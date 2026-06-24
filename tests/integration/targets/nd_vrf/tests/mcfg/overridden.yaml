@@ -41,9 +41,6 @@
         max_bgp_paths: 3
         max_ibgp_paths: 3
         ipv6_linklocal_enable: true
-        adv_host_routes: true
-        adv_default_routes: false
-        static_default_route: false
         deploy: false
         child_fabric_config:
           - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
@@ -129,7 +126,15 @@
 - name: MCFG Overridden TC2 - Validate Remaining VRF
   cisco.nd.tests.integration._nd_vrf_validate:
     nd_data: "{{ mcfg_over_gathered }}"
-    test_data: "{{ nd_vrf_mcfg_over_conf }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-mcfg-over-keep
+        vrf_id: "{{ nd_vrf_base_id + 32 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 32 }}"
+        vrf_description: Ansible ND VRF MCFG override keep updated
+        loopback_route_tag: 12355
+        max_bgp_paths: 3
+        max_ibgp_paths: 3
+        ipv6_linklocal_enable: true
   when: nd_vrf_run_mcfg | bool
   tags:
     - mcfg

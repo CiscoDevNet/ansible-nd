@@ -353,7 +353,10 @@ class VrfStateMachine:
 
             if items_to_delete:
                 target_args = dict(module_args)
-                target_args["config"] = [{"vrf_name": vrf_name} for vrf_name in target_vrf_names]
+                target_args["config"] = [
+                    self._delete_all_generated_config(vrf_name, strategy)
+                    for vrf_name in target_vrf_names
+                ]
 
                 self.coordinator._ensure_vrfs_have_no_networks(target_args, strategy, target_vrf_names)
                 detach_trace = self.coordinator._apply_deleted_attachment_phase(target_args, strategy, target_vrf_names)
@@ -364,6 +367,14 @@ class VrfStateMachine:
                     config=target_args.get("config") or [],
                     detach_trace=detach_trace,
                     wait_vrf_names=target_vrf_names,
+                )
+                traces.extend(
+                    self._deploy_pending_vrfs_before_delete(
+                        module_args,
+                        strategy,
+                        items_to_delete,
+                        target_vrf_names,
+                    )
                 )
 
                 sm._delete_items(items_to_delete)  # pylint: disable=protected-access
@@ -416,6 +427,57 @@ class VrfStateMachine:
                 self.coordinator._wait_for_vrfs_delete_ready(wait_args, strategy, wait_vrf_names)
         return traces
 
+    def _deploy_pending_vrfs_before_delete(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        items_to_delete: list[Any],
+        target_vrf_names: list[str],
+    ) -> list[dict[str, Any]]:
+        """Deploy pending VRF definitions once so the controller allows delete."""
+        pending_config = [
+            {
+                "vrf_name": vrf_name,
+                "deploy": True,
+                "deploy_type": "vrf",
+            }
+            for vrf_name in target_vrf_names
+        ]
+        current_result = {"after": [self._model_to_config(item) for item in items_to_delete]}
+        deploy_payloads = self.coordinator._build_pending_vrf_deploy_payloads(
+            current_result,
+            pending_config,
+            module_args,
+            strategy,
+        )
+        if not deploy_payloads:
+            return []
+
+        if self._check_mode():
+            return [
+                {
+                    "changed": True,
+                    "failed": False,
+                    "check_mode_deploy_payloads": deploy_payloads,
+                }
+            ]
+
+        traces: list[dict[str, Any]] = []
+        for deploy_payload in deploy_payloads:
+            traces.append(
+                self.coordinator._deploy_vrf_attachments(
+                    module_args,
+                    strategy,
+                    deploy_payload,
+                )
+            )
+        self.coordinator._wait_for_vrfs_delete_ready(
+            module_args,
+            strategy,
+            target_vrf_names,
+        )
+        return traces
+
     def _prepend_traces(self, result: dict[str, Any], traces: list[dict[str, Any]]) -> None:
         """Merge traces before the state-machine trace in result order."""
         for trace in reversed(traces):
@@ -432,6 +494,23 @@ class VrfStateMachine:
         if isinstance(identifier, tuple):
             return identifier[0]
         return identifier
+
+    @staticmethod
+    def _model_to_config(item: Any) -> dict[str, Any]:
+        """Return a config-shaped dict from a state-machine model instance."""
+        if hasattr(item, "to_config"):
+            return item.to_config()
+        if hasattr(item, "model_dump"):
+            return item.model_dump(by_alias=False, exclude_none=True, mode="json")
+        return {}
+
+    @staticmethod
+    def _delete_all_generated_config(vrf_name: str, strategy: BaseVrfStrategy) -> dict[str, Any]:
+        """Build synthetic delete config for config=[] cleanup."""
+        config = {"vrf_name": vrf_name}
+        if getattr(strategy, "is_parent", False):
+            config["deploy_type"] = "vrf"
+        return config
 
     def _vrf_names_from_models(self, items: Any) -> list[str]:
         """Return unique VRF names from state-machine model instances."""

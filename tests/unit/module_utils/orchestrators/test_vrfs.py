@@ -19,6 +19,10 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import (
+    HttpVerbEnum,
+    OperationType,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import (
     VrfConfigModel,
     VrfParentConfigModel,
@@ -34,13 +38,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argumen
     vrf_base_argument_spec,
     vrf_parent_argument_spec,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import (
+    Results,
+)
 
 
 class _Strategy:
-    def __init__(self, fabric_data=None, is_child=False, is_parent=False):
+    def __init__(self, fabric_data=None, is_child=False, is_parent=False, is_multicluster=False):
         self.fabric_data = fabric_data or {}
         self.is_child = is_child
         self.is_parent = is_parent
+        self.is_multicluster = is_multicluster
 
 
 def _transform(
@@ -49,13 +57,14 @@ def _transform(
     fabric_data=None,
     is_child=False,
     is_parent=False,
+    is_multicluster=False,
 ):
     """Call the payload transformer without constructing the full orchestrator."""
     instance = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
     object.__setattr__(
         instance,
         "strategy",
-        _Strategy(fabric_data, is_child, is_parent),
+        _Strategy(fabric_data, is_child, is_parent, is_multicluster),
     )
     if is_child:
         return instance._transform_child_config_to_payload_model_data(config, fabric_name)
@@ -67,8 +76,9 @@ class _EndpointStrategy:
     fabric_data = {}
     is_parent = False
 
-    def __init__(self, is_child=False):
+    def __init__(self, is_child=False, is_multicluster=False):
         self.is_child = is_child
+        self.is_multicluster = is_multicluster
 
     @staticmethod
     def configure_endpoint(_endpoint):
@@ -123,9 +133,9 @@ class _RestSend:
         self.response_current = {}
 
 
-def _orchestrator_for_request_tests(params, is_child=False):
+def _orchestrator_for_request_tests(params, is_child=False, is_multicluster=False):
     instance = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
-    object.__setattr__(instance, "strategy", _EndpointStrategy(is_child=is_child))
+    object.__setattr__(instance, "strategy", _EndpointStrategy(is_child=is_child, is_multicluster=is_multicluster))
     object.__setattr__(instance, "rest_send", _RestSend(params))
     return instance
 
@@ -218,6 +228,86 @@ def test_vrfs_00020_transform_applies_schema_defaults_for_minimal_config():
     assert payload["fabricData"]["configureStaticDefaultRoute"] is True
     assert payload["fabricData"]["bgpPasswordKeyType"] == 3
     assert payload["fabricData"]["trmData"]["v4RpAbsent"] is False
+
+
+def test_vrfs_00021_transform_mcfg_parent_preserves_fabric_data_for_top_down_payload():
+    """
+    # Summary
+
+    Verify MCFG parent configs keep parent fabricData so the top-down payload
+    can serialize advertise/static route flags into vrfTemplateConfig.
+    """
+    transformed = _transform(
+        {
+            "vrf_name": "ansible-mcfg-parent",
+            "vrf_id": 9008031,
+            "vlan_id": 631,
+            "adv_host_routes": True,
+            "adv_default_routes": False,
+            "static_default_route": False,
+        },
+        fabric_name="MCFG_FAB",
+        is_parent=True,
+        is_multicluster=True,
+    )
+    payload = VrfDataModel.from_config(transformed).to_payload()
+
+    assert payload["fabricName"] == "MCFG_FAB"
+    assert payload["fabricData"]["advertiseHostRoute"] is True
+    assert payload["fabricData"]["advertiseDefaultRoute"] is False
+    assert payload["fabricData"]["configureStaticDefaultRoute"] is False
+
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(orchestrator, "strategy", _McfgTopDownStrategy())
+    top_down_payload = orchestrator._top_down_vrf_payload(VrfDataModel.from_config(transformed))
+    template_config = json.loads(top_down_payload["vrfTemplateConfig"])
+
+    assert template_config["advertiseHostRouteFlag"] is True
+    assert template_config["advertiseDefaultRouteFlag"] is False
+    assert template_config["configureStaticDefaultRouteFlag"] is False
+
+
+def test_vrfs_00022_transform_msd_parent_omits_fabric_data():
+    """
+    # Summary
+
+    Verify non-MCFG parent behavior remains unchanged and does not carry
+    parent fabricData into the normal parent payload.
+    """
+    transformed = _transform(
+        {
+            "vrf_name": "ansible-msd-parent",
+            "adv_host_routes": True,
+            "adv_default_routes": False,
+            "static_default_route": False,
+        },
+        is_parent=True,
+    )
+    payload = VrfDataModel.from_config(transformed).to_payload()
+
+    assert "fabricData" not in payload
+
+
+def test_vrfs_00023_transform_mcfg_parent_omits_implicit_fabric_defaults():
+    """
+    # Summary
+
+    Verify MCFG parent configs do not carry implicit fabricData defaults when
+    the playbook only intends child_fabric_config to control child options.
+    """
+    transformed = _transform(
+        {
+            "vrf_name": "ansible-mcfg-parent-child-options",
+            "vrf_id": 9008032,
+            "vlan_id": 632,
+        },
+        fabric_name="MCFG_FAB",
+        is_parent=True,
+        is_multicluster=True,
+    )
+    payload = VrfDataModel.from_config(transformed).to_payload()
+
+    assert "fabricData" not in payload
 
 
 def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
@@ -879,3 +969,106 @@ def test_vrfs_00100_child_create_bulk_uses_update_endpoint():
             "advertiseDefaultRoute": False,
         },
     }
+
+
+def test_vrfs_00105_remote_mcfg_child_update_falls_back_to_list_visibility():
+    """
+    # Summary
+
+    Verify a remote MCFG child VRF update rejection does not fail the parent
+    workflow when the VRF is visible through the child list endpoint.
+    """
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "merged",
+            "config": [{"vrf_name": "ansible-mcfg-vrf"}],
+        },
+        is_child=True,
+        is_multicluster=True,
+    )
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        if kwargs["verb"].value == "PUT":
+            raise Exception("Request failed (400): Fabric 'AK-VXLAN' does not exist")
+        return {"vrfs": [{"fabricName": "AK-VXLAN", "vrfName": "ansible-mcfg-vrf"}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+    model = VrfDataModel.from_config(
+        {
+            "fabric_name": "AK-VXLAN",
+            "vrf_name": "ansible-mcfg-vrf",
+            "fabric_data": {
+                "advertiseDefaultRoute": False,
+                "advertiseHostRoute": True,
+            },
+        }
+    )
+
+    result = orchestrator.update(model)
+
+    assert result["status"] == "skipped"
+    assert result["fabricName"] == "AK-VXLAN"
+    assert result["vrfName"] == "ansible-mcfg-vrf"
+    assert [request["verb"].value for request in requests] == ["PUT", "GET"]
+    assert requests[1]["path"] == "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3Aansible-mcfg-vrf"
+
+
+def test_vrfs_00106_handled_remote_mcfg_child_update_clears_failed_trace():
+    """
+    # Summary
+
+    Verify the accepted remote-child PUT rejection remains visible in debug
+    traces but no longer marks the task failed after list visibility is proven.
+    """
+    results = Results()
+    results.action = OperationType.UPDATE.value
+    results.operation_type = OperationType.UPDATE
+    results.path_current = "/api/v1/manage/fabrics/AK-VXLAN/vrfs/ansible-mcfg-vrf"
+    results.verb_current = HttpVerbEnum.PUT
+    results.payload_current = {"vrfName": "ansible-mcfg-vrf"}
+    results.response_current = {
+        "RETURN_CODE": 400,
+        "DATA": {"message": "Fabric 'AK-VXLAN' does not exist"},
+    }
+    results.result_current = {"success": False, "changed": False}
+    results.diff_current = {}
+    results.verbosity_level_current = 2
+    results.register_api_call()
+
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "merged",
+            "config": [{"vrf_name": "ansible-mcfg-vrf"}],
+        },
+        is_child=True,
+        is_multicluster=True,
+    )
+    object.__setattr__(orchestrator, "results", results)
+
+    orchestrator._mark_child_update_rejection_handled("/api/v1/manage/fabrics/AK-VXLAN/vrfs/ansible-mcfg-vrf")
+
+    results.build_final_result()
+    final = results.final_result
+    assert final["failed"] is False
+    assert final["result"][0]["success"] is True
+    assert final["result"][0]["handled"] is True
+    assert final["response"][0]["handled"] is True
+
+
+def test_vrfs_00107_vrf_status_accepts_uppercase_controller_values():
+    """
+    # Summary
+
+    Verify live controller status casing is normalized by the API data model.
+    """
+    model = VrfDataModel.from_response(
+        {
+            "fabricName": "MCFG_C",
+            "vrfName": "ansible-nd-vrf-mcfg-merged",
+            "vrfStatus": "PENDING",
+        }
+    )
+
+    assert model.to_config()["vrf_status"] == "pending"

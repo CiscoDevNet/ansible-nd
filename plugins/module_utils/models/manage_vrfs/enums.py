@@ -59,6 +59,17 @@ class ConfigurationStatus(str, Enum):
     SUCCESS = "success"
 
     @classmethod
+    def _missing_(cls, value):
+        if not isinstance(value, str):
+            return None
+        if value == "NA":
+            return cls.NOT_APPLICABLE
+        for member in cls:
+            if member.value.lower() == value.lower():
+                return member
+        return None
+
+    @classmethod
     def choices(cls) -> list[str]:
         """Return list of valid choices."""
         return [e.value for e in cls]

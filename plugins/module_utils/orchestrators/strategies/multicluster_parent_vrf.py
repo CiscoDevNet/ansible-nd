@@ -5,8 +5,10 @@
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multisite_parent_vrf import (
     MultisiteParentVrfStrategy,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_actions import (
+    EpManageFabricsVrfActionsDeployPost,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.vrfs import (
-    EpOneManageFabricsVrfActionsDeployPost,
     EpOneManageFabricsVrfsGet,
     EpOneManageFabricsVrfsBulkDelete,
     EpOneManageFabricsVrfsPost,
@@ -48,7 +50,7 @@ class MulticlusterParentVrfStrategy(MultisiteParentVrfStrategy):
         return EpOneManageFabricsVrfsVrfNameDelete
 
     def vrf_actions_deploy_post_cls(self) -> type:
-        return EpOneManageFabricsVrfActionsDeployPost
+        return EpManageFabricsVrfActionsDeployPost
 
     def vrf_actions_remove_post_cls(self) -> type:
         return EpOneManageFabricsVrfsBulkDelete

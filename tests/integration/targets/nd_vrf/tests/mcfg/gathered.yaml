@@ -22,9 +22,6 @@
         vrf_description: Ansible ND VRF MCFG gathered test
         max_bgp_paths: 2
         max_ibgp_paths: 2
-        adv_host_routes: true
-        adv_default_routes: false
-        static_default_route: false
         deploy: false
         child_fabric_config:
           - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
@@ -87,7 +84,21 @@
 - name: MCFG Gathered TC2 - Validate Parent VRF
   cisco.nd.tests.integration._nd_vrf_validate:
     nd_data: "{{ mcfg_parent_gathered }}"
-    test_data: "{{ nd_vrf_mcfg_gathered_conf }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-mcfg-gathered
+        vrf_id: "{{ nd_vrf_base_id + 35 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 35 }}"
+        vrf_description: Ansible ND VRF MCFG gathered test
+        max_bgp_paths: 2
+        max_ibgp_paths: 2
+      - vrf_name: ansible-mcfg-gath-parent
+        vrf_id: "{{ nd_vrf_base_id + 36 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 36 }}"
+        vrf_description: Ansible ND VRF MCFG gathered parent-only test
+        ipv6_linklocal_enable: true
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
   when: nd_vrf_run_mcfg | bool
   tags:
     - mcfg
@@ -117,12 +128,14 @@
     - mcfg
     - gathered
 
-- name: MCFG Gathered TC3 - Validate Parent-Only VRF Not On Child
+- name: MCFG Gathered TC3 - Validate Parent VRF Propagated To Child
   cisco.nd.tests.integration._nd_vrf_validate:
     nd_data: "{{ mcfg_child_gathered }}"
     test_data:
       - vrf_name: ansible-mcfg-gath-parent
-    present: false
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
   when: nd_vrf_run_mcfg | bool
   tags:
     - mcfg

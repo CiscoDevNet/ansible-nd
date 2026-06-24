@@ -449,7 +449,9 @@ class VrfAttachmentManager:
         """Return True when existing attachment satisfies desired fields."""
         if existing.get("attach") is not True:
             return False
-        if existing.get("extraConfig") != desired.get("extraConfig"):
+        existing_extra_config = existing.get("extraConfig") or ""
+        desired_extra_config = desired.get("extraConfig") or ""
+        if existing_extra_config != desired_extra_config:
             return False
         desired_instance = desired.get("instanceValues") or {}
         if not desired_instance:

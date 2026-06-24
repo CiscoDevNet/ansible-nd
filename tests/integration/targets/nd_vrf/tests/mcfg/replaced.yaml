@@ -53,7 +53,7 @@
         max_bgp_paths: 2
         max_ibgp_paths: 2
         ipv6_linklocal_enable: true
-        adv_host_routes: true
+        adv_host_routes: false
         adv_default_routes: true
         static_default_route: true
         deploy: false
@@ -136,7 +136,24 @@
 - name: MCFG Replaced TC2 - Validate Parent VRF
   cisco.nd.tests.integration._nd_vrf_validate:
     nd_data: "{{ mcfg_replace_parent_gathered }}"
-    test_data: "{{ nd_vrf_mcfg_replace_conf }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-mcfg-replaced
+        vrf_id: "{{ nd_vrf_base_id + 31 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 31 }}"
+        vrf_description: Ansible ND VRF MCFG replaced updated
+        max_bgp_paths: 4
+        max_ibgp_paths: 4
+      - vrf_name: ansible-mcfg-repl-parent
+        vrf_id: "{{ nd_vrf_base_id + 39 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 39 }}"
+        vrf_description: Ansible ND VRF MCFG replaced parent-only updated
+        loopback_route_tag: 12354
+        max_bgp_paths: 2
+        max_ibgp_paths: 2
+        ipv6_linklocal_enable: true
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
   when: nd_vrf_run_mcfg | bool
   tags:
     - mcfg
@@ -166,12 +183,14 @@
     - mcfg
     - replaced
 
-- name: MCFG Replaced TC2 - Validate Parent-Only VRF Not On Child
+- name: MCFG Replaced TC2 - Validate Parent VRF Propagated To Child
   cisco.nd.tests.integration._nd_vrf_validate:
     nd_data: "{{ mcfg_replace_child_gathered }}"
     test_data:
       - vrf_name: ansible-mcfg-repl-parent
-    present: false
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
   when: nd_vrf_run_mcfg | bool
   tags:
     - mcfg

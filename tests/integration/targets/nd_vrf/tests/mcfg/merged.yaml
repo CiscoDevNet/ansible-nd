@@ -28,6 +28,13 @@
           }
         ] if nd_vrf_mcfg_switch | length > 0 else []
       }}
+  delegate_to: localhost
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged - Build Parent and Child VRF Config
+  ansible.builtin.set_fact:
     nd_vrf_mcfg_merged_config:
       - vrf_name: ansible-nd-vrf-mcfg-merged
         vrf_id: "{{ nd_vrf_base_id + 30 }}"
@@ -38,8 +45,6 @@
         max_ibgp_paths: 4
         ipv6_linklocal_enable: true
         disable_rt_auto: true
-        trm_enable: false
-        netflow_enable: false
         import_vpn_rt:
           - "65000:50030"
         export_vpn_rt:
@@ -79,8 +84,6 @@
         adv_host_routes: false
         adv_default_routes: true
         static_default_route: true
-        trm_enable: false
-        netflow_enable: false
         deploy: false
         child_fabric_config:
           - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
@@ -99,7 +102,7 @@
         max_ibgp_paths: 3
         ipv6_linklocal_enable: true
         disable_rt_auto: false
-        adv_host_routes: true
+        adv_host_routes: false
         adv_default_routes: true
         static_default_route: true
         deploy: false
@@ -166,7 +169,54 @@
 - name: MCFG Merged TC1 - Validate Parent VRF
   cisco.nd.tests.integration._nd_vrf_validate:
     nd_data: "{{ mcfg_merged_parent_gathered }}"
-    test_data: "{{ nd_vrf_mcfg_merged_conf }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-mcfg-merged
+        vrf_id: "{{ nd_vrf_base_id + 30 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 30 }}"
+        vrf_description: Ansible ND VRF MCFG merged integration test
+        loopback_route_tag: 12345
+        max_bgp_paths: 4
+        max_ibgp_paths: 4
+        ipv6_linklocal_enable: true
+        disable_rt_auto: true
+        import_vpn_rt:
+          - "65000:50030"
+        export_vpn_rt:
+          - "65000:50030"
+        import_evpn_rt:
+          - "65000:50030"
+        export_evpn_rt:
+          - "65000:50030"
+      - vrf_name: ansible-nd-vrf-mcfg-merged-l3vni
+        vrf_id: "{{ nd_vrf_base_id + 37 }}"
+        vrf_description: Ansible ND VRF MCFG merged L3VNI without VLAN
+        loopback_route_tag: 12349
+        max_bgp_paths: 1
+        max_ibgp_paths: 2
+        ipv6_linklocal_enable: true
+        disable_rt_auto: false
+        import_vpn_rt:
+          - "65000:50037"
+        export_vpn_rt:
+          - "65000:50037"
+        import_evpn_rt:
+          - "65000:50037"
+        export_evpn_rt:
+          - "65000:50037"
+      - vrf_name: ansible-mcfg-merged-parent
+        vrf_id: "{{ nd_vrf_base_id + 38 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 38 }}"
+        vrf_description: Ansible ND VRF MCFG merged parent-only integration test
+        loopback_route_tag: 12353
+        redist_direct_rmap: FABRIC-RMAP-REDIST-SUBNET
+        v6_redist_direct_rmap: FABRIC-RMAP-REDIST-SUBNET
+        max_bgp_paths: 3
+        max_ibgp_paths: 3
+        ipv6_linklocal_enable: true
+        disable_rt_auto: false
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
   when: nd_vrf_run_mcfg | bool
   tags:
     - mcfg
@@ -201,12 +251,14 @@
     - mcfg
     - merged
 
-- name: MCFG Merged TC1 - Validate Parent-Only VRF Not On Child
+- name: MCFG Merged TC1 - Validate Parent VRF Propagated To Child
   cisco.nd.tests.integration._nd_vrf_validate:
     nd_data: "{{ mcfg_merged_child_gathered }}"
     test_data:
       - vrf_name: ansible-mcfg-merged-parent
-    present: false
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
   when: nd_vrf_run_mcfg | bool
   tags:
     - mcfg

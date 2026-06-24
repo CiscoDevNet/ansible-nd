@@ -17,6 +17,12 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator import (
     VrfWorkflowCoordinator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachment_manager import (
+    VrfAttachmentManager,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multicluster_parent_vrf import (
+    MulticlusterParentVrfStrategy,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import (
     VrfConfigModel,
     VrfParentConfigModel,
@@ -66,6 +72,19 @@ class _ParentStrategy:
             "state": state,
             "config": vrf_configs,
         }
+
+
+class _McfgParentStrategy(_ParentStrategy):
+    fabric_data = {"members": [{"fabricName": "nacfab", "clusterName": "ND42-REL"}]}
+    fabric_name = "MCFG_C"
+
+    @property
+    def fabric_type(self):
+        return "multicluster_parent"
+
+    @property
+    def is_multicluster(self):
+        return True
 
 
 class _StandaloneStrategy:
@@ -171,6 +190,110 @@ def test_vrf_workflow_coordinator_00003_child_rejects_direct_attach():
         assert "attach is not valid" in exc.args[0]["msg"]
     else:
         raise AssertionError("child attach was not rejected")
+
+
+def test_vrf_workflow_coordinator_000035_mcfg_parent_scrubs_child_scoped_defaults():
+    """
+    # Summary
+
+    Verify defaulted parent fabric options are removed from MCFG parent rows
+    that are controlled through child_fabric_config.
+    """
+    parent_vrf = {
+        "vrf_name": "ansible-mcfg-vrf",
+        "l3vni_wo_vlan": False,
+        "adv_host_routes": False,
+        "adv_default_routes": True,
+        "static_default_route": True,
+        "netflow_enable": False,
+        "trm_enable": False,
+        "max_bgp_paths": 4,
+    }
+
+    VrfWorkflowCoordinator._remove_defaulted_mcfg_parent_fabric_options(parent_vrf)
+
+    assert parent_vrf == {
+        "vrf_name": "ansible-mcfg-vrf",
+        "max_bgp_paths": 4,
+    }
+
+
+def test_vrf_workflow_coordinator_000036_mcfg_parent_keeps_nondefault_fabric_options():
+    """
+    # Summary
+
+    Verify non-default MCFG parent fabric options survive the default scrub.
+    """
+    parent_vrf = {
+        "vrf_name": "ansible-mcfg-vrf",
+        "l3vni_wo_vlan": True,
+        "adv_host_routes": True,
+        "adv_default_routes": False,
+        "static_default_route": False,
+        "netflow_enable": True,
+    }
+
+    VrfWorkflowCoordinator._remove_defaulted_mcfg_parent_fabric_options(parent_vrf)
+
+    assert parent_vrf == {
+        "vrf_name": "ansible-mcfg-vrf",
+        "l3vni_wo_vlan": True,
+        "adv_host_routes": True,
+        "adv_default_routes": False,
+        "static_default_route": False,
+        "netflow_enable": True,
+    }
+
+
+def test_vrf_workflow_coordinator_000037_mcfg_parent_scrubs_child_owned_fabric_options():
+    """
+    # Summary
+
+    Verify MCFG parent rows with child_fabric_config leave fabric-instance
+    options to the child manage endpoint.
+    """
+    parent_vrf = {
+        "vrf_name": "ansible-mcfg-vrf",
+        "vrf_id": 9008037,
+        "l3vni_wo_vlan": True,
+        "adv_host_routes": True,
+        "adv_default_routes": False,
+        "static_default_route": False,
+        "bgp_password": "abcdef12",
+        "bgp_passwd_encrypt": 3,
+        "netflow_enable": True,
+        "max_bgp_paths": 4,
+    }
+
+    VrfWorkflowCoordinator._remove_child_owned_mcfg_parent_fabric_options(parent_vrf)
+
+    assert parent_vrf == {
+        "vrf_name": "ansible-mcfg-vrf",
+        "vrf_id": 9008037,
+        "max_bgp_paths": 4,
+    }
+
+
+def test_vrf_workflow_coordinator_000038_attachment_match_treats_missing_extra_config_as_empty():
+    """
+    # Summary
+
+    Verify attach idempotence is not broken when ND returns empty extraConfig
+    but the playbook omitted freeform_config.
+    """
+    existing = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+        "extraConfig": "",
+    }
+    desired = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+    }
+
+    assert VrfAttachmentManager.attachment_matches(existing, desired) is True
 
 
 def test_vrf_workflow_coordinator_00004_child_write_ignores_null_parser_defaults():
@@ -320,6 +443,50 @@ def test_vrf_workflow_coordinator_00010_parent_child_results_keep_state_machine_
     assert child["api_paths"] == child_result["api_paths"]
     assert child["api_payload"] == child_result["api_payload"]
     assert "child_fabric" not in child
+
+
+def test_vrf_workflow_coordinator_00011_child_exception_returns_structured_failure():
+    """
+    # Summary
+
+    Verify an exception raised while processing a child fabric is converted
+    into a child-scoped failed result that parent aggregation can preserve.
+    """
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module({"output_level": "debug"}),
+        strategy=_ParentStrategy(),
+    )
+
+    def raise_child(*_args, **_kwargs):
+        raise RuntimeError("child route failed")
+
+    object.__setattr__(coordinator, "_run_state_machine", raise_child)
+    child_result = coordinator._run_child_task(
+        {
+            "module_args": {"config": [{"vrf_name": "ansible-msd-vrf"}]},
+            "strategy": _ChildStrategy(),
+        }
+    )
+    child_result["child_fabric"] = "AK-VXLAN"
+
+    result = coordinator._build_structured_result(
+        {"changed": True, "failed": False, "before": [], "after": [], "diff": []},
+        [child_result],
+        "msd_p",
+        "multisite_parent",
+        "multisite",
+    )
+
+    assert result["changed"] is True
+    assert result["failed"] is True
+    assert "AK-VXLAN" in result["msg"]
+    child = result["child_fabrics"][0]
+    assert child["fabric"] == "AK-VXLAN"
+    assert child["fabric_type"] == "multisite_child"
+    assert child["failed"] is True
+    assert child["msg"] == "child route failed"
+    assert child["exception"] == "RuntimeError"
+    assert child["proposed"] == [{"vrf_name": "ansible-msd-vrf"}]
 
 
 def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks():
@@ -771,8 +938,8 @@ def test_vrf_workflow_coordinator_00075_deleted_empty_config_deletes_state_machi
     def detach(args, _strategy, vrf_names=None):
         call_order.append("detach")
         assert args["config"] == [
-            {"vrf_name": "ansible-msd-a"},
-            {"vrf_name": "ansible-msd-b"},
+            {"vrf_name": "ansible-msd-a", "deploy_type": "vrf"},
+            {"vrf_name": "ansible-msd-b", "deploy_type": "vrf"},
         ]
         assert module_args["config"] == []
         assert vrf_names == ["ansible-msd-a", "ansible-msd-b"]
@@ -1010,6 +1177,80 @@ def test_vrf_workflow_coordinator_check_mode_deleted_skips_deploy_and_wait():
     assert call_order == ["detach", "delete"]
     assert result["changed"] is True
     assert result["check_mode_deploy_payloads"] == [{"vrfNames": ["ansible-msd-vrf"]}]
+
+
+def test_vrf_workflow_coordinator_deleted_deploys_pending_vrfs_before_delete():
+    module_args = {
+        "fabric": "MCFG_C",
+        "state": "deleted",
+        "config": [],
+        "timeout": 30,
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_McfgParentStrategy(),
+    )
+    call_order = []
+
+    class FakeVrf:
+        def to_config(self):
+            return {
+                "vrf_name": "ansible-nd-vrf-mcfg-merged",
+                "vrf_status": "pending",
+            }
+
+    def deploy(args, strategy, payload):
+        call_order.append("deploy")
+        assert args == module_args
+        assert strategy.fabric_name == "MCFG_C"
+        assert payload == {"vrfNames": ["ansible-nd-vrf-mcfg-merged"]}
+        return {"changed": True, "failed": False}
+
+    def wait(args, strategy, vrf_names):
+        call_order.append("wait")
+        assert args == module_args
+        assert strategy.fabric_name == "MCFG_C"
+        assert vrf_names == ["ansible-nd-vrf-mcfg-merged"]
+
+    object.__setattr__(coordinator, "_deploy_vrf_attachments", deploy)
+    object.__setattr__(coordinator, "_wait_for_vrfs_delete_ready", wait)
+
+    traces = coordinator._vrf_state_machine()._deploy_pending_vrfs_before_delete(
+        module_args,
+        _McfgParentStrategy(),
+        [FakeVrf()],
+        ["ansible-nd-vrf-mcfg-merged"],
+    )
+
+    assert call_order == ["deploy", "wait"]
+    assert traces == [{"changed": True, "failed": False}]
+
+
+def test_vrf_workflow_coordinator_delete_all_parent_cleanup_uses_vrf_deploy_scope():
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module({"fabric": "MCFG_C", "state": "deleted", "config": []}),
+        strategy=_McfgParentStrategy(),
+    )
+
+    config = coordinator._vrf_state_machine()._delete_all_generated_config(
+        "ansible-nd-vrf-mcfg-merged",
+        _McfgParentStrategy(),
+    )
+
+    assert config == {
+        "vrf_name": "ansible-nd-vrf-mcfg-merged",
+        "deploy_type": "vrf",
+    }
+
+
+def test_vrf_workflow_coordinator_mcfg_parent_uses_manage_deploy_endpoint():
+    strategy = MulticlusterParentVrfStrategy(
+        fabric_name="MCFG_C",
+        fabric_data={},
+    )
+    endpoint = strategy.vrf_actions_deploy_post_cls()(fabric_name="MCFG_C")
+
+    assert endpoint.path == "/api/v1/manage/fabrics/MCFG_C/vrfActions/deploy"
 
 
 def test_vrf_workflow_coordinator_check_mode_attachment_phase_returns_planned_payload():

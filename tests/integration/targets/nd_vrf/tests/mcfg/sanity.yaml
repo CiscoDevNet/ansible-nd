@@ -32,9 +32,6 @@
           - "65000:50660"
         export_evpn_rt:
           - "65000:50660"
-        adv_host_routes: true
-        adv_default_routes: false
-        static_default_route: false
         deploy: false
         child_fabric_config:
           - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
@@ -78,9 +75,6 @@
         vrf_id: "{{ nd_vrf_base_id + 62 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 62 }}"
         vrf_description: Ansible ND VRF MCFG sanity overridden
-        adv_host_routes: true
-        adv_default_routes: false
-        static_default_route: false
         deploy: false
         child_fabric_config:
           - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
@@ -170,7 +164,25 @@
 - name: MCFG Sanity TC1 - Validate Parent Merged
   cisco.nd.tests.integration._nd_vrf_validate:
     nd_data: "{{ mcfg_sanity_parent_gathered }}"
-    test_data: "{{ nd_vrf_mcfg_sanity_merge_conf }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-mcfg-sanity-a
+        vrf_id: "{{ nd_vrf_base_id + 60 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 60 }}"
+        vrf_description: Ansible ND VRF MCFG sanity merged
+        max_bgp_paths: 2
+        max_ibgp_paths: 2
+        disable_rt_auto: true
+        import_vpn_rt:
+          - "65000:50660"
+        export_vpn_rt:
+          - "65000:50660"
+        import_evpn_rt:
+          - "65000:50660"
+        export_evpn_rt:
+          - "65000:50660"
+      - vrf_name: ansible-nd-vrf-mcfg-sanity-b
+        vrf_id: "{{ nd_vrf_base_id + 61 }}"
+        vrf_description: Ansible ND VRF MCFG sanity L3VNI without VLAN
     changed: "{{ mcfg_sanity_merged.changed }}"
   when: nd_vrf_run_mcfg | bool
   tags:
@@ -220,7 +232,13 @@
 - name: MCFG Sanity TC2 - Validate Replaced
   cisco.nd.tests.integration._nd_vrf_validate:
     nd_data: "{{ mcfg_sanity_replaced_gathered }}"
-    test_data: "{{ nd_vrf_mcfg_sanity_replace_conf }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-mcfg-sanity-a
+        vrf_id: "{{ nd_vrf_base_id + 60 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 60 }}"
+        vrf_description: Ansible ND VRF MCFG sanity replaced
+        max_bgp_paths: 4
+        max_ibgp_paths: 4
     changed: "{{ mcfg_sanity_replaced.changed }}"
   when: nd_vrf_run_mcfg | bool
   tags:
@@ -270,7 +288,11 @@
 - name: MCFG Sanity TC3 - Validate Override Created VRF
   cisco.nd.tests.integration._nd_vrf_validate:
     nd_data: "{{ mcfg_sanity_overridden_gathered }}"
-    test_data: "{{ nd_vrf_mcfg_sanity_override_conf }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-mcfg-sanity-c
+        vrf_id: "{{ nd_vrf_base_id + 62 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 62 }}"
+        vrf_description: Ansible ND VRF MCFG sanity overridden
     changed: "{{ mcfg_sanity_overridden.changed }}"
   when: nd_vrf_run_mcfg | bool
   tags:

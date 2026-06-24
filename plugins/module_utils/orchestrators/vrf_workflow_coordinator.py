@@ -264,6 +264,10 @@ class VrfWorkflowCoordinator:
             # Parent config: same VRF but without child_fabric_config
             parent_vrf = dict(vrf)
             parent_vrf.pop("child_fabric_config", None)
+            if getattr(self.strategy, "is_multicluster", False):
+                self._remove_defaulted_mcfg_parent_fabric_options(parent_vrf)
+                if child_configs:
+                    self._remove_child_owned_mcfg_parent_fabric_options(parent_vrf)
             parent_config.append(parent_vrf)
 
         # Step 4 — run parent state machine
@@ -303,6 +307,85 @@ class VrfWorkflowCoordinator:
         return self._build_structured_result(parent_result, child_results, parent_fabric, fabric_type, log_type)
 
     # ── Config splitting helpers ──────────────────────────────────
+
+    @staticmethod
+    def _remove_defaulted_mcfg_parent_fabric_options(parent_vrf: dict[str, Any]) -> None:
+        """
+        Remove Ansible-injected fabric option defaults from MCFG parent rows
+        that are scoped to child fabrics.
+
+        The parent top-down API does not consistently read back these default
+        flags when child fabrics disagree, so sending implicit defaults causes
+        repeated parent updates.  Non-default values are left intact.
+        """
+        defaulted_fabric_values = {
+            "l3vni_wo_vlan": False,
+            "adv_host_routes": False,
+            "adv_default_routes": True,
+            "static_default_route": True,
+            "trm_enable": False,
+            "ipv6_trm": False,
+            "no_rp": False,
+            "rp_external": False,
+            "trm_bgw_msite": False,
+            "netflow_enable": False,
+        }
+        for key, default_value in defaulted_fabric_values.items():
+            if parent_vrf.get(key) == default_value:
+                parent_vrf.pop(key, None)
+
+    @staticmethod
+    def _remove_child_owned_mcfg_parent_fabric_options(parent_vrf: dict[str, Any]) -> None:
+        """
+        Remove fabric-instance options from MCFG parent rows that also have
+        explicit child_fabric_config.
+
+        In MCFG, child-specific VRF fabric options are applied through the
+        child manage endpoints.  Keeping those same fields on the parent
+        top-down row causes repeated parent PUTs because parent readback and
+        child readback do not expose the exact same fabricData shape.
+        """
+        child_owned_fields = {
+            "l3vni_wo_vlan",
+            "l3_vni_without_vlan",
+            "adv_host_routes",
+            "advertise_host_route",
+            "adv_default_routes",
+            "advertise_default_route",
+            "static_default_route",
+            "configure_static_default_route",
+            "bgp_password",
+            "bgpPassword",
+            "bgp_passwd_encrypt",
+            "bgp_password_key_type",
+            "netflow_enable",
+            "netflow",
+            "nf_monitor",
+            "netflow_monitor",
+            "trm_enable",
+            "ipv4_trm",
+            "ipv6_trm",
+            "no_rp",
+            "v4_rp_absent",
+            "rp_external",
+            "v4_rp_external",
+            "rp_address",
+            "v4_rp_address",
+            "rp_loopback_id",
+            "loopback_number",
+            "underlay_mcast_ip",
+            "l3_vni_multicast_group",
+            "overlay_mcast_group",
+            "v4_multicast_group",
+            "trm_bgw_msite",
+            "trm_on_bgw",
+            "import_mvpn_rt",
+            "mvpn_route_target_import",
+            "export_mvpn_rt",
+            "mvpn_route_target_export",
+        }
+        for key in child_owned_fields:
+            parent_vrf.pop(key, None)
 
     def _accumulate_child_task(
         self,
@@ -882,7 +965,17 @@ class VrfWorkflowCoordinator:
         """
         module_args = child_task["module_args"]
         child_strategy = child_task["strategy"]
-        result = self._run_state_machine(module_args, strategy=child_strategy)
+        try:
+            result = self._run_state_machine(module_args, strategy=child_strategy)
+        except Exception as exc:
+            return {
+                "changed": False,
+                "failed": True,
+                "msg": str(exc),
+                "exception": type(exc).__name__,
+                "fabric_type": getattr(child_strategy, "fabric_type", "unknown_child"),
+                "proposed": copy.deepcopy(module_args.get("config") or []),
+            }
         result.setdefault("fabric_type", child_strategy.fabric_type)
         return result
 

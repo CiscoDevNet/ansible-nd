@@ -35,6 +35,7 @@ Architecture overview
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 
@@ -117,6 +118,50 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             if name in config:
                 return config[name]
         return default
+
+    @staticmethod
+    def _has_explicit_fabric_data(config: dict[str, Any]) -> bool:
+        """Return True when playbook config explicitly sets fabric-level VRF options."""
+        fabric_field_names = {
+            "l3vni_wo_vlan",
+            "l3_vni_without_vlan",
+            "adv_host_routes",
+            "advertise_host_route",
+            "adv_default_routes",
+            "advertise_default_route",
+            "static_default_route",
+            "configure_static_default_route",
+            "bgp_password",
+            "bgpPassword",
+            "bgp_passwd_encrypt",
+            "bgp_password_key_type",
+            "netflow_enable",
+            "netflow",
+            "nf_monitor",
+            "netflow_monitor",
+            "trm_enable",
+            "ipv4_trm",
+            "ipv6_trm",
+            "no_rp",
+            "v4_rp_absent",
+            "rp_external",
+            "v4_rp_external",
+            "rp_address",
+            "v4_rp_address",
+            "rp_loopback_id",
+            "loopback_number",
+            "underlay_mcast_ip",
+            "l3_vni_multicast_group",
+            "overlay_mcast_group",
+            "v4_multicast_group",
+            "trm_bgw_msite",
+            "trm_on_bgw",
+            "import_mvpn_rt",
+            "mvpn_route_target_import",
+            "export_mvpn_rt",
+            "mvpn_route_target_export",
+        }
+        return any(name in config for name in fabric_field_names)
 
     def _default_vrf_type(self) -> str:
         """Return the standard VRF type derived from resolved fabric details."""
@@ -335,7 +380,9 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         )
 
         transformed["core_data"] = core_data.to_payload()
-        if not getattr(self.strategy, "is_parent", False):
+        is_parent = getattr(self.strategy, "is_parent", False)
+        is_multicluster = getattr(self.strategy, "is_multicluster", False)
+        if not is_parent or (is_multicluster and self._has_explicit_fabric_data(config)):
             transformed["fabric_data"] = fabric_data.to_payload()
         return transformed
 
@@ -786,6 +833,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     def update(self, model_instance: NDVrfModel, **kwargs) -> ResponseType:
         """PUT (replace) a single VRF identified by vrfName."""
+        endpoint_path = ""
         try:
             # Composite identifier is (vrf_name, fabric_name); vrf_name is index 0.
             vrf_name = model_instance.get_identifier_value()[0]
@@ -793,17 +841,103 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 self.strategy.vrf_put_cls(),
                 vrf_name=vrf_name,
             )
+            endpoint_path = endpoint.path
             payload = self._create_or_update_payload(model_instance)
             if self.strategy.is_child:
                 payload = {key: value for key, value in payload.items() if key in ("fabricName", "vrfName", "vrfType", "fabricData")}
             return self._request(
-                path=endpoint.path,
+                path=endpoint_path,
                 verb=endpoint.verb,
                 data=payload,
                 operation_type=OperationType.UPDATE,
             )
         except Exception as e:
+            if self._is_list_only_mcfg_child_update(e, model_instance):
+                vrf_name, fabric_name = model_instance.get_identifier_value()
+                self._mark_child_update_rejection_handled(endpoint_path)
+                return {
+                    "status": "skipped",
+                    "message": (
+                        "Controller rejected direct multicluster child VRF update "
+                        f"for fabric '{fabric_name}', but VRF '{vrf_name}' is "
+                        "visible through the child fabric list endpoint."
+                    ),
+                    "vrfName": vrf_name,
+                    "fabricName": fabric_name,
+                }
             raise Exception(f"Update VRF failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def _mark_child_update_rejection_handled(self, endpoint_path: str) -> None:
+        """
+        Mark the rejected remote-child PUT as handled once list visibility
+        proves the VRF exists.
+
+        Results are normally immutable API-call records.  This narrowly
+        replaces only the matching failed PUT record so debug output still
+        shows the controller response without causing the whole task to fail.
+        """
+        results = getattr(self, "results", None)
+        if not endpoint_path or results is None:
+            return
+        tasks = getattr(results, "_tasks", None)
+        if not tasks:
+            return
+        for index in range(len(tasks) - 1, -1, -1):
+            task = tasks[index]
+            if task.path != endpoint_path or task.verb.upper() != "PUT" or not task.failed:
+                continue
+            result = copy.deepcopy(task.result)
+            result["success"] = True
+            result["handled"] = True
+            response = copy.deepcopy(task.response)
+            response["handled"] = True
+            response["handled_reason"] = "remote multicluster child VRF update is list-visible only"
+            tasks[index] = task.model_copy(update={"result": result, "response": response, "failed": False, "changed": False})
+            if getattr(results, "_final_result", None) is not None:
+                results._final_result = None
+            return
+
+    def _is_list_only_mcfg_child_update(self, error: Exception, model_instance: NDVrfModel) -> bool:
+        """
+        Return True when a remote MCFG child exposes a VRF in list results but
+        rejects direct per-VRF update routes.
+        """
+        if not (getattr(self.strategy, "is_child", False) and getattr(self.strategy, "is_multicluster", False)):
+            return False
+        error_text = str(error)
+        if "Fabric" not in error_text or ("does not exist" not in error_text and "Invalid fabric name" not in error_text):
+            return False
+        return self._child_vrf_visible_in_list(model_instance)
+
+    def _child_vrf_visible_in_list(self, model_instance: NDVrfModel) -> bool:
+        """Check child VRF presence using the list route, avoiding the broken single-object route."""
+        vrf_name, fabric_name = model_instance.get_identifier_value()
+        try:
+            endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
+            if hasattr(endpoint, "endpoint_params"):
+                endpoint.endpoint_params.filter = self._vrf_name_filter([vrf_name])
+            result = self._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                not_found_ok=True,
+                operation_type=OperationType.QUERY,
+            )
+        except Exception:
+            return False
+
+        if isinstance(result, dict):
+            items = result.get("vrfs") or result.get("items") or []
+        else:
+            items = result or []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if (item.get("vrfName") or item.get("vrf_name")) != vrf_name:
+                continue
+            item_fabric = item.get("fabricName") or item.get("fabric_name")
+            if item_fabric in (None, fabric_name):
+                return True
+        return False
 
     # ── Delete ────────────────────────────────────────────────────
 
