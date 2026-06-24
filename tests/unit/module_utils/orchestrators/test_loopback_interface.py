@@ -174,7 +174,6 @@ def test_loopback_interface_00100() -> None:
     def responses():
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
-        yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -220,7 +219,6 @@ def test_loopback_interface_00110() -> None:
     def responses():
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
-        yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -238,18 +236,20 @@ def test_loopback_interface_00120() -> None:
     """
     # Summary
 
-    Verify `create` wraps an unknown-switch-IP `RuntimeError` raised by the capability preflight's switch resolution.
+    Verify `create` wraps an unknown-switch-IP `RuntimeError` raised by `_resolve_switch_id`.
+
+    Capability preflight now runs centrally in `NDStateMachine` (not inside `create`), so an unresolvable
+    `switch_ip` reaching `create` directly surfaces the raw `_resolve_switch_id` failure, wrapped by `create`.
 
     ## Test
 
     - switches-list returns a different IP than the model's `switch_ip`
-    - `validate_switches_capable` aggregates the unresolvable IP into a single `RuntimeError`
-    - `create` re-raises as `RuntimeError` matching `Create failed for .*loopback10`
+    - `_resolve_switch_id` raises; `create` re-raises as `RuntimeError` matching `Create failed for .*loopback10`
 
     ## Classes and Methods
 
     - LoopbackInterfaceOrchestrator.create()
-    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    - NDBaseInterfaceOrchestrator._resolve_switch_id()
     """
     method_name = inspect.stack()[0][3]
 
@@ -261,7 +261,7 @@ def test_loopback_interface_00120() -> None:
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
     model = _build_loopback_model(switch_ip="192.168.12.151")
 
-    match = r"Create failed for .*loopback10.*Cannot resolve switch_ip to switchId in fabric 'fabric_1' for: 192\.168\.12\.151"
+    match = r"Create failed for .*loopback10.*No switch found with fabricManagementIp '192\.168\.12\.151'"
     with pytest.raises(RuntimeError, match=match):
         instance.create(model)
 
@@ -295,7 +295,6 @@ def test_loopback_interface_00200() -> None:
     def responses():
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
-        yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -336,7 +335,6 @@ def test_loopback_interface_00210() -> None:
     def responses():
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
-        yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -457,7 +455,6 @@ def test_loopback_interface_00400() -> None:
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
         yield responses_loopback_interface(f"{method_name}c")
-        yield responses_loopback_interface(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -509,7 +506,6 @@ def test_loopback_interface_00410() -> None:
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
         yield responses_loopback_interface(f"{method_name}c")
-        yield responses_loopback_interface(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -545,7 +541,6 @@ def test_loopback_interface_00420() -> None:
     def responses():
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
-        yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -882,7 +877,6 @@ def test_loopback_interface_00800() -> None:
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
         yield responses_loopback_interface(f"{method_name}c")
-        yield responses_loopback_interface(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)

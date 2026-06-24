@@ -172,5 +172,34 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
         "MESSAGE": "OK",
         "DATA": {"switches": []}
+    },
+    "test_base_interface_00860a": {
+        "TEST_NOTES": [
+            "preflight() delegation: switches list resolves the target IP before the capability GET."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_base_interface_00860b": {
+        "TEST_NOTES": [
+            "preflight() delegation: capableSwitches returns 200 with empty switches; offender warning in check_mode proves preflight() routed to validate_switches_capable."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": []
+        }
     }
 }

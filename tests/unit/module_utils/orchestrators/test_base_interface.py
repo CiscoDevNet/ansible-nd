@@ -996,3 +996,44 @@ def test_base_interface_00850() -> None:
         instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
 
     assert rest_send.sender.ansible_module.warnings == []
+
+
+def test_base_interface_00860() -> None:
+    """
+    # Summary
+
+    Verify `preflight` delegates to `validate_switches_capable`. `NDStateMachine` calls `preflight` (the generic
+    pre-mutation hook) rather than `validate_switches_capable` directly, so this guards the interface override that
+    wires the two together.
+
+    ## Test
+
+    - `rest_send.check_mode` is True
+    - Switches inventory resolves the target IP to `FDO12345ABC`
+    - `capableSwitches` returns 200 with an empty `switches` list (the target is incapable)
+    - `preflight` does NOT raise (check-mode softening, inherited from `validate_switches_capable`)
+    - A warning mentioning the offending `switchId` is recorded -> proves `preflight` routed through `validate_switches_capable`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.check_mode = True
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.preflight([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    warnings = rest_send.sender.ansible_module.warnings
+    assert len(warnings) == 1
+    assert "Capability preflight skipped in check mode" in warnings[0]
+    assert "FDO12345ABC" in warnings[0]

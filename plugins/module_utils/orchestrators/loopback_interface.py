@@ -99,7 +99,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         - If the create API request fails.
         """
         try:
-            self.validate_switches_capable([model_instance])
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
             payload = model_instance.to_payload()
@@ -125,7 +124,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         - If the update API request fails.
         """
         try:
-            self.validate_switches_capable([model_instance])
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
@@ -169,7 +167,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         - If any create API request fails.
         """
         try:
-            self.validate_switches_capable(model_instances)
             groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
             for model_instance in model_instances:
                 switch_id = self._resolve_switch_id(model_instance.switch_ip)

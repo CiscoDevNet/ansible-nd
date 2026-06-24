@@ -139,6 +139,23 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             )
         return self._capability_preflight
 
+    def preflight(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Run capability preflight for the proposed interfaces. Delegates to `validate_switches_capable`, which is a
+        no-op unless the orchestrator opts in via the `interface_type`/`interface_mode` ClassVars. Invoked by
+        `NDStateMachine.manage_state` before create/update operations so the check runs in `--check` mode, where the
+        underlying mutations are skipped.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `validate_switches_capable` (see its docstring).
+        """
+        self.validate_switches_capable(model_instances)
+
     def validate_switches_capable(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary

@@ -6,6 +6,7 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 from typing import Any, Callable
+
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -88,12 +89,17 @@ class NDStateMachine:
         Manage state according to desired configuration.
         """
         if self.state in ["merged", "replaced", "overridden"]:
+            # Capability preflight runs here -- before _manage_create_update_state, whose mutations are
+            # skipped in check mode -- so dry-runs surface incapable switches (PR #275 / issue #273).
+            self.model_orchestrator.preflight(list(self.proposed))
             self._manage_create_update_state()
 
             if self.state == "overridden":
                 self._manage_override_deletions()
 
         elif self.state == "deleted":
+            # Capability preflight intentionally NOT run for deletes: removing configuration does not
+            # depend on a switch's capability to host the interface type (PR #275 scope decision).
             self._manage_delete_state()
 
         else:
