@@ -110,8 +110,9 @@ class SubinterfaceUnmanagedInterfaceModel(NDBaseModel):
     Manage Interfaces API payload, so `to_payload()` and `from_response()` work via standard Pydantic
     serialization. The policy body carries only the `policyType` discriminator.
 
-    `interface_type` is sent on POST but NOT on PUT (the API rejects it on PUT). The orchestrator's `update()`
-    method drops it from the payload before sending.
+    `interface_type` is required by the ND API on both POST and PUT. The per-interface PUT (`updateInterface`) uses
+    `interfaceType` as the request-body discriminator (mapping `subInterface` -> `interfaceSubInterface`) and lists it
+    in `required`, so `to_payload()` always serializes it for both verbs (verified against the ND 4.2.1 OpenAPI spec).
 
     ## Raises
 
