@@ -309,12 +309,19 @@ def test_subinterface_managed_interface_00220(field, value, should_raise):
 
     - SubinterfaceManagedPolicyModel.__init__()
     """
+    # `prefix`/`ipv6_prefix` are required-together with `ip`/`ipv6` (see `_validate_ip_prefix_paired`), so supply
+    # the paired address when range-testing the mask length in isolation.
+    kwargs = {field: value}
+    if field == "prefix":
+        kwargs.setdefault("ip", "10.1.1.1")
+    elif field == "ipv6_prefix":
+        kwargs.setdefault("ipv6", "2001:db8::1")
     if should_raise:
         with pytest.raises(ValidationError):
-            SubinterfaceManagedPolicyModel(**{field: value})
+            SubinterfaceManagedPolicyModel(**kwargs)
     else:
         with does_not_raise():
-            instance = SubinterfaceManagedPolicyModel(**{field: value})
+            instance = SubinterfaceManagedPolicyModel(**kwargs)
         assert getattr(instance, field) == value
 
 
@@ -361,6 +368,60 @@ def test_subinterface_managed_interface_00240():
         SubinterfaceManagedPolicyModel(vrf_interface="")
     with pytest.raises(ValidationError):
         SubinterfaceManagedPolicyModel(vrf_interface="a" * 33)
+
+
+def test_subinterface_managed_interface_00250():
+    """
+    # Summary
+
+    Verify `_validate_netflow_monitor_present`: `netflow_monitor` is required when `netflow` is true.
+
+    ## Test
+
+    - `netflow=True` without `netflow_monitor` is rejected
+    - `netflow=True` with `netflow_monitor` is accepted
+    - `netflow=False` (or unset) without `netflow_monitor` is accepted
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedPolicyModel._validate_netflow_monitor_present()
+    """
+    with pytest.raises(ValidationError, match="netflow_monitor must be provided when netflow is true"):
+        SubinterfaceManagedPolicyModel(netflow=True)
+    with does_not_raise():
+        SubinterfaceManagedPolicyModel(netflow=True, netflow_monitor="MONITOR-1")
+        SubinterfaceManagedPolicyModel(netflow=False)
+        SubinterfaceManagedPolicyModel()
+
+
+def test_subinterface_managed_interface_00260():
+    """
+    # Summary
+
+    Verify `_validate_ip_prefix_paired`: `ip`/`prefix` (and `ipv6`/`ipv6_prefix`) are required together.
+
+    ## Test
+
+    - `ip` without `prefix` is rejected; `prefix` without `ip` is rejected
+    - `ipv6` without `ipv6_prefix` is rejected; `ipv6_prefix` without `ipv6` is rejected
+    - Both halves of a pair, or neither, is accepted
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedPolicyModel._validate_ip_prefix_paired()
+    """
+    with pytest.raises(ValidationError, match="ip and prefix are required together"):
+        SubinterfaceManagedPolicyModel(ip="10.1.1.1")
+    with pytest.raises(ValidationError, match="ip and prefix are required together"):
+        SubinterfaceManagedPolicyModel(prefix=24)
+    with pytest.raises(ValidationError, match="ipv6 and ipv6_prefix are required together"):
+        SubinterfaceManagedPolicyModel(ipv6="2001:db8::1")
+    with pytest.raises(ValidationError, match="ipv6 and ipv6_prefix are required together"):
+        SubinterfaceManagedPolicyModel(ipv6_prefix=64)
+    with does_not_raise():
+        SubinterfaceManagedPolicyModel(ip="10.1.1.1", prefix=24)
+        SubinterfaceManagedPolicyModel(ipv6="2001:db8::1", ipv6_prefix=64)
+        SubinterfaceManagedPolicyModel()
 
 
 # =============================================================================

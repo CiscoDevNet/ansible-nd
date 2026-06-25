@@ -72,7 +72,7 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
 
-    # TODO ND returns HTTP 207 Multi-Status on subinterface POST with per-item `status: "failed"` when the parent
+    # TODO(4.2.1) ND returns HTTP 207 Multi-Status on subinterface POST with per-item `status: "failed"` when the parent
     # interface is not in routed mode (or other policy validation fails). Our RestSend response_handler treats 207 as
     # success and returns the body without raising, so without this check the orchestrator would silently report
     # "changed" when nothing was actually created. Remove this workaround once CiscoDevNet/ansible-nd#295 lands the
@@ -276,7 +276,7 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
             for switch_ip, switch_id in self.fabric_context.switch_map.items():
                 api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
                 result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-                if not result:
+                if not isinstance(result, dict):
                     continue
                 interfaces = result.get("interfaces", []) or []
                 subifs = [iface for iface in interfaces if iface.get("interfaceType") == "subInterface"]

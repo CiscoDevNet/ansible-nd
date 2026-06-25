@@ -43,6 +43,7 @@ from typing import ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import SubinterfaceManagedPolicyTypeEnum
@@ -112,6 +113,47 @@ class SubinterfaceManagedPolicyModel(NDNestedModel):
         if isinstance(value, int) and not isinstance(value, bool):
             return str(value)
         return value
+
+    @model_validator(mode="after")
+    def _validate_netflow_monitor_present(self) -> SubinterfaceManagedPolicyModel:
+        """
+        # Summary
+
+        Reject enabling `netflow` without supplying a `netflow_monitor`.
+
+        The DOCUMENTATION and field description state that `netflow_monitor` is required when `netflow` is true. Enforcing it at the model layer
+        fails an incomplete policy early with a clear error instead of pushing a netflow config with no monitor and deferring the outcome to ND.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `netflow` is true and `netflow_monitor` is missing or empty.
+        """
+        if self.netflow is True and not self.netflow_monitor:
+            raise ValueError("netflow_monitor must be provided when netflow is true.")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_ip_prefix_paired(self) -> SubinterfaceManagedPolicyModel:
+        """
+        # Summary
+
+        Reject supplying only one half of an address/mask pair. `ip` requires `prefix` (and `ipv6` requires `ipv6_prefix`) and vice versa, so a
+        partial address is never serialized into a payload that ND would reject or apply ambiguously.
+
+        ## Raises
+
+        ### ValueError
+
+        - If exactly one of `ip` / `prefix` is set.
+        - If exactly one of `ipv6` / `ipv6_prefix` is set.
+        """
+        if (self.ip is None) != (self.prefix is None):
+            raise ValueError("ip and prefix are required together; set both or neither.")
+        if (self.ipv6 is None) != (self.ipv6_prefix is None):
+            raise ValueError("ipv6 and ipv6_prefix are required together; set both or neither.")
+        return self
 
 
 class SubinterfaceManagedNetworkOSModel(NDNestedModel):
