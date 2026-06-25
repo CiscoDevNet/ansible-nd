@@ -18,9 +18,6 @@ Endpoints covered:
 
 from __future__ import annotations
 
-__author__ = "Akshayanat C S"
-
-
 from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
