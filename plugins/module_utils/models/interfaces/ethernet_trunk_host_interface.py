@@ -170,7 +170,7 @@ def _validate_customer_vlan_id_list(value):
 # a single source of truth. Also introduce a shared `VlanId` type (1..4094) in the same PR and replace per-field `Field(ge=1, le=4094)`
 # constraints (native_vlan, customer_inner_vlan_id, provider_vlan_id, access_vlan, ...) — the constraint is already enforced today,
 # this is cosmetic/consistency cleanup. Each branch currently carries its own copy of the validators because adding VLAN-specific code
-# to the loopback base branch (where types.py lives) is out of that branch's scope.
+# to the loopback base branch (where types.py lives) is out of that branch's scope. Tracked in CiscoDevNet/ansible-nd#347.
 # In the same consolidation, fold the interface-name normalizer into a shared helper: `normalize_interface_name`,
 # `_CANONICAL_INTERFACE_TYPE`, and `_INTERFACE_NAME_PREFIX_RE` are byte-identical here and in ethernet_access_interface.py, while
 # loopback_interface.py needs a different rule (it lowercases the whole name to match ND's GET form). So the shared helper must be
