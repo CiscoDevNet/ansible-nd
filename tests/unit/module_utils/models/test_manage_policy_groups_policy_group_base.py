@@ -275,9 +275,7 @@ def test_manage_policy_groups_policy_group_base_00200() -> None:
     assert instance.switch_ids == []
 
     with does_not_raise():
-        instance = PolicyGroupCreate(
-            template_name="feature_enable", switch_ids=["FDO111"]
-        )
+        instance = PolicyGroupCreate(template_name="feature_enable", switch_ids=["FDO111"])
     assert instance.switch_ids == ["FDO111"]
 
     with does_not_raise():
@@ -553,9 +551,7 @@ def test_manage_policy_groups_policy_group_base_00400() -> None:
     - ``PolicyGroupCreate.from_config``
     """
     with does_not_raise():
-        instance = PolicyGroupCreate.from_config(
-            {"name": "feature_enable", "switch_ids": ["FDO111"]}
-        )
+        instance = PolicyGroupCreate.from_config({"name": "feature_enable", "switch_ids": ["FDO111"]})
     assert instance.template_name == "feature_enable"
     assert instance.switch_ids == ["FDO111"]
 
@@ -577,9 +573,7 @@ def test_manage_policy_groups_policy_group_base_00410() -> None:
     - ``PolicyGroupCreate.from_config``
     """
     with does_not_raise():
-        instance = PolicyGroupCreate.from_config(
-            {"name": "user_facing", "template_name": "model_value"}
-        )
+        instance = PolicyGroupCreate.from_config({"name": "user_facing", "template_name": "model_value"})
     assert instance.template_name == "model_value"
 
 

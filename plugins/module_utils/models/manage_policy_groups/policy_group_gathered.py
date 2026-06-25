@@ -52,9 +52,7 @@ class PolicyGroupGathered(NDBaseModel):
 
     # --- NDBaseModel ClassVars ---
     identifiers: ClassVar[list[str]] = ["policy_id"]
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "single"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
     exclude_from_diff: ClassVar[set] = set()
 
     # --- Fields ---
@@ -155,11 +153,7 @@ class PolicyGroupGathered(NDBaseModel):
         # controller responses may include templateInputs.PRIORITY, so use it
         # only when top-level priority is missing.
         effective_priority = self.priority if self.priority is not None else 500
-        if (
-            self.priority is None
-            and self.template_inputs
-            and "PRIORITY" in self.template_inputs
-        ):
+        if self.priority is None and self.template_inputs and "PRIORITY" in self.template_inputs:
             try:
                 effective_priority = int(self.template_inputs["PRIORITY"])
             except (ValueError, TypeError):
@@ -174,11 +168,7 @@ class PolicyGroupGathered(NDBaseModel):
         }
 
         if self.template_inputs:
-            cleaned_ti = {
-                k: v
-                for k, v in self.template_inputs.items()
-                if k not in SYSTEM_INJECTED_TEMPLATE_KEYS
-            }
+            cleaned_ti = {k: v for k, v in self.template_inputs.items() if k not in SYSTEM_INJECTED_TEMPLATE_KEYS}
             if cleaned_ti:
                 config["template_inputs"] = cleaned_ti
         return config

@@ -1374,9 +1374,7 @@ def test_nd_policy_resources_module_00470() -> None:
     assert "markDelete" in nd.calls[0][0]
     assert "switchActions/deploy" in nd.calls[1][0]
     assert nd.calls[1][2] == {"switchIds": ["SN1", "SN2"]}
-    deploy_task = [
-        task for task in module.results._tasks if task.metadata["action"] == "policy_switch_deploy"
-    ][0]
+    deploy_task = [task for task in module.results._tasks if task.metadata["action"] == "policy_switch_deploy"][0]
     assert deploy_task.diff["policy_ids"] == ["P-ACTIVE"]
     assert deploy_task.diff["blind_pending_delete_switch_ids"] == ["SN2"]
 

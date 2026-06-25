@@ -176,9 +176,7 @@ def test_manage_policy_groups_gathered_models_00100() -> None:
     - ``PolicyGroupGathered.from_api_policy_group``
     """
     with does_not_raise():
-        instance = PolicyGroupGathered.from_api_policy_group(
-            {"policyId": "POLICY-GROUP-1"}
-        )
+        instance = PolicyGroupGathered.from_api_policy_group({"policyId": "POLICY-GROUP-1"})
 
     assert instance.policy_id == "POLICY-GROUP-1"
     assert instance.template_inputs == {}

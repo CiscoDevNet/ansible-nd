@@ -717,9 +717,7 @@ def test_manage_policy_group_orchestrator_00300() -> None:
 
     - PolicyGroupOrchestrator.query_by_id
     """
-    rest_send = _build_rest_send(
-        [_resp(_summary_payload([{"policyId": "P1", "description": "x"}]))]
-    )
+    rest_send = _build_rest_send([_resp(_summary_payload([{"policyId": "P1", "description": "x"}]))])
     results = _make_results()
     instance = _make_orchestrator(rest_send, results=results)
 
@@ -981,9 +979,7 @@ def test_manage_policy_group_orchestrator_00450() -> None:
     results = _make_results()
     instance = _make_orchestrator(rest_send, results=results)
 
-    summary = instance.deploy_pending_deleted_cleanup(
-        [{"policy_id": "POLICY-GROUP-20020", "switch_ids": ["SN1"]}]
-    )
+    summary = instance.deploy_pending_deleted_cleanup([{"policy_id": "POLICY-GROUP-20020", "switch_ids": ["SN1"]}])
 
     assert summary["changed"] is True
     assert summary["switch_ids"] == ["SN1"]
@@ -1010,9 +1006,7 @@ def test_manage_policy_group_orchestrator_00455() -> None:
     results = _make_results()
     instance = _make_orchestrator(rest_send, results=results)
 
-    summary = instance.deploy_pending_deleted_cleanup(
-        [{"policy_id": "POLICY-GROUP-FAKE998"}]
-    )
+    summary = instance.deploy_pending_deleted_cleanup([{"policy_id": "POLICY-GROUP-FAKE998"}])
 
     assert summary["changed"] is False
     assert summary["switch_ids"] == []
@@ -1053,9 +1047,7 @@ def test_manage_policy_group_orchestrator_00456() -> None:
     results = _make_results()
     instance = _make_orchestrator(rest_send, results=results)
 
-    summary = instance.deploy_pending_deleted_cleanup(
-        [{"policy_id": "POLICY-GROUP-ORIGINAL"}]
-    )
+    summary = instance.deploy_pending_deleted_cleanup([{"policy_id": "POLICY-GROUP-ORIGINAL"}])
 
     assert summary["changed"] is True
     assert summary["switch_ids"] == ["SN9"]
@@ -1099,15 +1091,11 @@ def test_manage_policy_group_orchestrator_00457() -> None:
     results = _make_results()
     instance = _make_orchestrator(rest_send, results=results)
 
-    summary = instance.deploy_pending_deleted_cleanup(
-        [{"name": "feature_enable", "description": "same"}]
-    )
+    summary = instance.deploy_pending_deleted_cleanup([{"name": "feature_enable", "description": "same"}])
 
     assert summary["changed"] is False
     assert summary["switch_ids"] == []
-    assert summary["skipped"][0]["reason"] == (
-        "ambiguous pending-delete description; use policy group ID"
-    )
+    assert summary["skipped"][0]["reason"] == ("ambiguous pending-delete description; use policy group ID")
     assert len(results._tasks) == 1
 
 
@@ -1149,13 +1137,9 @@ def test_manage_policy_group_orchestrator_00460() -> None:
     )
     results = _make_results()
     instance = _make_orchestrator(rest_send, results=results)
-    instance.schedule_pending_deleted_cleanup(
-        [{"policy_id": "POLICY-GROUP-PENDING"}]
-    )
+    instance.schedule_pending_deleted_cleanup([{"policy_id": "POLICY-GROUP-PENDING"}])
 
-    result = instance.delete_bulk(
-        [_build_pg_model(policy_id="P1", description="active", switch_ids=["SN1"])]
-    )
+    result = instance.delete_bulk([_build_pg_model(policy_id="P1", description="active", switch_ids=["SN1"])])
 
     assert result["pendingDeletedCleanupSwitchIds"] == ["SN2"]
     assert len(results._tasks) == 3
@@ -1188,14 +1172,12 @@ def test_manage_policy_group_orchestrator_00470() -> None:
                     ]
                 )
             ),
-            _resp({"switchIds": [{"switchId": "SN1", "status": "success"}]}, method="POST")
+            _resp({"switchIds": [{"switchId": "SN1", "status": "success"}]}, method="POST"),
         ]
     )
     results = _make_results()
     instance = _make_orchestrator(rest_send, results=results)
-    instance.schedule_pending_deleted_cleanup(
-        [{"policy_id": "POLICY-GROUP-PENDING"}]
-    )
+    instance.schedule_pending_deleted_cleanup([{"policy_id": "POLICY-GROUP-PENDING"}])
 
     result = instance.delete_bulk([])
 
@@ -1272,9 +1254,7 @@ def test_manage_policy_group_orchestrator_00510() -> None:
     # Single POST issued; payload uses the policyGroups envelope.
     assert len(results._tasks) == 1
     assert results._tasks[0].verb == "POST"
-    assert results._tasks[0].payload == {
-        "policyGroups": [m.to_payload() for m in models]
-    }
+    assert results._tasks[0].payload == {"policyGroups": [m.to_payload() for m in models]}
 
 
 def test_manage_policy_group_orchestrator_00515() -> None:
@@ -1492,9 +1472,7 @@ def test_manage_policy_group_orchestrator_00610() -> None:
     instance = _make_orchestrator(rest_send, deploy=False)
     model = _build_pg_model(policy_id=None, description="needs id")
 
-    with pytest.raises(
-        Exception, match="Update policy group failed.*needs id.*no policy_id"
-    ):
+    with pytest.raises(Exception, match="Update policy group failed.*needs id.*no policy_id"):
         instance.update(model)
 
 
@@ -1517,11 +1495,7 @@ def test_manage_policy_group_orchestrator_00620() -> None:
     - PolicyGroupOrchestrator.update
     """
     cached_raw = [{"policyId": "P1", "switchIds": ["SN1", "SN2"]}]
-    deploy_body = {
-        "switchIds": [
-            {"switchId": sn, "status": "success"} for sn in ["SN1", "SN2", "SN3"]
-        ]
-    }
+    deploy_body = {"switchIds": [{"switchId": sn, "status": "success"} for sn in ["SN1", "SN2", "SN3"]]}
     rest_send = _build_rest_send(
         [
             _resp({"policyId": "P1"}, method="PUT"),
@@ -1790,11 +1764,7 @@ def test_manage_policy_group_orchestrator_00710() -> None:
             {"policyId": "P2", "status": "success"},
         ]
     }
-    deploy_body = {
-        "switchIds": [
-            {"switchId": sn, "status": "success"} for sn in ("SN1", "SN2", "SN3")
-        ]
-    }
+    deploy_body = {"switchIds": [{"switchId": sn, "status": "success"} for sn in ("SN1", "SN2", "SN3")]}
     rest_send = _build_rest_send(
         [
             _resp(mark_body, method="POST"),
@@ -2037,9 +2007,7 @@ def test_manage_policy_group_orchestrator_00830() -> None:
     rest_send = _build_rest_send([_resp(list_body, method="POST")])
     instance = _make_orchestrator(rest_send)
 
-    with pytest.raises(
-        Exception, match="switchActions/deploy reported 1 failed switch.*SN1"
-    ):
+    with pytest.raises(Exception, match="switchActions/deploy reported 1 failed switch.*SN1"):
         instance._switch_deploy(["SN1"])
 
 
@@ -2149,9 +2117,7 @@ def test_manage_policy_group_orchestrator_00930() -> None:
     rest_send = _build_rest_send([])
     results = _make_results()
     instance = _make_orchestrator(rest_send, deploy=True, results=results)
-    pg_unrelated = _build_pg_model(
-        policy_id="P_OTHER", description="unrelated", switch_ids=["SN9"]
-    )
+    pg_unrelated = _build_pg_model(policy_id="P_OTHER", description="unrelated", switch_ids=["SN9"])
     sm = _FakeStateMachine(proposed=[], existing=[pg_unrelated])
 
     with does_not_raise():
@@ -2465,9 +2431,7 @@ def test_manage_policy_group_orchestrator_01210() -> None:
 
     - PolicyGroupOrchestrator.query_by_id
     """
-    rest_send = _build_rest_send(
-        [_resp(_summary_payload([{"policyId": "POLICY-GROUP-1", "templateName": "t"}]))]
-    )
+    rest_send = _build_rest_send([_resp(_summary_payload([{"policyId": "POLICY-GROUP-1", "templateName": "t"}]))])
     results = _make_results()
     instance = _make_orchestrator(
         rest_send,
@@ -2556,9 +2520,7 @@ def test_manage_policy_group_orchestrator_01240() -> None:
     rest_send = _build_rest_send(
         [
             _resp(
-                _summary_payload(
-                    [{"policyId": "POLICY-GROUP-1", "switchIds": ["SN1"]}]
-                ),
+                _summary_payload([{"policyId": "POLICY-GROUP-1", "switchIds": ["SN1"]}]),
                 method="GET",
             ),
             _resp({"policyId": "POLICY-GROUP-1"}, method="PUT"),
@@ -2652,11 +2614,7 @@ def test_manage_policy_group_orchestrator_01260() -> None:
     """
     # create_bulk → POST then trailing switchActions/deploy when deploy=True.
     create_response = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
-    deploy_response = {
-        "switchIds": [
-            {"switchId": "SN1", "status": "success", "message": "Deployed Successfully"}
-        ]
-    }
+    deploy_response = {"switchIds": [{"switchId": "SN1", "status": "success", "message": "Deployed Successfully"}]}
     rest_send = _build_rest_send(
         [
             _resp(create_response, method="POST"),
