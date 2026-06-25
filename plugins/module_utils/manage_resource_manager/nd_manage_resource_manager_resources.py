@@ -396,7 +396,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 api_elapsed = time.monotonic() - api_start
                 if exc.status == 404:
                     self.log.info(
-                         "_fetch_resources_paginated: GET resources returned 404 after %.3f second(s) (path=%s, state=%s), treating as empty",
+                        "_fetch_resources_paginated: GET resources returned 404 after %.3f second(s) (path=%s, state=%s), treating as empty",
                         api_elapsed,
                         ep.path,
                         self.state,
