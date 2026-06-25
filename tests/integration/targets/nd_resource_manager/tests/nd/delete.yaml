@@ -5,7 +5,7 @@
 - name: Delete Resources
   cisco.nd.nd_manage_resource_manager:
     state: deleted                                 # choose form [merged, deleted, gathered]
-    fabric: "{{ ansible_it_fabric }}"
+    fabric_name: "{{ ansible_it_fabric }}"
     config:
       - entity_name: "l3_vni_fabric"               # A unique name to identify the resource
         pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
@@ -67,7 +67,7 @@
     - name: Create Resources
       cisco.nd.nd_manage_resource_manager: &rm_merge
         state: merged                              # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"           # A unique name to identify the resource
             pool_type: "ID"                        # choose from ['ID', 'IP', 'SUBNET']
@@ -171,7 +171,7 @@
     - name: Delete Resources - scope_type missing
       cisco.nd.nd_manage_resource_manager:
         state: deleted                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"               # A unique name to identify the resource
       register: result
@@ -189,7 +189,7 @@
     - name: Delete Resources - pool_type missing
       cisco.nd.nd_manage_resource_manager:
         state: deleted                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - scope_type: "fabric"
       register: result
@@ -207,7 +207,7 @@
     - name: Delete Resources - entity_name missing
       cisco.nd.nd_manage_resource_manager:
         state: deleted                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
             pool_name: "VPC_ID"                        # Based on the 'poolType', select appropriate name
@@ -227,7 +227,7 @@
     - name: Delete Resources - pool_name missing
       cisco.nd.nd_manage_resource_manager:
         state: deleted                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"               # A unique name to identify the resource
             pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
@@ -247,7 +247,7 @@
     - name: Delete Resources - switch info missing
       cisco.nd.nd_manage_resource_manager:
         state: deleted                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}" # A unique name to identify the resource
             pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']

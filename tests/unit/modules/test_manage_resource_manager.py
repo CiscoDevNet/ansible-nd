@@ -87,12 +87,16 @@ class _DummyAnsibleModule:
         self.check_mode = False
         self._verbosity = verbosity
         self.exit_payload = None
+        self.warnings = []
 
     def exit_json(self, **kwargs):
         self.exit_payload = kwargs
 
     def fail_json(self, **kwargs):
         raise AssertionError("fail_json was not expected: {0}".format(kwargs))
+
+    def warn(self, message):
+        self.warnings.append(message)
 
 
 class _DummyND:
@@ -142,7 +146,7 @@ def test_main_requires_pydantic_before_continuing():
     """Module entrypoint calls require_pydantic immediately after AnsibleModule."""
     dummy_module = _DummyAnsibleModule()
     dummy_module.params = {
-        "fabric": "fabric-1",
+        "fabric_name": "fabric-1",
         "output_level": "normal",
         "state": "gathered",
         "config": [],
@@ -183,6 +187,212 @@ def test_main_requires_pydantic_before_continuing():
     mocked_rm_module.exit_module.assert_called_once_with()
 
 
+def test_main_fails_with_structured_payload_when_fabric_name_missing():
+    """Module entrypoint fails early with standard formatted output when fabric_name is absent."""
+
+    class _FailFastAnsibleModule(_DummyAnsibleModule):
+        def fail_json(self, **kwargs):
+            self.fail_payload = kwargs
+            raise RuntimeError("fail_json_called")
+
+    dummy_module = _FailFastAnsibleModule()
+    dummy_module.params = {
+        "output_level": "normal",
+        "state": "gathered",
+        "config": [],
+        "host": "198.51.100.10",
+        "username": "admin",
+    }
+
+    with patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}), patch.object(
+        manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}
+    ), patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module), patch.object(
+        manage_resource_manager_module,
+        "require_pydantic",
+    ), patch.object(
+        manage_resource_manager_module,
+        "setup_logging",
+    ), patch.object(
+        manage_resource_manager_module,
+        "NDModule",
+    ) as ndmodule_mock:
+        with pytest.raises(RuntimeError, match="fail_json_called"):
+            manage_resource_manager_module.main()
+
+    assert dummy_module.fail_payload["msg"] == "The 'fabric_name' parameter is required."
+    assert dummy_module.fail_payload["failed"] is True
+    ndmodule_mock.assert_not_called()
+
+
+def test_record_nd_module_error_result_uses_rest_send_payload_when_available():
+    """Helper consumes RestSend current response/result when ND object exposes them."""
+    results = Results()
+    results.action = "manage_resource_manager"
+
+    nd = MagicMock()
+    nd.rest_send.response_current = {"RETURN_CODE": 503, "MESSAGE": "controller unavailable", "DATA": {"detail": "x"}}
+    nd.rest_send.result_current = {"success": False, "changed": False, "found": False}
+
+    error = NDModuleError(msg="service unavailable", status=503, response_payload={"detail": "x"})
+
+    manage_resource_manager_module._record_nd_module_error_result(results, nd, error, LOG)
+
+    assert len(results.responses) == 1
+    assert results.responses[0]["RETURN_CODE"] == 503
+    assert len(results.results) == 1
+    assert results.results[0]["success"] is False
+
+
+def test_record_nd_module_error_result_falls_back_when_rest_send_unavailable():
+    """Helper falls back to NDModuleError fields when RestSend attrs are missing/invalid."""
+    results = Results()
+    results.action = "manage_resource_manager"
+
+    nd = MagicMock()
+    nd.rest_send = None
+    error = NDModuleError(msg="not found", status=404, response_payload={"error": "missing"})
+
+    manage_resource_manager_module._record_nd_module_error_result(results, nd, error, LOG)
+
+    assert len(results.responses) == 1
+    assert results.responses[0]["RETURN_CODE"] == 404
+    assert results.responses[0]["MESSAGE"] == "not found"
+    assert results.responses[0]["DATA"] == {"error": "missing"}
+    assert len(results.results) == 1
+    assert results.results[0]["success"] is False
+
+
+def test_main_ndmoduleerror_path_fails_with_standard_output():
+    """main() handles NDModuleError raised during NDModule init and fails cleanly."""
+
+    class _FailFastAnsibleModule(_DummyAnsibleModule):
+        def fail_json(self, **kwargs):
+            self.fail_payload = kwargs
+            raise RuntimeError("fail_json_called")
+
+    dummy_module = _FailFastAnsibleModule()
+    dummy_module.params = {
+        "fabric_name": "fabric-1",
+        "output_level": "normal",
+        "state": "merged",
+        "config": [],
+        "host": "198.51.100.10",
+        "username": "admin",
+    }
+
+    with patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}), patch.object(
+        manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}
+    ), patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module), patch.object(
+        manage_resource_manager_module,
+        "require_pydantic",
+    ), patch.object(
+        manage_resource_manager_module,
+        "setup_logging",
+    ), patch.object(
+        manage_resource_manager_module,
+        "NDModule",
+        side_effect=NDModuleError(msg="auth failed", status=401),
+    ):
+        with pytest.raises(RuntimeError, match="fail_json_called"):
+            manage_resource_manager_module.main()
+
+    assert dummy_module.fail_payload["msg"] == "auth failed"
+    assert dummy_module.fail_payload["failed"] is True
+    assert "error_details" not in dummy_module.fail_payload
+
+
+def test_main_valueerror_path_fails_with_validation_message():
+    """main() catches ValueError from resource-manager flow and fails with that message."""
+
+    class _FailFastAnsibleModule(_DummyAnsibleModule):
+        def fail_json(self, **kwargs):
+            self.fail_payload = kwargs
+            raise RuntimeError("fail_json_called")
+
+    dummy_module = _FailFastAnsibleModule()
+    dummy_module.params = {
+        "fabric_name": "fabric-1",
+        "output_level": "normal",
+        "state": "merged",
+        "config": [],
+        "host": "198.51.100.10",
+        "username": "admin",
+    }
+
+    mocked_rm_module = MagicMock()
+    mocked_rm_module.manage_state.side_effect = ValueError("invalid config")
+
+    with patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}), patch.object(
+        manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}
+    ), patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module), patch.object(
+        manage_resource_manager_module,
+        "require_pydantic",
+    ), patch.object(
+        manage_resource_manager_module,
+        "setup_logging",
+    ), patch.object(
+        manage_resource_manager_module,
+        "NDModule",
+        return_value=MagicMock(),
+    ), patch.object(
+        manage_resource_manager_module,
+        "NDResourceManagerModule",
+        return_value=mocked_rm_module,
+    ):
+        with pytest.raises(RuntimeError, match="fail_json_called"):
+            manage_resource_manager_module.main()
+
+    assert dummy_module.fail_payload["msg"] == "invalid config"
+    assert dummy_module.fail_payload["failed"] is True
+
+
+def test_main_generic_exception_debug_includes_traceback():
+    """main() catches unexpected exceptions and includes traceback at debug output level."""
+
+    class _FailFastAnsibleModule(_DummyAnsibleModule):
+        def fail_json(self, **kwargs):
+            self.fail_payload = kwargs
+            raise RuntimeError("fail_json_called")
+
+    dummy_module = _FailFastAnsibleModule()
+    dummy_module.params = {
+        "fabric_name": "fabric-1",
+        "output_level": "debug",
+        "state": "merged",
+        "config": [],
+        "host": "198.51.100.10",
+        "username": "admin",
+    }
+
+    mocked_rm_module = MagicMock()
+    mocked_rm_module.manage_state.side_effect = RuntimeError("boom")
+
+    with patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}), patch.object(
+        manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}
+    ), patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module), patch.object(
+        manage_resource_manager_module,
+        "require_pydantic",
+    ), patch.object(
+        manage_resource_manager_module,
+        "setup_logging",
+    ), patch.object(
+        manage_resource_manager_module,
+        "NDModule",
+        return_value=MagicMock(),
+    ), patch.object(
+        manage_resource_manager_module,
+        "NDResourceManagerModule",
+        return_value=mocked_rm_module,
+    ):
+        with pytest.raises(RuntimeError, match="fail_json_called"):
+            manage_resource_manager_module.main()
+
+    assert dummy_module.fail_payload["msg"] == "boom"
+    assert dummy_module.fail_payload["failed"] is True
+    assert "traceback" in dummy_module.fail_payload
+    assert "RuntimeError: boom" in dummy_module.fail_payload["traceback"]
+
+
 def test_resource_manager_config_rejects_unknown_id_pool_name():
     """Unknown ID pool names remain invalid for modifying states."""
     with pytest.raises(Exception, match="pool_name 'WRONG_POOL' is not valid"):
@@ -203,6 +413,32 @@ def test_resource_manager_config_allows_partial_gathered_filter():
     model = ResourceManagerConfigModel.model_validate({"scope_type": "device"}, context={"state": "gathered"})
     assert model.scope_type == "device"
     assert model.switches is None
+
+
+def test_resource_manager_argspec_includes_nested_config_options():
+    """Argument spec exposes typed nested config options for Ansible-side validation."""
+    spec = ResourceManagerConfigModel.get_argument_spec()
+
+    assert spec["fabric_name"]["type"] == "str"
+    assert spec["fabric_name"]["required"] is True
+    assert spec["state"]["choices"] == ["merged", "deleted", "gathered"]
+
+    config_spec = spec["config"]
+    assert config_spec["type"] == "list"
+    assert config_spec["elements"] == "dict"
+
+    options = config_spec["options"]
+    assert options["entity_name"]["type"] == "str"
+    assert options["pool_type"]["type"] == "str"
+    assert options["pool_type"]["choices"] == ["ID", "IP", "SUBNET"]
+    assert options["pool_name"]["type"] == "str"
+    assert options["scope_type"]["type"] == "str"
+    assert options["scope_type"]["choices"] == ["fabric", "device", "device_interface", "device_pair", "link"]
+    assert options["resource"]["type"] == "str"
+    assert options["is_pre_allocated"]["type"] == "bool"
+    assert options["vrf_name"]["type"] == "str"
+    assert options["switches"]["type"] == "list"
+    assert options["switches"]["elements"] == "str"
 
 
 @pytest.mark.parametrize(
@@ -424,7 +660,7 @@ def _mock_nd_module(fabric="fabric-1", state="merged", config=None, check_mode=F
     """Create a mock NDModule with request method for API calls."""
     nd = MagicMock()
     nd.params = {
-        "fabric": fabric,
+        "fabric_name": fabric,
         "state": state,
         "config": config or [],
         "output_level": "normal",
@@ -2153,7 +2389,7 @@ def test_payload_construction_success():
 def test_check_mode_prevents_api_calls_merged():
     """Check mode with merged state logs but doesn't call API."""
     module, nd = _resource_manager_with_nd(state="merged", config=[_config()], all_resources=[])
-    module.check_mode = True
+    nd.module.check_mode = True
     nd.request.return_value = {
         "resources": [
             {
@@ -2168,25 +2404,31 @@ def test_check_mode_prevents_api_calls_merged():
         "meta": {"counts": {"remaining": 0, "total": 1}},
     }
 
+    # Ignore initialization-time GETs and count only manage_merged calls.
+    nd.request.reset_mock()
+
     # Run manage_merged in check mode
     module.manage_merged()  # pylint: disable=protected-access
 
     # API shouldn't be called in check mode for new resources
     assert nd.request.call_count == 0
     # Verify changed=True and diff recorded in check mode
-    assert len(module.results.result) > 0
-    last_result = module.results.result[-1]
+    assert len(module.results.results) > 0
+    last_result = module.results.results[-1]
     assert last_result["changed"] is True
 
 
 def test_check_mode_prevents_api_calls_deleted():
     """Check mode with deleted state logs but doesn't call DELETE."""
     module, nd = _resource_manager_with_nd(state="deleted", config=[_config()], all_resources=[_response()])
-    module.check_mode = True
+    nd.module.check_mode = True
     nd.request.return_value = {
         "resources": [{"resourceId": 101, "status": None}],
         "meta": {"counts": {"remaining": 0, "total": 1}},
     }
+
+    # Ignore initialization-time GETs and count only manage_deleted calls.
+    nd.request.reset_mock()
 
     # Run manage_deleted in check mode
     module.manage_deleted()  # pylint: disable=protected-access
@@ -2194,8 +2436,8 @@ def test_check_mode_prevents_api_calls_deleted():
     # DELETE shouldn't be called in check mode
     assert nd.request.call_count == 0
     # Verify changed=True and diff recorded in check mode
-    assert len(module.results.result) > 0
-    last_result = module.results.result[-1]
+    assert len(module.results.results) > 0
+    last_result = module.results.results[-1]
     assert last_result["changed"] is True
 
 
@@ -2375,11 +2617,13 @@ def test_manage_merged_check_mode_registers_diff_without_post_call():
     assert nd.request.call_count == 0
     assert len(module.changed_dict[0]["merged"]) == 1
     # Verify check mode registers pending changes with changed=True and diff
-    assert len(module.results.result) > 0
-    last_result = module.results.result[-1]
+    assert len(module.results.results) > 0
+    last_result = module.results.results[-1]
     assert last_result["changed"] is True
-    assert "merged" in last_result.get("diff", {})
-    assert len(last_result["diff"]["merged"]) == 1
+    assert len(module.results.diffs) > 0
+    last_diff = module.results.diffs[-1]
+    assert "merged" in last_diff
+    assert len(last_diff["merged"]) == 1
 
 
 def test_manage_merged_post_exception_is_wrapped_with_value_error():
@@ -2588,11 +2832,13 @@ def test_manage_deleted_deduplicates_ids_and_skips_missing_id_in_check_mode():
     assert module.changed_dict[0]["deleted"] == ["101"]
     assert nd.request.call_count == 0
     # Verify check mode registers pending deletions with changed=True and diff
-    assert len(module.results.result) > 0
-    last_result = module.results.result[-1]
+    assert len(module.results.results) > 0
+    last_result = module.results.results[-1]
     assert last_result["changed"] is True
-    assert "deleted" in last_result.get("diff", {})
-    assert last_result["diff"]["deleted"] == ["101"]
+    assert len(module.results.diffs) > 0
+    last_diff = module.results.diffs[-1]
+    assert "deleted" in last_diff
+    assert last_diff["deleted"] == [101]
 
 
 def test_manage_deleted_api_exception_is_wrapped_with_value_error():

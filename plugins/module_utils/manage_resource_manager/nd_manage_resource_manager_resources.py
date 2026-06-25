@@ -80,7 +80,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         self.nd = nd
         self.results = results
         self.log = log if log is not None else logging.getLogger("nd.NDResourceManagerModule")
-        self.fabric = nd.params["fabric"]
+        self.fabric = nd.params.get("fabric_name") or nd.params.get("fabric")
         self.state = nd.params["state"]
         self.config = nd.params.get("config") or []
 

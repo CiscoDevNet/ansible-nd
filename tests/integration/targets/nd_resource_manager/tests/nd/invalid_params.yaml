@@ -11,7 +11,7 @@
     - name: Create Resources - Invalid Pool type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"             # A unique name to identify the resource
             pool_type: "IDLE"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -23,7 +23,7 @@
     - name: Create Resources - Invalid Pool Name
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"             # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -35,7 +35,7 @@
     - name: Create Resources - L3 VNI wrong scope type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"             # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -47,7 +47,7 @@
     - name: Create Resources - L2VNI - wrong scope type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l2_vni_fabric"             # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -59,7 +59,7 @@
     - name: Create Resources - LOOPBACK_ID wrong scope type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "loopback_dev"              # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -74,7 +74,7 @@
     - name: Create Resources - VPC_ID wrong scope type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}"  # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -89,7 +89,7 @@
     - name: Create Resources - LOOPBACK0_IP_POOL wrong scope type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "mmudigon-2"                # A unique name to identify the resource
             pool_type: "IP"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -101,7 +101,7 @@
     - name: Create Resources - LOOPBACK1_IP_POOL wrong scope type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"  # A unique name to identify the resource
             pool_type: "IP"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -115,7 +115,7 @@
     - name: Create Resources - SUBNET wrong scope type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"  # A unique name to identify the resource
             pool_type: "SUBNET"                      # choose from ['ID', 'IP', 'SUBNET']

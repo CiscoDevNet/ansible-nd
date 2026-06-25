@@ -5,7 +5,7 @@
 - name: Delete Resources
   cisco.nd.nd_manage_resource_manager: &rm_delete
     state: deleted                                 # choose form [merged, deleted, gathered]
-    fabric: "{{ ansible_it_fabric }}"
+    fabric_name: "{{ ansible_it_fabric }}"
     config:
       - entity_name: "l3_vni_fabric"               # A unique name to identify the resource
         pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
@@ -66,7 +66,7 @@
     - name: Create Resources
       cisco.nd.nd_manage_resource_manager: &rm_merge
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"             # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -171,7 +171,7 @@
     - name: Modify Resources
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"             # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -250,7 +250,7 @@
     - name: Create Resources - Missing switch info
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "loopback_dev"              # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -268,7 +268,7 @@
     - name: Create Resources - Missing scope_type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "loopback_dev"              # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -288,7 +288,7 @@
     - name: Create Resources - Missing pool_type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "loopback_dev"              # A unique name to identify the resource
             scope_type: "device"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
@@ -308,7 +308,7 @@
     - name: Create Resources - Missing pool_name
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "loopback_dev"              # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -328,7 +328,7 @@
     - name: Create Resources - Missing entity_name
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - pool_name: "LOOPBACK_ID"                 # Based on the 'poolType', select appropriate name
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -348,7 +348,7 @@
     - name: Create Resources - Missing resource value
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "loopback_dev"              # A unique name to identify the resource
             pool_name: "LOOPBACK_ID"                 # Based on the 'poolType', select appropriate name

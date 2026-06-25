@@ -14,7 +14,7 @@ description:
   - Supports all resource pool types (ID, IP, SUBNET) and scope types (fabric, device, device_interface, device_pair, link).
   - Provides idempotent merged and deleted states.
 options:
-  fabric:
+  fabric_name:
     description:
       - Name of the target fabric for resource manager operations.
     type: str
@@ -37,7 +37,13 @@ options:
   config:
     description:
       - A list of dictionaries containing resource configurations.
-      - For state C(gathered), this may be omitted to return all resources.
+      - "For C(state=merged): Required fields per item are C(entity_name), C(pool_type), C(pool_name), C(scope_type), and C(resource).
+        Additional required field C(switches) when C(scope_type) is not C(fabric). Optional fields C(is_pre_allocated), C(vrf_name)."
+      - "For C(state=deleted): Required fields per item are C(entity_name), C(pool_type), C(pool_name), C(scope_type).
+        Additional required field C(switches) when C(scope_type) is not C(fabric). Optional fields C(is_pre_allocated), C(vrf_name)."
+      - "For C(state=gathered): C(config) may be omitted entirely to retrieve all resources, or provided with optional filter fields.
+        Each config item can include any combination of C(entity_name), C(pool_name), C(switches), C(resource), C(scope_type), C(pool_type).
+        Filter fields act as match criteria; only those provided are used to select resources."
     type: list
     elements: dict
     suboptions:
@@ -49,49 +55,73 @@ options:
           - "device_pair: two tildes required, e.g. 'SER1~SER2~label'."
           - "device_interface: one tilde required, e.g. 'SER~Ethernet1/13'."
           - "link: three tildes required, e.g. 'SER1~Eth1/3~SER2~Eth1/3'."
+          - Required for C(state=merged) and C(state=deleted).
+          - Optional filter for C(state=gathered).
         type: str
-        required: true
+        required: false
       pool_type:
         description:
           - Type of resource pool.
+          - Required for C(state=merged) and C(state=deleted).
+          - Optional filter for C(state=gathered).
         type: str
-        required: true
         choices:
           - ID
           - IP
           - SUBNET
+        required: false
       pool_name:
         description:
           - Name of the resource pool from which the resource is allocated.
+          - Required for C(state=merged) and C(state=deleted).
+          - Optional filter for C(state=gathered).
         type: str
-        required: true
+        required: false
       scope_type:
         description:
           - Scope of resource allocation.
+          - Required for C(state=merged) and C(state=deleted).
+          - Optional filter for C(state=gathered).
         type: str
-        required: true
         choices:
           - fabric
           - device
           - device_interface
           - device_pair
           - link
+        required: false
       resource:
         description:
           - Value of the resource being allocated.
           - The value will be an integer if C(pool_type=ID).
           - The value will be an IPv4 or IPv6 address if C(pool_type=IP).
           - The value will be an IPv4 or IPv6 address with a net mask if C(pool_type=SUBNET).
-          - Required when C(state=merged).
+          - Required only for C(state=merged).
+          - Optional filter for C(state=gathered).
         type: str
         required: false
       switches:
         description:
           - Switch IP addresses or DNS names of the management interface of the switch to which the
             allocated resource is assigned.
-          - Required when C(scope_type) is not C(fabric).
+          - Required for C(state=merged) and C(state=deleted) when C(scope_type) is not C(fabric).
+          - Optional filter for C(state=gathered).
         type: list
         elements: str
+        required: false
+      is_pre_allocated:
+        description:
+          - Whether the resource is pre-allocated by the system.
+          - When set to C(true), the resource is managed externally and the module will not attempt updates.
+          - Optional for C(state=merged) and C(state=deleted).
+        type: bool
+        required: false
+      vrf_name:
+        description:
+          - Virtual Routing and Forwarding (VRF) name for the resource.
+          - Applicable when the resource is scoped to a device or link using a specific VRF context.
+          - Optional for C(state=merged) and C(state=deleted).
+        type: str
         required: false
 extends_documentation_fragment:
   - cisco.nd.modules
@@ -99,6 +129,7 @@ notes:
   - Requires Nexus Dashboard 3.x or higher with the ND Manage API (v1).
   - Idempotence checking compares the existing resource value to the desired value.
   - Entity name matching is order-insensitive for tilde-separated serial numbers.
+  - For C(state=gathered), partial filter entries are supported (e.g., just C(entity_name) or just C(switches)) to retrieve specific subsets of resources.
 """
 
 EXAMPLES = """
@@ -137,7 +168,7 @@ EXAMPLES = """
 - name: Create Resources
   cisco.nd.nd_manage_resource_manager:
     state: merged                               # choose form [merged, deleted, gathered]
-    fabric: test_fabric
+    fabric_name: test_fabric
     config:
       - entity_name: "l3_vni_fabric"            # A unique name to identify the resource
         pool_type: "ID"                         # choose from ['ID', 'IP', 'SUBNET']
@@ -182,7 +213,7 @@ EXAMPLES = """
 - name: Delete Resources
   cisco.nd.nd_manage_resource_manager:
     state: deleted                              # choose form [merged, deleted, gathered]
-    fabric: test_fabric
+    fabric_name: test_fabric
     config:
       - entity_name: "l3_vni_fabric"            # A unique name to identify the resource
         pool_type: "ID"                         # choose from ['ID', 'IP', 'SUBNET']
@@ -222,12 +253,12 @@ EXAMPLES = """
 - name: Gather all Resources - no filters
   cisco.nd.nd_manage_resource_manager:
     state: gathered                            # choose form [merged, deleted, gathered]
-    fabric: test_fabric
+    fabric_name: test_fabric
 
 - name: Gather Resources - filter by entity name
   cisco.nd.nd_manage_resource_manager:
     state: gathered                             # choose form [merged, deleted, gathered]
-    fabric: test_fabric
+    fabric_name: test_fabric
     config:
       - entity_name: "l3_vni_fabric"            # A unique name to identify the resource
       - entity_name: "loopback_dev"             # A unique name to identify the resource
@@ -238,7 +269,7 @@ EXAMPLES = """
 - name: Gather Resources - filter by switch
   cisco.nd.nd_manage_resource_manager:
     state: gathered                             # choose form [merged, deleted, gathered]
-    fabric: test_fabric
+    fabric_name: test_fabric
     config:
       - switches:                               # provide the switch information to which the given resource is attached
           - 192.168.10.150
@@ -246,7 +277,7 @@ EXAMPLES = """
 - name: Gather Resources - filter by fabric and pool name
   cisco.nd.nd_manage_resource_manager:
     state: gathered                             # choose form [merged, deleted, gathered]
-    fabric: test_fabric
+    fabric_name: test_fabric
     config:
       - pool_name: "L3_VNI"                     # Based on the 'poolType', select appropriate name
       - pool_name: "VPC_ID"                     # Based on the 'poolType', select appropriate name
@@ -255,7 +286,7 @@ EXAMPLES = """
 - name: Gather Resources - filter by switch and pool name
   cisco.nd.nd_manage_resource_manager:
     state: gathered                             # choose form [merged, deleted, gathered]
-    fabric: "{{ ansible_it_fabric }}"
+    fabric_name: "{{ ansible_it_fabric }}"
     config:
       - pool_name: "L3_VNI"                     # Based on the 'poolType', select appropriate name
         switches:                               # provide the switch information to which the given resource is attached
@@ -270,7 +301,7 @@ EXAMPLES = """
 - name: Gather Resources - mixed query
   cisco.nd.nd_manage_resource_manager:
     state: gathered                             # choose form [merged, deleted, gathered]
-    fabric: test_fabric
+    fabric_name: test_fabric
     config:
       - entity_name: "l2_vni_fabric"            # A unique name to identify the resource
       - switches:                               # provide the switch information to which the given resource is attached
@@ -449,25 +480,33 @@ def main():
         logging.getLevelName(log.getEffectiveLevel()),
     )
 
-    # Get parameters
-    fabric = module.params.get("fabric")
     output_level = module.params.get("output_level")
     state = module.params.get("state")
     config_count = len(module.params.get("config") or [])
-    log.debug(
-        "main: resolved module params — fabric='%s', state='%s', output_level='%s', config_count=%s, check_mode=%s",
-        fabric,
-        state,
-        output_level,
-        config_count,
-        module.check_mode,
-    )
 
     # Initialize Results - this collects all operation results
     results = Results()
     results.check_mode = module.check_mode
     results.action = "manage_resource_manager"
     nd = None
+
+    # Enforce the top-level selector contract with a standard failed result payload.
+    fabric_name = module.params.get("fabric_name")
+    if not fabric_name:
+      error_msg = "The 'fabric_name' parameter is required."
+      log.error("main: parameter validation failed — %s", error_msg)
+      _record_failed_result(results, error_msg)
+      final = _format_module_result(module, output_level, results, failed=True)
+      module.fail_json(msg=error_msg, **final)
+
+    log.debug(
+        "main: resolved module params — fabric_name='%s', state='%s', output_level='%s', config_count=%s, check_mode=%s",
+        fabric_name,
+        state,
+        output_level,
+        config_count,
+        module.check_mode,
+    )
 
     try:
         # Initialize NDModule (uses RestSend infrastructure internally)
@@ -484,7 +523,7 @@ def main():
 
         log.debug(
             "main: NDResourceManagerModule created — fabric='%s', state='%s', config_count=%s",
-            fabric,
+            fabric_name,
             state,
             len(rm_module.config or []),
         )
@@ -497,7 +536,7 @@ def main():
         log.info(
             "main: manage_state() completed successfully — state='%s', fabric='%s', changed=%s",
             state,
-            fabric,
+            fabric_name,
             results.changed,
         )
         rm_module.exit_module()
@@ -508,7 +547,7 @@ def main():
             "main: NDModuleError caught — error_type=NDModuleError, status=%s, msg='%s', fabric='%s', state='%s'",
             getattr(error, "status", None),
             error.msg,
-            fabric,
+            fabric_name,
             state,
         )
 
@@ -546,7 +585,7 @@ def main():
         log.error(
             "main: ValueError caught — msg='%s', fabric='%s', state='%s'",
             str(error),
-            fabric,
+            fabric_name,
             state,
         )
         _record_failed_result(results, str(error))
@@ -559,7 +598,7 @@ def main():
             "main: unexpected exception caught — error_type='%s', msg='%s', fabric='%s', state='%s'",
             type(error).__name__,
             str(error),
-            fabric,
+            fabric_name,
             state,
         )
 

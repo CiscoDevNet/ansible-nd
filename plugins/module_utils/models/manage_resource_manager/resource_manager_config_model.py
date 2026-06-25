@@ -115,7 +115,6 @@ class ResourceManagerConfigModel(NDBaseModel):
             "When True, the 'resource' field must also be provided."
         ),
     )
-    # TODO(Jeet): We need to import this fields from common shared_fields file.
     vrf_name: str | None = Field(
         default=None,
         description=("VRF name associated with the resource allocation. Use 'default' for the global default VRF. When omitted, the default VRF is assumed."),
@@ -406,11 +405,27 @@ class ResourceManagerConfigModel(NDBaseModel):
     def get_argument_spec(cls) -> dict[str, Any]:
         """Return the Ansible argument spec for nd_manage_resource_manager."""
         return dict(
-            fabric=dict(type="str", required=True),
+            fabric_name=dict(type="str", required=True),
             state=dict(
                 type="str",
                 default="merged",
                 choices=["merged", "deleted", "gathered"],
             ),
-            config=dict(type="list", elements="dict"),
+            config=dict(
+                type="list",
+                elements="dict",
+                options=dict(
+                    entity_name=dict(type="str"),
+                    pool_type=dict(type="str", choices=["ID", "IP", "SUBNET"]),
+                    pool_name=dict(type="str"),
+                    scope_type=dict(
+                        type="str",
+                        choices=["fabric", "device", "device_interface", "device_pair", "link"],
+                    ),
+                    resource=dict(type="str"),
+                    is_pre_allocated=dict(type="bool"),
+                    vrf_name=dict(type="str"),
+                    switches=dict(type="list", elements="str"),
+                ),
+            ),
         )

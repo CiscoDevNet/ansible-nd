@@ -5,7 +5,7 @@
 - name: Delete Resources
   cisco.nd.nd_manage_resource_manager: &rm_delete
     state: deleted                                 # choose form [merged, deleted, gathered]
-    fabric: "{{ ansible_it_fabric }}"
+    fabric_name: "{{ ansible_it_fabric }}"
     config:
       - entity_name: "l3_vni_fabric"               # A unique name to identify the resource
         pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
@@ -66,7 +66,7 @@
     - name: Create Resources
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"             # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -145,7 +145,7 @@
     - name: Gathered all Resources - false filters
       cisco.nd.nd_manage_resource_manager:
         state: gathered                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
       register: result
 
     - name: ASSERT - Check condition
@@ -169,7 +169,7 @@
     - name: Gathered Resources - filter by entity name
       cisco.nd.nd_manage_resource_manager:
         state: gathered                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"             # A unique name to identify the resource
           - entity_name: "l2_vni_fabric"             # A unique name to identify the resource
@@ -192,7 +192,7 @@
     - name: Gathered Resources - filter by switch 1
       cisco.nd.nd_manage_resource_manager:
         state: gathered                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - switches: # provide the switch information to which the given resource is attached
               - "{{ ansible_switch1 }}"
@@ -207,7 +207,7 @@
     - name: Gathered Resources - filter by switch 2
       cisco.nd.nd_manage_resource_manager:
         state: gathered                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - switches: # provide the switch information to which the given resource is attached
               - "{{ ansible_switch2 }}"
@@ -222,7 +222,7 @@
     - name: Gathered Resources - filter by fabric and pool name
       cisco.nd.nd_manage_resource_manager:
         state: gathered                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - pool_name: "BGP_ASN_ID"                  # Based on the 'poolType', select appropriate name
           - pool_name: "L3_VNI"                      # Based on the 'poolType', select appropriate name
@@ -252,7 +252,7 @@
     - name: Gathered Resources - filter by switch and pool name
       cisco.nd.nd_manage_resource_manager:
         state: gathered                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - pool_name: "BGP_ASN_ID"                  # Based on the 'poolType', select appropriate name
           - switches: # provide the switch information to which the given resource is attached
@@ -301,7 +301,7 @@
     - name: Gathered Resources - mixed gathered
       cisco.nd.nd_manage_resource_manager:
         state: gathered                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l2_vni_fabric"             # A unique name to identify the resource
           - switches: # provide the switch information to which the given resource is attached

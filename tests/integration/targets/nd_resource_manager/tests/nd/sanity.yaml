@@ -5,7 +5,7 @@
 - name: SANITY- Delete Resources
   cisco.nd.nd_manage_resource_manager: &rm_delete
     state: deleted                                 # choose form [merged, deleted, gathered]
-    fabric: "{{ ansible_it_fabric }}"
+    fabric_name: "{{ ansible_it_fabric }}"
     config:
       - entity_name: "l3_vni_fabric"               # A unique name to identify the resource
         pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
@@ -70,7 +70,7 @@
     - name: SANITY- Create Resources
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"             # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
@@ -149,7 +149,7 @@
     - name: SANITY- Gathered all Resources - false filters
       cisco.nd.nd_manage_resource_manager:
         state: gathered
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
       register: result
 
     - name: ASSERT - Check condition
@@ -173,7 +173,7 @@
     - name: SANITY- Gathered Resources - filter by entity name
       cisco.nd.nd_manage_resource_manager:
         state: gathered                                 # choose form [merged, deleted, gathered]
-        fabric: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"             # A unique name to identify the resource
           - entity_name: "l2_vni_fabric"             # A unique name to identify the resource
