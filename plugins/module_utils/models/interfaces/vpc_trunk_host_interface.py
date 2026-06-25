@@ -154,7 +154,7 @@ def _validate_customer_vlan_id_list(value):
 
 # TODO: After all per-policy interface modules merge to develop, consolidate AllowedVlans, CustomerVlanIdList,
 # and _validate_vlan_id_or_range into models/types.py so siblings share a single source of truth. This module
-# carries its own copy to keep the vpc stack self-contained.
+# carries its own copy to keep the vpc stack self-contained. Tracked in CiscoDevNet/ansible-nd#347.
 AllowedVlans = Annotated[Optional[str], BeforeValidator(_validate_allowed_vlans)]
 """Trunk allowed-VLANs spec (`str | None`): 'none', 'all', or comma-separated VLAN ids/ranges in 1..4094."""
 
