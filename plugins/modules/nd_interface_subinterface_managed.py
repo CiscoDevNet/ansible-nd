@@ -17,7 +17,7 @@ description:
   O(config[].interface_name) value (e.g. C(Ethernet1/3.2) or C(Port-channel10.5)).
 - This module manages the managed variant only (C(policyType) C(subinterface)).
   The unmanaged variant (C(policyType) C(monitorSubinterface)) is handled by C(nd_interface_subinterface_unmanaged).
-- It supports creating, updating, querying, and deleting subinterface configurations on switches within a fabric.
+- It supports creating, updating, and deleting subinterface configurations on switches within a fabric.
 - Each config item targets a single subinterface identified by O(config[].interface_name).
 - Configure multiple subinterfaces in one task by listing multiple config items.
 author:
