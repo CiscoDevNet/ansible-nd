@@ -44,6 +44,7 @@ class NetworkAttachmentManager:
 
     wait_attempts = 20
     wait_delay = 15
+    wait_chunk_size = 30
     undeploy_retry_attempts = 3
 
     def __init__(self, coordinator: Any):
@@ -306,10 +307,45 @@ class NetworkAttachmentManager:
 
     @staticmethod
     def _attachment_changed(current: dict[str, Any], desired: dict[str, Any]) -> bool:
-        for key in ("vlanId", "interfaces", "instanceValues", "extraConfig"):
+        for key in ("vlanId", "instanceValues", "extraConfig"):
+            if key not in desired:
+                continue
+            if NetworkAttachmentManager._empty_equivalent(desired.get(key)) and NetworkAttachmentManager._empty_equivalent(current.get(key)):
+                continue
             if desired.get(key) != current.get(key):
                 return True
+        if "interfaces" in desired and NetworkAttachmentManager._normalized_interfaces(
+            desired.get("interfaces")
+        ) != NetworkAttachmentManager._normalized_interfaces(current.get("interfaces")):
+            return True
         return False
+
+    @staticmethod
+    def _empty_equivalent(value: Any) -> bool:
+        """Return True for API/playbook empty values that are semantically absent."""
+        return value in (None, "", {}, [])
+
+    @staticmethod
+    def _normalized_interfaces(interfaces: Any) -> list[dict[str, Any]]:
+        """Normalize attachment interfaces to fields that affect Network attachment intent."""
+        normalized = []
+        for interface in interfaces or []:
+            mapping = interface.get("mapping") or {}
+            normalized_interface = {
+                "mode": NetworkAttachmentManager._status_value(interface.get("mode")).lower(),
+                "interfaceRange": interface.get("interfaceRange") or interface.get("interface_range"),
+                "interfaceGroupName": interface.get("interfaceGroupName") or interface.get("interface_group_name"),
+                "nativeVlan": bool(interface.get("nativeVlan") if "nativeVlan" in interface else interface.get("native_vlan", False)),
+            }
+            if mapping:
+                normalized_mapping = {"mappingType": mapping.get("mappingType") or mapping.get("mapping_type")}
+                if mapping.get("customerVlan") is not None or mapping.get("customer_vlan") is not None:
+                    normalized_mapping["customerVlan"] = (
+                        mapping.get("customerVlan") if mapping.get("customerVlan") is not None else mapping.get("customer_vlan")
+                    )
+                normalized_interface["mapping"] = {key: value for key, value in normalized_mapping.items() if value is not None}
+            normalized.append({key: value for key, value in normalized_interface.items() if value is not None})
+        return sorted(normalized, key=lambda item: (item.get("mode", ""), item.get("interfaceRange", ""), item.get("interfaceGroupName", "")))
 
     @staticmethod
     def attachment_matches(existing: dict[str, Any], desired: dict[str, Any]) -> bool:
@@ -366,7 +402,7 @@ class NetworkAttachmentManager:
             operation_type=operation_type,
         )
         self._raise_on_failed_results(response, "Network attachment failed")
-        return {"response": response, "sequence": results.responses, "deploy_targets": deploy_targets}
+        return self.coordinator._finalize_api_trace(results, deploy_targets)
 
     @staticmethod
     def _raise_on_failed_results(response: Any, prefix: str) -> None:
@@ -448,27 +484,48 @@ class NetworkAttachmentManager:
     ) -> list[dict[str, Any]]:
         configured = set(configured_network_names(config))
         deploy_enabled = deploy_enabled_by_network(config)
-        pending_statuses = {"pending", "outOfSync", "failed", "inProgress", "deploymentInProgress"}
-        pending = []
+        pending_statuses = {"pending", "outofsync", "failed", "inprogress", "deploymentinprogress"}
+        deploy_targets: dict[str, set[str]] = {}
+        after_names: set[str] = set()
+        pending_network_names: set[str] = set()
         for network in result.get("after") or []:
             name = network.get("network_name") or network.get("networkName")
-            status = network.get("network_status") or network.get("networkStatus")
-            if name in configured and deploy_enabled.get(name, True) and status in pending_statuses:
-                pending.append(name)
-        if not pending:
+            status = self._status_value(network.get("network_status") or network.get("networkStatus"))
+            if name in configured:
+                after_names.add(name)
+            if name in configured and deploy_enabled.get(name, True) and status.lower() in pending_statuses:
+                pending_network_names.add(name)
+
+        deploy_enabled_names = sorted(name for name in after_names if deploy_enabled.get(name, True))
+        if deploy_enabled_names:
+            attachment_details = self.current_attachment_details_ignore_missing(module_args, strategy, deploy_enabled_names)
+            for attachment in attachment_details:
+                network_name = attachment.get("networkName")
+                switch_id = attachment.get("switchId")
+                if network_name not in configured or not deploy_enabled.get(network_name, True):
+                    continue
+                attachment_pending = self.attachment_status(attachment).lower() in pending_statuses
+                if attachment.get("attach") is True and attachment_pending:
+                    self.record_deploy_target(deploy_targets, network_name, switch_id)
+                if attachment.get("attach") is False and self.attachment_has_pending_delete_work(attachment):
+                    self.record_deploy_target(deploy_targets, network_name, switch_id)
+        for network_name in pending_network_names:
+            deploy_targets.setdefault(network_name, set())
+
+        if not deploy_targets:
             return []
-        return [NetworkSwitchesListModel(network_names=sorted(set(pending))).to_payload()]
+        return self.build_deploy_payloads(config, deploy_targets)
 
     def deploy_network_attachments(self, module_args: dict, strategy: BaseNetworkStrategy, deploy_payload: dict[str, Any]) -> dict[str, Any]:
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
         endpoint = orchestrator._make_endpoint(strategy.network_actions_deploy_post_cls())
-        response = orchestrator._request(
+        orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,
             data=deploy_payload,
             operation_type=OperationType.UPDATE,
         )
-        return {"response": response, "sequence": results.responses}
+        return self.coordinator._finalize_api_trace(results)
 
     def wait_for_attachments_delete_ready(
         self,
@@ -481,8 +538,8 @@ class NetworkAttachmentManager:
             return
         last_blockers: dict[str, list[dict[str, Any]]] = {}
         retried_targets: dict[tuple[str, str], int] = {}
-        for attempt in range(self.wait_attempts):
-            attachments = self.current_attachment_details_ignore_missing(module_args, strategy, sorted(pending))
+        for attempt in range(self._delete_wait_attempts(len(pending))):
+            attachments = self._current_attachment_details_for_wait(module_args, strategy, sorted(pending))
             blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending}
             retry_targets: dict[str, set[str]] = {}
             for attachment in attachments:
@@ -525,7 +582,7 @@ class NetworkAttachmentManager:
         retry_statuses = {"pending", "inprogress", "deploymentinprogress", "previewinprogress"}
         last_statuses: dict[str, str] = {}
         retried_networks: dict[str, int] = {}
-        for attempt in range(self.wait_attempts):
+        for attempt in range(self._delete_wait_attempts(len(pending))):
             orchestrator, _results = self.coordinator._new_network_orchestrator(module_args, strategy)
             networks = orchestrator.query_all() or []
             last_statuses = {}
@@ -550,6 +607,26 @@ class NetworkAttachmentManager:
             time.sleep(self.wait_delay)
         self.coordinator.module.fail_json(msg=f"Timed out waiting for networks to become deletable on fabric '{strategy.fabric_name}': {last_statuses}")
 
+    def _delete_wait_attempts(self, item_count: int) -> int:
+        if self.wait_attempts != type(self).wait_attempts:
+            return int(self.wait_attempts)
+        extra_attempts = max(0, (max(item_count, 1) - 1) // self.wait_chunk_size)
+        return min(80, int(self.wait_attempts) + extra_attempts)
+
+    def _current_attachment_details_for_wait(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        network_names: list[str],
+    ) -> list[dict[str, Any]]:
+        if len(network_names) <= self.wait_chunk_size:
+            return self.current_attachment_details_ignore_missing(module_args, strategy, network_names)
+        attachments: list[dict[str, Any]] = []
+        for index in range(0, len(network_names), self.wait_chunk_size):
+            chunk = network_names[index : index + self.wait_chunk_size]
+            attachments.extend(self.current_attachment_details_ignore_missing(module_args, strategy, chunk))
+        return attachments
+
     @staticmethod
     def filter_attachment_details_by_network(attachments: list[dict[str, Any]], network_names: Union[list[str], set[str]]) -> list[dict[str, Any]]:
         names = set(network_names)
@@ -557,10 +634,10 @@ class NetworkAttachmentManager:
 
     @staticmethod
     def attachment_has_pending_delete_work(attachment: dict[str, Any]) -> bool:
-        pending_statuses = {"deploymentInProgress", "failed", "inProgress", "outOfSync", "pending", "previewInProgress"}
+        pending_statuses = {"deploymentinprogress", "failed", "inprogress", "outofsync", "pending", "previewinprogress"}
         for key in ("status", "configStatus", "deploymentStatus", "networkStatus", "attachmentStatus"):
             status = attachment.get(key)
-            if status is not None and str(status).strip() in pending_statuses:
+            if status is not None and NetworkAttachmentManager._status_value(status).lower() in pending_statuses:
                 return True
         return False
 
@@ -569,8 +646,13 @@ class NetworkAttachmentManager:
         for key in ("status", "configStatus", "deploymentStatus", "networkStatus", "attachmentStatus"):
             status = attachment.get(key)
             if status is not None:
-                return str(status).strip()
+                return NetworkAttachmentManager._status_value(status)
         return ""
+
+    @staticmethod
+    def _status_value(status: Any) -> str:
+        """Return the plain API status string from raw strings or enum values."""
+        return str(getattr(status, "value", status) or "").strip()
 
     @staticmethod
     def attachment_blocks_delete(attachment: dict[str, Any]) -> bool:

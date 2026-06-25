@@ -270,23 +270,58 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     def _query_all_scoped(self, network_names: list[str]) -> ResponseType:
         networks: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for network_name in network_names:
-            endpoint = self._make_endpoint(self.strategy.networks_get_cls())
-            if hasattr(endpoint, "endpoint_params"):
-                endpoint.endpoint_params.filter = self._network_name_filter([network_name])
-            result = self._request(
-                path=endpoint.path,
-                verb=endpoint.verb,
-                not_found_ok=True,
-                operation_type=OperationType.QUERY,
-            )
-            items = result.get("networks") or result.get("items") if isinstance(result, dict) else result
-            for item in items or []:
-                item_name = item.get("networkName") or item.get("network_name") if isinstance(item, dict) else None
-                if item_name and item_name not in seen:
-                    networks.append(self._normalize_query_network_item(item))
-                    seen.add(item_name)
+        ordered_names = list(dict.fromkeys(network_names))
+        try:
+            self._append_scoped_network_items(networks, seen, self._query_all_scoped_batch(ordered_names), ordered_names)
+        except Exception:
+            pass
+
+        for network_name in [name for name in ordered_names if name not in seen]:
+            self._append_scoped_network_items(networks, seen, self._query_all_scoped_one(network_name), [network_name])
         return networks
+
+    def _query_all_scoped_batch(self, network_names: list[str]) -> list[dict[str, Any]]:
+        endpoint = self._make_endpoint(self.strategy.networks_get_cls())
+        if hasattr(endpoint, "endpoint_params"):
+            endpoint.endpoint_params.filter = self._network_name_filter(network_names)
+            endpoint.endpoint_params.max = max(len(network_names), 1)
+        result = self._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            not_found_ok=True,
+            operation_type=OperationType.QUERY,
+        )
+        if isinstance(result, dict):
+            return result.get("networks") or result.get("items") or []
+        return result or []
+
+    def _query_all_scoped_one(self, network_name: str) -> list[dict[str, Any]]:
+        endpoint = self._make_endpoint(self.strategy.networks_get_cls())
+        if hasattr(endpoint, "endpoint_params"):
+            endpoint.endpoint_params.filter = self._network_name_filter([network_name])
+        result = self._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            not_found_ok=True,
+            operation_type=OperationType.QUERY,
+        )
+        if isinstance(result, dict):
+            return result.get("networks") or result.get("items") or []
+        return result or []
+
+    def _append_scoped_network_items(
+        self,
+        networks: list[dict[str, Any]],
+        seen: set[str],
+        items: list[dict[str, Any]],
+        requested_names: list[str],
+    ) -> None:
+        requested = set(requested_names)
+        for item in items or []:
+            item_name = item.get("networkName") or item.get("network_name") if isinstance(item, dict) else None
+            if item_name and item_name in requested and item_name not in seen:
+                networks.append(self._normalize_query_network_item(item))
+                seen.add(item_name)
 
     def _query_all_unfiltered(self) -> ResponseType:
         endpoint = self._make_endpoint(self.strategy.networks_get_cls())

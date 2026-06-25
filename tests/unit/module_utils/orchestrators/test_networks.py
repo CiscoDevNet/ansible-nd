@@ -12,6 +12,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.co
     NetworkConfigModel,
     NetworkParentConfigModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
+    ConfigurationStatus,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import (
     network_parent_argument_spec,
 )
@@ -204,6 +207,85 @@ def test_argument_spec_uses_manage_json_defaults():
     assert "default" not in spec["ipv6_trm"]
     assert spec["enable_ir"]["default"] is False
     assert spec["dhcp_servers"]["options"]["server_address"]["required"] is True
+
+
+def test_network_query_all_scopes_targeted_state_reads_with_batch_filter():
+    strategy = StandaloneNetworkStrategy(
+        fabric_name="fab1",
+        fabric_data={"managementType": "vxlanIbgp"},
+    )
+    orchestrator = NDNetworkOrchestrator(
+        rest_send=RestSend(
+            {
+                "state": "replaced",
+                "config": [
+                    {"network_name": "BLUE_NET"},
+                    {"network_name": "GREEN_NET"},
+                    {"network_name": "BLUE_NET"},
+                ],
+                "check_mode": False,
+            }
+        ),
+        strategy=strategy,
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {
+            "networks": [
+                {"networkName": "BLUE_NET"},
+                {"networkName": "GREEN_NET"},
+            ]
+        }
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    assert orchestrator.query_all() == [
+        {"networkName": "BLUE_NET"},
+        {"networkName": "GREEN_NET"},
+    ]
+    assert requested_paths == [
+        "/api/v1/manage/fabrics/fab1/networks?max=2&filter=%28networkName%3ABLUE_NET%20OR%20networkName%3AGREEN_NET%29",
+    ]
+
+
+def test_network_query_all_scoped_falls_back_for_missing_batch_items():
+    strategy = StandaloneNetworkStrategy(
+        fabric_name="fab1",
+        fabric_data={"managementType": "vxlanIbgp"},
+    )
+    orchestrator = NDNetworkOrchestrator(
+        rest_send=RestSend(
+            {
+                "state": "replaced",
+                "config": [
+                    {"network_name": "BLUE_NET"},
+                    {"network_name": "GREEN_NET"},
+                ],
+                "check_mode": False,
+            }
+        ),
+        strategy=strategy,
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        if len(requested_paths) == 1:
+            return {"networks": [{"networkName": "BLUE_NET"}]}
+        return {"networks": [{"networkName": "GREEN_NET"}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    assert orchestrator.query_all() == [
+        {"networkName": "BLUE_NET"},
+        {"networkName": "GREEN_NET"},
+    ]
+    assert requested_paths == [
+        "/api/v1/manage/fabrics/fab1/networks?max=2&filter=%28networkName%3ABLUE_NET%20OR%20networkName%3AGREEN_NET%29",
+        "/api/v1/manage/fabrics/fab1/networks?filter=networkName%3AGREEN_NET",
+    ]
 
 
 def test_legacy_network_names_are_normalized():
@@ -655,6 +737,264 @@ def test_network_check_mode_attachment_phase_returns_planned_payload():
     ]
 
 
+def test_network_merged_runs_post_attach_and_deploy_for_desired_attachment():
+    class Module:
+        check_mode = False
+
+    class Strategy:
+        is_child = False
+        is_parent = False
+
+    class Coordinator:
+        module = Module()
+        strategy = Strategy()
+
+        def __init__(self):
+            self.calls = []
+
+        def _desired_attachment_map(self, module_args, strategy):
+            self.calls.append(("desired", module_args["state"], strategy))
+            return {
+                ("BLUE_NET", "SERIAL1"): {
+                    "networkName": "BLUE_NET",
+                    "switchId": "SERIAL1",
+                    "attach": True,
+                }
+            }
+
+        def _apply_attachment_phase(self, module_args, strategy, phase, desired=None, current_network_names=None, current=None):
+            self.calls.append(("phase", phase, desired, current))
+            if phase == "pre":
+                return {}
+            assert desired == {
+                ("BLUE_NET", "SERIAL1"): {
+                    "networkName": "BLUE_NET",
+                    "switchId": "SERIAL1",
+                    "attach": True,
+                }
+            }
+            return {"changed": True, "deploy_targets": {"BLUE_NET": {"SERIAL1"}}}
+
+        def _run_state_machine(self, module_args, strategy=None):
+            self.calls.append(("crud", module_args["state"], strategy))
+            module_args["config"][0].clear()
+            return {"changed": False, "after": [{"network_name": "BLUE_NET", "network_status": "pending"}]}
+
+        def _attachment_map_after_detach(self, current, payloads):
+            return current
+
+        def _merge_api_trace(self, result, trace):
+            result["changed"] = result.get("changed", False) or trace.get("changed", False)
+            result.setdefault("merged_traces", []).append(trace)
+
+        def _build_deploy_payloads(self, config, *target_maps):
+            self.calls.append(("build_deploy", target_maps))
+            assert config == [
+                {
+                    "network_name": "BLUE_NET",
+                    "deploy": True,
+                    "attach": [{"ip_address": "10.1.1.11"}],
+                }
+            ]
+            assert target_maps == ({}, {"BLUE_NET": {"SERIAL1"}})
+            return [{"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL1"]}]
+
+        def _build_pending_network_deploy_payloads(self, *_args):
+            raise AssertionError("attachment deploy targets should be used first")
+
+        def _deploy_network_attachments(self, module_args, strategy, deploy_payload):
+            self.calls.append(("deploy", deploy_payload))
+            return {"changed": True, "response": {"status": "accepted"}}
+
+    coordinator = Coordinator()
+    result = NetworkStateMachine(coordinator).run(
+        {
+            "state": "merged",
+            "config": [
+                {
+                    "network_name": "BLUE_NET",
+                    "deploy": True,
+                    "attach": [{"ip_address": "10.1.1.11"}],
+                }
+            ],
+        }
+    )
+
+    assert result["changed"] is True
+    assert ("deploy", {"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL1"]}) in coordinator.calls
+
+
+def test_network_deploy_fallback_queries_current_pending_networks():
+    class Module:
+        check_mode = False
+
+    class Strategy:
+        pass
+
+    class Coordinator:
+        module = Module()
+
+        def __init__(self):
+            self.pending_calls = 0
+            self.traces = []
+
+        def _build_deploy_payloads(self, config, *target_maps):
+            return []
+
+        def _build_pending_network_deploy_payloads(self, result, config, module_args, strategy):
+            self.pending_calls += 1
+            if self.pending_calls == 1:
+                assert result["after"] == []
+                return []
+            assert result == {"after": [{"networkName": "BLUE_NET", "networkStatus": "pending"}]}
+            return [{"networkNames": ["BLUE_NET"]}]
+
+        def _deploy_enabled_by_network(self, _config):
+            return {"BLUE_NET": True}
+
+        def _configured_network_names(self, _config):
+            return ["BLUE_NET"]
+
+        def _query_current_networks_with_trace(self, module_args, strategy):
+            return [{"networkName": "BLUE_NET", "networkStatus": "pending"}], {"changed": False, "api_paths": ["/networks"]}
+
+        def _merge_api_trace(self, result, trace):
+            self.traces.append(trace)
+            result["changed"] = result.get("changed", False) or trace.get("changed", False)
+
+        def _deploy_network_attachments(self, module_args, strategy, deploy_payload):
+            return {"changed": True, "api_payload": [deploy_payload]}
+
+    coordinator = Coordinator()
+    result = NetworkStateMachine(coordinator)._deploy_after_attachment_changes(
+        {"changed": False, "after": []},
+        [{"network_name": "BLUE_NET", "deploy": True}],
+        {"config": [{"network_name": "BLUE_NET", "deploy": True}]},
+        Strategy(),
+        {},
+        {},
+        False,
+    )
+
+    assert coordinator.pending_calls == 2
+    assert coordinator.traces[0] == {"changed": False, "api_paths": ["/networks"]}
+    assert result["changed"] is True
+
+
+def test_network_state_machine_idempotent_run_deploys_pending_attach():
+    class Module:
+        check_mode = False
+
+    class Strategy:
+        is_child = False
+        is_parent = False
+
+    class Coordinator:
+        module = Module()
+        strategy = Strategy()
+
+        def __init__(self):
+            self.deployed_payloads = []
+
+        def _desired_attachment_map(self, *_args):
+            return {
+                ("BLUE_NET", "SERIAL1"): {
+                    "networkName": "BLUE_NET",
+                    "switchId": "SERIAL1",
+                    "attach": True,
+                }
+            }
+
+        def _apply_attachment_phase(self, module_args, strategy, phase, desired=None, current_network_names=None, current=None):
+            return {"current": {}} if phase == "pre" else {}
+
+        def _attachment_map_after_detach(self, current, payloads):
+            return current
+
+        def _run_state_machine(self, *_args, **_kwargs):
+            return {
+                "changed": False,
+                "failed": False,
+                "after": [
+                    {
+                        "network_name": "BLUE_NET",
+                        "network_status": "pending",
+                    }
+                ],
+            }
+
+        def _merge_api_trace(self, result, trace, prepend=False):
+            result["changed"] = result.get("changed", False) or trace.get("changed", False)
+
+        def _build_deploy_payloads(self, *_args):
+            return []
+
+        def _build_pending_network_deploy_payloads(self, result, config, module_args, strategy):
+            assert result["after"][0]["network_status"] == "pending"
+            return [{"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL1"]}]
+
+        def _query_current_networks_with_trace(self, *_args):
+            raise AssertionError("pending state from state-machine output should be enough")
+
+        def _deploy_network_attachments(self, module_args, strategy, payload):
+            self.deployed_payloads.append(payload)
+            return {"changed": True, "final": {"changed": True}}
+
+    coordinator = Coordinator()
+    result = NetworkStateMachine(coordinator).run(
+        {
+            "state": "merged",
+            "config": [
+                {
+                    "network_name": "BLUE_NET",
+                    "deploy": True,
+                    "deploy_type": "switch",
+                    "attach": [{"ip_address": "10.1.1.11", "ports": ["Ethernet1/1"]}],
+                }
+            ],
+        }
+    )
+
+    assert result["changed"] is True
+    assert coordinator.deployed_payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL1"]}]
+
+
+def test_network_state_machine_deploy_false_skips_pending_fallback_query():
+    class Module:
+        check_mode = False
+
+    class Coordinator:
+        module = Module()
+
+        def _build_deploy_payloads(self, *_args):
+            return []
+
+        def _build_pending_network_deploy_payloads(self, *_args):
+            return []
+
+        def _deploy_enabled_by_network(self, _config):
+            return {"BLUE_NET": False}
+
+        def _configured_network_names(self, _config):
+            return ["BLUE_NET"]
+
+        def _query_current_networks_with_trace(self, *_args):
+            raise AssertionError("deploy false must not query current networks for fallback deploy")
+
+    coordinator = Coordinator()
+    result = NetworkStateMachine(coordinator)._deploy_after_attachment_changes(
+        {"changed": True, "after": [{"network_name": "BLUE_NET", "network_status": "pending"}]},
+        [{"network_name": "BLUE_NET", "deploy": False}],
+        {"config": [{"network_name": "BLUE_NET", "deploy": False}]},
+        object(),
+        {},
+        {},
+        False,
+    )
+
+    assert result["changed"] is True
+
+
 def test_network_bulk_delete_retries_only_sync_failed_networks():
     orchestrator = _orchestrator()
     requested_payloads = []
@@ -721,6 +1061,205 @@ def test_delete_deploy_payloads_honor_network_deploy_type():
     assert payloads == [{"networkNames": ["BLUE_NET"]}]
 
 
+def test_pending_network_deploy_payload_covers_deploy_false_then_deploy_true_attach():
+    class Coordinator:
+        pass
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.current_attachment_details_ignore_missing = lambda *_args: [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "attach": True,
+            "status": "pending",
+        }
+    ]
+
+    payloads = manager.build_pending_network_deploy_payloads(
+        {"after": [{"network_name": "BLUE_NET", "network_status": "pending"}]},
+        [{"network_name": "BLUE_NET", "deploy": True}],
+        {"config": []},
+        _orchestrator().strategy,
+    )
+
+    assert payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]
+
+
+def test_pending_network_deploy_payload_falls_back_to_network_scope_without_attachments():
+    class Coordinator:
+        pass
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.current_attachment_details_ignore_missing = lambda *_args: []
+
+    payloads = manager.build_pending_network_deploy_payloads(
+        {"after": [{"network_name": "BLUE_NET", "network_status": "pending"}]},
+        [{"network_name": "BLUE_NET", "deploy": True}],
+        {"config": []},
+        _orchestrator().strategy,
+    )
+
+    assert payloads == [{"networkNames": ["BLUE_NET"]}]
+
+
+def test_pending_network_deploy_payload_accepts_enum_status():
+    class Coordinator:
+        pass
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.current_attachment_details_ignore_missing = lambda *_args: []
+
+    payloads = manager.build_pending_network_deploy_payloads(
+        {"after": [{"network_name": "BLUE_NET", "network_status": ConfigurationStatus.PENDING}]},
+        [{"network_name": "BLUE_NET", "deploy": True}],
+        {"config": []},
+        _orchestrator().strategy,
+    )
+
+    assert payloads == [{"networkNames": ["BLUE_NET"]}]
+
+
+def test_pending_network_deploy_payload_covers_deploy_false_then_deploy_true_detach():
+    class Coordinator:
+        pass
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.current_attachment_details_ignore_missing = lambda *_args: [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "attach": False,
+            "status": "pending",
+        }
+    ]
+
+    payloads = manager.build_pending_network_deploy_payloads(
+        {"after": [{"network_name": "BLUE_NET", "network_status": "deployed"}]},
+        [{"network_name": "BLUE_NET", "deploy": True}],
+        {"config": []},
+        _orchestrator().strategy,
+    )
+
+    assert payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]
+
+
+def test_pending_network_deploy_payload_accepts_enum_attachment_status():
+    class Coordinator:
+        pass
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.current_attachment_details_ignore_missing = lambda *_args: [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "attach": False,
+            "status": ConfigurationStatus.PENDING,
+        }
+    ]
+
+    payloads = manager.build_pending_network_deploy_payloads(
+        {"after": [{"network_name": "BLUE_NET", "network_status": ConfigurationStatus.DEPLOYED}]},
+        [{"network_name": "BLUE_NET", "deploy": True}],
+        {"config": []},
+        _orchestrator().strategy,
+    )
+
+    assert payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]
+
+
+def test_pending_network_deploy_payload_honors_deploy_false_for_pending_detach():
+    class Coordinator:
+        pass
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.current_attachment_details_ignore_missing = lambda *_args: [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "attach": False,
+            "status": "pending",
+        }
+    ]
+
+    payloads = manager.build_pending_network_deploy_payloads(
+        {"after": [{"network_name": "BLUE_NET", "network_status": "deployed"}]},
+        [{"network_name": "BLUE_NET", "deploy": False}],
+        {"config": []},
+        _orchestrator().strategy,
+    )
+
+    assert payloads == []
+
+
+def test_planned_attach_payloads_ignore_api_empty_defaults():
+    current = {
+        ("BLUE_NET", "FDO123"): {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "vlanId": 2301,
+            "attach": True,
+            "status": "pending",
+            "instanceValues": {},
+            "extraConfig": "",
+            "interfaces": [
+                {
+                    "mode": "access",
+                    "interfaceRange": "Ethernet1/10",
+                }
+            ],
+        }
+    }
+    desired = {
+        ("BLUE_NET", "FDO123"): {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "vlanId": 2301,
+            "attach": True,
+            "interfaces": [
+                {
+                    "mode": "access",
+                    "interfaceRange": "Ethernet1/10",
+                    "nativeVlan": False,
+                }
+            ],
+        }
+    }
+
+    assert NetworkAttachmentManager.planned_attach_payloads(current, desired) == []
+
+
+def test_planned_attach_payloads_detect_real_interface_change():
+    current = {
+        ("BLUE_NET", "FDO123"): {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "vlanId": 2301,
+            "attach": True,
+            "interfaces": [
+                {
+                    "mode": "access",
+                    "interfaceRange": "Ethernet1/10",
+                }
+            ],
+        }
+    }
+    desired_payload = {
+        "networkName": "BLUE_NET",
+        "switchId": "FDO123",
+        "vlanId": 2301,
+        "attach": True,
+        "interfaces": [
+            {
+                "mode": "access",
+                "interfaceRange": "Ethernet1/11",
+                "nativeVlan": False,
+            }
+        ],
+    }
+
+    assert NetworkAttachmentManager.planned_attach_payloads(current, {("BLUE_NET", "FDO123"): desired_payload}) == [desired_payload]
+
+
 def test_pending_network_status_is_not_delete_ready():
     class Module:
         params = {}
@@ -778,6 +1317,36 @@ def test_pending_attachment_status_is_not_delete_ready():
             {"config": [{"network_name": "BLUE_NET"}]},
             _orchestrator().strategy,
         )
+
+
+def test_attachment_delete_wait_chunks_large_network_name_sets():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs["msg"])
+
+    class Coordinator:
+        module = Module()
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.wait_attempts = 1
+    manager.wait_delay = 0
+    manager.wait_chunk_size = 2
+    queried_chunks = []
+
+    def query(_module_args, _strategy, names):
+        queried_chunks.append(names)
+        return []
+
+    manager.current_attachment_details_ignore_missing = query
+
+    manager.wait_for_attachments_delete_ready(
+        {"config": [{"network_name": f"NET_{index}"} for index in range(5)]},
+        _orchestrator().strategy,
+    )
+
+    assert queried_chunks == [["NET_0", "NET_1"], ["NET_2", "NET_3"], ["NET_4"]]
 
 
 def test_pending_attachment_delete_wait_retries_undeploy():

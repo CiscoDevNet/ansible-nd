@@ -20,6 +20,8 @@ coordinator helpers instead of changing the shared state-machine contract.
 
 from __future__ import annotations
 
+import copy
+
 from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_network import (
@@ -69,7 +71,7 @@ class NetworkStateMachine:
         """
         active_strategy = strategy or self.coordinator.strategy
         state = module_args.get("state", "merged")
-        config = module_args.get("config") or []
+        config = copy.deepcopy(module_args.get("config") or [])
 
         if active_strategy.is_child or state == "gathered":
             return self.run_basic(module_args, strategy=active_strategy)
@@ -82,7 +84,7 @@ class NetworkStateMachine:
 
         desired_attachments = None
         desired_network_names = None
-        if state in ("replaced", "overridden"):
+        if state in ("merged", "replaced", "overridden"):
             desired_attachments = self.coordinator._desired_attachment_map(
                 module_args,
                 active_strategy,
@@ -133,7 +135,7 @@ class NetworkStateMachine:
         """
         Run overridden using the state machine's initial current-state query.
         """
-        config = module_args.get("config") or []
+        config = copy.deepcopy(module_args.get("config") or [])
         desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
         desired_network_names = self.coordinator._configured_network_names(config)
 
@@ -240,6 +242,19 @@ class NetworkStateMachine:
         if not deploy_payloads:
             deploy_payloads = self.coordinator._build_pending_network_deploy_payloads(
                 result,
+                config,
+                module_args,
+                strategy,
+            )
+        if not deploy_payloads:
+            deploy_enabled = self.coordinator._deploy_enabled_by_network(config)
+            network_names = self.coordinator._configured_network_names(config)
+            if not any(deploy_enabled.get(network_name, True) for network_name in network_names):
+                return result
+            current_networks, query_trace = self.coordinator._query_current_networks_with_trace(module_args, strategy)
+            self.coordinator._merge_api_trace(result, query_trace)
+            deploy_payloads = self.coordinator._build_pending_network_deploy_payloads(
+                {"after": current_networks},
                 config,
                 module_args,
                 strategy,
