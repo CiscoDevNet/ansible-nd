@@ -1,0 +1,120 @@
+---
+# Merged state tests for nd_manage_l3out
+# Copyright: (c) 2026, Cisco Systems, Inc.
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- MERGED CREATE: BGP L3Out ---
+
+- name: "MERGED CREATE: Create BGP L3Out with routed interfaces (check mode)"
+  cisco.nd.nd_manage_l3out: &merge_l3out_bgp
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ l3out_bgp }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_bgp
+
+- name: "MERGED CREATE: Create BGP L3Out with routed interfaces (normal mode)"
+  cisco.nd.nd_manage_l3out: *merge_l3out_bgp
+  register: nm_merged_create_bgp
+
+- name: "MERGED CREATE: Verify BGP L3Out creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_bgp is changed
+      - nm_merged_create_bgp is changed
+      - nm_merged_create_bgp.after | length >= 1
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Re-apply BGP L3Out creation (check mode)"
+  cisco.nd.nd_manage_l3out: *merge_l3out_bgp
+  check_mode: true
+  register: cm_merged_idem_bgp
+
+- name: "MERGED IDEMPOTENT: Re-apply BGP L3Out creation (normal mode)"
+  cisco.nd.nd_manage_l3out: *merge_l3out_bgp
+  register: nm_merged_idem_bgp
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_bgp is not changed
+      - nm_merged_idem_bgp is not changed
+
+# --- MERGED CREATE: Static L3Out ---
+
+- name: "MERGED CREATE: Create static L3Out with subInterface (check mode)"
+  cisco.nd.nd_manage_l3out: &merge_l3out_static
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ l3out_static }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_static
+
+- name: "MERGED CREATE: Create static L3Out with subInterface (normal mode)"
+  cisco.nd.nd_manage_l3out: *merge_l3out_static
+  register: nm_merged_create_static
+
+- name: "MERGED CREATE: Verify static L3Out creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_static is changed
+      - nm_merged_create_static is changed
+
+# --- MERGED CREATE: SVI L3Out ---
+
+- name: "MERGED CREATE: Create SVI L3Out with dual-stack (check mode)"
+  cisco.nd.nd_manage_l3out: &merge_l3out_svi
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ l3out_svi }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_svi
+
+- name: "MERGED CREATE: Create SVI L3Out with dual-stack (normal mode)"
+  cisco.nd.nd_manage_l3out: *merge_l3out_svi
+  register: nm_merged_create_svi
+
+- name: "MERGED CREATE: Verify SVI L3Out creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_svi is changed
+      - nm_merged_create_svi is changed
+
+# --- MERGED UPDATE ---
+
+- name: "MERGED UPDATE: Update BGP L3Out hold_interval (check mode)"
+  cisco.nd.nd_manage_l3out: &merge_l3out_bgp_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ l3out_bgp_updated }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_update_bgp
+
+- name: "MERGED UPDATE: Update BGP L3Out hold_interval (normal mode)"
+  cisco.nd.nd_manage_l3out: *merge_l3out_bgp_updated
+  register: nm_merged_update_bgp
+
+- name: "MERGED UPDATE: Verify BGP L3Out was updated"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update_bgp is changed
+      - nm_merged_update_bgp is changed
+
+- name: "MERGED UPDATE: Re-apply update for idempotency"
+  cisco.nd.nd_manage_l3out: *merge_l3out_bgp_updated
+  register: nm_merged_update_bgp_idem
+
+- name: "MERGED UPDATE: Verify idempotency after update"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_bgp_idem is not changed

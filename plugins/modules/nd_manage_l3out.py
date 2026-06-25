@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Slawomir Kaszlikowski
+# Copyright: (c) 2026, Cisco Systems, Inc.
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -17,18 +17,18 @@ ANSIBLE_METADATA = {
 
 DOCUMENTATION = r"""
 ---
-module: nd_l3out
-version_added: "1.0.0"
+module: nd_manage_l3out
+version_added: "2.0.0"
 short_description: Manage L3Outs (Layer-3 Outs) on Cisco Nexus Dashboard
 description:
 - Manage L3Out (Layer-3 Out) configurations on Cisco Nexus Dashboard (ND).
-- L3Outs provide connectivity between NDFC-managed fabrics and external networks.
+- L3Outs provide connectivity between ND-managed fabrics and external networks.
 - Supports multiple connectivity types (routed, subInterface, svi) and routing protocols (BGP, static).
 - Requires ND 4.1 or later.
 author:
-- Slawomir Kaszlikowski
+- Cisco Systems, Inc.
 options:
-  fabric:
+  fabric_name:
     description:
     - Name of the target fabric for L3Out operations.
     type: str
@@ -41,13 +41,10 @@ options:
       If an L3Out does not exist, it will be created.
     - Use O(state=replaced) to completely replace existing L3Out configurations.
       If an L3Out exists, it will be fully replaced. If it does not exist, it will be created.
-    - Use O(state=overridden) to enforce the configuration as the single source of truth.
-      The L3Outs on ND will be modified to exactly match the configuration.
-      Any L3Out existing on ND but not present in the configuration will be deleted. Use with extra caution.
-    - Use O(state=deleted) to delete L3Outs.
-      If no O(config) is provided, all L3Outs in the fabric will be deleted.
+    - Use O(state=deleted) to delete the L3Outs specified in O(config).
+      The O(config) list is required and each item must include at least O(config.name).
     type: str
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, deleted ]
     default: merged
   config:
     description:
@@ -183,7 +180,11 @@ options:
                 suboptions:
                   switch_id:
                     description:
-                    - Unique identifier of the switch (serial number).
+                    - Unique identifier of the switch.
+                    - Accepts either the switch serial number (e.g. C(FDO12345678)) or the
+                      switch management IP address (e.g. C(10.1.1.11)).
+                    - When a management IP is provided, it is automatically resolved to the
+                      serial number via the fabric switch inventory.
                     type: str
                     required: true
                   interface_name:
@@ -195,13 +196,13 @@ options:
                     description:
                     - Admin state of the interface.
                     type: bool
-                  ipv4_address:
+                  interface_interface_ipv4_address:
                     description:
-                    - IPv4 address for the interface.
+                    - IPv4 address assigned to the L3Out interface.
                     type: str
-                  ipv6_address:
+                  interface_ipv6_address:
                     description:
-                    - IPv6 address for the interface.
+                    - IPv6 address assigned to the L3Out interface.
                     type: str
                   netflow:
                     description:
@@ -222,7 +223,11 @@ options:
                 suboptions:
                   switch_id:
                     description:
-                    - Unique identifier of the switch (serial number).
+                    - Unique identifier of the switch.
+                    - Accepts either the switch serial number (e.g. C(FDO12345678)) or the
+                      switch management IP address (e.g. C(10.1.1.11)).
+                    - When a management IP is provided, it is automatically resolved to the
+                      serial number via the fabric switch inventory.
                     type: str
                     required: true
                   interface_name:
@@ -234,13 +239,13 @@ options:
                     description:
                     - Admin state of the interface.
                     type: bool
-                  ipv4_address:
+                  interface_interface_ipv4_address:
                     description:
-                    - IPv4 address for the interface.
+                    - IPv4 address assigned to the L3Out interface.
                     type: str
-                  ipv6_address:
+                  interface_ipv6_address:
                     description:
-                    - IPv6 address for the interface.
+                    - IPv6 address assigned to the L3Out interface.
                     type: str
                   netflow:
                     description:
@@ -571,16 +576,16 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard having version 4.1 or higher.
-- L3Outs provide inter-fabric connectivity between NDFC-managed fabrics and external networks.
-- The fabric parameter refers to the fabric context for the L3Out operations (typically fabric1).
+- L3Outs provide inter-fabric connectivity between ND-managed fabrics and external networks.
+- The fabric_name parameter refers to the fabric context for the L3Out operations (typically fabric1).
 - The RV(before) output shows existing L3Outs in the fabric before any changes.
 - The RV(after) output shows L3Outs in the fabric after changes are applied.
 """
 
 EXAMPLES = r"""
 - name: Create L3Out with routed interfaces and BGP
-  cisco.nd.nd_l3out:
-    fabric: "{{ fabric_name }}"
+  cisco.nd.nd_manage_l3out:
+    fabric_name: "{{ fabric_name }}"
     state: merged
     config:
       - name: my-l3out
@@ -600,11 +605,11 @@ EXAMPLES = r"""
               switch1_details:
                 switch_id: FDO12345678
                 interface_name: Ethernet1/1
-                ipv4_address: 10.0.0.1
+                interface_ipv4_address: 10.0.0.1
               switch2_details:
                 switch_id: FDO87654321
                 interface_name: Ethernet1/1
-                ipv4_address: 10.0.0.2
+                interface_ipv4_address: 10.0.0.2
         routing_details:
           routing_protocol: bgp
           auth: false
@@ -623,8 +628,8 @@ EXAMPLES = r"""
   register: create_l3out
 
 - name: Create L3Out with attach (deploy after creation)
-  cisco.nd.nd_l3out:
-    fabric: "{{ fabric_name }}"
+  cisco.nd.nd_manage_l3out:
+    fabric_name: "{{ fabric_name }}"
     state: merged
     config:
       - name: my-l3out-deployed
@@ -644,11 +649,11 @@ EXAMPLES = r"""
               switch1_details:
                 switch_id: FDO12345678
                 interface_name: Ethernet1/1.100
-                ipv4_address: 10.0.0.1
+                interface_ipv4_address: 10.0.0.1
               switch2_details:
                 switch_id: FDO87654321
                 interface_name: Ethernet1/1.100
-                ipv4_address: 10.0.0.2
+                interface_ipv4_address: 10.0.0.2
         routing_details:
           routing_protocol: bgp
           fabric1_details:
@@ -657,8 +662,8 @@ EXAMPLES = r"""
             local_asn: "65002"
 
 - name: Detach (undeploy) an existing L3Out
-  cisco.nd.nd_l3out:
-    fabric: "{{ fabric_name }}"
+  cisco.nd.nd_manage_l3out:
+    fabric_name: "{{ fabric_name }}"
     state: merged
     config:
       - name: my-l3out-deployed
@@ -678,11 +683,11 @@ EXAMPLES = r"""
               switch1_details:
                 switch_id: FDO12345678
                 interface_name: Ethernet1/1.100
-                ipv4_address: 10.0.0.1
+                interface_ipv4_address: 10.0.0.1
               switch2_details:
                 switch_id: FDO87654321
                 interface_name: Ethernet1/1.100
-                ipv4_address: 10.0.0.2
+                interface_ipv4_address: 10.0.0.2
         routing_details:
           routing_protocol: bgp
           fabric1_details:
@@ -691,8 +696,8 @@ EXAMPLES = r"""
             local_asn: "65002"
 
 - name: Create L3Out with subInterface and static routing
-  cisco.nd.nd_l3out:
-    fabric: "{{ fabric_name }}"
+  cisco.nd.nd_manage_l3out:
+    fabric_name: "{{ fabric_name }}"
     state: merged
     config:
       - name: l3out-static
@@ -711,12 +716,12 @@ EXAMPLES = r"""
               switch1_details:
                 switch_id: FDO12345678
                 interface_name: Ethernet1/2.100
-                ipv4_address: 192.168.100.1
+                interface_ipv4_address: 192.168.100.1
                 interface_description: "Link to external network"
               switch2_details:
                 switch_id: FDO87654321
                 interface_name: Ethernet1/2.100
-                ipv4_address: 192.168.100.2
+                interface_ipv4_address: 192.168.100.2
                 interface_description: "Link from DC1"
         routing_details:
           routing_protocol: static
@@ -729,8 +734,8 @@ EXAMPLES = r"""
               route_preference: 1
 
 - name: Replace an existing L3Out completely
-  cisco.nd.nd_l3out:
-    fabric: "{{ fabric_name }}"
+  cisco.nd.nd_manage_l3out:
+    fabric_name: "{{ fabric_name }}"
     state: replaced
     config:
       - name: my-l3out
@@ -747,11 +752,11 @@ EXAMPLES = r"""
               switch1_details:
                 switch_id: FDO12345678
                 interface_name: Ethernet1/3
-                ipv4_address: 10.0.1.1
+                interface_ipv4_address: 10.0.1.1
               switch2_details:
                 switch_id: FDO87654321
                 interface_name: Ethernet1/3
-                ipv4_address: 10.0.1.2
+                interface_ipv4_address: 10.0.1.2
         routing_details:
           routing_protocol: static
           fabric1_static_routes:
@@ -762,17 +767,12 @@ EXAMPLES = r"""
                 - FDO12345678
 
 - name: Delete specific L3Outs
-  cisco.nd.nd_l3out:
-    fabric: "{{ fabric_name }}"
+  cisco.nd.nd_manage_l3out:
+    fabric_name: "{{ fabric_name }}"
     state: deleted
     config:
       - name: my-l3out
       - name: l3out-static
-
-- name: Delete all L3Outs in fabric (use with caution)
-  cisco.nd.nd_l3out:
-    fabric: "{{ fabric_name }}"
-    state: deleted
 """
 
 RETURN = r"""
@@ -824,22 +824,101 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_l3ou
 )
 
 
-def _handle_attachments(nd_state_machine: NDStateMachine, check_mode: bool) -> None:
+# Fields required by the OpenAPI l3Out schema for create/update operations
+_WRITE_STATE_REQUIRED_FIELDS = [
+    "fabric1_name",
+    "fabric2_name",
+    "vrf1_name",
+    "vrf2_name",
+    "configured_fabrics",
+    "ip_version",
+    "connectivity_details",
+    "routing_details",
+]
+
+
+def _validate_config_for_state(module: AnsibleModule) -> None:
+    """
+    Validate that config items have all required fields for the current state.
+
+    For merged/replaced states, the ND L3Out API requires a complete object.
+    For deleted state, config must be provided with at least the L3Out name(s).
+    Validating locally produces clear error messages instead of opaque
+    controller-side bulk item failures.
+    """
+    state = module.params.get("state")
+    config = module.params.get("config") or []
+
+    if state == "deleted" and not config:
+        module.fail_json(
+            msg=(
+                "The 'config' parameter is required for state=deleted. "
+                "Provide a list of L3Outs to delete, each with at least a 'name' field."
+            )
+        )
+
+    if state not in ("merged", "replaced"):
+        return
+
+    for idx, item in enumerate(config):
+        missing = [f for f in _WRITE_STATE_REQUIRED_FIELDS if not item.get(f)]
+        if missing:
+            name = item.get("name", f"config[{idx}]")
+            module.fail_json(
+                msg=(
+                    f"L3Out '{name}': missing required fields for state={state}: "
+                    f"{', '.join(missing)}. "
+                    f"All L3Out fields are required for create/update operations."
+                )
+            )
+
+
+def _handle_attachments(nd_state_machine: NDStateMachine, check_mode: bool) -> dict:
     """
     Process attach/detach operations for L3Outs that have the attach field set.
 
     This is called after manage_state() completes to handle deployment operations.
+    Attach/detach is a separate API action endpoint and is excluded from the
+    model diff, so this function explicitly tracks and reports changes.
+
+    Returns:
+        A dict with 'attachment_changed' (bool) and 'attachment_failures' (list).
     """
-    if check_mode:
-        return
+    result = {"attachment_changed": False, "attachment_failures": []}
 
     attachments = []
     for item in nd_state_machine.proposed:
         if item.attach is not None:
             attachments.append({"name": item.name, "attach": item.attach})
 
-    if attachments:
-        nd_state_machine.model_orchestrator.attach_l3outs(attachments)
+    if not attachments:
+        return result
+
+    if check_mode:
+        result["attachment_changed"] = True
+        return result
+
+    try:
+        api_result = nd_state_machine.model_orchestrator.attach_l3outs(attachments)
+
+        # Check for per-item failures in 207 response
+        if api_result and isinstance(api_result, dict):
+            items = api_result.get("results", [])
+            for item in items:
+                if isinstance(item, dict):
+                    status = item.get("status", "")
+                    if status == "failed":
+                        name = item.get("name", "unknown")
+                        message = item.get("message", "No details")
+                        result["attachment_failures"].append(
+                            f"'{name}': {message}"
+                        )
+
+        result["attachment_changed"] = True
+    except Exception as e:
+        result["attachment_failures"].append(str(e))
+
+    return result
 
 
 def main():
@@ -852,6 +931,9 @@ def main():
     )
     require_pydantic(module)
 
+    # Validate required fields before entering state machine
+    _validate_config_for_state(module)
+
     nd_state_machine = None
 
     try:
@@ -861,29 +943,42 @@ def main():
             model_orchestrator=L3OutOrchestrator,
         )
 
-        # Manage state (merged, replaced, overridden, deleted)
+        # Manage state (merged, replaced, deleted)
         nd_state_machine.manage_state()
 
         # Post-state: handle attach/detach operations
-        _handle_attachments(nd_state_machine, module.check_mode)
+        attach_result = _handle_attachments(nd_state_machine, module.check_mode)
 
         # Format output
-        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
-        module.exit_json(
-            **nd_state_machine.output.format_with_verbosity(
-                verbosity, nd_state_machine.results
-            )
-        )
+        output = nd_state_machine.output.format()
+
+        # Merge attachment state into output
+        if attach_result["attachment_changed"]:
+            output["changed"] = True
+        if attach_result["attachment_failures"]:
+            output.setdefault("warnings", [])
+            for failure in attach_result["attachment_failures"]:
+                output["warnings"].append(
+                    f"Attachment operation failed: {failure}"
+                )
+
+        module.exit_json(**output)
 
     except NDStateMachineError as e:
-        output = nd_state_machine.output.format() if nd_state_machine else {}
+        try:
+            output = nd_state_machine.output.format() if nd_state_machine else {}
+        except Exception:
+            output = {}
         error_msg = f"Module execution failed: {str(e)}"
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
 
     except Exception as e:
-        output = nd_state_machine.output.format() if nd_state_machine else {}
+        try:
+            output = nd_state_machine.output.format() if nd_state_machine else {}
+        except Exception:
+            output = {}
         error_msg = f"Module failed: {str(e)}"
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"

@@ -1,4 +1,4 @@
-# Copyright: (c) 2026, Slawomir Kaszlikowski
+# Copyright: (c) 2026, Cisco Systems, Inc.
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """
@@ -17,6 +17,10 @@ Endpoints:
   (PUT /api/v1/manage/l3Outs/{l3OutName})
 - EpManageL3OutDelete - Delete a specific L3Out
   (DELETE /api/v1/manage/l3Outs/{l3OutName})
+- EpManageL3OutAttach - Attach/detach L3Outs
+  (POST /api/v1/manage/l3OutActions/attach)
+- EpManageL3OutBulkDelete - Bulk delete L3Outs
+  (POST /api/v1/manage/l3OutActions/remove)
 """
 
 from __future__ import absolute_import, annotations, division, print_function
@@ -88,9 +92,11 @@ class _EpManageL3OutBase(FabricNameMixin, NDEndpointBaseModel):
 
 class EpManageL3OutsGet(_EpManageL3OutBase):
     """
-    GET /api/v1/manage/l3Outs
+    GET /api/v1/manage/l3Outs?fabricName={fabricName}
 
     List all L3Outs. Optionally filter by fabric name using query parameter.
+    The fabricName query param is rendered into the path by the endpoint,
+    keeping query-string construction out of the orchestrator.
     """
 
     class_name: Literal["EpManageL3OutsGet"] = Field(
@@ -108,26 +114,26 @@ class EpManageL3OutsGet(_EpManageL3OutBase):
 
     @property
     def path(self) -> str:
-        return self._build_collection_path()
+        base_path = self._build_collection_path()
+        if self.fabric_name:
+            return f"{base_path}?fabricName={self.fabric_name}"
+        return base_path
 
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.GET
-
-    @property
-    def query_params(self) -> dict:
-        """Return query parameters for filtering by fabric name."""
-        params = {}
-        if self.fabric_name:
-            params["fabricName"] = self.fabric_name
-        return params
 
 
 class EpManageL3OutPost(_EpManageL3OutBase):
     """
     POST /api/v1/manage/l3Outs
 
-    Create one or more L3Outs
+    Create one or more L3Outs.
+
+    Request body format:
+        {"l3Outs": [{...l3out1...}, {...l3out2...}]}
+
+    Response: GenericBulkResponse (HTTP 207 multi-status)
     """
 
     class_name: Literal["EpManageL3OutPost"] = Field(
@@ -139,6 +145,33 @@ class EpManageL3OutPost(_EpManageL3OutBase):
     @property
     def path(self) -> str:
         return self._build_collection_path()
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpManageL3OutBulkDelete(NDEndpointBaseModel):
+    """
+    POST /api/v1/manage/l3OutActions/remove
+
+    Bulk delete multiple L3Outs in a single request.
+
+    Request body format:
+        {"l3OutNames": ["L3Out1", "L3Out2"]}
+
+    Response: GenericBulkResponse (HTTP 207 multi-status)
+    """
+
+    class_name: Literal["EpManageL3OutBulkDelete"] = Field(
+        default="EpManageL3OutBulkDelete",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        return BasePath.path("l3OutActions", "remove")
 
     @property
     def verb(self) -> HttpVerbEnum:

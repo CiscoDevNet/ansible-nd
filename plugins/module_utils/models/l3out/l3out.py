@@ -1,4 +1,4 @@
-# Copyright: (c) 2026, Slawomir Kaszlikowski
+# Copyright: (c) 2026, Cisco Systems, Inc.
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -116,8 +116,8 @@ class SwitchDetailsModel(NDNestedModel):
 
     switch_id: str = Field(alias="switchId")
     interface_name: str = Field(alias="interfaceName")
-    ipv4_address: Optional[str] = Field(default=None, alias="ipv4Address")
-    ipv6_address: Optional[str] = Field(default=None, alias="ipv6Address")
+    interface_ipv4_address: Optional[str] = Field(default=None, alias="ipv4Address")
+    interface_ipv6_address: Optional[str] = Field(default=None, alias="ipv6Address")
     interface_description: Optional[str] = Field(
         default=None, alias="interfaceDescription"
     )
@@ -162,7 +162,7 @@ class L3OutModel(NDBaseModel):
     """
     Layer-3 Out (L3Out) configuration for Nexus Dashboard.
 
-    L3Outs provide connectivity between NDFC-managed fabrics and external networks.
+    L3Outs provide connectivity between ND-managed fabrics and external networks.
     They support multiple connectivity types (routed, subInterface, svi) and
     routing protocols (BGP, static).
 
@@ -211,7 +211,7 @@ class L3OutModel(NDBaseModel):
     @classmethod
     def get_argument_spec(cls) -> Dict:
         """
-        Return the Ansible argument spec for the nd_l3out module.
+        Return the Ansible argument spec for the nd_manage_l3out module.
 
         The L3Out module has a complex nested structure with discriminated types
         for connectivity (routed/subInterface/svi) and routing (bgp/static).
@@ -222,8 +222,8 @@ class L3OutModel(NDBaseModel):
             switch_id=dict(type="str", required=True),
             interface_name=dict(type="str", required=True),
             interface_admin_state=dict(type="bool"),
-            ipv4_address=dict(type="str"),
-            ipv6_address=dict(type="str"),
+            interface_ipv4_address=dict(type="str"),
+            interface_ipv6_address=dict(type="str"),
             netflow=dict(type="bool"),
             netflow_monitor=dict(type="str"),
             interface_description=dict(type="str"),
@@ -342,11 +342,11 @@ class L3OutModel(NDBaseModel):
         )
 
         return dict(
-            fabric=dict(type="str", required=True),
+            fabric_name=dict(type="str", required=True),
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "deleted"],
             ),
             config=dict(type="list", elements="dict", default=[], options=l3out_spec),
         )
