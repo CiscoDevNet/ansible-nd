@@ -154,7 +154,9 @@ class SubinterfaceUnmanagedInterfaceModel(NDBaseModel):
         ### ValueError
 
         - If `value` is a string without a `.<sub>` segment.
+        - If the `.<sub>` segment is empty or non-numeric (e.g. `'Ethernet1/3.'`).
         - If `value` does not start with `Ethernet` or `Port-channel` (case-insensitive).
+        - If the parent has no port/channel number after the prefix (e.g. `'ethernetfoo.1'`).
         """
         if not isinstance(value, str) or not value:
             return value
@@ -162,14 +164,22 @@ class SubinterfaceUnmanagedInterfaceModel(NDBaseModel):
         if "." not in stripped:
             raise ValueError(f"interface_name must include a dot-separated subinterface id (e.g. 'Ethernet1/3.2'); got {value!r}")
         parent, sub = stripped.rsplit(".", 1)
+        if not sub.isdigit():
+            raise ValueError(f"interface_name subinterface id (after '.') must be a number (e.g. 'Ethernet1/3.2'); got {value!r}")
         parent_lower = parent.lower()
         # ND echoes interface names lowercased on GET; normalize to canonical case so idempotency comparisons work.
         if parent_lower.startswith("ethernet"):
-            canonical_parent = "Ethernet" + parent[len("ethernet") :]
+            port_spec = parent[len("ethernet") :]
+            canonical_parent = "Ethernet" + port_spec
         elif parent_lower.startswith("port-channel"):
-            canonical_parent = "Port-channel" + parent[len("port-channel") :]
+            port_spec = parent[len("port-channel") :]
+            canonical_parent = "Port-channel" + port_spec
         else:
             raise ValueError(f"interface_name parent must be 'Ethernet...' or 'Port-channel...'; got parent={parent!r}")
+        if not port_spec or not port_spec[0].isdigit():
+            raise ValueError(
+                f"interface_name parent {parent!r} is malformed; expected a port/channel number after the prefix (e.g. 'Ethernet1/3', 'Port-channel10')"
+            )
         return f"{canonical_parent}.{sub}"
 
     # --- Argument Spec ---

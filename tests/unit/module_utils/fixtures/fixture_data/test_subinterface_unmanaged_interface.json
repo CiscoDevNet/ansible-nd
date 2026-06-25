@@ -435,5 +435,36 @@
                 }
             ]
         }
+    },
+    "test_subinterface_unmanaged_interface_00704a": {
+        "TEST_NOTES": ["query_all non-dict DATA: fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "local": true, "fabricStatus": "default"}
+    },
+    "test_subinterface_unmanaged_interface_00704b": {
+        "TEST_NOTES": ["query_all non-dict DATA: switches list (1 switch)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00704c": {
+        "TEST_NOTES": [
+            "query_all non-dict DATA: ND returns a bare JSON array instead of {'interfaces': [...]}.",
+            "The isinstance(result, dict) guard must skip this switch rather than raising AttributeError on .get()."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": []
     }
 }

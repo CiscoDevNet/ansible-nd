@@ -63,12 +63,26 @@ def _build_rest_send(gen_responses: ResponseGenerator) -> RestSend:
         ({"results": [{"name": "Ethernet1/3.20", "status": "success", "message": "ok"}]}, False),
         ({"results": [{"name": "Ethernet1/3.20", "status": "failed", "message": "parent not routed"}]}, True),
         ({"results": [{"name": "Ethernet1/3.20", "status": "error", "message": "validation"}]}, True),
+        ({"results": [{"name": "Ethernet1/3.20", "status": "Failed", "message": "parent not routed"}]}, True),
+        ({"results": [{"name": "Ethernet1/3.20", "status": " ERROR ", "message": "validation"}]}, True),
+        ({"results": [{"name": "Ethernet1/3.20", "status": None, "message": "no status key"}]}, False),
         ({"results": []}, False),
         ({}, False),
         (None, False),
         ("not a dict", False),
     ],
-    ids=["success", "failed-raises", "error-raises", "empty-results", "missing-results", "none-input", "non-dict-input"],
+    ids=[
+        "success",
+        "failed-raises",
+        "error-raises",
+        "failed-mixed-case-raises",
+        "error-padded-uppercase-raises",
+        "none-status-no-raise",
+        "empty-results",
+        "missing-results",
+        "none-input",
+        "non-dict-input",
+    ],
 )
 def test_subinterface_unmanaged_interface_00010(payload, expected_raise) -> None:
     """
@@ -79,7 +93,7 @@ def test_subinterface_unmanaged_interface_00010(payload, expected_raise) -> None
     ## Test
 
     - Various 207-body shapes are passed
-    - `RuntimeError` is raised iff any item carries `status` in `("failed", "error")`
+    - `RuntimeError` is raised iff any item carries `status` of `"failed"`/`"error"` (case-insensitive, whitespace-tolerant)
 
     ## Classes and Methods
 
@@ -717,6 +731,42 @@ def test_subinterface_unmanaged_interface_00703(monkeypatch) -> None:
 
     - One switch with only ethernet interfaces
     - `query_all` returns []
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.query_all()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}c")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+
+    with does_not_raise():
+        result = orchestrator.query_all()
+
+    assert result == []
+
+
+def test_subinterface_unmanaged_interface_00704(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `query_all` skips a switch whose interface-list DATA is a non-dict (e.g. ND returns a bare JSON array
+    instead of `{"interfaces": [...]}`) instead of raising `AttributeError` on `.get()`.
+
+    ## Test
+
+    - Fabric summary returns valid (local, default)
+    - Switches list returns one switch
+    - That switch's interfaces GET returns a bare list as DATA
+    - `query_all` returns [] without raising
 
     ## Classes and Methods
 

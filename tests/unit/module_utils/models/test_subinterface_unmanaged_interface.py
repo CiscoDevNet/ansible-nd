@@ -347,6 +347,77 @@ def test_subinterface_unmanaged_interface_00740():
     assert "parent must be" not in message
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["Ethernet1/3.", "Port-channel10."],
+    ids=["ethernet_trailing_dot", "portchannel_trailing_dot"],
+)
+def test_subinterface_unmanaged_interface_00750(value):
+    """
+    # Summary
+
+    Verify `normalize_interface_name` rejects a trailing-dot name with an empty sub-id (e.g. `Ethernet1/3.`).
+
+    ## Test
+
+    - A name whose `.<sub>` segment is empty raises ValidationError mentioning the numeric sub-id requirement
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceModel.normalize_interface_name()
+    """
+    with pytest.raises(ValidationError, match="subinterface id .* must be a number"):
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="1.2.3.4", interface_name=value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["Ethernet1/3.abc", "Port-channel10.2a"],
+    ids=["ethernet_alpha_sub", "portchannel_alphanumeric_sub"],
+)
+def test_subinterface_unmanaged_interface_00760(value):
+    """
+    # Summary
+
+    Verify `normalize_interface_name` rejects a non-numeric sub-id (e.g. `Ethernet1/3.abc`).
+
+    ## Test
+
+    - A name whose `.<sub>` segment is not all-digits raises ValidationError mentioning the numeric sub-id requirement
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceModel.normalize_interface_name()
+    """
+    with pytest.raises(ValidationError, match="subinterface id .* must be a number"):
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="1.2.3.4", interface_name=value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["ethernetfoo.1", "port-channelbar.2"],
+    ids=["ethernet_no_port", "portchannel_no_number"],
+)
+def test_subinterface_unmanaged_interface_00770(value):
+    """
+    # Summary
+
+    Verify `normalize_interface_name` rejects a parent that carries the right prefix but no port/channel number
+    after it (e.g. `ethernetfoo.1`), rather than silently canonicalizing the malformed parent.
+
+    ## Test
+
+    - A name whose parent has a non-numeric first character after the `Ethernet`/`Port-channel` prefix raises
+      ValidationError mentioning the malformed parent
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceModel.normalize_interface_name()
+    """
+    with pytest.raises(ValidationError, match="is malformed"):
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="1.2.3.4", interface_name=value)
+
+
 # =============================================================================
 # Test: SubinterfaceUnmanagedInterfaceModel — composite identifier
 # =============================================================================
