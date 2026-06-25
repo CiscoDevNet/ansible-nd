@@ -341,6 +341,50 @@ EXAMPLES = r"""
                 - Ethernet1/2
     state: merged
 
+- name: Replace the configuration of a specific vPC interface
+  cisco.nd.nd_interface_vpc_access:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: vpc100
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 20
+              peer1_port_channel_id: 100
+              peer1_member_ports:
+                - Ethernet1/3
+              peer2_port_channel_id: 100
+              peer2_member_ports:
+                - Ethernet1/3
+              port_channel_mode: active
+              peer1_port_channel_description: Reprovisioned Server-A on peer1
+              peer2_port_channel_description: Reprovisioned Server-A on peer2
+    state: replaced
+
+# state=overridden is fabric-wide: every vPC interface in the fabric that is managed by this module and is NOT
+# listed below is deleted. An empty config list deletes ALL such vPC interfaces in the fabric. Use with caution.
+- name: Enforce vPC interfaces fabric-wide, deleting all others managed by this module
+  cisco.nd.nd_interface_vpc_access:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: vpc100
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 10
+              peer1_port_channel_id: 100
+              peer1_member_ports:
+                - Ethernet1/1
+              peer2_port_channel_id: 100
+              peer2_member_ports:
+                - Ethernet1/1
+              port_channel_mode: active
+    state: overridden
+
 - name: Delete a vPC interface
   cisco.nd.nd_interface_vpc_access:
     fabric_name: my_fabric
