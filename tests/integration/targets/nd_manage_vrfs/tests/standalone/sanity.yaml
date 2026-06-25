@@ -9,11 +9,6 @@
 
 - name: Standalone Sanity - Build Test Data
   ansible.builtin.set_fact:
-    target_fabric: "{{ nd_vrf_standalone_fabric }}"
-    target_vrf_names:
-      - ansible-nd-vrf-sanity-a
-      - ansible-nd-vrf-sanity-b
-      - ansible-nd-vrf-sanity-c
     nd_vrf_sanity_attach_block: >-
       {{
         [
@@ -31,6 +26,16 @@
           }
         ] if nd_vrf_standalone_switch | length > 0 else []
       }}
+  delegate_to: localhost
+  tags: sanity
+
+- name: Standalone Sanity - Build Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_standalone_fabric }}"
+    target_vrf_names:
+      - ansible-nd-vrf-sanity-a
+      - ansible-nd-vrf-sanity-b
+      - ansible-nd-vrf-sanity-c
     nd_vrf_sanity_merge_config:
       - vrf_name: ansible-nd-vrf-sanity-a
         vrf_id: "{{ nd_vrf_base_id + 40 }}"
