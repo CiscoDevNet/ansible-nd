@@ -13,7 +13,7 @@ version_added: "2.0.0"
 short_description: Manage SVI (switched virtual) interfaces on Cisco Nexus Dashboard
 description:
 - Manage SVI interfaces on Cisco Nexus Dashboard.
-- It supports creating, updating, querying, and deleting SVI interface configurations on switches within a fabric.
+- It supports creating, updating, and deleting SVI interface configurations on switches within a fabric.
 - Each config item targets a single SVI identified by O(config[].interface_name) (e.g. C(vlan333)).
 - Configure multiple SVIs in one task by listing multiple config items.
 author:
