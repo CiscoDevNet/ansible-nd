@@ -333,12 +333,19 @@ def test_svi_interface_00220(field, value, should_raise):
 
     - SviPolicyModel.__init__()
     """
+    # `prefix`/`prefixv6` are required-together with `ip`/`ipv6` (see `_validate_ip_prefix_paired`), so supply
+    # the paired address when range-testing the mask length in isolation.
+    kwargs = {field: value}
+    if field == "prefix":
+        kwargs.setdefault("ip", "10.1.1.1")
+    elif field == "prefixv6":
+        kwargs.setdefault("ipv6", "2001:db8::1")
     if should_raise:
         with pytest.raises(ValidationError):
-            SviPolicyModel(**{field: value})
+            SviPolicyModel(**kwargs)
     else:
         with does_not_raise():
-            instance = SviPolicyModel(**{field: value})
+            instance = SviPolicyModel(**kwargs)
         assert getattr(instance, field) == value
 
 
@@ -361,6 +368,60 @@ def test_svi_interface_00230():
         SviPolicyModel(description="a" * 254)
     with pytest.raises(ValidationError):
         SviPolicyModel(description="a" * 255)
+
+
+def test_svi_interface_00240():
+    """
+    # Summary
+
+    Verify `_validate_netflow_monitor_present`: `netflow_monitor` is required when `netflow` is true.
+
+    ## Test
+
+    - `netflow=True` without `netflow_monitor` is rejected
+    - `netflow=True` with `netflow_monitor` is accepted
+    - `netflow=False` (or unset) without `netflow_monitor` is accepted
+
+    ## Classes and Methods
+
+    - SviPolicyModel._validate_netflow_monitor_present()
+    """
+    with pytest.raises(ValidationError, match="netflow_monitor must be provided when netflow is true"):
+        SviPolicyModel(netflow=True)
+    with does_not_raise():
+        SviPolicyModel(netflow=True, netflow_monitor="MONITOR-1")
+        SviPolicyModel(netflow=False)
+        SviPolicyModel()
+
+
+def test_svi_interface_00250():
+    """
+    # Summary
+
+    Verify `_validate_ip_prefix_paired`: `ip`/`prefix` (and `ipv6`/`prefixv6`) are required together.
+
+    ## Test
+
+    - `ip` without `prefix` is rejected; `prefix` without `ip` is rejected
+    - `ipv6` without `prefixv6` is rejected; `prefixv6` without `ipv6` is rejected
+    - Both halves of a pair, or neither, is accepted
+
+    ## Classes and Methods
+
+    - SviPolicyModel._validate_ip_prefix_paired()
+    """
+    with pytest.raises(ValidationError, match="ip and prefix are required together"):
+        SviPolicyModel(ip="10.1.1.1")
+    with pytest.raises(ValidationError, match="ip and prefix are required together"):
+        SviPolicyModel(prefix=24)
+    with pytest.raises(ValidationError, match="ipv6 and prefixv6 are required together"):
+        SviPolicyModel(ipv6="2001:db8::1")
+    with pytest.raises(ValidationError, match="ipv6 and prefixv6 are required together"):
+        SviPolicyModel(prefixv6=64)
+    with does_not_raise():
+        SviPolicyModel(ip="10.1.1.1", prefix=24)
+        SviPolicyModel(ipv6="2001:db8::1", prefixv6=64)
+        SviPolicyModel()
 
 
 # =============================================================================

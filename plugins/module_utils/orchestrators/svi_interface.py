@@ -246,7 +246,7 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
             for switch_ip, switch_id in self.fabric_context.switch_map.items():
                 api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
                 result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-                if not result:
+                if not isinstance(result, dict):
                     continue
                 interfaces = result.get("interfaces", []) or []
                 svis = [iface for iface in interfaces if iface.get("interfaceType") == "svi"]
