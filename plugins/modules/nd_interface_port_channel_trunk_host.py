@@ -431,6 +431,92 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed, or in check mode would change, the fabric configuration.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
+  - An empty list when no matching interface configuration existed.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: port-channel501
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          allowed_vlans: "100-200"
+          native_vlan: 99
+          ports:
+          - Ethernet1/1
+          - Ethernet1/2
+          port_channel_mode: active
+after:
+  description:
+  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
+  - In check mode, the configuration that would result had the module run outside of check mode.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: port-channel501
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          allowed_vlans: "100-300"
+          native_vlan: 99
+          ports:
+          - Ethernet1/1
+          - Ethernet1/2
+          port_channel_mode: active
+diff:
+  description: The per-interface difference between C(before) and C(after).
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: port-channel501
+    config_data:
+      network_os:
+        policy:
+          allowed_vlans: "100-300"
+proposed:
+  description: The configuration the module proposed to apply, before reconciliation with the controller.
+  returned: when O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: port-channel501
+    config_data:
+      network_os:
+        policy:
+          allowed_vlans: "100-300"
+logs:
+  description: Internal diagnostic log messages collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample:
+  - "Querying existing port-channel interface configuration"
+msg:
+  description: A human-readable error message, present only when the module fails.
+  returned: on failure
+  type: str
+  sample: "Configuration error: ..."
 """
 
 # pylint: disable=wrong-import-position
