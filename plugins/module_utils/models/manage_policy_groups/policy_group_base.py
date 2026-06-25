@@ -146,7 +146,7 @@ class PolicyGroupCreate(NDBaseModel):
     source: str | None = Field(
         default="",
         max_length=255,
-        description="Controller source marker. Empty means an active user-managed root policy group; non-empty generated artifacts are filtered from normal reads.",
+        description="Controller source marker. Empty means an active user-managed root group; non-empty generated artifacts are filtered from normal reads.",
     )
     template_inputs: dict[str, Any] | None = Field(
         default=None,
