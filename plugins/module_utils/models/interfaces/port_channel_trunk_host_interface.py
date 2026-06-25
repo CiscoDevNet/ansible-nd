@@ -243,7 +243,9 @@ class PortChannelTrunkHostPolicyModel(NDNestedModel):
         default=None, alias="orphanPort", description="Configure as a vPC orphan port (suspended by secondary peer on vPC failure)"
     )
     pfc: bool | None = Field(default=None, alias="pfc", description="Enable Priority Flow Control")
-    policy_type: TrunkPoHostPolicyTypeEnum = Field(default=TrunkPoHostPolicyTypeEnum.TRUNK_PO_HOST, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)")
+    policy_type: TrunkPoHostPolicyTypeEnum = Field(
+        default=TrunkPoHostPolicyTypeEnum.TRUNK_PO_HOST, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)"
+    )
     port_channel_id: str | None = Field(default=None, alias="portChannelId", description="Port-channel id (response-only echo of interface_name)")
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Configure as edge trunk port (PortFast on trunk)")
