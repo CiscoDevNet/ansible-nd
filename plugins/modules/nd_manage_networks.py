@@ -30,9 +30,8 @@ options:
   deploy_type:
     description:
       - Top-level deployment scope used when a config entry does not set C(deploy_type).
-      - V(resource) is accepted as a compatibility alias for V(network).
     type: str
-    choices: [ switch, network, resource ]
+    choices: [ switch, network ]
     default: switch
   config:
     description:
@@ -109,7 +108,7 @@ options:
       deploy_type:
         description: Deployment scope for this Network.
         type: str
-        choices: [ switch, network, resource ]
+        choices: [ switch, network ]
         default: switch
       attach:
         description: Switch attachment entries for this Network.
@@ -629,7 +628,7 @@ def main():
         deploy_type=dict(
             type="str",
             default="switch",
-            choices=["switch", "network", "resource"],
+            choices=["switch", "network"],
         ),
         config=dict(
             type="list",

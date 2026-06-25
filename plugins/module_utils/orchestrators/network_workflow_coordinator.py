@@ -114,8 +114,6 @@ class NetworkWorkflowCoordinator:
             module_args["state"] = "gathered"
 
         top_level_deploy_type = module_args.get("deploy_type")
-        if top_level_deploy_type == "resource":
-            top_level_deploy_type = "network"
         if top_level_deploy_type:
             for item in module_args.get("config") or []:
                 if isinstance(item, dict) and "deploy_type" not in item and "deployType" not in item:

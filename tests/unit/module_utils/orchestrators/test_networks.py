@@ -100,7 +100,7 @@ def test_network_parent_argument_spec_includes_child_config():
     assert "net_name" in spec
     assert "net_id" in spec
     assert "gw_ip_subnet" in spec
-    assert spec["deploy_type"]["choices"] == ["switch", "network", "resource"]
+    assert spec["deploy_type"]["choices"] == ["switch", "network"]
 
 
 def test_user_defined_template_fields_require_user_defined_type():
@@ -439,10 +439,10 @@ def test_tor_ports_are_rejected_because_network_attachment_api_has_no_tor_field(
         )
 
 
-def test_module_level_query_and_resource_deploy_type_are_normalized():
+def test_module_level_query_and_network_deploy_type_are_applied():
     module_args = {
         "state": "query",
-        "deploy_type": "resource",
+        "deploy_type": "network",
         "config": [{"net_name": "LEGACY_NET", "is_l2only": True}],
     }
 
@@ -450,6 +450,19 @@ def test_module_level_query_and_resource_deploy_type_are_normalized():
 
     assert module_args["state"] == "gathered"
     assert module_args["config"][0]["deploy_type"] == "network"
+
+
+def test_network_deploy_type_network_builds_network_level_payload():
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "BLUE_NET",
+            "is_l2only": True,
+            "deploy_type": "network",
+        }
+    )
+
+    assert model.to_config()["deploy_type"] == "network"
+    assert NetworkAttachmentManager.build_deploy_payloads([model.to_config()], {"BLUE_NET": {"FDO123"}}) == [{"networkNames": ["BLUE_NET"]}]
 
 
 def test_transform_l2_network_payload_uses_manage_schema_shape():

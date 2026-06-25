@@ -118,7 +118,7 @@ def network_base_argument_spec():
         net_template=dict(type="str"),
         net_extension_template=dict(type="str"),
         deploy=dict(type="bool", default=True),
-        deploy_type=dict(type="str", default="switch", choices=["switch", "network", "resource"]),
+        deploy_type=dict(type="str", default="switch", choices=["switch", "network"]),
         attach=dict(type="list", elements="dict", options=_attachment_spec()),
     )
     spec.update(_shared_network_fields(defaults=True))

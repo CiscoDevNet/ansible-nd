@@ -276,11 +276,6 @@ class NetworkConfigModel(NDBaseModel):
             if legacy in normalized and current not in normalized:
                 normalized[current] = normalized[legacy]
 
-        if normalized.get("deploy_type") == "resource":
-            normalized["deploy_type"] = "network"
-        if normalized.get("deployType") == "resource":
-            normalized["deployType"] = "network"
-
         secondary = normalized.get("secondary_gateway_ipv4_collection")
         if secondary is None:
             secondary = normalized.get("secondaryGatewayIpv4Collection")
