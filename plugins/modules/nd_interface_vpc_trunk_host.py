@@ -307,15 +307,20 @@ options:
                         - Provider VLAN id.
                         - Valid range is 1-4094.
                         type: int
-  deploy:
+  config_actions:
     description:
-    - Whether to deploy vPC interface changes after mutations are complete.
-    - When V(true), all queued vPC interface changes are deployed in a single bulk API call at the end of module
-      execution via the C(interfaceActions/deploy) API. Only the vPC interfaces modified by this task are deployed.
-    - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
-    - Setting O(deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
-    type: bool
-    default: true
+    - Controls deploy behavior after interface mutations are complete.
+    type: dict
+    suboptions:
+      deploy:
+        description:
+        - Whether to deploy vPC interface changes after mutations are complete.
+        - When V(true), all queued vPC interface changes are deployed in a single bulk API call at the end of module
+          execution via the C(interfaceActions/deploy) API. Only the vPC interfaces modified by this task are deployed.
+        - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
+        - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
+        type: bool
+        default: true
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -468,7 +473,8 @@ EXAMPLES = r"""
               native_vlan: 100
               peer1_port_channel_id: 500
               peer2_port_channel_id: 500
-    deploy: false
+    config_actions:
+      deploy: false
     state: merged
 
 """
@@ -509,7 +515,12 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(TrunkVpcHostInterfaceModel.get_argument_spec())
     argument_spec.update(
-        deploy={"type": "bool", "default": True},
+        config_actions={
+            "type": "dict",
+            "options": {
+                "deploy": {"type": "bool", "default": True},
+            },
+        },
     )
 
     module = AnsibleModule(
@@ -529,13 +540,15 @@ def main():
         )
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
-        nd_state_machine.model_orchestrator.deploy = module.params["deploy"]
+        config_actions = module.params.get("config_actions") or {}
+        deploy = config_actions.get("deploy", True)
+        nd_state_machine.model_orchestrator.deploy = deploy
 
         module_log.debug(
             "manage_state begin state=%s check_mode=%s deploy=%s",
             module.params.get("state"),
             module.check_mode,
-            module.params["deploy"],
+            deploy,
         )
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
