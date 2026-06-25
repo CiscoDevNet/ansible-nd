@@ -55,8 +55,17 @@ def responses_pc_access(key: str):
     return load_fixture("test_port_channel_access_interface")[key]
 
 
-def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> RestSend:
-    """Build a RestSend wired to the file-based Sender and the real ResponseHandler."""
+def _build_rest_send(
+    gen_responses: ResponseGenerator,
+    fabric_name: str = "fabric_1",
+    state: str | None = None,
+    config: list[dict] | None = None,
+) -> RestSend:
+    """Build a RestSend wired to the file-based Sender and the real ResponseHandler.
+
+    `state` and `config` populate `rest_send.params` so `query_all`'s `_switches_to_query` scoping
+    (fabric-wide for `overridden`, config-scoped otherwise) can be exercised.
+    """
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
     sender.gen = gen_responses
@@ -66,7 +75,13 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    rest_send = RestSend({"check_mode": False, "fabric_name": fabric_name})
+    params: dict = {"check_mode": False, "fabric_name": fabric_name}
+    if state is not None:
+        params["state"] = state
+    if config is not None:
+        params["config"] = config
+
+    rest_send = RestSend(params)
     rest_send.sender = sender
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
@@ -74,9 +89,14 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     return rest_send
 
 
-def _build_orchestrator(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> PortChannelAccessInterfaceOrchestrator:
+def _build_orchestrator(
+    gen_responses: ResponseGenerator,
+    fabric_name: str = "fabric_1",
+    state: str | None = None,
+    config: list[dict] | None = None,
+) -> PortChannelAccessInterfaceOrchestrator:
     """Construct an orchestrator with the file-based RestSend injected."""
-    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name)
+    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, state=state, config=config)
     return PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
 
 
@@ -227,7 +247,8 @@ def test_port_channel_access_orchestrator_00400() -> None:
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        orchestrator = _build_orchestrator(gen_responses)
+        # state=overridden keeps query_all fabric-wide so this test exercises cross-switch filtering.
+        orchestrator = _build_orchestrator(gen_responses, state="overridden")
         result = orchestrator.query_all()
 
     assert isinstance(result, list)
@@ -273,7 +294,8 @@ def test_port_channel_access_orchestrator_00410() -> None:
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        orchestrator = _build_orchestrator(gen_responses)
+        # state=overridden keeps query_all fabric-wide so every switch is scanned.
+        orchestrator = _build_orchestrator(gen_responses, state="overridden")
         result = orchestrator.query_all()
 
     assert result == []
@@ -331,10 +353,52 @@ def test_port_channel_access_orchestrator_00430() -> None:
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        orchestrator = _build_orchestrator(gen_responses)
+        # state=overridden keeps query_all fabric-wide so the 404 switch is still visited and skipped.
+        orchestrator = _build_orchestrator(gen_responses, state="overridden")
         result = orchestrator.query_all()
 
     assert result == []
+
+
+def test_port_channel_access_orchestrator_00440() -> None:
+    """
+    # Summary
+
+    Verify `query_all` scopes its per-switch interface-list fan-out to switches named in the user config when
+    `state` is not `overridden`, rather than querying every switch in the fabric.
+
+    ## Test
+
+    - Fabric has two switches (192.168.1.1, 192.168.1.2), but config names only 192.168.1.1
+    - state is `merged` (non-overridden), so `_switches_to_query` returns only the config switch
+    - Only the config switch's interfaces are fetched; the second switch is never queried (the response
+      generator yields exactly three responses — summary, switch list, switch-1 interfaces — and would raise
+      if a second per-switch GET were issued)
+    - Result contains only the accessPoHost port-channel on the config switch
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator._switches_to_query()
+    - PortChannelBaseOrchestrator.query_all()
+    """
+
+    def responses():
+        yield responses_pc_access("test_query_all_config_scoped_00440a")
+        yield responses_pc_access("test_query_all_config_scoped_00440b")
+        yield responses_pc_access("test_query_all_config_scoped_00440c")
+
+    gen_responses = ResponseGenerator(responses())
+
+    config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel501"}]
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses, state="merged", config=config)
+        result = orchestrator.query_all()
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "port-channel501"
+    assert result[0]["switchIp"] == "192.168.1.1"
 
 
 # =============================================================================

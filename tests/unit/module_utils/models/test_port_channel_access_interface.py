@@ -237,31 +237,40 @@ def test_port_channel_access_interface_00120():
     [
         (["ethernet1/1", "ethernet1/2"], ["Ethernet1/1", "Ethernet1/2"]),
         (["Ethernet1/1"], ["Ethernet1/1"]),
-        (["e1/1"], ["E1/1"]),
+        # NX-OS abbreviations expand to the canonical Ethernet form so they match the wire key (idempotency).
+        (["e1/1"], ["Ethernet1/1"]),
+        (["eth1/1", "et1/1"], ["Ethernet1/1", "Ethernet1/1"]),
+        # Any casing of the full prefix canonicalizes to "Ethernet".
+        (["ETHERNET1/2", "etHernet1/3"], ["Ethernet1/2", "Ethernet1/3"]),
         ([], []),
         (None, None),
-        # Mixed and breakout-style names preserve everything after the first character.
-        (["ethernet1/1/1", "ETHERNET1/2"], ["Ethernet1/1/1", "ETHERNET1/2"]),
+        # Digits and separators after the alphabetic prefix are preserved (breakout/subinterface forms).
+        (["ethernet1/1/1"], ["Ethernet1/1/1"]),
     ],
     ids=[
-        "lowercase_to_capitalized",
-        "already_capitalized_passthrough",
-        "single_letter",
+        "lowercase_to_canonical",
+        "already_canonical_passthrough",
+        "single_letter_abbreviation",
+        "eth_and_et_abbreviations",
+        "uppercase_canonicalized",
         "empty_list",
         "none_passthrough",
-        "mixed_breakout",
+        "breakout_separators_preserved",
     ],
 )
 def test_port_channel_access_interface_00180(value, expected):
     """
     # Summary
 
-    Verify `normalize_ports` capitalizes the first character of each member interface name.
+    Verify `normalize_ports` expands any case-insensitive NX-OS abbreviation of a member interface name to ND's
+    canonical `Ethernet` form so user input round-trips against the wire key.
 
     ## Test
 
-    - Lowercase member names are capitalized
-    - Already-capitalized values pass through
+    - Lowercase and abbreviated member names (`e1/1`, `eth1/1`, `et1/1`) expand to `Ethernet...`
+    - Any casing of the full prefix canonicalizes to `Ethernet`
+    - Already-canonical values pass through unchanged
+    - Digits/separators after the prefix are preserved
     - Empty list and None pass through
 
     ## Classes and Methods

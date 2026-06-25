@@ -240,6 +240,66 @@
         "DATA": {}
     },
 
+    "test_query_all_config_scoped_00440a": {
+        "TEST_NOTES": [
+            "Fabric summary: fabric exists (for validate_prerequisites)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_query_all_config_scoped_00440b": {
+        "TEST_NOTES": [
+            "Switch list: two switches in fabric_1, but config names only 192.168.1.1.",
+            "Expect: query_all (state!=overridden) scopes to the config switch and never GETs FDO22222BBB's interfaces."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"},
+                {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}
+            ]
+        }
+    },
+    "test_query_all_config_scoped_00440c": {
+        "TEST_NOTES": [
+            "Interfaces for the config-named switch FDO11111AAA: one accessPoHost port-channel.",
+            "If query_all were NOT config-scoped it would also GET FDO22222BBB and exhaust the response generator."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel501",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessPoHost",
+                                "accessVlan": 100,
+                                "ports": ["Ethernet1/1"],
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+
     "test_port_channel_access_orchestrator_00200a": {
         "TEST_NOTES": ["create happy path: switches list (1 switch)"],
         "RETURN_CODE": 200,

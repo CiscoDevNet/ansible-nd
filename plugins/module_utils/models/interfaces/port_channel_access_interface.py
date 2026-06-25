@@ -30,6 +30,7 @@ interfaces inherit access-mode settings from the port-channel; users do not pre-
 
 from __future__ import annotations
 
+import re
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -52,6 +53,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
+
+# Splits an interface name into its leading alphabetic prefix and the rest (digits/separators).
+_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
+
+# Member interfaces of a port-channel are always physical ethernet ports, so the canonical wire prefix
+# is always "Ethernet". Any case-insensitive NX-OS abbreviation (e.g. "e", "eth", "ether") expands to the
+# full form so user input matches the wire key and idempotency holds.
+_CANONICAL_MEMBER_TYPE = "Ethernet"
 
 
 class PortChannelAccessPolicyModel(NDNestedModel):
@@ -151,23 +160,50 @@ class PortChannelAccessPolicyModel(NDNestedModel):
         """
         # Summary
 
-        Normalize each member interface name to ND API convention (e.g. `ethernet1/1` -> `Ethernet1/1`).
+        Normalize each member interface name to ND's canonical `Ethernet` form so that any user-supplied casing or
+        NX-OS abbreviation round-trips against the wire form. Members are always physical ethernet ports. Examples:
+
+        - `ethernet1/1` -> `Ethernet1/1`
+        - `ETHERNET1/1` -> `Ethernet1/1`
+        - `eth1/1` -> `Ethernet1/1` (abbreviation expanded)
+        - `e1/1` -> `Ethernet1/1` (abbreviation expanded)
+        - `Ethernet1/1` -> `Ethernet1/1` (idempotent)
+
+        Because the wire key is matched exactly, an abbreviated prefix that is not expanded would never match ND's
+        `Ethernet...` form, silently breaking idempotency (the port-channel re-deploys on every run). Any
+        case-insensitive prefix of `Ethernet` (`e`, `et`, `eth`, ...) is therefore expanded to the full canonical
+        name; an unrecognized prefix falls back to Title case so it still round-trips. Only the leading alphabetic
+        run is rewritten; digits and separators are preserved verbatim.
 
         ## Raises
 
         None
         """
-        if value is None:
-            return value
         if not isinstance(value, list):
             return value
-        normalized = []
-        for name in value:
-            if isinstance(name, str) and name:
-                normalized.append(name[0].upper() + name[1:])
-            else:
-                normalized.append(name)
-        return normalized
+        return [cls._normalize_member_name(name) for name in value]
+
+    @staticmethod
+    def _normalize_member_name(name):
+        """
+        # Summary
+
+        Normalize a single member interface name to ND's canonical `Ethernet` form (see `normalize_ports`).
+        Non-string or empty values are returned unchanged.
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(name, str) or not name:
+            return name
+        match = _INTERFACE_NAME_PREFIX_RE.match(name)
+        if not match:
+            return name
+        prefix, rest = match.groups()
+        if _CANONICAL_MEMBER_TYPE.lower().startswith(prefix.lower()):
+            return _CANONICAL_MEMBER_TYPE + rest
+        return prefix[0].upper() + prefix[1:].lower() + rest
 
     @model_serializer(mode="wrap")
     def _strip_policy_type_in_config(self, handler, info: SerializationInfo):
