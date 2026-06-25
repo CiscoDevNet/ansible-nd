@@ -5,7 +5,7 @@
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multisite_parent_network import (
     MultisiteParentNetworkStrategy,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.networks import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
     EpOneManageFabricsNetworkActionsDeployPost,
     EpOneManageFabricsNetworksGet,
     EpOneManageFabricsNetworksBulkDelete,

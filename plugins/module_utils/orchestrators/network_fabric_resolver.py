@@ -27,7 +27,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsGet,
     EpManageFabricsMembersGet,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.fabrics import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics import (
     EpOneManageFabricsGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_network import (
