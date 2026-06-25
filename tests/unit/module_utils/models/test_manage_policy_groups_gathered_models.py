@@ -15,11 +15,10 @@ Tests ``PolicyGroupGathered`` -- the read-model used by the
   ``templateInputs`` and the ``nvPairs`` fallback name.
 - ``to_gathered_config()`` round-trip shape:
   * key renames (``template_name`` -> ``name``)
-  * priority lift from ``templateInputs.PRIORITY`` (the wire-shape
-    workaround for ``switch_freeform``-style templates)
+  * priority lift from ``templateInputs.PRIORITY`` only when top-level
+    priority is absent
   * stripping of ``SYSTEM_INJECTED_TEMPLATE_KEYS``
-  * ``priority=0`` is preserved (server-reset sentinel) and not
-    replaced by the model default of 500.
+  * invalid priority values are rejected instead of emitted.
 """
 
 # pylint: disable=use-implicit-booleaness-not-comparison
@@ -177,7 +176,9 @@ def test_manage_policy_groups_gathered_models_00100() -> None:
     - ``PolicyGroupGathered.from_api_policy_group``
     """
     with does_not_raise():
-        instance = PolicyGroupGathered.from_api_policy_group({"policyId": "POLICY-GROUP-1"})
+        instance = PolicyGroupGathered.from_api_policy_group(
+            {"policyId": "POLICY-GROUP-1"}
+        )
 
     assert instance.policy_id == "POLICY-GROUP-1"
     assert instance.template_inputs == {}
@@ -411,13 +412,11 @@ def test_manage_policy_groups_gathered_models_00230() -> None:
     # Summary
 
     Verify ``to_gathered_config()`` lifts ``templateInputs.PRIORITY`` into
-    the top-level ``priority`` (wire-shape workaround for
-    ``switch_freeform``-style templates whose top-level ``priority`` field
-    is server-reset to 0).
+    the top-level ``priority`` only when top-level ``priority`` is absent.
 
     ## Test
 
-    - With ``priority=0`` and ``templateInputs.PRIORITY="750"``, the
+    - With ``priority=None`` and ``templateInputs.PRIORITY="750"``, the
       gathered output reports ``priority=750``.
     - ``PRIORITY`` is removed from the emitted ``template_inputs`` because
       it is in ``SYSTEM_INJECTED_TEMPLATE_KEYS``.
@@ -429,7 +428,7 @@ def test_manage_policy_groups_gathered_models_00230() -> None:
     instance = PolicyGroupGathered(
         policy_id="POLICY-GROUP-1",
         template_name="switch_freeform",
-        priority=0,
+        priority=None,
         template_inputs={"PRIORITY": "750", "CONF": "banner"},
     )
     config = instance.to_gathered_config()
@@ -442,10 +441,8 @@ def test_manage_policy_groups_gathered_models_00240() -> None:
     """
     # Summary
 
-    Verify ``to_gathered_config()`` preserves ``priority=0`` (server-reset
-    sentinel) when ``templateInputs.PRIORITY`` is absent. The model
-    default of 500 must NOT be substituted here -- doing so would break
-    idempotency on the next round-trip (the next have would still be 0).
+    Verify top-level ``priority`` wins over ``templateInputs.PRIORITY`` when
+    both are present.
 
     ## Classes and Methods
 
@@ -454,12 +451,13 @@ def test_manage_policy_groups_gathered_models_00240() -> None:
     instance = PolicyGroupGathered(
         policy_id="POLICY-GROUP-1",
         template_name="feature_enable",
-        priority=0,
-        template_inputs={"featureName": "lacp"},
+        priority=500,
+        template_inputs={"featureName": "lacp", "PRIORITY": "750"},
     )
     config = instance.to_gathered_config()
 
-    assert config["priority"] == 0
+    assert config["priority"] == 500
+    assert config["template_inputs"] == {"featureName": "lacp"}
 
 
 def test_manage_policy_groups_gathered_models_00250() -> None:
@@ -489,6 +487,24 @@ def test_manage_policy_groups_gathered_models_00250() -> None:
     assert config["priority"] == 200
     # PRIORITY is in SYSTEM_INJECTED_TEMPLATE_KEYS so it is stripped anyway.
     assert config["template_inputs"] == {"CONF": "x"}
+
+
+def test_manage_policy_groups_gathered_models_00255() -> None:
+    """
+    # Summary
+
+    Verify gathered policy-group priority follows the documented 1-2000 range.
+
+    ## Classes and Methods
+
+    - ``PolicyGroupGathered.__init__``
+    """
+    with pytest.raises(ValidationError, match="priority"):
+        PolicyGroupGathered(
+            policy_id="POLICY-GROUP-1",
+            template_name="feature_enable",
+            priority=0,
+        )
 
 
 def test_manage_policy_groups_gathered_models_00260() -> None:

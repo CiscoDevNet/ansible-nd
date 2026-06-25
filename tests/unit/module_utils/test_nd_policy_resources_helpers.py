@@ -699,23 +699,44 @@ def test_nd_policy_resources_helpers_00560() -> None:
     """
     # Summary
 
-    Verify ``_policies_differ`` treats missing ``description`` /
-    ``priority`` as their documented defaults (``""`` / ``500``) so
-    callers may omit them on either side.
+    Verify ``_policies_differ`` treats missing ``description`` as ``""`` and
+    missing ``priority`` as "preserve existing", so omitted priority does not
+    trigger an update.
 
     ## Test
 
     - Missing description compared against empty string -> no diff.
-    - Missing priority compared against 500 -> no diff.
+    - Missing priority compared against a non-default existing value -> no diff.
 
     ## Classes and Methods
 
     - ``NDPolicyModule._policies_differ``
     """
     want: dict = {}
-    have = {"description": "", "priority": 500}
+    have = {"description": "", "priority": 470}
 
     assert NDPolicyModule._policies_differ(want, have) == {}
+
+
+def test_nd_policy_resources_helpers_00570() -> None:
+    """
+    # Summary
+
+    Verify create/update priority helpers implement the intended split:
+    creates default omitted priority to 500, while updates preserve the
+    controller's existing priority when the user omits it.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._want_with_create_defaults``
+    - ``NDPolicyModule._priority_for_update``
+    """
+    want: dict = {}
+    have = {"priority": 470}
+
+    assert NDPolicyModule._want_with_create_defaults(want)["priority"] == 500
+    assert NDPolicyModule._priority_for_update(want, have) == 470
+    assert NDPolicyModule._priority_for_update({"priority": 500}, have) == 500
 
 
 # =============================================================================

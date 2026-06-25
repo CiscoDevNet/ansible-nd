@@ -12,8 +12,8 @@ creating, updating, and identifying policy groups in ``nd_manage_policy_group``:
 
 - Field defaults, aliases, validators.
 - ``validate_switch_ids`` field validator.
-- ``_normalize_priority_from_template_inputs`` model validator (the
-  wire-shape-vs-schema workaround for ``switch_freeform``-style templates).
+- ``_normalize_priority_from_template_inputs`` model validator for older
+  controller responses that carry priority in ``templateInputs.PRIORITY``.
 - ``from_config()`` classmethod (Ansible-dict -> model translation).
 - ``get_argument_spec()`` classmethod.
 - ``to_request_dict()`` (alias + nested payload shape).
@@ -56,7 +56,9 @@ def test_manage_policy_groups_policy_group_base_00010() -> None:
     - ``entity_type`` defaults to ``PolicyEntityType.SWITCH``.
     - ``entity_name`` defaults to ``"SWITCH"``.
     - ``description`` defaults to ``None``.
-    - ``priority`` defaults to ``500``.
+    - ``priority`` defaults to ``None`` so omitted updates preserve the
+      existing controller value. Create defaulting to ``500`` happens at the
+      orchestrator API boundary.
     - ``source`` defaults to ``""``.
     - ``template_inputs`` defaults to ``None``.
     - ``policy_id`` defaults to ``None``.
@@ -74,7 +76,7 @@ def test_manage_policy_groups_policy_group_base_00010() -> None:
     assert instance.entity_type == PolicyEntityType.SWITCH
     assert instance.entity_name == "SWITCH"
     assert instance.description is None
-    assert instance.priority == 500
+    assert instance.priority is None
     assert instance.source == ""
     assert instance.template_inputs is None
     assert instance.policy_id is None
@@ -180,11 +182,12 @@ def test_manage_policy_groups_policy_group_base_00050() -> None:
     # Summary
 
     Verify ``PolicyGroupCreate`` enforces the documented ``priority`` range
-    (0 sentinel allowed, otherwise 1-2000).
+    (1-2000).
 
     ## Test
 
-    - ``priority=0`` is accepted (server-reset sentinel).
+    - ``priority=0`` is rejected.
+    - ``priority=1`` is accepted (lower bound).
     - ``priority=2000`` is accepted (upper bound).
     - ``priority=-1`` is rejected.
     - ``priority=2001`` is rejected.
@@ -193,8 +196,10 @@ def test_manage_policy_groups_policy_group_base_00050() -> None:
 
     - ``PolicyGroupCreate.__init__``
     """
-    with does_not_raise():
+    with pytest.raises(ValidationError, match="priority"):
         PolicyGroupCreate(template_name="feature_enable", priority=0)
+    with does_not_raise():
+        PolicyGroupCreate(template_name="feature_enable", priority=1)
     with does_not_raise():
         PolicyGroupCreate(template_name="feature_enable", priority=2000)
     with pytest.raises(ValidationError, match="priority"):
@@ -270,7 +275,9 @@ def test_manage_policy_groups_policy_group_base_00200() -> None:
     assert instance.switch_ids == []
 
     with does_not_raise():
-        instance = PolicyGroupCreate(template_name="feature_enable", switch_ids=["FDO111"])
+        instance = PolicyGroupCreate(
+            template_name="feature_enable", switch_ids=["FDO111"]
+        )
     assert instance.switch_ids == ["FDO111"]
 
     with does_not_raise():
@@ -360,14 +367,15 @@ def test_manage_policy_groups_policy_group_base_00310() -> None:
     # Summary
 
     Verify the priority normalisation lifts ``templateInputs.PRIORITY`` to
-    the top level when the top-level ``priority`` is the server-reset
-    sentinel (None or 0) and strips ``PRIORITY`` from ``template_inputs``.
+    the top level only when top-level ``priority`` is absent or ``None``,
+    and strips ``PRIORITY`` from ``template_inputs``.
 
     ## Test
 
     - When ``priority=None`` is in input, ``PRIORITY`` from template_inputs
       is lifted to top level.
-    - When ``priority=0`` is in input, ``PRIORITY`` is lifted (replacing 0).
+    - When top-level ``priority`` is omitted, ``PRIORITY`` from
+      template_inputs is lifted to top level.
     - ``PRIORITY`` is removed from ``template_inputs`` in both cases.
 
     ## Classes and Methods
@@ -389,12 +397,20 @@ def test_manage_policy_groups_policy_group_base_00310() -> None:
         instance = PolicyGroupCreate.model_validate(
             {
                 "template_name": "switch_freeform",
-                "priority": 0,
                 "template_inputs": {"PRIORITY": "200", "CONF": "banner"},
             }
         )
     assert instance.priority == 200
     assert instance.template_inputs == {"CONF": "banner"}
+
+    with pytest.raises(ValidationError, match="priority"):
+        PolicyGroupCreate.model_validate(
+            {
+                "template_name": "switch_freeform",
+                "priority": 0,
+                "template_inputs": {"PRIORITY": "200", "CONF": "banner"},
+            }
+        )
 
 
 def test_manage_policy_groups_policy_group_base_00320() -> None:
@@ -436,7 +452,8 @@ def test_manage_policy_groups_policy_group_base_00330() -> None:
 
     ## Test
 
-    - ``templateInputs.PRIORITY`` is lifted when the camelCase key is used.
+    - ``templateInputs.PRIORITY`` is lifted when the camelCase key is used and
+      top-level priority is absent.
     - ``PRIORITY`` is stripped from the camelCase ``templateInputs`` dict.
 
     ## Classes and Methods
@@ -447,7 +464,6 @@ def test_manage_policy_groups_policy_group_base_00330() -> None:
         instance = PolicyGroupCreate.model_validate(
             {
                 "templateName": "switch_freeform",
-                "priority": 0,
                 "templateInputs": {"PRIORITY": "300", "CONF": "banner"},
             }
         )
@@ -508,7 +524,6 @@ def test_manage_policy_groups_policy_group_base_00350() -> None:
         instance = PolicyGroupCreate.model_validate(
             {
                 "template_name": "switch_freeform",
-                "priority": 0,
                 "template_inputs": {"PRIORITY": "150"},
             }
         )
@@ -538,7 +553,9 @@ def test_manage_policy_groups_policy_group_base_00400() -> None:
     - ``PolicyGroupCreate.from_config``
     """
     with does_not_raise():
-        instance = PolicyGroupCreate.from_config({"name": "feature_enable", "switch_ids": ["FDO111"]})
+        instance = PolicyGroupCreate.from_config(
+            {"name": "feature_enable", "switch_ids": ["FDO111"]}
+        )
     assert instance.template_name == "feature_enable"
     assert instance.switch_ids == ["FDO111"]
 
@@ -560,7 +577,9 @@ def test_manage_policy_groups_policy_group_base_00410() -> None:
     - ``PolicyGroupCreate.from_config``
     """
     with does_not_raise():
-        instance = PolicyGroupCreate.from_config({"name": "user_facing", "template_name": "model_value"})
+        instance = PolicyGroupCreate.from_config(
+            {"name": "user_facing", "template_name": "model_value"}
+        )
     assert instance.template_name == "model_value"
 
 
@@ -569,13 +588,13 @@ def test_manage_policy_groups_policy_group_base_00420() -> None:
     # Summary
 
     Verify ``from_config()`` strips Ansible-injected default placeholders
-    (``None``, ``0``, ``[]``, ``{}``) so Pydantic defaults are honoured
+    (``None``, ``[]``, ``{}``) so Pydantic defaults are honoured
     and ``model_fields_set`` accurately reflects user input.
 
     ## Test
 
     - ``description=None`` is stripped -> field remains the model default.
-    - ``priority=0`` is stripped -> priority remains the default 500.
+    - omitted ``priority`` remains ``None``.
     - ``switch_ids=[]`` is stripped -> switch_ids remains the default [].
     - ``template_inputs={}`` is stripped -> template_inputs remains None.
 
@@ -588,15 +607,17 @@ def test_manage_policy_groups_policy_group_base_00420() -> None:
             {
                 "name": "feature_enable",
                 "description": None,
-                "priority": 0,
                 "switch_ids": [],
                 "template_inputs": {},
             }
         )
     assert instance.description is None
-    assert instance.priority == 500
+    assert instance.priority is None
     assert instance.switch_ids == []
     assert instance.template_inputs is None
+
+    with pytest.raises(ValidationError, match="priority"):
+        PolicyGroupCreate.from_config({"name": "feature_enable", "priority": 0})
 
 
 def test_manage_policy_groups_policy_group_base_00430() -> None:
@@ -754,6 +775,7 @@ def test_manage_policy_groups_policy_group_base_00600() -> None:
     assert payload["entityName"] == "SWITCH"
     assert payload["templateInputs"] == {"featureName": "lacp"}
     assert "description" not in payload
+    assert "priority" not in payload
 
 
 def test_manage_policy_groups_policy_group_base_00610() -> None:

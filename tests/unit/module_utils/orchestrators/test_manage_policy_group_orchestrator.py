@@ -97,7 +97,14 @@ def _build_rest_send(response_dicts: list[dict]) -> RestSend:
     return rest_send
 
 
-def _resp(data: Any = None, *, return_code: int = 200, method: str = "GET", path: str = "/api/v1", message: str = "OK") -> dict:
+def _resp(
+    data: Any = None,
+    *,
+    return_code: int = 200,
+    method: str = "GET",
+    path: str = "/api/v1",
+    message: str = "OK",
+) -> dict:
     """Build one controller response dict for the ``Sender`` generator."""
     return {
         "RETURN_CODE": return_code,
@@ -151,7 +158,7 @@ def _build_pg_model(
     switch_ids: list[str] | None = None,
     template_inputs: dict | None = None,
     policy_id: str | None = None,
-    priority: int = 500,
+    priority: int | None = 500,
     entity_type: str = "switch",
     entity_name: str = "SWITCH",
 ) -> PolicyGroupCreate:
@@ -165,15 +172,44 @@ def _build_pg_model(
         "template_name": template_name,
         "description": description,
         "switch_ids": switch_ids if switch_ids is not None else ["SN1"],
-        "priority": priority,
         "entity_type": entity_type,
         "entity_name": entity_name,
     }
+    if priority is not None:
+        kwargs["priority"] = priority
     if template_inputs is not None:
         kwargs["template_inputs"] = template_inputs
     if policy_id is not None:
         kwargs["policy_id"] = policy_id
     return PolicyGroupCreate(**kwargs)
+
+
+def _build_pg_raw(
+    *,
+    policy_id: str = "P1",
+    template_name: str = "feature_enable",
+    description: str = "test pg",
+    switch_ids: list[str] | None = None,
+    template_inputs: dict | None = None,
+    priority: int = 500,
+    entity_type: str = "switch",
+    entity_name: str = "SWITCH",
+    source: str = "",
+) -> dict:
+    """Build a controller-shaped policy-group response for update tests."""
+    raw = {
+        "policyId": policy_id,
+        "templateName": template_name,
+        "description": description,
+        "switchIds": switch_ids if switch_ids is not None else ["SN1"],
+        "priority": priority,
+        "entityType": entity_type,
+        "entityName": entity_name,
+        "source": source,
+    }
+    if template_inputs is not None:
+        raw["templateInputs"] = template_inputs
+    return raw
 
 
 # =============================================================================
@@ -325,14 +361,14 @@ def test_manage_policy_group_orchestrator_00120() -> None:
     """
     # Summary
 
-    ``query_all`` strips internal controller artifacts (records carrying a
-    non-empty ``source`` field) from the cached raw list.
+    ``query_all`` strips internal controller artifacts and pending-delete
+    records from the cached raw list.
 
     ## Test
 
     - Three groups in API response, one with a non-empty ``source``
-    - The source-bearing record is excluded from both the return value and
-      the cache
+    - One group with ``markDeleted=true``
+    - Both non-active records are excluded from the return value and cache
 
     ## Classes and Methods
 
@@ -341,7 +377,18 @@ def test_manage_policy_group_orchestrator_00120() -> None:
     api_groups = [
         {"policyId": "P1", "description": "user", "templateName": "t1", "source": ""},
         {"policyId": "P2", "description": "user", "templateName": "t2"},
-        {"policyId": "P3", "description": "artifact", "templateName": "switch_freeform", "source": "P1"},
+        {
+            "policyId": "P3",
+            "description": "artifact",
+            "templateName": "switch_freeform",
+            "source": "P1",
+        },
+        {
+            "policyId": "P4",
+            "description": "pending",
+            "templateName": "feature_enable",
+            "markDeleted": True,
+        },
     ]
     rest_send = _build_rest_send([_resp({"policyGroups": api_groups})])
     instance = _make_orchestrator(rest_send)
@@ -350,8 +397,10 @@ def test_manage_policy_group_orchestrator_00120() -> None:
 
     pids = {g["policyId"] for g in result}
     assert "P3" not in pids
+    assert "P4" not in pids
     assert instance._raw_cache is not None
     assert all(not g.get("source") for g in instance._raw_cache)
+    assert all(not g.get("markDeleted", False) for g in instance._raw_cache)
 
 
 def test_manage_policy_group_orchestrator_00130() -> None:
@@ -394,8 +443,18 @@ def test_manage_policy_group_orchestrator_00140() -> None:
     - PolicyGroupOrchestrator.query_all
     """
     cached = [
-        {"policyId": "P1", "description": "same", "templateName": "t", "updateTimestamp": 100},
-        {"policyId": "P2", "description": "same", "templateName": "t", "updateTimestamp": 200},
+        {
+            "policyId": "P1",
+            "description": "same",
+            "templateName": "t",
+            "updateTimestamp": 100,
+        },
+        {
+            "policyId": "P2",
+            "description": "same",
+            "templateName": "t",
+            "updateTimestamp": 200,
+        },
     ]
     rest_send = _build_rest_send([])
     instance = _make_orchestrator(rest_send)
@@ -491,9 +550,24 @@ def test_manage_policy_group_orchestrator_00210() -> None:
     - PolicyGroupOrchestrator._deduplicate_groups
     """
     groups = [
-        {"policyId": "old", "description": "x", "templateName": "t", "updateTimestamp": 100},
-        {"policyId": "new", "description": "x", "templateName": "t", "updateTimestamp": 200},
-        {"policyId": "mid", "description": "x", "templateName": "t", "updateTimestamp": 150},
+        {
+            "policyId": "old",
+            "description": "x",
+            "templateName": "t",
+            "updateTimestamp": 100,
+        },
+        {
+            "policyId": "new",
+            "description": "x",
+            "templateName": "t",
+            "updateTimestamp": 200,
+        },
+        {
+            "policyId": "mid",
+            "description": "x",
+            "templateName": "t",
+            "updateTimestamp": 150,
+        },
     ]
     result = PolicyGroupOrchestrator._deduplicate_groups(groups)
     assert len(result) == 1
@@ -512,8 +586,18 @@ def test_manage_policy_group_orchestrator_00220() -> None:
     - PolicyGroupOrchestrator._deduplicate_groups
     """
     groups = [
-        {"policyId": "old", "description": "x", "templateName": "t", "createTimestamp": 50},
-        {"policyId": "new", "description": "x", "templateName": "t", "createTimestamp": 75},
+        {
+            "policyId": "old",
+            "description": "x",
+            "templateName": "t",
+            "createTimestamp": 50,
+        },
+        {
+            "policyId": "new",
+            "description": "x",
+            "templateName": "t",
+            "createTimestamp": 75,
+        },
     ]
     result = PolicyGroupOrchestrator._deduplicate_groups(groups)
     assert len(result) == 1
@@ -663,7 +747,7 @@ def test_manage_policy_group_orchestrator_00410() -> None:
     # Summary
 
     Cache-miss path builds a Lucene ``AND`` filter on both ``templateName``
-    and ``description`` then strips ``source``-bearing artifacts.
+    and ``description`` then strips non-active records.
 
     ## Classes and Methods
 
@@ -672,6 +756,12 @@ def test_manage_policy_group_orchestrator_00410() -> None:
     api_groups = [
         {"policyId": "P1", "description": "d", "templateName": "t1"},
         {"policyId": "P2", "description": "d", "templateName": "t1", "source": "PX"},
+        {
+            "policyId": "P3",
+            "description": "d",
+            "templateName": "t1",
+            "markDeleted": True,
+        },
     ]
     rest_send = _build_rest_send([_resp({"policyGroups": api_groups})])
     results = _make_results()
@@ -689,7 +779,7 @@ def test_manage_policy_group_orchestrator_00420() -> None:
     """
     # Summary
 
-    With no filters the cache-miss path still strips source artifacts and
+    With no filters the cache-miss path still strips non-active records and
     deduplicates the returned list.
 
     ## Classes and Methods
@@ -697,9 +787,25 @@ def test_manage_policy_group_orchestrator_00420() -> None:
     - PolicyGroupOrchestrator.query_filtered
     """
     api_groups = [
-        {"policyId": "P1", "description": "d", "templateName": "t", "updateTimestamp": 100},
-        {"policyId": "P2", "description": "d", "templateName": "t", "updateTimestamp": 200},
+        {
+            "policyId": "P1",
+            "description": "d",
+            "templateName": "t",
+            "updateTimestamp": 100,
+        },
+        {
+            "policyId": "P2",
+            "description": "d",
+            "templateName": "t",
+            "updateTimestamp": 200,
+        },
         {"policyId": "P3", "description": "other", "templateName": "t", "source": "PX"},
+        {
+            "policyId": "P4",
+            "description": "pending",
+            "templateName": "t",
+            "markDeleted": True,
+        },
     ]
     rest_send = _build_rest_send([_resp({"policyGroups": api_groups})])
     instance = _make_orchestrator(rest_send)
@@ -708,6 +814,7 @@ def test_manage_policy_group_orchestrator_00420() -> None:
     pids = {g["policyId"] for g in result}
 
     assert "P3" not in pids  # source-artifact stripped
+    assert "P4" not in pids  # markDeleted record stripped
     assert pids == {"P2"}  # P1 collapsed into P2 (later timestamp)
 
 
@@ -751,6 +858,217 @@ def test_manage_policy_group_orchestrator_00440() -> None:
 
     with pytest.raises(Exception, match="Query filtered policy groups failed"):
         instance.query_filtered(template_name="t")
+
+
+# =============================================================================
+# Test: pending markDeleted cleanup
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_00450() -> None:
+    """
+    # Summary
+
+    Pending-delete cleanup works when the user supplies either the generated
+    child policy group ID or the original policy group ID.  The direct ID GET is
+    accepted only when the returned record is already ``markDeleted``; otherwise
+    the helper falls back to a targeted ``source:<original_id>`` GET.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.deploy_pending_deleted_cleanup
+    """
+    child = {
+        "policyId": "POLICY-GROUP-20020",
+        "source": "POLICY-GROUP-20010",
+        "description": "cleanup me",
+        "templateName": "switch_freeform_config",
+        "switchIds": ["SN1"],
+        "markDeleted": True,
+    }
+    deploy_body = {"switchIds": [{"switchId": "SN1", "status": "success"}]}
+
+    rest_send = _build_rest_send(
+        [
+            _resp(child),
+            _resp(deploy_body, method="POST"),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+
+    summary = instance.deploy_pending_deleted_cleanup(
+        [{"policy_id": "POLICY-GROUP-20020"}]
+    )
+
+    assert summary["changed"] is True
+    assert summary["matched_policy_group_ids"] == ["POLICY-GROUP-20020"]
+    assert summary["switch_ids"] == ["SN1"]
+    assert len(results._tasks) == 2
+    assert "/policyGroups/POLICY-GROUP-20020" in results._tasks[0].path
+    assert "switchActions/deploy" in results._tasks[1].path
+
+    child_without_switch_ids = dict(child)
+    child_without_switch_ids.pop("switchIds")
+    rest_send = _build_rest_send(
+        [
+            # GET /policyGroups/{id} returned a non-pending original row; this
+            # must not be accepted as pending-delete cleanup evidence.
+            _resp({"policyId": "POLICY-GROUP-20010", "markDeleted": False}),
+            _resp({"policyGroups": [child_without_switch_ids]}),
+            _resp(deploy_body, method="POST"),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+
+    summary = instance.deploy_pending_deleted_cleanup(
+        [
+            {
+                "policy_id": "POLICY-GROUP-20010",
+                "description": "cleanup me",
+                "switch_ids": ["SN1"],
+            }
+        ]
+    )
+
+    assert summary["changed"] is True
+    assert summary["matched_policy_group_ids"] == ["POLICY-GROUP-20020"]
+    assert summary["switch_ids"] == ["SN1"]
+    assert len(results._tasks) == 3
+    assert "/policyGroups/POLICY-GROUP-20010" in results._tasks[0].path
+    assert "source" in results._tasks[1].path
+    assert "switchActions/deploy" in results._tasks[2].path
+    assert results._tasks[2].payload == {"switchIds": ["SN1"]}
+
+
+def test_manage_policy_group_orchestrator_00455() -> None:
+    """
+    # Summary
+
+    Pending-delete cleanup treats a syntactically invalid policy-group ID with
+    no additional cleanup scope as already absent.  It must not call
+    ``GET /policyGroups/{id}`` because the controller returns retryable HTTP
+    500 responses for nonnumeric ID suffixes such as ``POLICY-GROUP-FAKE998``.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.deploy_pending_deleted_cleanup
+    """
+    rest_send = _build_rest_send([])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+
+    summary = instance.deploy_pending_deleted_cleanup(
+        [{"policy_id": "POLICY-GROUP-FAKE998"}]
+    )
+
+    assert summary["changed"] is False
+    assert summary["matched_policy_group_ids"] == []
+    assert summary["switch_ids"] == []
+    assert len(results._tasks) == 0
+
+
+def test_manage_policy_group_orchestrator_00460() -> None:
+    """
+    # Summary
+
+    Description-only pending cleanup ignores template name drift and then
+    exact-matches the description in Python so Lucene overmatches do not
+    produce deploy candidates.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.deploy_pending_deleted_cleanup
+    """
+    wanted = {
+        "policyId": "POLICY-GROUP-WANTED",
+        "description": "cleanup me",
+        "templateName": "switch_freeform_config",
+        "switchIds": ["SN1", "SN2"],
+        "markDeleted": True,
+    }
+    wrong_desc = {
+        "policyId": "POLICY-GROUP-WRONG",
+        "description": "cleanup me extra",
+        "templateName": "switch_freeform_config",
+        "switchIds": ["SN3"],
+        "markDeleted": True,
+    }
+    active = {
+        "policyId": "POLICY-GROUP-ACTIVE",
+        "description": "cleanup me",
+        "templateName": "switch_freeform_config",
+        "switchIds": ["SN4"],
+        "markDeleted": False,
+    }
+    deploy_body = {
+        "switchIds": [
+            {"switchId": "SN1", "status": "success"},
+            {"switchId": "SN2", "status": "success"},
+        ]
+    }
+    rest_send = _build_rest_send(
+        [
+            _resp({"policyGroups": [wanted, wrong_desc, active]}),
+            _resp(deploy_body, method="POST"),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+
+    summary = instance.deploy_pending_deleted_cleanup(
+        [{"name": "switch_freeform", "description": "cleanup me"}]
+    )
+
+    assert summary["changed"] is True
+    assert summary["matched_policy_group_ids"] == ["POLICY-GROUP-WANTED"]
+    assert summary["switch_ids"] == ["SN1", "SN2"]
+    assert len(results._tasks) == 2
+    assert "description" in results._tasks[0].path
+    assert results._tasks[1].payload == {"switchIds": ["SN1", "SN2"]}
+
+
+def test_manage_policy_group_orchestrator_00470() -> None:
+    """
+    # Summary
+
+    Description-only pending cleanup refuses to deploy when the description
+    matches multiple pending policy groups.  The caller must provide
+    ``policy_id`` so the switch-wide deploy is scoped to a proven resource.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.deploy_pending_deleted_cleanup
+    """
+    rest_send = _build_rest_send(
+        [
+            _resp(
+                {
+                    "policyGroups": [
+                        {
+                            "policyId": "POLICY-GROUP-1",
+                            "description": "ambiguous",
+                            "switchIds": ["SN1"],
+                            "markDeleted": True,
+                        },
+                        {
+                            "policyId": "POLICY-GROUP-2",
+                            "description": "ambiguous",
+                            "switchIds": ["SN2"],
+                            "markDeleted": True,
+                        },
+                    ]
+                }
+            )
+        ]
+    )
+    instance = _make_orchestrator(rest_send)
+
+    with pytest.raises(Exception, match="Multiple pending markDeleted policy groups"):
+        instance.deploy_pending_deleted_cleanup(
+            [{"name": "feature_enable", "description": "ambiguous"}]
+        )
 
 
 # =============================================================================
@@ -820,7 +1138,32 @@ def test_manage_policy_group_orchestrator_00510() -> None:
     # Single POST issued; payload uses the policyGroups envelope.
     assert len(results._tasks) == 1
     assert results._tasks[0].verb == "POST"
-    assert results._tasks[0].payload == {"policyGroups": [m.to_payload() for m in models]}
+    assert results._tasks[0].payload == {
+        "policyGroups": [m.to_payload() for m in models]
+    }
+
+
+def test_manage_policy_group_orchestrator_00515() -> None:
+    """
+    # Summary
+
+    ``create_bulk`` materializes the create-time priority default when the
+    user omitted priority.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.create_bulk
+    """
+    response_body = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
+    rest_send = _build_rest_send([_resp(response_body, method="POST")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=False, results=results)
+    model = _build_pg_model(priority=None)
+
+    instance.create_bulk([model])
+
+    assert model.to_payload().get("priority") is None
+    assert results._tasks[0].payload["policyGroups"][0]["priority"] == 500
 
 
 def test_manage_policy_group_orchestrator_00520() -> None:
@@ -836,7 +1179,12 @@ def test_manage_policy_group_orchestrator_00520() -> None:
     - PolicyGroupOrchestrator.create_bulk
     """
     create_body = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
-    deploy_body = {"switchIds": [{"switchId": "SN1", "status": "success", "message": "ok"}, {"switchId": "SN2", "status": "success", "message": "ok"}]}
+    deploy_body = {
+        "switchIds": [
+            {"switchId": "SN1", "status": "success", "message": "ok"},
+            {"switchId": "SN2", "status": "success", "message": "ok"},
+        ]
+    }
     rest_send = _build_rest_send(
         [
             _resp(create_body, method="POST"),
@@ -971,6 +1319,30 @@ def test_manage_policy_group_orchestrator_00600() -> None:
     assert results._tasks[0].payload == model.to_payload()
 
 
+def test_manage_policy_group_orchestrator_00605() -> None:
+    """
+    # Summary
+
+    ``update`` preserves the current priority when the user omitted priority.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.update
+    """
+    cached_raw = [_build_pg_raw(policy_id="P1", switch_ids=["SN1"], priority=725)]
+    update_body = {"policyId": "P1"}
+    rest_send = _build_rest_send([_resp(update_body, method="PUT")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=False, results=results)
+    instance._raw_cache = cached_raw
+    model = _build_pg_model(policy_id="P1", switch_ids=["SN1"], priority=None)
+
+    instance.update(model)
+
+    assert model.to_payload().get("priority") is None
+    assert results._tasks[0].payload["priority"] == 725
+
+
 def test_manage_policy_group_orchestrator_00610() -> None:
     """
     # Summary
@@ -986,7 +1358,9 @@ def test_manage_policy_group_orchestrator_00610() -> None:
     instance = _make_orchestrator(rest_send, deploy=False)
     model = _build_pg_model(policy_id=None, description="needs id")
 
-    with pytest.raises(Exception, match="Update policy group failed.*needs id.*no policy_id"):
+    with pytest.raises(
+        Exception, match="Update policy group failed.*needs id.*no policy_id"
+    ):
         instance.update(model)
 
 
@@ -1009,7 +1383,11 @@ def test_manage_policy_group_orchestrator_00620() -> None:
     - PolicyGroupOrchestrator.update
     """
     cached_raw = [{"policyId": "P1", "switchIds": ["SN1", "SN2"]}]
-    deploy_body = {"switchIds": [{"switchId": sn, "status": "success"} for sn in ["SN1", "SN2", "SN3"]]}
+    deploy_body = {
+        "switchIds": [
+            {"switchId": sn, "status": "success"} for sn in ["SN1", "SN2", "SN3"]
+        ]
+    }
     rest_send = _build_rest_send(
         [
             _resp({"policyId": "P1"}, method="PUT"),
@@ -1083,6 +1461,158 @@ def test_manage_policy_group_orchestrator_00640() -> None:
     assert results._tasks[1].payload == {"switchIds": ["SN1"]}
 
 
+def test_manage_policy_group_orchestrator_00650() -> None:
+    """
+    # Summary
+
+    A mixed update that changes both membership and policy intent is split into
+    two independent ``PUT`` calls, followed by a single consolidated deploy.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.update
+    """
+    cached_raw = [
+        _build_pg_raw(
+            policy_id="P1",
+            switch_ids=["SN1"],
+            template_inputs={"featureName": "lacp"},
+            priority=500,
+        )
+    ]
+    rest_send = _build_rest_send(
+        [
+            _resp({"policyId": "P1", "step": "membership"}, method="PUT"),
+            _resp({"policyId": "P1", "step": "intent"}, method="PUT"),
+            _resp(
+                {
+                    "switchIds": [
+                        {"switchId": "SN1", "status": "success"},
+                        {"switchId": "SN2", "status": "success"},
+                    ]
+                },
+                method="POST",
+            ),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=True, results=results)
+    instance._raw_cache = cached_raw
+    model = _build_pg_model(
+        policy_id="P1",
+        switch_ids=["SN1", "SN2"],
+        template_inputs={"featureName": "lldp"},
+    )
+
+    instance.update(model)
+
+    membership_payload = {
+        "switchIds": ["SN1", "SN2"],
+        "templateName": "feature_enable",
+        "entityType": "switch",
+        "entityName": "SWITCH",
+        "description": "test pg",
+        "priority": 500,
+        "source": "",
+        "templateInputs": {"featureName": "lacp"},
+    }
+
+    assert len(results._tasks) == 3
+    assert results._tasks[0].verb == "PUT"
+    assert results._tasks[0].metadata["action"] == "update"
+    assert results._tasks[0].payload == membership_payload
+    assert results._tasks[1].verb == "PUT"
+    assert results._tasks[1].metadata["action"] == "update"
+    assert results._tasks[1].payload == model.to_payload()
+    assert "switchActions/deploy" in results._tasks[2].path
+    assert results._tasks[2].payload == {"switchIds": ["SN1", "SN2"]}
+
+
+def test_manage_policy_group_orchestrator_00660() -> None:
+    """
+    # Summary
+
+    The same mixed update split happens when ``deploy=False``, but no
+    ``switchActions/deploy`` call is issued.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.update
+    """
+    cached_raw = [
+        _build_pg_raw(
+            policy_id="P1",
+            switch_ids=["SN1"],
+            template_inputs={"featureName": "lacp"},
+            priority=500,
+        )
+    ]
+    rest_send = _build_rest_send(
+        [
+            _resp({"policyId": "P1", "step": "membership"}, method="PUT"),
+            _resp({"policyId": "P1", "step": "intent"}, method="PUT"),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=False, results=results)
+    instance._raw_cache = cached_raw
+    model = _build_pg_model(
+        policy_id="P1",
+        switch_ids=["SN1", "SN2"],
+        template_inputs={"featureName": "lldp"},
+    )
+
+    instance.update(model)
+
+    assert len(results._tasks) == 2
+    assert [task.verb for task in results._tasks] == ["PUT", "PUT"]
+    assert [task.metadata["action"] for task in results._tasks] == ["update", "update"]
+
+
+def test_manage_policy_group_orchestrator_00670() -> None:
+    """
+    # Summary
+
+    A membership-only update remains a single ``PUT``.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.update
+    """
+    cached_raw = [
+        _build_pg_raw(
+            policy_id="P1",
+            switch_ids=["SN1"],
+            template_inputs={"featureName": "lacp"},
+            priority=500,
+        )
+    ]
+    rest_send = _build_rest_send([_resp({"policyId": "P1"}, method="PUT")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=False, results=results)
+    instance._raw_cache = cached_raw
+    model = _build_pg_model(
+        policy_id="P1",
+        switch_ids=["SN1", "SN2"],
+        template_inputs={"featureName": "lacp"},
+    )
+
+    instance.update(model)
+
+    assert len(results._tasks) == 1
+    assert results._tasks[0].verb == "PUT"
+    assert results._tasks[0].payload == {
+        "switchIds": ["SN1", "SN2"],
+        "templateName": "feature_enable",
+        "entityType": "switch",
+        "entityName": "SWITCH",
+        "description": "test pg",
+        "priority": 500,
+        "source": "",
+        "templateInputs": {"featureName": "lacp"},
+    }
+
+
 # =============================================================================
 # Test: delete / delete_bulk
 # =============================================================================
@@ -1126,7 +1656,11 @@ def test_manage_policy_group_orchestrator_00710() -> None:
             {"policyId": "P2", "status": "success"},
         ]
     }
-    deploy_body = {"switchIds": [{"switchId": sn, "status": "success"} for sn in ("SN1", "SN2", "SN3")]}
+    deploy_body = {
+        "switchIds": [
+            {"switchId": sn, "status": "success"} for sn in ("SN1", "SN2", "SN3")
+        ]
+    }
     rest_send = _build_rest_send(
         [
             _resp(mark_body, method="POST"),
@@ -1175,7 +1709,15 @@ def test_manage_policy_group_orchestrator_00720() -> None:
         [
             _resp(mark_body, method="POST"),
             _resp({}, method="DELETE"),  # direct DELETE for P2
-            _resp({"switchIds": [{"switchId": "SN1", "status": "success"}, {"switchId": "SN2", "status": "success"}]}, method="POST"),
+            _resp(
+                {
+                    "switchIds": [
+                        {"switchId": "SN1", "status": "success"},
+                        {"switchId": "SN2", "status": "success"},
+                    ]
+                },
+                method="POST",
+            ),
         ]
     )
     results = _make_results()
@@ -1303,7 +1845,11 @@ def test_manage_policy_group_orchestrator_00810() -> None:
     body = {
         "switchIds": [
             {"switchId": "SN1", "status": "success", "message": "ok"},
-            {"switchId": "SN2", "status": "notExecuted", "message": "No Commands to execute"},
+            {
+                "switchId": "SN2",
+                "status": "notExecuted",
+                "message": "No Commands to execute",
+            },
         ]
     }
     rest_send = _build_rest_send([_resp(body, method="POST")])
@@ -1333,7 +1879,10 @@ def test_manage_policy_group_orchestrator_00820() -> None:
     rest_send = _build_rest_send([_resp(body, method="POST")])
     instance = _make_orchestrator(rest_send)
 
-    with pytest.raises(Exception, match="switchActions/deploy reported 1 failed switch.*SN2.*deploy timeout"):
+    with pytest.raises(
+        Exception,
+        match="switchActions/deploy reported 1 failed switch.*SN2.*deploy timeout",
+    ):
         instance._switch_deploy(["SN1", "SN2"])
 
 
@@ -1354,7 +1903,9 @@ def test_manage_policy_group_orchestrator_00830() -> None:
     rest_send = _build_rest_send([_resp(list_body, method="POST")])
     instance = _make_orchestrator(rest_send)
 
-    with pytest.raises(Exception, match="switchActions/deploy reported 1 failed switch.*SN1"):
+    with pytest.raises(
+        Exception, match="switchActions/deploy reported 1 failed switch.*SN1"
+    ):
         instance._switch_deploy(["SN1"])
 
 
@@ -1431,7 +1982,12 @@ def test_manage_policy_group_orchestrator_00920() -> None:
 
     - PolicyGroupOrchestrator.deploy_unchanged_user_mentioned
     """
-    body = {"switchIds": [{"switchId": "SN1", "status": "success"}, {"switchId": "SN2", "status": "success"}]}
+    body = {
+        "switchIds": [
+            {"switchId": "SN1", "status": "success"},
+            {"switchId": "SN2", "status": "success"},
+        ]
+    }
     rest_send = _build_rest_send([_resp(body, method="POST")])
     results = _make_results()
     instance = _make_orchestrator(rest_send, deploy=True, results=results)
@@ -1459,7 +2015,9 @@ def test_manage_policy_group_orchestrator_00930() -> None:
     rest_send = _build_rest_send([])
     results = _make_results()
     instance = _make_orchestrator(rest_send, deploy=True, results=results)
-    pg_unrelated = _build_pg_model(policy_id="P_OTHER", description="unrelated", switch_ids=["SN9"])
+    pg_unrelated = _build_pg_model(
+        policy_id="P_OTHER", description="unrelated", switch_ids=["SN9"]
+    )
     sm = _FakeStateMachine(proposed=[], existing=[pg_unrelated])
 
     with does_not_raise():
@@ -1774,7 +2332,9 @@ def test_manage_policy_group_orchestrator_01210() -> None:
 
     - PolicyGroupOrchestrator.query_by_id
     """
-    rest_send = _build_rest_send([_resp({"policyId": "POLICY-GROUP-1", "templateName": "t"})])
+    rest_send = _build_rest_send(
+        [_resp({"policyId": "POLICY-GROUP-1", "templateName": "t"})]
+    )
     results = _make_results()
     instance = _make_orchestrator(
         rest_send,
@@ -1857,8 +2417,8 @@ def test_manage_policy_group_orchestrator_01240() -> None:
 
     - PolicyGroupOrchestrator.update
     """
-    # Two responses: (1) cached GET miss for _get_current_switch_ids, then
-    # (2) the actual PUT.  Order matters because _get_current_switch_ids
+    # Two responses: (1) cached GET miss for _get_current_policy_group, then
+    # (2) the actual PUT.  Order matters because _get_current_policy_group
     # runs before the PUT inside update().
     rest_send = _build_rest_send(
         [
@@ -1901,7 +2461,15 @@ def test_manage_policy_group_orchestrator_01250() -> None:
     - PolicyGroupOrchestrator._mark_delete
     """
     # markDelete reports the policy id as failed → triggers direct DELETE.
-    mark_response = {"policyGroups": [{"policyId": "POLICY-GROUP-1", "status": "failed", "message": "PYTHON content-type"}]}
+    mark_response = {
+        "policyGroups": [
+            {
+                "policyId": "POLICY-GROUP-1",
+                "status": "failed",
+                "message": "PYTHON content-type",
+            }
+        ]
+    }
     rest_send = _build_rest_send(
         [
             _resp(mark_response, method="POST"),  # markDelete
@@ -1946,7 +2514,11 @@ def test_manage_policy_group_orchestrator_01260() -> None:
     """
     # create_bulk → POST then trailing switchActions/deploy when deploy=True.
     create_response = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
-    deploy_response = {"switchIds": [{"switchId": "SN1", "status": "success", "message": "Deployed Successfully"}]}
+    deploy_response = {
+        "switchIds": [
+            {"switchId": "SN1", "status": "success", "message": "Deployed Successfully"}
+        ]
+    }
     rest_send = _build_rest_send(
         [
             _resp(create_response, method="POST"),

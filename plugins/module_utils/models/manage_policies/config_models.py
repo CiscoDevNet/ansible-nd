@@ -8,7 +8,8 @@ They enforce constraints from the ND API specification (``createBasePolicy``
 schema) at the playbook boundary so errors are caught early with clear messages.
 
 Schema constraints (source: ND API specification, createBasePolicy):
-    - priority: integer, min=1, max=2000, default=500
+    - priority: integer, min=1, max=2000. Create payloads default to 500;
+      omitted update config preserves the existing controller value.
     - description: string, maxLength=255
     - templateName: string, maxLength=255
 
@@ -65,11 +66,11 @@ class PlaybookSwitchPolicyConfig(NDNestedModel):
         max_length=255,
         description="Policy description (max 255 characters)",
     )
-    priority: int = Field(
-        default=500,
+    priority: int | None = Field(
+        default=None,
         ge=1,
         le=2000,
-        description="Policy priority (1-2000, default 500)",
+        description="Policy priority (1-2000). Defaults to 500 on create; omitted updates preserve the existing priority.",
     )
     create_additional_policy: bool = Field(
         default=True,
@@ -175,11 +176,11 @@ class PlaybookPolicyConfig(NDNestedModel):
         max_length=255,
         description="Policy description (max 255 characters)",
     )
-    priority: int = Field(
-        default=500,
+    priority: int | None = Field(
+        default=None,
         ge=1,
         le=2000,
-        description="Policy priority (1-2000, default 500)",
+        description="Policy priority (1-2000). Defaults to 500 on create; omitted updates preserve the existing priority.",
     )
     create_additional_policy: bool = Field(
         default=True,

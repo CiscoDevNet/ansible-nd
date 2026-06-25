@@ -93,6 +93,137 @@
           - result.changed == false
       tags: deleted
 
+    ########################################################
+    ## TC4 - normal template pending cleanup by ID         ##
+    ########################################################
+
+    # Normal policy-group templates keep the original policy group ID with
+    # markDeleted=true after deploy=false. The follow-up deploy=true run must
+    # find that same ID and deploy cleanup without issuing markDelete again.
+    # The markDeleted policy-group response may omit switchIds, so the cleanup
+    # call supplies switch_ids as the explicit switchActions/deploy target.
+
+    - name: "DELETED TC4 SETUP - Create policy group for pending cleanup"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Pending cleanup Enable LACP"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lacp
+      register: pending_setup
+      tags: deleted
+
+    - name: "DELETED TC4 SETUP - Capture pending cleanup policy group ID"
+      ansible.builtin.set_fact:
+        pending_cleanup_policy_group_id: "{{ (pending_setup.after | selectattr('description', 'equalto', 'Pending cleanup Enable LACP') | first).policy_id }}"
+      tags: deleted
+
+    - name: "DELETED TC4 - Delete policy group with deploy=false"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: false
+        config:
+          - name: "{{ pending_cleanup_policy_group_id }}"
+            description: "Pending cleanup Enable LACP"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC4 - Verify deploy=false delete changed"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    - name: "DELETED TC4B - Deploy pending markDeleted cleanup by policy group ID"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ pending_cleanup_policy_group_id }}"
+            description: "Pending cleanup Enable LACP"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC4B - Verify pending cleanup deploy changed"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    ########################################################
+    ## TC5 - switch_freeform source-child cleanup          ##
+    ########################################################
+
+    # switch_freeform can leave a generated child whose source points at the
+    # original policy group ID. The cleanup run must find that child by source
+    # even when the user provides only the original ID.
+
+    - name: "DELETED TC5 SETUP - Create switch_freeform policy group for source cleanup"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "Pending cleanup switch_freeform source"
+            priority: 120
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: |
+                line console
+                  exec-timeout 5
+      register: source_cleanup_setup
+      tags: deleted
+
+    - name: "DELETED TC5 SETUP - Capture switch_freeform source cleanup policy group ID"
+      ansible.builtin.set_fact:
+        source_cleanup_policy_group_id: "{{ (source_cleanup_setup.after | selectattr('description', 'equalto', 'Pending cleanup switch_freeform source') | first).policy_id }}"
+      tags: deleted
+
+    - name: "DELETED TC5 - Delete switch_freeform policy group with deploy=false"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: false
+        config:
+          - name: "{{ source_cleanup_policy_group_id }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC5 - Verify deploy=false switch_freeform delete changed"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    - name: "DELETED TC5B - Deploy source-child pending cleanup by original policy group ID"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ source_cleanup_policy_group_id }}"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC5B - Verify source-child pending cleanup deploy changed"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
   always:
     - name: "DELETED - Final cleanup"
       ansible.builtin.import_tasks: ../tasks/cleanup.yaml

@@ -157,7 +157,13 @@
           - (gathered_result.gathered | default([])) | length == 0
       tags: deleted
 
-    # TC-5: Delete with deploy=false (markDelete only)
+    ##############################################
+    ## TC5 - normal template pending cleanup     ##
+    ##############################################
+
+    # Normal templates keep the original policy ID with markDeleted=true after
+    # deploy=false. The follow-up deploy=true run must find that same ID and
+    # deploy cleanup without issuing markDelete again.
     - name: "DELETED TC5 SETUP - Create a policy for markDelete test"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
@@ -177,19 +183,135 @@
       register: setup_result
       tags: deleted
 
+    - name: "DELETED TC5 SETUP - Gather markDelete test policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+            description: "Timezone for markDelete test"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc5_gathered_result
+      tags: deleted
+
+    - name: "DELETED TC5 SETUP - Capture markDelete test policy ID"
+      ansible.builtin.set_fact:
+        tc5_markdelete_policy_id: "{{ tc5_gathered_result.gathered[0].policy_id }}"
+      tags: deleted
+
     - name: "DELETED TC5 - Delete with deploy=false (markDelete only)"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: false
         config:
-          - name: clock_timezone
+          - name: "{{ tc5_markdelete_policy_id }}"
+            description: "Timezone for markDelete test"
           - switch:
               - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: deleted
 
     - name: "DELETED TC5 - Verify markDelete happened"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    - name: "DELETED TC5B - Deploy pending markDeleted cleanup by policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ tc5_markdelete_policy_id }}"
+            description: "Timezone for markDelete test"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC5B - Verify pending cleanup deploy changed"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    ##############################################
+    ## TC5C - switch_freeform source child       ##
+    ##############################################
+
+    # switch_freeform deploy=false can leave a generated child whose
+    # source points at the original policy ID. The cleanup run must find that
+    # child by source even when the user provides only the original ID.
+    - name: "DELETED TC5C SETUP - Create switch_freeform policy for source cleanup"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "Source cleanup switch freeform"
+            priority: 125
+            template_inputs:
+              CONF: |
+                line console
+                  exec-timeout 5
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: setup_result
+      tags: deleted
+
+    - name: "DELETED TC5C SETUP - Gather switch_freeform source cleanup policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "Source cleanup switch freeform"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc5c_gathered_result
+      tags: deleted
+
+    - name: "DELETED TC5C SETUP - Capture switch_freeform source cleanup policy ID"
+      ansible.builtin.set_fact:
+        tc5c_source_cleanup_policy_id: "{{ tc5c_gathered_result.gathered[0].policy_id }}"
+      tags: deleted
+
+    - name: "DELETED TC5C - Delete switch_freeform with deploy=false"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: false
+        config:
+          - name: "{{ tc5c_source_cleanup_policy_id }}"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC5C - Verify deploy=false switch_freeform delete changed"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    - name: "DELETED TC5D - Deploy source-child pending cleanup by original policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ tc5c_source_cleanup_policy_id }}"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC5D - Verify source-child pending cleanup deploy changed"
       ansible.builtin.assert:
         that:
           - result.changed == true

@@ -39,6 +39,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
     EpManageSwitchActionsDeployPost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.policy_group_base import (
     PolicyGroupCreate,
@@ -94,7 +95,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManagePolicyGroupsDelete
 
     # Additional endpoints not in base
-    mark_delete_endpoint: type[NDEndpointBaseModel] = EpManagePolicyGroupActionsMarkDeletePost
+    mark_delete_endpoint: type[NDEndpointBaseModel] = (
+        EpManagePolicyGroupActionsMarkDeletePost
+    )
     switch_deploy_endpoint: type[NDEndpointBaseModel] = EpManageSwitchActionsDeployPost
 
     # Configuration
@@ -176,7 +179,11 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             if with_ticket and self.ticket_id and hasattr(params, "ticket_id"):
                 params.ticket_id = self.ticket_id
         except ValidationError as exc:
-            raise Exception("Invalid value for orchestrator parameter " "(ticket_id / cluster_name) on endpoint " f"{type(ep).__name__}: {exc}") from exc
+            raise Exception(
+                "Invalid value for orchestrator parameter "
+                "(ticket_id / cluster_name) on endpoint "
+                f"{type(ep).__name__}: {exc}"
+            ) from exc
 
     # ------------------------------------------------------------------ #
     # Query operations
@@ -198,11 +205,12 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         filters in memory. The cache is invalidated automatically by any
         mutation method (``create_bulk``, ``update``, ``delete_bulk``).
 
-        The cache stores the broadest possible view (no description and source
+        The cache stores the broadest possible user-managed view (no description
         filtering applied here on the raw response — only the spec-mandated
-        ``source`` artifact filter is always applied since those records are
-        never user-managed). ``include_no_description`` and ``deduplicate``
-        are then applied as Python-side filters on the cached list.
+        ``source`` artifact and ``markDeleted`` filters are always applied
+        since those records are not active user-managed groups).
+        ``include_no_description`` and ``deduplicate`` are then applied as
+        Python-side filters on the cached list.
 
         Args:
             include_no_description: When False (default), exclude policy groups
@@ -230,14 +238,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 ep.lucene_params.max = 10000
                 result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
                 groups = result.get("policyGroups", []) or []
-                # Filter out internal controller artifacts (e.g. switch_freeform_config
-                # records auto-generated during deletion of PYTHON content-type
-                # policy groups). These have a non-empty "source" field referencing
-                # the original policy ID and are never user-managed.
-                # Per the policyBase schema, ``source`` defaults to ``""`` and is
-                # falsy for user-created groups; ``not g.get("source")`` covers
-                # ``""``, ``None``, and missing — all spec-valid forms.
-                raw = [g for g in groups if not g.get("source")]
+                raw = [g for g in groups if self._is_active_user_group(g)]
                 # Cache without the per-call filters so other callers can re-derive
                 # their view.  ``_raw_cache`` is a Pydantic PrivateAttr so plain
                 # assignment is correct here.
@@ -278,13 +279,29 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             key = (group.get("description", ""), group.get("templateName", ""))
             if key in seen:
                 # Keep the one with the later timestamp
-                existing_ts = seen[key].get("updateTimestamp") or seen[key].get("createTimestamp") or 0
-                current_ts = group.get("updateTimestamp") or group.get("createTimestamp") or 0
+                existing_ts = (
+                    seen[key].get("updateTimestamp")
+                    or seen[key].get("createTimestamp")
+                    or 0
+                )
+                current_ts = (
+                    group.get("updateTimestamp") or group.get("createTimestamp") or 0
+                )
                 if current_ts > existing_ts:
                     seen[key] = group
             else:
                 seen[key] = group
         return list(seen.values())
+
+    @staticmethod
+    def _is_active_user_group(group: dict) -> bool:
+        """Return True when a policy-group record belongs in normal reads.
+
+        Normal query/gathered/idempotency paths should expose only active,
+        user-managed policy groups. Pending-delete cleanup uses dedicated raw
+        helpers so it can still inspect ``source`` and ``markDeleted`` records.
+        """
+        return not group.get("source") and not group.get("markDeleted", False)
 
     def query_by_id(self, policy_group_id: str) -> ResponseType:
         """GET /policyGroups/{policyGroupId} — fetch a single policy group by ID."""
@@ -320,20 +337,24 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             Filtered list of policy group dicts (deduplicated by default).
         """
         try:
-            # Serve from cache if populated; ``_raw_cache`` already has the
-            # ``source``-artifact filter applied. We re-apply the requested
-            # template_name / description filters in memory to mirror the
-            # semantics of the server-side Lucene query.
-            raw = self._raw_cache
-            if raw is not None:
-                groups = raw
+            def filter_groups(groups: list) -> list:
+                groups = [g for g in groups if self._is_active_user_group(g)]
                 if template_name:
-                    groups = [g for g in groups if g.get("templateName") == template_name]
+                    groups = [
+                        g for g in groups if g.get("templateName") == template_name
+                    ]
                 if description:
                     groups = [g for g in groups if g.get("description") == description]
                 if deduplicate:
                     return self._deduplicate_groups(groups)
                 return list(groups)
+
+            # Serve from cache if populated; ``_raw_cache`` already has the
+            # active-user-group filter applied. Re-filtering keeps the behavior
+            # identical if a future caller stores a wider raw cache.
+            raw = self._raw_cache
+            if raw is not None:
+                return filter_groups(raw)
 
             ep = self.query_all_endpoint()
             ep.fabric_name = self.fabric_name
@@ -350,13 +371,315 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 ep.lucene_params.filter = " AND ".join(filters)
 
             result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
-            groups = result.get("policyGroups", []) or []
-            groups = [g for g in groups if not g.get("source")]
-            if deduplicate:
-                return self._deduplicate_groups(groups)
-            return groups
+            groups = filter_groups(result.get("policyGroups", []) or [])
+            if groups or not filters or not description:
+                return groups
+
+            # Some controller Lucene filters are not reliable for free-form
+            # descriptions (for example values containing boolean-looking
+            # words). Fall back to the active cache and exact Python matching.
+            return filter_groups(self.query_all(include_no_description=True, deduplicate=False))
         except Exception as e:
             raise Exception(f"Query filtered policy groups failed: {e}") from e
+
+    @staticmethod
+    def _escape_lucene_value(value: str) -> str:
+        """Escape Lucene special characters while leaving spaces tokenized."""
+        s = str(value)
+        if not s:
+            return s
+        chars_to_escape = set(r'+-!(){}[]^"~*?:\/')
+        return "".join(f"\\{ch}" if ch in chars_to_escape else ch for ch in s)
+
+    @staticmethod
+    def _is_mark_deleted_record(record: dict) -> bool:
+        """Return True when the controller marks a group as pending delete."""
+        value = record.get("markDeleted", False)
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() == "true"
+
+    @staticmethod
+    def _policy_group_key(record: dict) -> tuple:
+        """Build a stable best-effort key for deduplicating raw group rows."""
+        return (
+            record.get("policyId"),
+            record.get("source"),
+            tuple(PolicyGroupOrchestrator._record_switch_ids(record)),
+            record.get("templateName"),
+            record.get("description"),
+        )
+
+    @staticmethod
+    def _record_switch_ids(record: dict) -> list[str]:
+        """Return switch IDs from either policy-group response key."""
+        switch_ids = record.get("switchIds")
+        if switch_ids is None:
+            switch_ids = record.get("switchId")
+        if switch_ids is None:
+            return []
+        if isinstance(switch_ids, list):
+            return [sid for sid in switch_ids if sid]
+        if switch_ids:
+            return [switch_ids]
+        return []
+
+    @staticmethod
+    def _cleanup_identity(entry: dict) -> tuple[str | None, str | None]:
+        """Extract the cleanup identity from a user config entry."""
+        policy_group_id = entry.get("policy_id")
+        name = entry.get("name") or ""
+        if not policy_group_id and name.startswith("POLICY-GROUP-"):
+            policy_group_id = name
+        return policy_group_id, entry.get("description")
+
+    @staticmethod
+    def _is_policy_group_id_endpoint_safe(policy_group_id: str) -> bool:
+        """Return True when an ID is safe for ``GET /policyGroups/{id}``.
+
+        The controller expects the generated numeric suffix.  Values such as
+        ``POLICY-GROUP-FAKE998`` produce HTTP 500 responses that RestSend
+        retries until timeout, so pending-delete cleanup must short-circuit
+        them before using the ID endpoint.
+        """
+        prefix = "POLICY-GROUP-"
+        return (
+            isinstance(policy_group_id, str)
+            and policy_group_id.startswith(prefix)
+            and policy_group_id[len(prefix) :].isdigit()
+        )
+
+    def _query_policy_groups_by_description_raw(self, description: str) -> list[dict]:
+        """Query policy groups with only a description Lucene filter.
+
+        Unlike ``query_filtered``, this raw helper intentionally does not
+        remove ``source`` artifacts because the pending-delete cleanup branch
+        must be able to see generated child records.
+        """
+        ep = self.query_all_endpoint()
+        ep.fabric_name = self.fabric_name
+        ep.lucene_params.max = 10000
+        ep.lucene_params.filter = "description:{0}".format(
+            self._escape_lucene_value(description)
+        )
+        self._apply_endpoint_params(ep, with_ticket=False)
+        result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
+        if isinstance(result, dict):
+            return result.get("policyGroups", []) or []
+        return []
+
+    def _query_policy_groups_by_source_raw(self, source_policy_group_id: str) -> list[dict]:
+        """Query policy groups whose ``source`` points at ``source_policy_group_id``.
+
+        Switch-freeform cleanup can leave a generated child group with a new
+        ``policyId`` and ``source`` set to the original group ID.  This keeps
+        the pending-delete lookup targeted without fetching the whole fabric.
+        """
+        ep = self.query_all_endpoint()
+        ep.fabric_name = self.fabric_name
+        ep.lucene_params.max = 10000
+        # Policy-group IDs are stored literally in ``source`` (for example
+        # ``POLICY-GROUP-12345``). Escaping hyphens produces an encoded
+        # backslash in the final URI and prevents the controller match.
+        ep.lucene_params.filter = f"source:{source_policy_group_id}"
+        self._apply_endpoint_params(ep, with_ticket=False)
+        result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
+        if isinstance(result, dict):
+            return result.get("policyGroups", []) or []
+        return []
+
+    def _find_pending_deleted_groups(self, entry: dict) -> list[dict]:
+        """Find already-``markDeleted`` policy groups for delete+deploy cleanup.
+
+        This path is isolated from normal query/state-machine reads.  It first
+        uses policy group ID when available and accepts the returned record only
+        when ``markDeleted`` is true.  If no pending record is found by ID, it
+        queries ``source:<policy_group_id>`` so generated cleanup children can
+        be found when their source points at the original group.  That fallback
+        is used only when the user supplied extra cleanup scope (description or
+        switch_ids); a completely unknown ID with no scope is treated as an
+        already-absent no-op.  Without an ID, it narrows by description and
+        then exact-matches in Python.
+        Template name is intentionally ignored because generated cleanup
+        children can use a different template name from the user-facing policy
+        group.
+        """
+        policy_group_id, description = self._cleanup_identity(entry)
+        if policy_group_id and not self._is_policy_group_id_endpoint_safe(policy_group_id):
+            log.debug(
+                "pending-delete cleanup skipped invalid policy group ID %r.",
+                policy_group_id,
+            )
+            if not description:
+                return []
+            policy_group_id = None
+
+        if not policy_group_id and not description:
+            log.debug(
+                "pending-delete cleanup skipped: neither policy_id nor description is available."
+            )
+            return []
+
+        matches: list[dict] = []
+        seen: set[tuple] = set()
+        requested_switch_ids = set(entry.get("switch_ids") or [])
+
+        def add_matching_candidates(candidates: list[dict]) -> None:
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                if not self._is_mark_deleted_record(candidate):
+                    continue
+
+                candidate_policy_id = candidate.get("policyId")
+                candidate_source = candidate.get("source")
+                if policy_group_id:
+                    if (
+                        candidate_policy_id != policy_group_id
+                        and candidate_source != policy_group_id
+                    ):
+                        continue
+                    if (
+                        candidate_policy_id != policy_group_id
+                        and description
+                        and (candidate.get("description") or "") != description
+                    ):
+                        continue
+                    if requested_switch_ids:
+                        candidate_switch_ids = set(self._record_switch_ids(candidate))
+                        if candidate_switch_ids and candidate_switch_ids != requested_switch_ids:
+                            continue
+                        if not candidate_switch_ids:
+                            candidate = dict(candidate)
+                            candidate["switchIds"] = sorted(requested_switch_ids)
+                else:
+                    if (candidate.get("description") or "") != description:
+                        continue
+                    if requested_switch_ids:
+                        candidate_switch_ids = set(self._record_switch_ids(candidate))
+                        if candidate_switch_ids and candidate_switch_ids != requested_switch_ids:
+                            continue
+                        if not candidate_switch_ids:
+                            candidate = dict(candidate)
+                            candidate["switchIds"] = sorted(requested_switch_ids)
+
+                key = self._policy_group_key(candidate)
+                if key in seen:
+                    continue
+                seen.add(key)
+                matches.append(candidate)
+
+        if policy_group_id:
+            try:
+                by_id = self.query_by_id(policy_group_id)
+            except Exception as exc:  # noqa: BLE001
+                log.debug(
+                    "pending-delete cleanup ID lookup failed for %s (%s: %s)",
+                    policy_group_id,
+                    type(exc).__name__,
+                    exc,
+                )
+                by_id = None
+            if by_id:
+                add_matching_candidates([by_id])
+            if not matches and (description or requested_switch_ids):
+                add_matching_candidates(self._query_policy_groups_by_source_raw(policy_group_id))
+            elif not matches:
+                log.debug(
+                    "pending-delete cleanup source lookup skipped for %s: no description or switch_ids were supplied.",
+                    policy_group_id,
+                )
+            if not matches and description:
+                add_matching_candidates(self._query_policy_groups_by_description_raw(description))
+        else:
+            add_matching_candidates(self._query_policy_groups_by_description_raw(description))
+
+        if not policy_group_id:
+            distinct_policy_ids = {
+                g.get("policyId") for g in matches if g.get("policyId")
+            }
+            if len(distinct_policy_ids) > 1:
+                raise Exception(
+                    "Multiple pending markDeleted policy groups match "
+                    "description {0!r}. Provide policy_id to safely deploy "
+                    "the pending delete cleanup.".format(description)
+                )
+
+        log.debug(
+            "pending-delete cleanup matched %d policy group record(s) for policy_group_id=%r description=%r",
+            len(matches),
+            policy_group_id,
+            description,
+        )
+        return matches
+
+    def deploy_pending_deleted_cleanup(self, config_entries: list[dict]) -> dict:
+        """Deploy switch cleanup for already-markDeleted policy groups.
+
+        Used only by ``state=deleted`` + ``deploy=true`` after the normal active
+        delete path runs.  It is deliberately separate from ``query_all`` so
+        normal merged/gathered/idempotency reads continue hiding
+        ``source``/pending-delete artifacts.
+        """
+        summary = {
+            "matched_policy_group_ids": [],
+            "switch_ids": [],
+            "skipped": [],
+            "changed": False,
+        }
+        if not self.deploy:
+            return summary
+
+        matched: list[dict] = []
+        for index, entry in enumerate(config_entries):
+            policy_group_id, description = self._cleanup_identity(entry)
+            if not policy_group_id and not description:
+                summary["skipped"].append(
+                    {
+                        "index": index,
+                        "reason": "policy_id or description required for pending-delete cleanup",
+                    }
+                )
+                continue
+            matched.extend(self._find_pending_deleted_groups(entry))
+
+        unique: list[dict] = []
+        seen: set[tuple] = set()
+        for group in matched:
+            key = self._policy_group_key(group)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(group)
+
+        switch_ids = sorted(
+            {
+                sid
+                for group in unique
+                for sid in self._record_switch_ids(group)
+                if sid
+            }
+        )
+        policy_group_ids = [
+            group.get("policyId") for group in unique if group.get("policyId")
+        ]
+
+        summary["matched_policy_group_ids"] = policy_group_ids
+        summary["switch_ids"] = switch_ids
+        if not unique:
+            return summary
+        if not switch_ids:
+            raise Exception(
+                "Pending markDeleted policy group record(s) were found, but none "
+                "included switchIds for switchActions/deploy."
+            )
+
+        summary["changed"] = True
+        if self.rest_send.check_mode:
+            return summary
+
+        self._switch_deploy(switch_ids)
+        return summary
 
     # ------------------------------------------------------------------ #
     # Create operations
@@ -366,7 +689,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         """Create a single policy group (wraps in bulk API)."""
         return self.create_bulk([model_instance], **kwargs)
 
-    def create_bulk(self, model_instances: list[PolicyGroupCreate], **kwargs) -> ResponseType:
+    def create_bulk(
+        self, model_instances: list[PolicyGroupCreate], **kwargs
+    ) -> ResponseType:
         """POST /policyGroups with ``{"policyGroups": [...]}`` wrapper.
 
         The endpoint always returns HTTP 207 (Multi-Status); per-item
@@ -379,7 +704,11 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             ep.fabric_name = self.fabric_name
             self._apply_endpoint_params(ep)
 
-            payload = {"policyGroups": [m.to_payload() for m in model_instances]}
+            payload = {
+                "policyGroups": [
+                    self._with_create_defaults(m.to_payload()) for m in model_instances
+                ]
+            }
             result = self._request(path=ep.path, verb=ep.verb, data=payload)
 
             # Populate server-generated policyIds back onto model instances
@@ -405,7 +734,11 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                     failures.append(f"{ident}: {msg}")
 
             if failures:
-                raise Exception("Bulk create reported {0} failed item(s): {1}".format(len(failures), "; ".join(failures)))
+                raise Exception(
+                    "Bulk create reported {0} failed item(s): {1}".format(
+                        len(failures), "; ".join(failures)
+                    )
+                )
 
             # Deploy if requested.
             if self.deploy:
@@ -438,17 +771,30 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         try:
             policy_group_id = model_instance.policy_id
             if not policy_group_id:
-                raise ValueError(f"Cannot update policy group — no policy_id found. " f"Description: {model_instance.description!r}")
+                raise ValueError(
+                    f"Cannot update policy group — no policy_id found. "
+                    f"Description: {model_instance.description!r}"
+                )
 
-            # Capture current switch_ids before update for removal detection
-            old_switch_ids = self._get_current_switch_ids(policy_group_id)
+            current_group = self._get_current_policy_group(policy_group_id)
+            old_switch_ids = self._extract_switch_ids(current_group)
+            desired_payload = self._with_update_priority(
+                model_instance.to_payload(), current_group
+            )
+            update_payloads = self._build_update_payloads(
+                current_group, desired_payload
+            )
 
-            ep = self.update_endpoint()
-            ep.fabric_name = self.fabric_name
-            ep.policy_group_id = policy_group_id
-            self._apply_endpoint_params(ep)
+            if len(update_payloads) > 1:
+                log.info(
+                    "Splitting policy group update for %s into %d PUT requests because switch membership and intent changed together.",
+                    policy_group_id,
+                    len(update_payloads),
+                )
 
-            result = self._request(path=ep.path, verb=ep.verb, data=model_instance.to_payload())
+            result = {}
+            for payload in update_payloads:
+                result = self._put_policy_group(policy_group_id, payload)
 
             # Deploy if requested.
             #
@@ -459,16 +805,170 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             # switches that were removed from the group (so the negative
             # / removal config is pushed to them).
             if self.deploy:
-                new_switch_ids = set(model_instance.switch_ids or [])
+                new_switch_ids = set(desired_payload.get("switchIds", []) or [])
                 removed_switches = old_switch_ids - new_switch_ids
-                affected_switches = {sid for sid in new_switch_ids | removed_switches if sid}
+                affected_switches = {
+                    sid for sid in new_switch_ids | removed_switches if sid
+                }
                 if affected_switches:
                     self._switch_deploy(sorted(affected_switches))
 
             self._invalidate_cache()
             return result
         except Exception as e:
-            raise Exception(f"Update policy group failed for {model_instance.description!r}: {e}") from e
+            raise Exception(
+                f"Update policy group failed for {model_instance.description!r}: {e}"
+            ) from e
+
+    def _put_policy_group(self, policy_group_id: str, payload: dict) -> ResponseType:
+        """Send one ``PUT /policyGroups/{policyGroupId}`` request.
+
+        Keeping this as a small helper ensures split updates are registered as
+        separate API calls in ``Results`` with their own payload/response data.
+        """
+        ep = self.update_endpoint()
+        ep.fabric_name = self.fabric_name
+        ep.policy_group_id = policy_group_id
+        self._apply_endpoint_params(ep)
+        return self._request(
+            path=ep.path,
+            verb=ep.verb,
+            data=payload,
+            operation_type=OperationType.UPDATE,
+        )
+
+    def _get_current_policy_group(self, policy_group_id: str) -> dict:
+        """Return the raw current policy group dict for ``policy_group_id``.
+
+        The cached ``query_all`` response is preferred because module execution
+        usually performs that broad read before the state machine runs.
+        """
+        raw = self._raw_cache
+        if raw is not None:
+            for group in raw:
+                if group.get("policyId") == policy_group_id:
+                    return dict(group)
+            return {}
+        try:
+            result = self.query_by_id(policy_group_id)
+            return dict(result or {}) if isinstance(result, dict) else {}
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "_get_current_policy_group: GET for %s failed (%s: %s) — using desired payload as the only update request",
+                policy_group_id,
+                type(exc).__name__,
+                exc,
+            )
+            return {}
+
+    @classmethod
+    def _build_update_payloads(
+        cls, current_group: dict, desired_payload: dict
+    ) -> list[dict]:
+        """Build one or two update payloads for a policy group.
+
+        The controller rejects a single PUT that changes switch membership and
+        policy intent together. Instead of maintaining a hardcoded list of
+        intent fields, compare the payloads after removing only ``switchIds``.
+        """
+        if not current_group:
+            return [desired_payload]
+
+        try:
+            current_payload = cls._policy_group_to_payload(current_group)
+        except Exception as exc:  # noqa: BLE001
+            log.debug(
+                "Could not normalize current policy group for split update detection (%s: %s); using single PUT.",
+                type(exc).__name__,
+                exc,
+            )
+            return [desired_payload]
+        current_switch_ids = cls._extract_switch_ids(current_payload)
+        desired_switch_ids = cls._extract_switch_ids(desired_payload)
+        membership_changed = current_switch_ids != desired_switch_ids
+        if not membership_changed:
+            return [desired_payload]
+
+        current_intent = cls._without_switch_ids(current_payload)
+        desired_intent = cls._without_switch_ids(desired_payload)
+        membership_payload = cls._policy_group_to_membership_payload(
+            current_group, current_payload
+        )
+        membership_payload["switchIds"] = desired_payload.get("switchIds", [])
+        if current_intent == desired_intent:
+            return [membership_payload]
+
+        return [membership_payload, desired_payload]
+
+    @staticmethod
+    def _with_create_defaults(payload: dict) -> dict:
+        """Materialize create-only defaults before sending the POST body."""
+        out = dict(payload)
+        if out.get("priority") is None:
+            out["priority"] = 500
+        return out
+
+    @classmethod
+    def _with_update_priority(cls, desired_payload: dict, current_group: dict) -> dict:
+        """Preserve existing priority when the user omitted it on update."""
+        if desired_payload.get("priority") is not None:
+            return desired_payload
+        out = dict(desired_payload)
+        current_priority = current_group.get("priority") if current_group else None
+        if current_priority is None and current_group:
+            try:
+                current_priority = cls._policy_group_to_payload(current_group).get(
+                    "priority"
+                )
+            except Exception:  # noqa: BLE001
+                current_priority = None
+        try:
+            parsed_priority = int(current_priority)
+        except (TypeError, ValueError):
+            parsed_priority = 500
+        out["priority"] = parsed_priority if 1 <= parsed_priority <= 2000 else 500
+        return out
+
+    @staticmethod
+    def _policy_group_to_payload(group: dict) -> dict:
+        """Normalize an API policy group dict to the PUT payload shape."""
+        normalized = dict(group)
+        if "switchIds" not in normalized and "switchId" in normalized:
+            normalized["switchIds"] = normalized["switchId"]
+        return PolicyGroupCreate.from_response(normalized).to_payload()
+
+    @staticmethod
+    def _policy_group_to_membership_payload(
+        group: dict, normalized_payload: dict
+    ) -> dict:
+        """Build a membership-only payload from the controller's current shape.
+
+        ``normalized_payload`` is used for validation/defaults, but values
+        echoed by the controller are preferred so the membership PUT changes
+        only ``switchIds`` from the controller's perspective.
+        """
+        payload = dict(normalized_payload)
+        for key in list(payload):
+            if key in group:
+                payload[key] = group[key]
+            elif key == "switchIds" and "switchId" in group:
+                payload[key] = group["switchId"]
+        return payload
+
+    @staticmethod
+    def _extract_switch_ids(payload: dict) -> set:
+        """Return switch IDs from either API or payload key variants."""
+        switch_ids = payload.get("switchIds")
+        if switch_ids is None:
+            switch_ids = payload.get("switch_ids")
+        if switch_ids is None:
+            switch_ids = payload.get("switchId")
+        return {sid for sid in switch_ids or [] if sid}
+
+    @staticmethod
+    def _without_switch_ids(payload: dict) -> dict:
+        """Return a payload copy with only membership removed."""
+        return {key: value for key, value in payload.items() if key != "switchIds"}
 
     # ------------------------------------------------------------------ #
     # Delete operations
@@ -478,7 +978,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         """Delete a single policy group (delegates to delete_bulk)."""
         return self.delete_bulk([model_instance], **kwargs)
 
-    def delete_bulk(self, model_instances: list[PolicyGroupCreate], **kwargs) -> ResponseType:
+    def delete_bulk(
+        self, model_instances: list[PolicyGroupCreate], **kwargs
+    ) -> ResponseType:
         """Delete multiple policy groups with markDelete-first fallback.
 
         Deletion strategy:
@@ -676,7 +1178,11 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             )
 
         if failures:
-            raise Exception("switchActions/deploy reported {0} failed switch(es): {1}".format(len(failures), "; ".join(failures)))
+            raise Exception(
+                "switchActions/deploy reported {0} failed switch(es): {1}".format(
+                    len(failures), "; ".join(failures)
+                )
+            )
 
         return result
 
@@ -707,7 +1213,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             return
 
         sent_identifiers = {item.get_identifier_value() for item in state_machine.sent}
-        proposed_identifiers = {item.get_identifier_value() for item in state_machine.proposed}
+        proposed_identifiers = {
+            item.get_identifier_value() for item in state_machine.proposed
+        }
         log.debug(
             "deploy-unchanged: proposed_identifiers=%s",
             sorted(map(str, proposed_identifiers)),

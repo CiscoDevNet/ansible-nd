@@ -1297,3 +1297,159 @@ def test_nd_policy_resources_module_00450() -> None:
     assert succeeded == ["P-S", "P-W"]
     assert py_fail == []
     assert other_fail == []
+
+
+def test_nd_policy_resources_module_00460() -> None:
+    """
+    # Summary
+
+    Verify pending-delete cleanup works when the user supplies either the
+    generated child policy ID or the original policy ID.  The direct ID GET is
+    accepted only when the returned record is already ``markDeleted``; otherwise
+    the helper falls back to a targeted ``source:<original_id>`` GET.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._find_pending_deleted_policies``
+    """
+    child = {
+        "policyId": "POLICY-CHILD",
+        "source": "POLICY-ORIG",
+        "description": "cleanup me",
+        "templateName": "switch_freeform_config",
+        "switchId": "SN1",
+        "markDeleted": True,
+    }
+
+    module, nd, _log = _make_module()
+    nd.queue(child)
+
+    matches = module._find_pending_deleted_policies(
+        {
+            "policyId": "POLICY-CHILD",
+            "switchId": "SN1",
+        }
+    )
+
+    assert matches == [child]
+    assert len(nd.calls) == 1
+    assert "/policies/POLICY-CHILD" in nd.calls[0][0]
+
+    module, nd, _log = _make_module()
+    nd.queue({"policyId": "POLICY-ORIG", "markDeleted": False}, {"policies": [child]})
+
+    matches = module._find_pending_deleted_policies(
+        {
+            "policyId": "POLICY-ORIG",
+            "switchId": "SN1",
+        }
+    )
+
+    assert matches == [child]
+    assert len(nd.calls) == 2
+    assert "/policies/POLICY-ORIG" in nd.calls[0][0]
+    assert "filter=" in nd.calls[1][0]
+    assert "source" in nd.calls[1][0]
+    assert "POLICY" in nd.calls[1][0]
+
+
+def test_nd_policy_resources_module_00470() -> None:
+    """
+    # Summary
+
+    Verify pending-delete cleanup with no policy ID uses exact description
+    matching and switch post-filtering, so tokenized Lucene overmatches do not
+    trigger an unrelated switch deploy candidate.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._find_pending_deleted_policies``
+    """
+    module, nd, _log = _make_module()
+    wanted = {
+        "policyId": "POLICY-WANTED",
+        "description": "target desc",
+        "switchId": "SN1",
+        "markDeleted": True,
+    }
+    wrong_desc = {
+        "policyId": "POLICY-WRONG-DESC",
+        "description": "target desc extra",
+        "switchId": "SN1",
+        "markDeleted": True,
+    }
+    wrong_switch = {
+        "policyId": "POLICY-WRONG-SW",
+        "description": "target desc",
+        "switchId": "SN2",
+        "markDeleted": True,
+    }
+    active = {
+        "policyId": "POLICY-ACTIVE",
+        "description": "target desc",
+        "switchId": "SN1",
+        "markDeleted": False,
+    }
+    nd.queue({"policies": [wanted, wrong_desc, wrong_switch, active]})
+
+    matches = module._find_pending_deleted_policies(
+        {"description": "target desc", "switchId": "SN1"}
+    )
+
+    assert matches == [wanted]
+    assert len(nd.calls) == 1
+    assert "filter=" in nd.calls[0][0]
+    assert "description" in nd.calls[0][0]
+    assert "target" in nd.calls[0][0]
+
+
+def test_nd_policy_resources_module_00480() -> None:
+    """
+    # Summary
+
+    Verify ``_execute_deleted`` turns an active-cache skip into a pending
+    markDeleted switch deploy when deploy=true, instead of registering the
+    normal "already absent" successful read row.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._execute_deleted``
+    """
+    module, nd, _log = _make_module(params=_default_params(state="deleted", deploy=True))
+    child = {
+        "policyId": "POLICY-CHILD",
+        "source": "POLICY-ORIG",
+        "description": "cleanup me",
+        "templateName": "switch_freeform_config",
+        "switchId": "SN1",
+        "markDeleted": True,
+    }
+    nd.queue({}, {"policies": [child]}, {"status": "Configuration deployment completed"})
+
+    module._execute_deleted(
+        [
+            {
+                "action": "skip",
+                "want": {
+                    "policyId": "POLICY-ORIG",
+                    "description": "cleanup me",
+                    "switchId": "SN1",
+                },
+                "policies": [],
+                "policy_ids": [],
+                "match_count": 0,
+                "warning": None,
+                "error_msg": None,
+                "query_path": "/api/v1/manage/fabrics/fab-test/policies/POLICY-ORIG",
+                "query_verb": HttpVerbEnum.GET,
+            }
+        ]
+    )
+
+    assert len(module.results._tasks) == 1
+    task = module.results._tasks[0]
+    assert task.metadata["action"] == "policy_pending_delete_deploy"
+    assert "switchActions/deploy" in task.path
+    assert task.payload == {"switchIds": ["SN1"]}
+    assert task.diff["policy_ids"] == ["POLICY-CHILD"]
+    assert task.diff["switch_ids"] == ["SN1"]

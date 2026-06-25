@@ -61,7 +61,8 @@ class PolicyGroupCreate(NDBaseModel):
     ## Optional Fields
 
     - description: Policy group description (max 255 chars)
-    - priority: Policy priority (1-2000, default 500)
+    - priority: Policy priority (1-2000). Creates default to 500 at the
+      API boundary; omitted updates preserve the existing controller value.
     - source: Source of the policy (e.g., "UNDERLAY", "OVERLAY", "")
     - template_inputs: Name/value pairs passed to the template
     - secondary_entity_name: Secondary entity name (for configProfile)
@@ -86,7 +87,9 @@ class PolicyGroupCreate(NDBaseModel):
 
     # --- NDBaseModel ClassVars ---
     identifiers: ClassVar[list[str]] = ["description", "template_name"]
-    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
+    identifier_strategy: ClassVar[
+        Literal["single", "composite", "hierarchical", "singleton"] | None
+    ] = "composite"
     # Note: ``priority`` is intentionally NOT excluded — the base diff uses
     # ``exclude_none=True``, so an omitted priority on the user side is already
     # ignored, while an explicit priority change correctly triggers an update.
@@ -135,12 +138,10 @@ class PolicyGroupCreate(NDBaseModel):
         description="Description of the policy group",
     )
     priority: int | None = Field(
-        default=500,
-        ge=0,  # 0 is the server-reset sentinel (controller zeroes the field for some
-        # templates and echoes the value into templateInputs.PRIORITY instead).
-        # User-visible range is 1-2000; 0 is never a valid user priority.
+        default=None,
+        ge=1,
         le=2000,
-        description="Priority of the policy group (1-2000). 0 is the server-reset sentinel.",
+        description="Priority of the policy group (1-2000). Creates default to 500; omitted updates preserve existing priority.",
     )
     source: str | None = Field(
         default="",
@@ -177,31 +178,32 @@ class PolicyGroupCreate(NDBaseModel):
             return v
         for sid in v:
             if not isinstance(sid, str) or not sid.strip():
-                raise ValueError(f"Invalid switch ID: {sid!r}. Must be a non-empty string.")
+                raise ValueError(
+                    f"Invalid switch ID: {sid!r}. Must be a non-empty string."
+                )
         return v
 
-    # TODO(4.2.1): wire-shape-vs-schema workaround — the controller echoes the
-    # user-set priority into ``templateInputs.PRIORITY`` and resets the top-level
-    # ``priority`` field to 0 for some templates (e.g. ``switch_freeform``).  This
-    # validator lifts the value back to the top level so that have/want comparisons
-    # remain schema-consistent.  Remove once the controller stops doing this.
+    # TODO(4.2.1): wire-shape-vs-schema compatibility — older controller
+    # responses may echo priority into ``templateInputs.PRIORITY``.  When the
+    # top-level priority field is genuinely absent, lift that value back to the
+    # top level so have/want comparisons remain schema-consistent.  Remove once
+    # the controller no longer emits priority metadata in templateInputs.
     @model_validator(mode="before")
     @classmethod
     def _normalize_priority_from_template_inputs(cls, data: Any) -> Any:
         """Normalize priority echoed by the controller into ``templateInputs.PRIORITY``.
 
-        For some templates (e.g. ``switch_freeform``) the controller stores the
-        user-set priority inside ``templateInputs.PRIORITY`` and zeroes out the
-        top-level ``priority`` field in its GET response.  Without this
-        normalization the ``have`` model (built from the API) and the ``want``
-        model (built from gathered output round-trip) would compare unequally
-        on either ``priority`` or ``template_inputs``, breaking idempotency.
+        Older controller responses may carry the user-set priority inside
+        ``templateInputs.PRIORITY``.  Without this normalization the ``have``
+        model (built from the API) and the ``want`` model (built from gathered
+        output round-trip) can compare unequally on either ``priority`` or
+        ``template_inputs``, breaking idempotency.
 
         Normalization rules (applied symmetrically to both want and have):
           1. If ``templateInputs.PRIORITY`` is convertible to int AND top-level
-             ``priority`` is the server-reset sentinel (None/0), lift it to
-             top-level.  If the user explicitly set a non-zero top-level
-             priority, respect it (the controller's stale echo loses).
+             ``priority`` is absent or ``None``, lift it to top-level. If the
+             user explicitly set a top-level priority, respect it (the
+             controller's stale echo loses).
           2. Always remove ``PRIORITY`` from ``template_inputs`` so the two
              sides compare equally on ``template_inputs``.
 
@@ -222,9 +224,12 @@ class PolicyGroupCreate(NDBaseModel):
             return data
 
         new_data = dict(data)
-        # Only lift to top-level when top-level is the server-reset sentinel.
+        # Only lift to top-level when top-level priority is genuinely absent.
+        # A supplied 0 is invalid user input and should fail validation instead
+        # of being treated as "unset".
+        priority_absent = "priority" not in data
         top_priority = data.get("priority")
-        if top_priority in (None, 0, "0"):
+        if priority_absent or top_priority is None:
             try:
                 new_data["priority"] = int(ti["PRIORITY"])
             except (TypeError, ValueError):
@@ -235,26 +240,32 @@ class PolicyGroupCreate(NDBaseModel):
         return new_data
 
     @classmethod
-    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "PolicyGroupCreate":
+    def from_config(
+        cls, ansible_config: dict[str, Any], **kwargs
+    ) -> "PolicyGroupCreate":
         """Create model instance from Ansible config dict.
 
         Handles the ``name`` → ``template_name`` translation so the user-facing
         arg_spec can use ``name`` while the model uses ``template_name``.
 
-        Strips keys where Ansible injected default placeholders (None, 0, empty
-        list) so that Pydantic's own defaults are used and ``model_fields_set``
-        accurately reflects only user-provided fields.
+        Strips keys where Ansible injected default placeholders (None, empty
+        list/dict) so that Pydantic's own defaults are used and
+        ``model_fields_set`` accurately reflects only user-provided fields.
         """
         config = dict(ansible_config)
         if "name" in config and "template_name" not in config:
             config["template_name"] = config.pop("name")
         # Remove Ansible-injected defaults so Pydantic defaults take effect.
-        # Ansible injects None for unset str/dict/list, and 0 for unset int.
-        config = {k: v for k, v in config.items() if v is not None and v != 0 and v != [] and v != {}}
+        config = {
+            k: v for k, v in config.items() if v is not None and v != [] and v != {}
+        }
         # Controller stringifies all templateInputs values after deploy
         # (e.g., int 5 → "5"). Normalize here so diff comparison works.
         if "template_inputs" in config and isinstance(config["template_inputs"], dict):
-            config["template_inputs"] = {k: str(v) if not isinstance(v, str) else v for k, v in config["template_inputs"].items()}
+            config["template_inputs"] = {
+                k: str(v) if not isinstance(v, str) else v
+                for k, v in config["template_inputs"].items()
+            }
         return cls.model_validate(config, by_name=True, **kwargs)
 
     @classmethod
@@ -283,7 +294,9 @@ class PolicyGroupCreate(NDBaseModel):
             ),
             ticket_id=dict(type="str"),
             cluster_name=dict(type="str"),
-            state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),
+            state=dict(
+                type="str", default="merged", choices=["merged", "deleted", "gathered"]
+            ),
         )
 
     def to_request_dict(self) -> dict[str, Any]:

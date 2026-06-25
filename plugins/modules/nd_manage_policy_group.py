@@ -59,6 +59,18 @@ options:
     - For C(delete) (both C(markDelete)-succeeded and direct-DELETE fallback),
       the deploy target is a single consolidated call against the union of all
       affected switches across every policy group being deleted in this task.
+    - If a later C(delete) run uses O(deploy=true) for a policy group already
+      pending deletion from a previous O(deploy=false) run, the module performs
+      a targeted cleanup lookup. With a C(POLICY-GROUP-*) ID, it first calls
+      C(GET /policyGroups/{policyGroupId}) and accepts the record only if
+      C(markDeleted=true). If no pending record is found by ID, it calls
+      C(GET /policyGroups?filter=source:<policyGroupId>) and post-filters for
+      C(source == policyGroupId) and C(markDeleted=true). This handles generated
+      child records whose C(policyId) differs from the original deleted policy
+      group. Without an ID, it falls back to exact C(description) matching. It
+      then calls C(switchActions/deploy) for the matched member switches.
+      Template name is B(not) used for this cleanup lookup because generated
+      cleanup children can use a different template name.
     - For user-mentioned policy groups listed in O(config) whose desired state
       already matches the controller (no diff), C(switchActions/deploy) is still
       issued against the existing member switches so the user-expressed deploy
@@ -103,7 +115,16 @@ options:
         - For O(state=merged), if the ID is not found on the controller, the module fails with an error.
           Policy group IDs are server-generated and cannot be used to create new policy groups.
           Use a template name in O(config.name) together with O(config.description) to create new policy groups.
-        - For O(state=deleted), if the ID is not found, it is silently skipped (assumed already deleted).
+        - For O(state=deleted), if the ID is not found in the active policy-group view,
+          it is treated as already deleted. When O(deploy=true), the module performs a
+          targeted pending-delete cleanup lookup for that ID before deciding no work is needed.
+          It checks C(GET /policyGroups/{policy_id}) first and requires
+          C(markDeleted=true). If that does not find a pending record, it checks
+          C(GET /policyGroups?filter=source:<policy_id>) for generated child records
+          whose C(source) points at the original policy group ID. Supplying either the
+          original ID or the generated child ID is supported. If the matched child
+          record does not include C(switchIds), include O(config.switch_ids) so the
+          module can safely target C(switchActions/deploy).
         - For O(state=gathered), the ID is used directly to query the specific policy group by ID.
         - Required for O(state=merged) and O(state=deleted). Optional for O(state=gathered)
           where entries can filter by O(config.description) alone.
@@ -241,17 +262,25 @@ notes:
   C(markDelete)-succeeded and direct-DELETE groups) so the negative (removal)
   configuration is pushed. If O(deploy=false), step 3 is skipped and the
   switch running config is left untouched until a subsequent deploy."
+- "If a later C(state=deleted) run with O(deploy=true) targets a group already
+  pending deletion from a previous O(deploy=false) run, the module does not
+  relax normal query filters globally. It performs an isolated cleanup lookup
+  by C(POLICY-GROUP-*) ID, C(source:<policy_id>), or exact C(description) and
+  deploys the matched group's switches. Description-only cleanup fails when
+  multiple pending groups match; provide O(config.policy_id) or a
+  C(POLICY-GROUP-*) name in that case."
 - "B(Ghost-record cleanup for PYTHON content-type templates:)"
 - After a direct C(DELETE) of a PYTHON content-type policy group (step 2 above),
   the controller internally creates a transient C(switch_freeform_config) artifact
   with a non-empty C(source) field referencing the deleted policy group. These
-  ghost records are automatically filtered out during C(query_all) operations so
+  ghost records are automatically filtered out during normal query operations so
   they do not appear in C(gathered) output and do not affect idempotency checks
   on subsequent runs.
 - Query and gathered paths filter out controller artifacts with a non-empty C(source)
-  field. Normal state-machine reads also exclude no-description policy groups because
-  they cannot be indexed by the composite key; ID-based direct actions and C(gathered)
-  use broader reads when they need to see those groups.
+  field and pending-delete records with C(markDeleted=true). Normal state-machine reads
+  also exclude no-description policy groups because they cannot be indexed by the
+  composite key; ID-based direct actions and C(gathered) use broader reads when they
+  need to see no-description groups.
 """
 
 EXAMPLES = r"""
@@ -827,7 +856,7 @@ def _handle_gathered_state(orchestrator, config, log):
                 # Specific policy group by ID
                 log.info("Gathered: querying by ID %s", name)
                 result = orchestrator.query_by_id(name)
-                if result:
+                if result and orchestrator._is_active_user_group(result):
                     raw_groups.append(result)
             elif name and description:
                 # Filter by template name + description
@@ -1069,6 +1098,14 @@ def main():
         if state in ("merged", "deleted"):
             _resolve_switch_ips_in_config(module, log, config, module.params["fabric_name"])
 
+        pending_deleted_cleanup_config = []
+        if state == "deleted" and module.params.get("deploy"):
+            # Keep the user's original delete intent before POLICY-GROUP-* ID
+            # resolution drops already-absent active records.  A later cleanup
+            # pass uses only policy_id/POLICY-GROUP-* or exact description to
+            # find pending markDeleted records.
+            pending_deleted_cleanup_config = [dict(entry) for entry in config]
+
         # --- Gathered state: bypass the state machine entirely ---
         if state == "gathered":
             gathered = _handle_gathered_state(orchestrator, config, log)
@@ -1096,6 +1133,7 @@ def main():
         force_create_items = []
         direct_action_items = []
         normal_config = []
+        active_delete_policy_ids = set()
         if state in ("merged", "deleted"):
             for entry in module.params.get("config") or []:
                 if entry.get("create_additional_policy", False):
@@ -1113,6 +1151,8 @@ def main():
                     direct_action_items.append(entry)
                 else:
                     normal_config.append(entry)
+                if state == "deleted" and entry.get("policy_id"):
+                    active_delete_policy_ids.add(entry["policy_id"])
             # Strip the bookkeeping field from normal_config entries before
             # they hit Pydantic validation; the state machine path doesn't
             # need ``_existing_description``.
@@ -1187,21 +1227,56 @@ def main():
                     direct_actions_result["deleted"].append(model.model_dump(by_alias=False, exclude_none=True))
                     log.info("Direct-action: deleted policy group %s", pid)
 
-        # Initialize and run StateMachine for normal items
-        nd_state_machine = NDStateMachine(
-            module=module,
-            model_orchestrator=orchestrator,
-        )
-        nd_state_machine.manage_state()
+        # Initialize and run StateMachine for normal items.  Deleted requests
+        # can legitimately resolve to no active policy groups (for example an
+        # unknown POLICY-GROUP-* ID that is already absent).  In that case,
+        # avoid a second broad query_all from NDStateMachine initialization and
+        # let the pending-delete cleanup pass below decide whether there is any
+        # markDeleted/source artifact left to deploy.
+        nd_state_machine = None
+        if state == "deleted" and not normal_config:
+            log.info(
+                "Deleted state resolved to no active policy groups; skipping normal state-machine delete path."
+            )
+            result = {"changed": False}
+        else:
+            nd_state_machine = NDStateMachine(
+                module=module,
+                model_orchestrator=orchestrator,
+            )
+            nd_state_machine.manage_state()
 
-        # Deploy unchanged policies when deploy=true (push config even if no diff).
-        # The orchestrator method scopes strictly to policies the user mentioned
-        # in `config:` so we never touch unrelated fabric policies, and is a
-        # no-op when deploy=false.
-        if state == "merged" and not module.check_mode:
-            orchestrator.deploy_unchanged_user_mentioned(nd_state_machine)
+            # Deploy unchanged policies when deploy=true (push config even if no diff).
+            # The orchestrator method scopes strictly to policies the user mentioned
+            # in `config:` so we never touch unrelated fabric policies, and is a
+            # no-op when deploy=false.
+            if state == "merged" and not module.check_mode:
+                orchestrator.deploy_unchanged_user_mentioned(nd_state_machine)
 
-        result = nd_state_machine.output.format()
+            result = nd_state_machine.output.format()
+
+        if state == "deleted" and pending_deleted_cleanup_config:
+            sent_delete_identifiers = set()
+            if nd_state_machine is not None:
+                sent_delete_identifiers = {
+                    item.get_identifier_value() for item in nd_state_machine.sent
+                }
+            cleanup_candidates = []
+            for entry in pending_deleted_cleanup_config:
+                policy_group_id, description = PolicyGroupOrchestrator._cleanup_identity(entry)
+                if policy_group_id and policy_group_id in active_delete_policy_ids:
+                    continue
+                name = entry.get("name") or ""
+                if description and (description, name) in sent_delete_identifiers:
+                    continue
+                cleanup_candidates.append(entry)
+
+            if cleanup_candidates:
+                pending_cleanup = orchestrator.deploy_pending_deleted_cleanup(cleanup_candidates)
+                if pending_cleanup["changed"]:
+                    result["changed"] = True
+                    result["pending_deleted_cleanup"] = pending_cleanup
+
         # Surface force-created items as a dedicated key so they're visible
         # even though identifier collisions prevent them from appearing in
         # the state-machine's before/after.

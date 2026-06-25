@@ -128,8 +128,9 @@
           - result.changed == false
       tags: modify
 
-    # TC-3: Modify template_inputs of an existing policy
-    - name: "MODIFY TC3 - Update template_inputs using use_desc_as_key"
+    # TC-3: Modify template_inputs of an existing policy while omitting priority.
+    # The existing priority must be preserved instead of being reset to 500.
+    - name: "MODIFY TC3 - Update template_inputs without priority using use_desc_as_key"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
@@ -139,7 +140,6 @@
           - name: switch_freeform
             create_additional_policy: false
             description: "BFD timers"
-            priority: 115
             template_inputs:
               CONF: "bfd interval 500 min_rx 500 multiplier 5"
           - switch:
@@ -151,6 +151,27 @@
       ansible.builtin.assert:
         that:
           - result.changed == true
+      tags: modify
+
+    - name: "MODIFY TC3 - Gather BFD timers after omitted-priority update"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "BFD timers"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc3_gathered_result
+      tags: modify
+
+    - name: "MODIFY TC3 - Verify omitted priority was preserved"
+      ansible.builtin.assert:
+        that:
+          - tc3_gathered_result.changed == false
+          - tc3_gathered_result.gathered | length == 1
+          - tc3_gathered_result.gathered[0].priority == 115
+          - tc3_gathered_result.gathered[0].template_inputs.CONF == "bfd interval 500 min_rx 500 multiplier 5"
       tags: modify
 
     # TC-4: Modify using policy ID (gathered first to get ID)

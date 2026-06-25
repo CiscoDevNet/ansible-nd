@@ -341,10 +341,8 @@
           - switch_serial_1 in freeform_group.switch_ids
           - switch_serial_2 in freeform_group.switch_ids
           - freeform_group.priority == 110
-          # PRIORITY is stripped from template_inputs by
-          # _normalize_priority_from_template_inputs (TODO(4.2.1)) so that
-          # have/want diffs stay symmetric.  The lifted top-level priority
-          # above is the canonical source.
+          # PRIORITY is controller metadata and must not leak into gathered
+          # template_inputs. Top-level priority is the canonical source.
           - freeform_group.template_inputs.CONF == 'system vlan long-name'
       tags: gathered
 

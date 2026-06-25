@@ -52,7 +52,9 @@ class PolicyGroupGathered(NDBaseModel):
 
     # --- NDBaseModel ClassVars ---
     identifiers: ClassVar[list[str]] = ["policy_id"]
-    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    identifier_strategy: ClassVar[
+        Literal["single", "composite", "hierarchical", "singleton"] | None
+    ] = "single"
     exclude_from_diff: ClassVar[set] = set()
 
     # --- Fields ---
@@ -77,6 +79,8 @@ class PolicyGroupGathered(NDBaseModel):
     )
     priority: int | None = Field(
         default=500,
+        ge=1,
+        le=2000,
         description="Policy group priority (1-2000)",
     )
     entity_type: str | None = Field(
@@ -147,18 +151,15 @@ class PolicyGroupGathered(NDBaseModel):
         Returns:
             Dict in playbook config format.
         """
-        # Resolve effective priority: the controller may store the user-set
-        # priority inside templateInputs.PRIORITY (e.g. for switch_freeform)
-        # and reset the top-level priority to 0.  Prefer templateInputs.PRIORITY
-        # when available so gathered output is round-trip compatible.
-        #
-        # IMPORTANT: do NOT substitute a "500" default when the server returns
-        # ``priority=0``.  The controller uses 0 as the server-side "use default"
-        # sentinel and will keep returning 0 on the next GET; emitting 500 here
-        # would break idempotency on round-trip (the want model would be 500,
-        # the next have would be 0).
-        effective_priority = self.priority if self.priority is not None else 0
-        if self.template_inputs and "PRIORITY" in self.template_inputs:
+        # Resolve effective priority. Top-level priority is canonical. Older
+        # controller responses may include templateInputs.PRIORITY, so use it
+        # only when top-level priority is missing.
+        effective_priority = self.priority if self.priority is not None else 500
+        if (
+            self.priority is None
+            and self.template_inputs
+            and "PRIORITY" in self.template_inputs
+        ):
             try:
                 effective_priority = int(self.template_inputs["PRIORITY"])
             except (ValueError, TypeError):
@@ -173,7 +174,11 @@ class PolicyGroupGathered(NDBaseModel):
         }
 
         if self.template_inputs:
-            cleaned_ti = {k: v for k, v in self.template_inputs.items() if k not in SYSTEM_INJECTED_TEMPLATE_KEYS}
+            cleaned_ti = {
+                k: v
+                for k, v in self.template_inputs.items()
+                if k not in SYSTEM_INJECTED_TEMPLATE_KEYS
+            }
             if cleaned_ti:
                 config["template_inputs"] = cleaned_ti
         return config

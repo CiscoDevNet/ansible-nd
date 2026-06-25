@@ -18,6 +18,16 @@
         description: "Enable LLDP on leaf switches"
       - name: clock_timezone
         description: "Set timezone to CET"
+      - name: feature_enable
+        description: "Split membership and intent update"
+      - name: feature_enable
+        description: "Pending cleanup Enable LACP"
+        switch_ids:
+          - "{{ switch_serial_1 }}"
+      - name: switch_freeform
+        description: "Pending cleanup switch_freeform source"
+        switch_ids:
+          - "{{ switch_serial_1 }}"
 
       # --- special_cases.yaml (SPC- prefix) ---
       - name: switch_freeform

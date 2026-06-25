@@ -44,12 +44,11 @@
       register: result
       tags: special
 
-    - name: "SPECIAL A.SETUP - Verify baseline created"
+    - name: "SPECIAL A.SETUP - Verify baseline present"
       vars:
         baseline: "{{ result.after | selectattr('description', 'equalto', 'SPC-FORCE-baseline freeform') | list }}"
       ansible.builtin.assert:
         that:
-          - result.changed == true
           - baseline | length == 1
           - baseline[0].template_name == "switch_freeform"
           - baseline[0].template_inputs.CONF is search("rapid-pvst")
@@ -451,6 +450,10 @@
         that:
           - result.failed == true
           - result.msg is search('POLICY-GROUP-FAKE999')
+      tags: special
+
+    - name: "SPECIAL D.TC10 - Reset connection after expected module failure"
+      ansible.builtin.meta: reset_connection
       tags: special
 
     # ---- TC11: deleted with unknown POLICY-GROUP-* ID → skip silently ----

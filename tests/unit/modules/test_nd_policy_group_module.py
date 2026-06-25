@@ -132,6 +132,10 @@ class FakeOrchestrator:
         self.calls.append(("query_filtered", dict(kwargs)))
         return list(self._query_filtered_result)
 
+    @staticmethod
+    def _is_active_user_group(group: dict) -> bool:
+        return not group.get("source") and not group.get("markDeleted", False)
+
 
 class FakeValidationOrchestrator:
     """Stub ``PolicyGroupOrchestrator`` exposing only the two surfaces the
@@ -588,6 +592,42 @@ def test_nd_policy_group_module_00320() -> None:
     result = _handle_gathered_state(orch, config=[{"name": "POLICY-GROUP-MISSING"}], log=log)
 
     assert result == []
+
+
+def test_nd_policy_group_module_00325() -> None:
+    """
+    # Summary
+
+    Gathered-by-ID still hides controller artifacts and pending-delete
+    records, matching the default gathered-all behavior.
+
+    ## Classes and Methods
+
+    - ``_handle_gathered_state``
+    """
+    for body in (
+        {
+            "policyId": "POLICY-GROUP-SOURCE",
+            "templateName": "tpl",
+            "description": "d",
+            "switchIds": ["s1"],
+            "source": "POLICY-GROUP-ORIG",
+        },
+        {
+            "policyId": "POLICY-GROUP-DELETED",
+            "templateName": "tpl",
+            "description": "d",
+            "switchIds": ["s1"],
+            "markDeleted": True,
+        },
+    ):
+        orch = FakeOrchestrator(query_by_id_result=body)
+        log = ListLogger()
+
+        result = _handle_gathered_state(orch, config=[{"name": body["policyId"]}], log=log)
+
+        assert orch.calls == [("query_by_id", {"policy_id": body["policyId"]})]
+        assert result == []
 
 
 def test_nd_policy_group_module_00330() -> None:

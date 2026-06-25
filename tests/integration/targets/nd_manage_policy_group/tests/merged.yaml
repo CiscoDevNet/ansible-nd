@@ -118,6 +118,23 @@
           - result.changed == true
       tags: merged
 
+    - name: "MERGED TC4 - Gather updated policy group"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+      register: tc4_gathered
+      tags: merged
+
+    - name: "MERGED TC4 - Verify omitted update preserved priority"
+      ansible.builtin.assert:
+        that:
+          - tc4_gathered.gathered | length == 1
+          - tc4_gathered.gathered[0].priority == 110
+      tags: merged
+
     # TC-5: Idempotence after update
     - name: "MERGED TC5 - Idempotence after template_inputs update"
       cisco.nd.nd_manage_policy_group:
@@ -364,6 +381,76 @@
       ansible.builtin.assert:
         that:
           - result.changed == false
+      tags: merged
+
+    ##############################################
+    ## MERGE - Mixed membership + intent update ##
+    ##############################################
+
+    # TC-15: Create a feature_enable group on one switch.
+    - name: "MERGED TC15 - Create group for split membership and intent update"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Split membership and intent update"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lacp
+      register: result
+      tags: merged
+
+    - name: "MERGED TC15 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    # TC-16: Change both switch membership and featureName in one task. The
+    # module must split this into separate controller PUTs because ND rejects
+    # a single policy-group PUT that changes membership and intent together.
+    - name: "MERGED TC16 - Update membership and template_inputs together"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Split membership and intent update"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+              - "{{ switch_serial_2 }}"
+            template_inputs:
+              featureName: lldp
+      register: result
+      tags: merged
+
+    - name: "MERGED TC16 - Verify mixed update detected"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    - name: "MERGED TC16 - Gather mixed update result"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: feature_enable
+            description: "Split membership and intent update"
+      register: mixed_update_gathered
+      tags: merged
+
+    - name: "MERGED TC16 - Verify final mixed update state"
+      ansible.builtin.assert:
+        that:
+          - mixed_update_gathered.gathered | length == 1
+          - switch_serial_1 in mixed_update_gathered.gathered[0].switch_ids
+          - switch_serial_2 in mixed_update_gathered.gathered[0].switch_ids
+          - mixed_update_gathered.gathered[0].template_inputs.featureName == "lldp"
       tags: merged
 
   always:

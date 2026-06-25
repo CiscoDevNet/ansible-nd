@@ -49,7 +49,8 @@ def test_manage_policies_config_models_00010() -> None:
 
     - ``name`` is the only required field.
     - ``description`` defaults to ``""``.
-    - ``priority`` defaults to ``500``.
+    - ``priority`` defaults to ``None`` so updates can preserve existing
+      priority when the user omits it.
     - ``create_additional_policy`` defaults to ``True``.
     - ``template_inputs`` defaults to an empty dict.
 
@@ -62,7 +63,7 @@ def test_manage_policies_config_models_00010() -> None:
 
     assert instance.name == "switch_freeform"
     assert instance.description == ""
-    assert instance.priority == 500
+    assert instance.priority is None
     assert instance.create_additional_policy is True
     assert instance.template_inputs == {}
 
@@ -329,7 +330,8 @@ def test_manage_policies_config_models_00200() -> None:
 
     - ``name`` defaults to ``None``.
     - ``description`` defaults to ``""``.
-    - ``priority`` defaults to ``500``.
+    - ``priority`` defaults to ``None`` so updates can preserve existing
+      priority when the user omits it.
     - ``create_additional_policy`` defaults to ``True``.
     - ``template_inputs`` defaults to an empty dict.
     - ``switch`` defaults to ``None``.
@@ -344,7 +346,7 @@ def test_manage_policies_config_models_00200() -> None:
 
     assert instance.name is None
     assert instance.description == ""
-    assert instance.priority == 500
+    assert instance.priority is None
     assert instance.create_additional_policy is True
     assert instance.template_inputs == {}
     assert instance.switch is None

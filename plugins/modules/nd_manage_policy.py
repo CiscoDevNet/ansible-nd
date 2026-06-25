@@ -81,6 +81,18 @@ description:
   B(Note) — the direct-DELETE retry is triggered B(only) by the C("content type PYTHON")
   error. Other C(markDelete) failures (e.g., transient errors, validation errors) are
   surfaced as task failures and are B(not) auto-retried.
+- B(Pending delete cleanup) — if a previous run used O(state=deleted) with
+  O(deploy=false), a later O(state=deleted) run with O(deploy=true) can finish the
+  switch cleanup even though normal active-policy matching no longer sees the policy.
+  The module first tries C(GET /policies/{policyId}) when the user supplied a
+  C(POLICY-*) ID and accepts that record only if C(markDeleted=true). If no
+  pending record is found by ID, it queries
+  C(GET /policies?filter=source:<policyId>) to find generated child policies
+  whose C(source) points at the original policy ID. This means cleanup works when
+  the user provides either the original policy ID or the generated child policy
+  ID. When no ID is available, cleanup falls back to exact C(description) matching
+  on the target switch. Template name is B(not) used for this cleanup lookup
+  because generated children can use a different template name.
 author:
 - L Nikhil Sri Krishna (@nisaikri)
 options:
@@ -149,8 +161,9 @@ options:
         description:
         - Priority of the policy.
         - Valid range is 1-2000.
+        - When omitted while creating a policy, the module uses the controller default of 500.
+        - When omitted while updating an existing policy, the existing priority is preserved.
         type: int
-        default: 500
       create_additional_policy:
         description:
         - A flag indicating if a policy is to be created even if an identical policy already exists.
@@ -215,8 +228,9 @@ options:
               priority:
                 description:
                 - Priority of the policy.
+                - When omitted while creating a policy, the module uses the controller default of 500.
+                - When omitted while updating an existing policy, the existing priority is preserved.
                 type: int
-                default: 500
               create_additional_policy:
                 description:
                 - A flag indicating if a policy is to be created even if an identical policy already exists.
@@ -258,6 +272,17 @@ options:
     - For C(deleted) state with O(deploy=false), only C(markDelete) is performed. The policy
       is flagged for deletion on the controller but the running config remains on the switch
       until a subsequent deploy is issued.
+    - If a later C(deleted) run uses O(deploy=true) for a policy already pending deletion,
+      the module performs an isolated cleanup lookup. With a C(POLICY-*) ID it
+      first calls C(GET /policies/{policyId}) and requires C(markDeleted=true);
+      if that does not find a pending record, it calls
+      C(GET /policies?filter=source:<policyId>) and post-filters for
+      C(source == policyId) and C(markDeleted=true). This handles generated
+      child records whose C(policyId) differs from the original deleted policy.
+      Without an ID, it uses an exact C(description) match on the target switch.
+      It then calls C(switchActions/deploy) for the matched switch. It does not
+      expose C(markDeleted) or C(source) records to normal C(merged), C(gathered),
+      or active delete matching.
     - B(Exception) — C(switch_freeform) and other PYTHON content-type policies do not
       support the C(markDelete) API. The module automatically detects this and falls back
       to a direct C(DELETE) API call to remove the policy record from the controller.
@@ -269,11 +294,13 @@ options:
       (1) C(state=deleted) (after C(markDelete) or direct-DELETE), and
       (2) C(state=merged) when O(use_desc_as_key=true) and a description's
       C(template_name) changes, triggering a B(delete_and_create) flow whose
-      delete step also goes through C(markDelete) + C(switchActions/deploy).
-      In both situations the controller deploys B(every pending configuration
-      change staged for those switches), not only the changes performed by this
-      task. The ND controller does not provide a per-task or staged-only variant
-      of the switch-level deploy endpoint. The C(merged)-state C(pushConfig)
+      delete step also goes through C(markDelete) + C(switchActions/deploy), and
+      (3) C(state=deleted) cleanup of an already C(markDeleted) policy from a
+      prior O(deploy=false) run.
+      In these switch-level deploy situations, the controller deploys B(every
+      pending configuration change staged for those switches), not only the
+      changes performed by this task. The ND controller does not provide a
+      per-task or staged-only variant of the switch-level deploy endpoint. The C(merged)-state C(pushConfig)
       path (used for plain creates and in-place updates) is scoped to the
       affected policy IDs and is B(not) subject to this caveat.
     type: bool
