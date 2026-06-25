@@ -418,7 +418,6 @@ EXAMPLES = r"""
               dhcp_server_address2: 10.10.10.11
               vrf_dhcp2: shared_services
     state: merged
-
 """
 
 RETURN = r"""
