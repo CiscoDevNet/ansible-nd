@@ -443,29 +443,61 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             raise Exception(f"Query all VRFs failed: {e}") from e
 
     def _query_all_scoped(self, vrf_names: list[str]) -> ResponseType:
-        """GET selected VRFs one at a time to avoid controller OR-filter quirks."""
+        """GET selected VRFs with a batched filter and per-name fallback."""
         vrfs: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for vrf_name in vrf_names:
-            endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
-            if hasattr(endpoint, "endpoint_params"):
-                endpoint.endpoint_params.filter = self._vrf_name_filter([vrf_name])
-            result = self._request(
-                path=endpoint.path,
-                verb=endpoint.verb,
-                not_found_ok=True,
-                operation_type=OperationType.QUERY,
-            )
-            if isinstance(result, dict):
-                result_items = result.get("vrfs") or result.get("items") or []
-            else:
-                result_items = result or []
-            for item in result_items:
-                item_name = item.get("vrfName") or item.get("vrf_name") if isinstance(item, dict) else None
-                if item_name and item_name not in seen:
-                    vrfs.append(self._normalize_query_vrf_item(item))
-                    seen.add(item_name)
+        ordered_names = list(dict.fromkeys(vrf_names))
+        try:
+            self._append_scoped_vrf_items(vrfs, seen, self._query_all_scoped_batch(ordered_names), ordered_names)
+        except Exception:
+            pass
+
+        for vrf_name in [name for name in ordered_names if name not in seen]:
+            self._append_scoped_vrf_items(vrfs, seen, self._query_all_scoped_one(vrf_name), [vrf_name])
         return self._enrich_mcfg_parent_vrfs_from_children(vrfs)
+
+    def _query_all_scoped_batch(self, vrf_names: list[str]) -> list[dict[str, Any]]:
+        endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
+        if hasattr(endpoint, "endpoint_params"):
+            endpoint.endpoint_params.filter = self._vrf_name_filter(vrf_names)
+            endpoint.endpoint_params.max = max(len(vrf_names), 1)
+        result = self._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            not_found_ok=True,
+            operation_type=OperationType.QUERY,
+        )
+        if isinstance(result, dict):
+            return result.get("vrfs") or result.get("items") or []
+        return result or []
+
+    def _query_all_scoped_one(self, vrf_name: str) -> list[dict[str, Any]]:
+        endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
+        if hasattr(endpoint, "endpoint_params"):
+            endpoint.endpoint_params.filter = self._vrf_name_filter([vrf_name])
+        result = self._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            not_found_ok=True,
+            operation_type=OperationType.QUERY,
+        )
+        if isinstance(result, dict):
+            return result.get("vrfs") or result.get("items") or []
+        return result or []
+
+    def _append_scoped_vrf_items(
+        self,
+        vrfs: list[dict[str, Any]],
+        seen: set[str],
+        items: list[dict[str, Any]],
+        requested_names: list[str],
+    ) -> None:
+        requested = set(requested_names)
+        for item in items or []:
+            item_name = item.get("vrfName") or item.get("vrf_name") if isinstance(item, dict) else None
+            if item_name and item_name in requested and item_name not in seen:
+                vrfs.append(self._normalize_query_vrf_item(item))
+                seen.add(item_name)
 
     def _query_all_unfiltered(self) -> ResponseType:
         """GET all VRFs without a filter fallback."""

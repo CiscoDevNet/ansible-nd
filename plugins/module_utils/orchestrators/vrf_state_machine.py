@@ -353,10 +353,7 @@ class VrfStateMachine:
 
             if items_to_delete:
                 target_args = dict(module_args)
-                target_args["config"] = [
-                    self._delete_all_generated_config(vrf_name, strategy)
-                    for vrf_name in target_vrf_names
-                ]
+                target_args["config"] = [self._delete_all_generated_config(vrf_name, strategy) for vrf_name in target_vrf_names]
 
                 self.coordinator._ensure_vrfs_have_no_networks(target_args, strategy, target_vrf_names)
                 detach_trace = self.coordinator._apply_deleted_attachment_phase(target_args, strategy, target_vrf_names)

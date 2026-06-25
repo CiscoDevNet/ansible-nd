@@ -87,9 +87,9 @@ def test_manage_vrfs_00040() -> None:
 def test_manage_vrfs_00050() -> None:
     """Verify missing fabric or VRF identifiers raise ValueError."""
     with pytest.raises(ValueError, match="fabric_name must be set"):
-        _ = EpManageFabricsVrfsGet().path
+        EpManageFabricsVrfsGet().path
     with pytest.raises(ValueError, match="vrf_name must be set"):
-        _ = EpManageFabricsVrfsVrfNameGet(fabric_name="fab1").path
+        EpManageFabricsVrfsVrfNameGet(fabric_name="fab1").path
 
 
 def test_manage_vrf_actions_00100() -> None:

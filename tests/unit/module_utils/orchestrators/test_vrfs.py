@@ -634,13 +634,56 @@ def test_vrfs_00080_query_all_scopes_targeted_state_reads():
 
     def request(**kwargs):
         requested_paths.append(kwargs["path"])
-        return {"vrfs": []}
+        return {
+            "vrfs": [
+                {"vrfName": "ansible-vrf-b"},
+                {"vrfName": "ansible-vrf-a"},
+            ]
+        }
 
     object.__setattr__(orchestrator, "_request", request)
 
-    assert orchestrator.query_all() == []
+    assert orchestrator.query_all() == [
+        {"vrfName": "ansible-vrf-b"},
+        {"vrfName": "ansible-vrf-a"},
+    ]
     assert requested_paths == [
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3Aansible-vrf-b",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?max=2&filter=%28vrfName%3Aansible-vrf-a%20OR%20vrfName%3Aansible-vrf-b%29",
+    ]
+
+
+def test_vrfs_00081_query_all_scoped_falls_back_for_missing_batch_items():
+    """
+    # Summary
+
+    Verify batched scoped reads fill in names not returned by the batch query
+    using the legacy per-name filter path.
+    """
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "replaced",
+            "config": [
+                {"vrf_name": "ansible-vrf-b"},
+                {"vrf_name": "ansible-vrf-a"},
+            ],
+        }
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        if len(requested_paths) == 1:
+            return {"vrfs": [{"vrfName": "ansible-vrf-b"}]}
+        return {"vrfs": [{"vrfName": "ansible-vrf-a"}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    assert orchestrator.query_all() == [
+        {"vrfName": "ansible-vrf-b"},
+        {"vrfName": "ansible-vrf-a"},
+    ]
+    assert requested_paths == [
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?max=2&filter=%28vrfName%3Aansible-vrf-a%20OR%20vrfName%3Aansible-vrf-b%29",
         "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3Aansible-vrf-a",
     ]
 

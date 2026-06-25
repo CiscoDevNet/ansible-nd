@@ -115,6 +115,29 @@ class _ChildStrategy:
         return False
 
 
+def test_vrf_attachment_query_chunks_large_vrf_name_sets():
+    class Coordinator:
+        def __init__(self):
+            self.queried_chunks = []
+
+        def _current_attachment_details(self, _module_args, _strategy, vrf_names):
+            self.queried_chunks.append(vrf_names)
+            return []
+
+    coordinator = Coordinator()
+    manager = VrfAttachmentManager(coordinator=coordinator)
+    manager.delete_wait_chunk_size = 2
+
+    result = manager.current_attachment_details_ignore_missing(
+        {},
+        _StandaloneStrategy(),
+        [f"vrf-{index}" for index in range(5)],
+    )
+
+    assert result == []
+    assert coordinator.queried_chunks == [["vrf-0", "vrf-1"], ["vrf-2", "vrf-3"], ["vrf-4"]]
+
+
 def test_vrf_workflow_coordinator_00001_arg_spec_blocks_invalid_child_suboptions():
     """
     # Summary
@@ -625,6 +648,64 @@ def test_vrf_workflow_coordinator_00030_build_pending_vrf_deploy_payload():
     ]
 
 
+def test_vrf_workflow_coordinator_00031_build_pending_vrf_deploy_payload_for_pending_detach():
+    """
+    # Summary
+
+    Verify deploy=true can deploy a pending detached attachment left behind by
+    an earlier deploy=false attachment removal.
+    """
+    coordinator = VrfWorkflowCoordinator.__new__(VrfWorkflowCoordinator)
+    coordinator._current_attachment_details = lambda *_args, **_kwargs: [
+        {
+            "vrfName": "ansible-msd-vrf",
+            "switchId": "SERIAL1",
+            "attach": False,
+            "deploymentStatus": "pending",
+        }
+    ]
+
+    payloads = coordinator._build_pending_vrf_deploy_payloads(
+        {"after": [{"vrf_name": "ansible-msd-vrf", "vrf_status": "deployed"}]},
+        [{"vrf_name": "ansible-msd-vrf", "deploy": True}],
+        {"config": []},
+        _ParentStrategy(),
+    )
+
+    assert payloads == [
+        {
+            "switchIds": ["SERIAL1"],
+            "vrfNames": ["ansible-msd-vrf"],
+        }
+    ]
+
+
+def test_vrf_workflow_coordinator_00032_pending_detach_deploy_payload_honors_deploy_false():
+    """
+    # Summary
+
+    Verify deploy=false still defers an already-pending detached attachment.
+    """
+    coordinator = VrfWorkflowCoordinator.__new__(VrfWorkflowCoordinator)
+    coordinator._current_attachment_details = lambda *_args, **_kwargs: [
+        {
+            "vrfName": "ansible-msd-vrf",
+            "switchId": "SERIAL1",
+            "attach": False,
+            "deploymentStatus": "pending",
+        }
+    ]
+
+    payloads = coordinator._build_pending_vrf_deploy_payloads(
+        {"after": [{"vrf_name": "ansible-msd-vrf", "vrf_status": "deployed"}]},
+        [{"vrf_name": "ansible-msd-vrf", "deploy": False}],
+        {"config": []},
+        _ParentStrategy(),
+    )
+
+    assert payloads == []
+
+
 def test_vrf_workflow_coordinator_00040_build_vrf_level_deploy_payload():
     """
     # Summary
@@ -1097,7 +1178,7 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
     object.__setattr__(
         coordinator,
         "_query_current_vrfs",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("overridden must use state-machine existing data")),
+        lambda *_args, **_kwargs: (_sentinel for _sentinel in ()).throw(AssertionError("overridden must use state-machine existing data")),
     )
     object.__setattr__(coordinator, "_new_state_machine", new_state_machine)
     object.__setattr__(coordinator, "_current_attachment_details_ignore_missing", attachment_details)
@@ -1380,7 +1461,7 @@ def test_vrf_workflow_coordinator_00085_overridden_new_vrf_does_not_query_missin
     object.__setattr__(
         coordinator,
         "_query_current_vrfs",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("overridden must use state-machine existing data")),
+        lambda *_args, **_kwargs: (_sentinel for _sentinel in ()).throw(AssertionError("overridden must use state-machine existing data")),
     )
     object.__setattr__(coordinator, "_new_state_machine", new_state_machine)
     object.__setattr__(coordinator, "_current_attachment_details_ignore_missing", attachment_details)

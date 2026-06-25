@@ -46,6 +46,9 @@ class VrfAttachmentManager:
     this manager keeps attachment semantics out of the topology workflow.
     """
 
+    delete_wait_delay = 5
+    delete_wait_chunk_size = 30
+
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
 
@@ -384,6 +387,12 @@ class VrfAttachmentManager:
         vrf_names: Optional[list[str]],
     ) -> list[dict[str, Any]]:
         """Gather attachment details while treating absent deleted VRFs as empty."""
+        if vrf_names and len(vrf_names) > self.delete_wait_chunk_size:
+            attachments: list[dict[str, Any]] = []
+            for index in range(0, len(vrf_names), self.delete_wait_chunk_size):
+                chunk = vrf_names[index : index + self.delete_wait_chunk_size]
+                attachments.extend(self.current_attachment_details_ignore_missing(module_args, strategy, chunk))
+            return attachments
         try:
             return self.coordinator._current_attachment_details(module_args, strategy, vrf_names)
         except Exception as exc:
@@ -551,27 +560,29 @@ class VrfAttachmentManager:
         configured_vrfs = set(configured_vrf_names(config))
         pending_statuses = {"pending", "inProgress"}
         pending_vrfs: set[str] = set()
+        deploy_target_map: dict[str, set[str]] = {}
+        after_vrfs: set[str] = set()
 
         for vrf in result.get("after") or []:
             vrf_name = vrf.get("vrf_name") or vrf.get("vrfName")
             vrf_status = vrf.get("vrf_status") or vrf.get("vrfStatus")
             if not vrf_name or vrf_name not in configured_vrfs:
                 continue
+            after_vrfs.add(vrf_name)
             if not deploy_enabled.get(vrf_name, True):
                 continue
             if str(vrf_status or "").strip() in pending_statuses:
                 pending_vrfs.add(vrf_name)
 
-        if not pending_vrfs:
-            return []
-
         vrf_level_names: set[str] = set()
         switch_level_names = {vrf_name for vrf_name in pending_vrfs if deploy_type.get(vrf_name, "switch") == "switch"}
         vrf_level_names.update(pending_vrfs.difference(switch_level_names))
 
-        deploy_target_map: dict[str, set[str]] = {}
+        deploy_enabled_names = {vrf_name for vrf_name in after_vrfs if deploy_enabled.get(vrf_name, True)}
+        attachment_query_names = sorted((deploy_enabled_names.difference(vrf_level_names)).union(switch_level_names))
+        attachment_details = self.coordinator._current_attachment_details(module_args, strategy, attachment_query_names) if attachment_query_names else []
+
         if switch_level_names:
-            attachment_details = self.coordinator._current_attachment_details(module_args, strategy, sorted(switch_level_names))
             switch_ids_by_vrf: dict[str, set[str]] = {vrf_name: set() for vrf_name in switch_level_names}
             for attachment in attachment_details:
                 vrf_name = attachment.get("vrfName")
@@ -586,9 +597,22 @@ class VrfAttachmentManager:
                 else:
                     vrf_level_names.add(vrf_name)
 
+        for attachment in attachment_details:
+            vrf_name = attachment.get("vrfName")
+            switch_id = attachment.get("switchId")
+            if vrf_name not in configured_vrfs or not deploy_enabled.get(vrf_name, True):
+                continue
+            if attachment.get("attach") is False and self.attachment_has_pending_delete_work(attachment):
+                if deploy_type.get(vrf_name, "switch") == "vrf" or not switch_id:
+                    deploy_target_map.setdefault(vrf_name, set())
+                else:
+                    deploy_target_map.setdefault(vrf_name, set()).add(switch_id)
+
         for vrf_name in vrf_level_names:
             deploy_target_map.setdefault(vrf_name, set())
 
+        if not deploy_target_map:
+            return []
         return self.coordinator._build_deploy_payloads(config, deploy_target_map)
 
     def wait_for_vrfs_delete_ready(
@@ -602,7 +626,7 @@ class VrfAttachmentManager:
         if not pending_vrf_names:
             return
 
-        timeout = int(module_args.get("timeout") or self.coordinator.module.params.get("timeout") or 30)
+        timeout = self._delete_wait_timeout(module_args, len(pending_vrf_names))
         deadline = time.time() + timeout
         ready_statuses = {"notApplicable", "NA", "na", ""}
         last_statuses: dict[str, str] = {}
@@ -625,7 +649,16 @@ class VrfAttachmentManager:
                 self.coordinator.module.fail_json(
                     msg=("Timed out waiting for VRFs to become deletable after " f"detach deployment on fabric '{strategy.fabric_name}': " f"{last_statuses}")
                 )
-            time.sleep(5)
+            time.sleep(self.delete_wait_delay)
+
+    def _delete_wait_timeout(self, module_args: dict, item_count: int) -> int:
+        explicit_timeout = module_args.get("timeout")
+        if explicit_timeout is None:
+            explicit_timeout = self.coordinator.module.params.get("timeout")
+        if explicit_timeout is not None:
+            return int(explicit_timeout)
+        extra_chunks = max(0, (max(item_count, 1) - 1) // self.delete_wait_chunk_size)
+        return min(900, 30 + (extra_chunks * self.delete_wait_delay))
 
     def deploy_vrf_attachments(
         self,
