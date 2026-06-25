@@ -236,13 +236,15 @@ def test_loopback_interface_00120() -> None:
     """
     # Summary
 
-    Verify `create` wraps an unknown-switch-IP `RuntimeError` from `_resolve_switch_id`.
+    Verify `create` wraps an unknown-switch-IP `RuntimeError` raised by `_resolve_switch_id`.
+
+    Capability preflight now runs centrally in `NDStateMachine` (not inside `create`), so an unresolvable
+    `switch_ip` reaching `create` directly surfaces the raw `_resolve_switch_id` failure, wrapped by `create`.
 
     ## Test
 
     - switches-list returns a different IP than the model's `switch_ip`
-    - `_resolve_switch_id` raises `RuntimeError` with `No switch found with fabricManagementIp '192.168.12.151'`
-    - `create` re-raises as `RuntimeError` matching `Create failed for .*loopback10`
+    - `_resolve_switch_id` raises; `create` re-raises as `RuntimeError` matching `Create failed for .*loopback10`
 
     ## Classes and Methods
 

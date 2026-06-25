@@ -559,3 +559,34 @@ class TestRequestDefaultOperationType:
         task = results._tasks[0]
         assert task.metadata["action"] == "query"
         assert task.verbosity_level == 3
+
+
+# =============================================================================
+# Test: preflight() generic no-op hook
+# =============================================================================
+
+
+class TestPreflightNoOp:
+    """Tests for the generic preflight() pre-mutation hook on NDBaseOrchestrator.
+
+    NDStateMachine invokes preflight() over the proposed set before create/update operations.
+    The base implementation must be a no-op so non-interface orchestrators (local_user, fabric_*)
+    are unaffected; interface orchestrators override it to run capability preflight.
+    """
+
+    def test_preflight_returns_none_and_issues_no_request(self):
+        """preflight() on the generic base returns None and makes no API call."""
+        # No responses seeded: any HTTP attempt would StopIteration.
+        rest_send = _make_rest_send([])
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+
+        assert orch.preflight([StubModel(name="a"), StubModel(name="b")]) is None
+        assert results._tasks == []
+
+    def test_preflight_accepts_empty_sequence(self):
+        """preflight() tolerates an empty proposed set."""
+        rest_send = _make_rest_send([])
+        orch = _make_orchestrator(rest_send, results=None)
+
+        assert orch.preflight([]) is None

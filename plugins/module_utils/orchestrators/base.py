@@ -4,6 +4,7 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
+from collections.abc import Sequence
 from functools import wraps
 from typing import Any, ClassVar, Dict, Generic, Optional, TypeVar
 
@@ -117,6 +118,20 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             raise Exception(f"Request failed {self.rest_send.error_summary}")
 
         return self.rest_send.response_current.get("DATA", {})
+
+    def preflight(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Pre-mutation hook invoked by `NDStateMachine` before create/update operations — which are skipped in check
+        mode — so subclasses can validate the proposed set during a dry-run. Base implementation is a no-op;
+        interface orchestrators override to run capability preflight.
+
+        ## Raises
+
+        None
+        """
+        return
 
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
