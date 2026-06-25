@@ -198,19 +198,3 @@
               Resource manager bulk delete took {{ rm_load_delete_elapsed }}
               second(s), exceeding rm_load_max_delete_seconds={{ rm_load_max_delete_seconds }}.
           when: rm_load_max_delete_seconds is defined
-
-      always:
-
-        ##############################################
-        ##              CLEANUP                     ##
-        ##############################################
-
-        - name: LOAD - Cleanup generated resources
-          cisco.nd.nd_manage_resource_manager:
-            state: deleted
-            fabric_name: "{{ ansible_it_fabric }}"
-            config: "{{ rm_load_config }}"
-          register: rm_load_cleanup_result
-          when:
-            - rm_load_config is defined
-            - (rm_load_config | length) > 0

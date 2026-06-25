@@ -180,7 +180,7 @@ def test_main_requires_pydantic_before_continuing():
 
         manage_resource_manager_module.main()
 
-    assert [name for name, _ in call_order[:3]] == ["require_pydantic", "setup_logging", "NDModule"]
+    assert [name for name, _value in call_order[:3]] == ["require_pydantic", "setup_logging", "NDModule"]
     assert call_order[0][1] is dummy_module
     assert call_order[1][1] is dummy_module
     mocked_rm_module.manage_state.assert_called_once_with()
@@ -2721,9 +2721,7 @@ def test_manage_merged_raises_on_failed_create_status():
         "debugs": [],
     }
 
-    nd.request.return_value = {
-        "resources": [{"entityName": "loopback99", "status": "failed", "message": "resource pool exhausted"}]
-    }
+    nd.request.return_value = {"resources": [{"entityName": "loopback99", "status": "failed", "message": "resource pool exhausted"}]}
     failed_item = MagicMock()
     failed_item.entity_name = "loopback99"
     failed_item.status = "failed"

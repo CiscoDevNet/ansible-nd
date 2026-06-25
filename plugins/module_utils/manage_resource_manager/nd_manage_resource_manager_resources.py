@@ -396,8 +396,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 api_elapsed = time.monotonic() - api_start
                 if exc.status == 404:
                     self.log.info(
-                        "_fetch_resources_paginated: GET resources returned 404 after %.3f second(s) "
-                        "(path=%s, state=%s), treating as empty",
+                         "_fetch_resources_paginated: GET resources returned 404 after %.3f second(s) (path=%s, state=%s), treating as empty",
                         api_elapsed,
                         ep.path,
                         self.state,
@@ -410,8 +409,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                     self.state,
                 )
                 raise ValueError(
-                    f"_fetch_resources_paginated: GET resources API call failed after {api_elapsed:.3f} second(s)"
-                    f" (path={ep.path}, state={self.state})"
+                    f"_fetch_resources_paginated: GET resources API call failed after {api_elapsed:.3f} second(s) (path={ep.path}, state={self.state})"
                 ) from exc
             except Exception:
                 api_elapsed = time.monotonic() - api_start
@@ -422,8 +420,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                     self.state,
                 )
                 raise ValueError(
-                    f"_fetch_resources_paginated: GET resources API call failed after {api_elapsed:.3f} second(s)"
-                    f" (path={ep.path}, state={self.state})"
+                    f"_fetch_resources_paginated: GET resources API call failed after {api_elapsed:.3f} second(s) (path={ep.path}, state={self.state})"
                 )
 
             api_elapsed = time.monotonic() - api_start
@@ -480,8 +477,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             next_offset = offset + batch_count
             if next_offset <= offset:
                 self.log.warning(
-                    "_fetch_resources_paginated: non-increasing next_offset detected (offset=%s, batch_count=%s); "
-                    "stopping pagination to avoid loop",
+                    "_fetch_resources_paginated: non-increasing next_offset detected (offset=%s, batch_count=%s); stopping pagination to avoid loop",
                     offset,
                     batch_count,
                 )
@@ -900,12 +896,14 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 status_lower = resp_item.status.lower()
                 # Recognized success status values
                 if status_lower not in ("success", "created", "ok", "succeeded"):
-                    failed_items.append({
-                        "index": idx,
-                        "entity_name": resp_item.entity_name or "unknown",
-                        "status": resp_item.status,
-                        "message": resp_item.message or "no details provided",
-                    })
+                    failed_items.append(
+                        {
+                            "index": idx,
+                            "entity_name": resp_item.entity_name or "unknown",
+                            "status": resp_item.status,
+                            "message": resp_item.message or "no details provided",
+                        }
+                    )
                     self.log.error(
                         "_validate_batch_create_response_for_failures: response_item[%s] has failure status: entity_name=%s, status=%s, message=%s",
                         idx,
@@ -916,13 +914,9 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
 
         if failed_items:
             failed_details = "\n".join(
-                f"  [{item['index']}] entity_name={item['entity_name']}: status={item['status']}, message={item['message']}"
-                for item in failed_items
+                f"  [{item['index']}] entity_name={item['entity_name']}: status={item['status']}, message={item['message']}" for item in failed_items
             )
-            failed_msg = (
-                f"Partial success in batch create: {len(failed_items)} out of {pending_count} "
-                f"resource(s) failed:\n{failed_details}"
-            )
+            failed_msg = f"Partial success in batch create: {len(failed_items)} out of {pending_count} resource(s) failed:\n{failed_details}"
             self.log.error("_validate_batch_create_response_for_failures: %s", failed_msg)
             raise ValueError(failed_msg)
 
@@ -991,13 +985,9 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
 
         if failed_items:
             failed_details = "\n".join(
-                f"  [{item['index']}] resource_value={item['resource_value']}: status={item['status']}, message={item['message']}"
-                for item in failed_items
+                f"  [{item['index']}] resource_value={item['resource_value']}: status={item['status']}, message={item['message']}" for item in failed_items
             )
-            failed_msg = (
-                f"Partial success in batch delete: {len(failed_items)} out of {pending_count} "
-                f"resource(s) failed:\n{failed_details}"
-            )
+            failed_msg = f"Partial success in batch delete: {len(failed_items)} out of {pending_count} resource(s) failed:\n{failed_details}"
             self.log.error("_validate_remove_response_for_failures: %s", failed_msg)
             raise ValueError(failed_msg)
 

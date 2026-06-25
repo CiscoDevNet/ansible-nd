@@ -493,11 +493,11 @@ def main():
     # Enforce the top-level selector contract with a standard failed result payload.
     fabric_name = module.params.get("fabric_name")
     if not fabric_name:
-      error_msg = "The 'fabric_name' parameter is required."
-      log.error("main: parameter validation failed — %s", error_msg)
-      _record_failed_result(results, error_msg)
-      final = _format_module_result(module, output_level, results, failed=True)
-      module.fail_json(msg=error_msg, **final)
+        error_msg = "The 'fabric_name' parameter is required."
+        log.error("main: parameter validation failed — %s", error_msg)
+        _record_failed_result(results, error_msg)
+        final = _format_module_result(module, output_level, results, failed=True)
+        module.fail_json(msg=error_msg, **final)
 
     log.debug(
         "main: resolved module params — fabric_name='%s', state='%s', output_level='%s', config_count=%s, check_mode=%s",
