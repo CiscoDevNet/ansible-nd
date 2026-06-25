@@ -113,12 +113,6 @@ class NetworkWorkflowCoordinator:
         if module_args.get("state") == "query":
             module_args["state"] = "gathered"
 
-        top_level_deploy_type = module_args.get("deploy_type")
-        if top_level_deploy_type:
-            for item in module_args.get("config") or []:
-                if isinstance(item, dict) and "deploy_type" not in item and "deployType" not in item:
-                    item["deploy_type"] = top_level_deploy_type
-
     def _validate_topology_argument_scope(
         self,
         module_args: dict,

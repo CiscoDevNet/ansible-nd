@@ -439,17 +439,16 @@ def test_tor_ports_are_rejected_because_network_attachment_api_has_no_tor_field(
         )
 
 
-def test_module_level_query_and_network_deploy_type_are_applied():
+def test_module_level_query_is_normalized_to_gathered():
     module_args = {
         "state": "query",
-        "deploy_type": "network",
         "config": [{"net_name": "LEGACY_NET", "is_l2only": True}],
     }
 
     NetworkWorkflowCoordinator._normalize_module_args(module_args)
 
     assert module_args["state"] == "gathered"
-    assert module_args["config"][0]["deploy_type"] == "network"
+    assert "deploy_type" not in module_args["config"][0]
 
 
 def test_network_deploy_type_network_builds_network_level_payload():

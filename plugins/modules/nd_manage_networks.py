@@ -27,12 +27,6 @@ options:
     type: str
     choices: [ merged, replaced, overridden, deleted, gathered, query ]
     default: merged
-  deploy_type:
-    description:
-      - Top-level deployment scope used when a config entry does not set C(deploy_type).
-    type: str
-    choices: [ switch, network ]
-    default: switch
   config:
     description:
       - List of Network definitions to manage.
@@ -624,11 +618,6 @@ def main():
             type="str",
             default="merged",
             choices=["merged", "replaced", "overridden", "deleted", "gathered", "query"],
-        ),
-        deploy_type=dict(
-            type="str",
-            default="switch",
-            choices=["switch", "network"],
         ),
         config=dict(
             type="list",
