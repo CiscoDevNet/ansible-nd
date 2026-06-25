@@ -8,7 +8,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_actions import (
     EpManageFabricsVrfActionsDeployPost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.vrfs import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_vrfs import (
     EpOneManageFabricsVrfsGet,
     EpOneManageFabricsVrfsBulkDelete,
     EpOneManageFabricsVrfsPost,

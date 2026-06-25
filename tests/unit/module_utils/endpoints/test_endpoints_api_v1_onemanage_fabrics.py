@@ -14,7 +14,7 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.fabrics import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics import (
     EpOneManageFabricsGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
