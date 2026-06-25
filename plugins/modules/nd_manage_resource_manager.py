@@ -7,7 +7,7 @@ DOCUMENTATION = """
 ---
 module: nd_manage_resource_manager
 short_description: Manage resources in Cisco Nexus Dashboard (ND).
-version_added: "1.0.0"
+version_added: "2.0.0"
 author: Jeet Ram (@jeeram) <jeeram@cisco.com>
 description:
   - Create, delete, and gather resources in Cisco Nexus Dashboard using smart endpoints and pydantic models.
