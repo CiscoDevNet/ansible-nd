@@ -18,6 +18,10 @@ description:
 - B(Validation-first behavior) — playbook schema validation, switch IP resolution,
   empty-description checks for O(use_desc_as_key=true), and duplicate description+switch
   checks run before write operations.
+- Template-input schema validation is per-entry. If one policy entry has invalid
+  O(config[].template_inputs), that entry is reported as failed, but other valid entries in
+  the same task can still be created, updated, deleted, or deployed. The final task
+  result is failed when any entry fails.
 - This module is B(not) a rollback transaction. Once controller write calls begin,
   later API failures can leave earlier successful creates, updates, deletes, or
   deploys in place. The result output identifies the per-entry/per-step success or
@@ -84,15 +88,15 @@ description:
 - B(Pending delete cleanup) — if a previous run used O(state=deleted) with
   O(deploy=false), a later O(state=deleted) run with O(deploy=true) can finish the
   switch cleanup even though normal active-policy matching no longer sees the policy.
-  The module first tries C(GET /policies/{policyId}) when the user supplied a
-  C(POLICY-*) ID and accepts that record only if C(markDeleted=true). If no
-  pending record is found by ID, it queries
-  C(GET /policies?filter=source:<policyId>) to find generated child policies
-  whose C(source) points at the original policy ID. This means cleanup works when
-  the user provides either the original policy ID or the generated child policy
-  ID. When no ID is available, cleanup falls back to exact C(description) matching
-  on the target switch. Template name is B(not) used for this cleanup lookup
-  because generated children can use a different template name.
+  Normal reads intentionally filter out C(markDeleted=true) rows and generated
+  child rows with non-empty C(source). When a requested delete target is absent
+  from that active view and O(deploy=true), the module does B(not) issue extra
+  validation GET calls to prove that a pending row exists. It assumes the delete
+  may already be staged and issues C(POST /switchActions/deploy) for the requested
+  switch. This blind cleanup path is only possible when the config resolves to a
+  switch ID. It handles original policy IDs and generated child/source cleanup cases,
+  but it can also deploy the switch for a mistyped or already-clean target. The
+  deploy is switch-scoped and can push other pending changes staged for that switch.
 author:
 - L Nikhil Sri Krishna (@nisaikri)
 options:
@@ -106,8 +110,10 @@ options:
     description:
     - A list of dictionaries containing policy and switch information.
     - Required for C(merged) and C(deleted) states.
-    - Optional for C(gathered) state. When omitted with C(gathered), all policies on all
-      fabric switches are exported. When provided, only matching policies are exported.
+    - Optional for C(gathered) state. When omitted with C(gathered), all active,
+      user-manageable policies on all fabric switches are exported. Policies with
+      C(markDeleted=true) and generated/internal policies with non-empty C(source)
+      are excluded. When provided, only matching active policies are exported.
       A C(gathered) filter is still switch-scoped in the current implementation, so provide
       a switch target (legacy C(switch) entry or self-contained gathered entry) when
       filtering. To export across the whole fabric, omit O(config).
@@ -265,24 +271,23 @@ options:
     - If C(pushConfig) fails after a create or update, the policy record may already exist or
       be updated on the controller. Fix the device or controller-side deploy issue and rerun
       with O(deploy=true).
-    - For C(deleted) state with O(deploy=true), the module performs C(markDelete) followed
-      by C(switchActions/deploy) to push removal config to the affected switches. The policy
-      record remains on the controller in markDeleted state until the next switch-level deploy
-      cleans it up.
+    - For C(deleted) state with O(deploy=true), the module first attempts C(markDelete),
+      retries only C("content type PYTHON") markDelete failures with direct C(DELETE), and
+      then performs one consolidated C(switchActions/deploy) to push removal config to the
+      affected switches. Policies successfully marked for deletion remain on the controller
+      in C(markDeleted) state until switch-level deploy cleanup completes.
     - For C(deleted) state with O(deploy=false), only C(markDelete) is performed. The policy
       is flagged for deletion on the controller but the running config remains on the switch
       until a subsequent deploy is issued.
     - If a later C(deleted) run uses O(deploy=true) for a policy already pending deletion,
-      the module performs an isolated cleanup lookup. With a C(POLICY-*) ID it
-      first calls C(GET /policies/{policyId}) and requires C(markDeleted=true);
-      if that does not find a pending record, it calls
-      C(GET /policies?filter=source:<policyId>) and post-filters for
-      C(source == policyId) and C(markDeleted=true). This handles generated
-      child records whose C(policyId) differs from the original deleted policy.
-      Without an ID, it uses an exact C(description) match on the target switch.
-      It then calls C(switchActions/deploy) for the matched switch. It does not
-      expose C(markDeleted) or C(source) records to normal C(merged), C(gathered),
-      or active delete matching.
+      the normal active-policy cache will not return C(markDeleted=true) rows or generated
+      child rows with non-empty C(source). When the requested target is absent from that
+      active cache, the module does not perform additional C(GET /policies/{policyId}),
+      C(source:<policyId>), or description lookup calls. It treats the entry as a possible
+      pending cleanup and calls C(switchActions/deploy) for the requested switch. This is
+      intentionally a blind switch deploy; it can also deploy a switch for a typo or an
+      already-clean target. If the delete entry cannot be resolved to a switch ID, this
+      blind cleanup path is skipped because the module has no safe deploy target.
     - B(Exception) — C(switch_freeform) and other PYTHON content-type policies do not
       support the C(markDelete) API. The module automatically detects this and falls back
       to a direct C(DELETE) API call to remove the policy record from the controller.
@@ -295,8 +300,8 @@ options:
       (2) C(state=merged) when O(use_desc_as_key=true) and a description's
       C(template_name) changes, triggering a B(delete_and_create) flow whose
       delete step also goes through C(markDelete) + C(switchActions/deploy), and
-      (3) C(state=deleted) cleanup of an already C(markDeleted) policy from a
-      prior O(deploy=false) run.
+      (3) C(state=deleted) blind cleanup for a delete target absent from the active
+      cache after a prior O(deploy=false) run.
       In these switch-level deploy situations, the controller deploys B(every
       pending configuration change staged for those switches), not only the
       changes performed by this task. The ND controller does not provide a
@@ -337,7 +342,8 @@ options:
       controller but the running config remains on the switch.
     - Use C(gathered) to export existing policies as playbook-compatible config.
       When O(config) is provided, only matching policies are exported.
-      When O(config) is omitted, all policies on all fabric switches are exported.
+      When O(config) is omitted, all active, user-manageable policies on all fabric
+      switches are exported.
       The output under the C(gathered) return key can be used directly as O(config)
       in a subsequent C(merged) task.
     type: str
@@ -350,8 +356,10 @@ seealso:
 - module: cisco.nd.nd_rest
 notes:
 - The module is validation-first but not transactionally rolled back. Validation and
-  controller-ambiguity failures stop before writes; failures returned after write calls
-  begin are reported in task output and may require a rerun or manual cleanup.
+  controller-ambiguity failures stop before writes. Template-input validation is
+  per-entry, so invalid policy entries are reported as failures while valid entries
+  can still be processed. Failures returned after write calls begin are reported in
+  task output and may require a rerun or manual cleanup.
 - When O(use_desc_as_key=false) and O(config[].name) is a template name (not a policy ID),
   existing policies are B(never) updated in-place. The module always creates a new policy.
   This is because multiple policies can share the same template name, making it ambiguous
@@ -370,6 +378,10 @@ notes:
 - C(state=gathered) returns only active user-manageable policies. Policies already
   C(markDeleted) and internal controller sub-policies with a non-empty C(source) field
   are filtered out before gathered output and idempotency checks.
+- C(state=merged) uses the same active-policy view. A controller row that is already
+  C(markDeleted=true), or a generated child row whose C(source) is non-empty, does not
+  satisfy idempotency. Replaying the same desired config will create or update an active
+  policy instead of becoming a no-op against the pending-delete row.
 """
 
 EXAMPLES = r"""
@@ -582,11 +594,11 @@ EXAMPLES = r"""
       - switch:
           - serial_number: "{{ switch1 }}"
 
-# NOTE: switch_freeform policies use a direct DELETE fallback since
-#       markDelete is not supported for PYTHON content-type templates.
-#       When deploy=true, switchActions/deploy pushes config removal
-#       to the switch. When deploy=false, only the policy record is
-#       removed from the controller.
+# NOTE: switch_freeform policies are attempted through markDelete first. When
+#       the controller rejects markDelete for a PYTHON content-type template,
+#       the module retries that policy through direct DELETE. When deploy=true,
+#       switchActions/deploy pushes config removal to the switch. When
+#       deploy=false, only the policy record is removed from the controller.
 
 - name: Delete switch_freeform policies (direct DELETE fallback)
   cisco.nd.nd_manage_policy:
@@ -644,6 +656,66 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description:
+  - Whether the module created, updated, deleted, or switch-deployed any policy.
+  - No-diff C(merged) deploys of already matching policies do not by themselves
+    mark the task changed.
+  returned: always
+  type: bool
+before:
+  description:
+  - Active policy snapshots observed before mutation for entries that were changed
+    or checked.
+  returned: always
+  type: list
+  elements: dict
+after:
+  description:
+  - Policy snapshots after successful creates or updates.
+  - C(state=deleted) returns no deleted policies in C(after).
+  returned: always
+  type: list
+  elements: dict
+gathered:
+  description:
+  - Playbook-compatible active policy configuration returned by C(state=gathered).
+  - Contains C(policy_id) so gathered output can be replayed to target the same
+    controller policy directly.
+  returned: when state is gathered and active policies match
+  type: list
+  elements: dict
+proposed:
+  description:
+  - Desired policy payloads considered by the module.
+  returned: when output_level is info or debug
+  type: list
+  elements: dict
+warnings_nd:
+  description:
+  - Non-fatal ND warning messages captured from policy action responses.
+  returned: when ND returns warnings
+  type: list
+  elements: str
+api_path:
+  description:
+  - API paths called by the module, exposed at higher verbosity.
+  returned: with -vv or higher
+  type: list
+  elements: str
+api_payload:
+  description:
+  - API request payloads called by the module, exposed at higher verbosity.
+  returned: with -vv or higher
+  type: list
+  elements: dict
+api_diff:
+  description:
+  - Per-step action details, including create/update/delete/deploy decisions and
+    per-entry failures.
+  returned: with -vvv or higher
+  type: list
+  elements: dict
 """
 
 # pylint: disable=logging-fstring-interpolation

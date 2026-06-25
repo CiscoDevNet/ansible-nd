@@ -16,6 +16,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManagePolicyGroupsGet,
     EpManagePolicyGroupsPost,
     EpManagePolicyGroupsPut,
+    EpManagePolicySummaryGet,
     PolicyGroupMutationEndpointParams,
     PolicyGroupsGetEndpointParams,
 )
@@ -374,6 +375,35 @@ def test_manage_policy_groups_00170():
         result = instance.path
     assert "filter=" in result
     assert "max=10000" in result
+
+
+# =============================================================================
+# Test: EpManagePolicySummaryGet
+# =============================================================================
+
+
+def test_manage_policy_groups_00180():
+    """
+    # Summary
+
+    Verify EpManagePolicySummaryGet renders raw Lucene wildcard filters.
+
+    ## Classes and Methods
+
+    - EpManagePolicySummaryGet.path
+    """
+    with does_not_raise():
+        instance = EpManagePolicySummaryGet()
+        instance.fabric_name = "my-fabric"
+        instance.lucene_params.filter = "policyId:*POLICY-GROUP-*"
+        instance.lucene_params.max = 10000
+        instance.lucene_params.sort = "templateName:asc"
+        result = instance.path
+    assert result.startswith("/api/v1/manage/fabrics/my-fabric/policySummary?")
+    assert "filter=policyId:*POLICY-GROUP-*" in result
+    assert "max=10000" in result
+    assert "sort=templateName:asc" in result
+    assert "%2A" not in result
 
 
 # =============================================================================

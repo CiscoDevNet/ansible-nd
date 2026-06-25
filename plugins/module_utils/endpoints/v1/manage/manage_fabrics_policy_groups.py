@@ -10,6 +10,7 @@ in the ND Manage API.
 Endpoints covered:
 - GET    /fabrics/{fabricName}/policyGroups                    - List policy groups (with Lucene filtering)
 - GET    /fabrics/{fabricName}/policyGroups/{policyGroupId}    - Get policy group by ID
+- GET    /fabrics/{fabricName}/policySummary                   - Summary-backed policy group reads
 - POST   /fabrics/{fabricName}/policyGroups                    - Create policy groups in bulk
 - PUT    /fabrics/{fabricName}/policyGroups/{policyGroupId}    - Update a policy group
 - DELETE /fabrics/{fabricName}/policyGroups/{policyGroupId}    - Delete a policy group
@@ -209,6 +210,69 @@ class EpManagePolicyGroupsGet(PolicyGroupIdMixin, _EpManagePolicyGroupsBase):
         composite.add(self.lucene_params)
         qs = composite.to_query_string()
         return f"{base}?{qs}" if qs else base
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.GET
+
+
+class _EpManagePolicySummaryBase(FabricNameMixin, NDEndpointBaseModel):
+    """
+    Base class for Fabric Policy Summary endpoint.
+
+    ``GET /policyGroups`` is not reliable on some controller builds for
+    priority and markDeleted fields.  Policy-group read paths therefore use
+    ``/policySummary`` and normalize the response into the policy-group shape.
+    """
+
+    @property
+    def _base_path(self) -> str:
+        """Build the policySummary endpoint path."""
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "policySummary")
+
+
+class EpManagePolicySummaryGet(_EpManagePolicySummaryBase):
+    """
+    # Summary
+
+    ND Manage Policy Summary GET Endpoint.
+
+    ## Path
+
+    - /api/v1/manage/fabrics/{fabricName}/policySummary
+
+    ## Verb
+
+    - GET
+    """
+
+    class_name: Literal["EpManagePolicySummaryGet"] = Field(
+        default="EpManagePolicySummaryGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: PolicyGroupsGetEndpointParams = Field(
+        default_factory=PolicyGroupsGetEndpointParams,
+        description="Endpoint-specific query parameters",
+    )
+    lucene_params: LuceneQueryParams = Field(
+        default_factory=LuceneQueryParams,
+        description="Lucene-style filtering parameters (max, offset, sort, filter)",
+    )
+
+    @property
+    def path(self) -> str:
+        """Build the endpoint path with optional query string."""
+        composite = CompositeQueryParams()
+        composite.add(self.endpoint_params)
+        composite.add(self.lucene_params)
+        # Keep Lucene wildcard filters in the exact form accepted by the
+        # controller, e.g. ``filter=policyId:*POLICY-GROUP-*``.
+        qs = composite.to_query_string(url_encode=False)
+        return f"{self._base_path}?{qs}" if qs else self._base_path
 
     @property
     def verb(self) -> HttpVerbEnum:

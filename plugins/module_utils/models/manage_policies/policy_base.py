@@ -56,8 +56,11 @@ class PolicyCreate(NDBaseModel):
     ## Optional Fields
 
     - description: Policy description (max 255 chars)
-    - priority: Policy priority (1-2000, default 500)
-    - source: Source of the policy (e.g., "UNDERLAY", "OVERLAY", "")
+    - priority: Policy priority (1-2000). Creates default to 500 at the
+      API boundary; omitted updates preserve the existing controller value.
+    - source: Controller source marker. Empty means an active user-managed
+      root policy; non-empty values identify generated/internal artifacts that
+      normal module reads filter out.
     - template_inputs: Name/value pairs passed to the template
     - secondary_entity_name: Secondary entity name (for configProfile)
     - secondary_entity_type: Secondary entity type
@@ -123,7 +126,7 @@ class PolicyCreate(NDBaseModel):
     source: str | None = Field(
         default="",
         max_length=255,
-        description="Source of the policy (UNDERLAY, OVERLAY, LINK, etc.). Empty means any source can update.",
+        description="Controller source marker. Empty means an active user-managed root policy; non-empty generated artifacts are filtered from normal reads.",
     )
     template_inputs: dict[str, Any] | None = Field(
         default=None,

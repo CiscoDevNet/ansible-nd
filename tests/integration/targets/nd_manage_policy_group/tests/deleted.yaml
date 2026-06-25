@@ -97,11 +97,10 @@
     ## TC4 - normal template pending cleanup by ID         ##
     ########################################################
 
-    # Normal policy-group templates keep the original policy group ID with
-    # markDeleted=true after deploy=false. The follow-up deploy=true run must
-    # find that same ID and deploy cleanup without issuing markDelete again.
-    # The markDeleted policy-group response may omit switchIds, so the cleanup
-    # call supplies switch_ids as the explicit switchActions/deploy target.
+    # Normal policy-group templates can leave the original policy group ID
+    # staged as markDeleted=true after deploy=false. The follow-up deploy=true
+    # run sees no active record, validates the hidden markDeleted row through
+    # policySummary, and deploys the switches reported by that summary row.
 
     - name: "DELETED TC4 SETUP - Create policy group for pending cleanup"
       cisco.nd.nd_manage_policy_group:
@@ -140,7 +139,7 @@
           - result.changed == true
       tags: deleted
 
-    - name: "DELETED TC4B - Deploy pending markDeleted cleanup by policy group ID"
+    - name: "DELETED TC4B - Deploy pending cleanup by policy group ID"
       cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
@@ -148,8 +147,6 @@
         config:
           - name: "{{ pending_cleanup_policy_group_id }}"
             description: "Pending cleanup Enable LACP"
-            switch_ids:
-              - "{{ switch_serial_1 }}"
       register: result
       tags: deleted
 
@@ -160,12 +157,12 @@
       tags: deleted
 
     ########################################################
-    ## TC5 - switch_freeform source-child cleanup          ##
+    ## TC5 - switch_freeform pending cleanup               ##
     ########################################################
 
-    # switch_freeform can leave a generated child whose source points at the
-    # original policy group ID. The cleanup run must find that child by source
-    # even when the user provides only the original ID.
+    # switch_freeform can leave cleanup work outside the active policy-group
+    # view. The cleanup run validates the generated child through policySummary
+    # using the original policy group ID as source.
 
     - name: "DELETED TC5 SETUP - Create switch_freeform policy group for source cleanup"
       cisco.nd.nd_manage_policy_group:
@@ -206,19 +203,17 @@
           - result.changed == true
       tags: deleted
 
-    - name: "DELETED TC5B - Deploy source-child pending cleanup by original policy group ID"
+    - name: "DELETED TC5B - Deploy switch_freeform pending cleanup by original policy group ID"
       cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
         config:
           - name: "{{ source_cleanup_policy_group_id }}"
-            switch_ids:
-              - "{{ switch_serial_1 }}"
       register: result
       tags: deleted
 
-    - name: "DELETED TC5B - Verify source-child pending cleanup deploy changed"
+    - name: "DELETED TC5B - Verify pending cleanup deploy changed"
       ansible.builtin.assert:
         that:
           - result.changed == true

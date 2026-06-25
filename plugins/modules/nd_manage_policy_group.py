@@ -26,6 +26,10 @@ description:
 - The module is validation-first but B(not) a rollback transaction. Input validation
   and duplicate checks run before write operations; after controller writes begin,
   later API or deploy failures can leave earlier successful operations in place.
+- Template-input schema validation is per-entry. If one policy-group entry has invalid
+  O(config[].template_inputs), that entry is reported as failed, but other valid entries in
+  the same C(merged) task can still be created, updated, or deployed. The final task
+  result is failed when any entry fails.
 author:
 - L Nikhil Sri Krishna (@nisaikri)
 options:
@@ -60,17 +64,13 @@ options:
       the deploy target is a single consolidated call against the union of all
       affected switches across every policy group being deleted in this task.
     - If a later C(delete) run uses O(deploy=true) for a policy group already
-      pending deletion from a previous O(deploy=false) run, the module performs
-      a targeted cleanup lookup. With a C(POLICY-GROUP-*) ID, it first calls
-      C(GET /policyGroups/{policyGroupId}) and accepts the record only if
-      C(markDeleted=true). If no pending record is found by ID, it calls
-      C(GET /policyGroups?filter=source:<policyGroupId>) and post-filters for
-      C(source == policyGroupId) and C(markDeleted=true). This handles generated
-      child records whose C(policyId) differs from the original deleted policy
-      group. Without an ID, it falls back to exact C(description) matching. It
-      then calls C(switchActions/deploy) for the matched member switches.
-      Template name is B(not) used for this cleanup lookup because generated
-      cleanup children can use a different template name.
+      pending deletion from a previous O(deploy=false) run, the normal active
+      policy-group view will not return C(markDeleted=true) rows or generated
+      child rows with non-empty C(source). The module reads C(policySummary)
+      with C(filter=policyId:*POLICY-GROUP-*) and matches hidden
+      C(markDeleted=true) rows by requested ID as C(policyId), requested ID as
+      generated-child C(source), or exact description. Only matched pending-delete
+      rows contribute switches to the consolidated C(switchActions/deploy) target.
     - For user-mentioned policy groups listed in O(config) whose desired state
       already matches the controller (no diff), C(switchActions/deploy) is still
       issued against the existing member switches so the user-expressed deploy
@@ -88,11 +88,13 @@ options:
     description:
     - List of policy group configurations.
     - Required for C(merged) and C(deleted). Optional for C(gathered); when omitted
-      with C(gathered), all policy groups on the fabric are returned.
+      with C(gathered), all active, user-manageable policy groups on the fabric
+      are returned. Policy groups with C(markDeleted=true) and generated/internal
+      rows with non-empty C(source) are excluded.
     - For C(merged), C(config.name) is required. If C(config.name) is a template name,
       C(config.description) is also required unless C(create_additional_policy=true).
     - For C(deleted), C(config.name) is required. A template name without
-      C(config.description) expands to all existing policy groups using that template.
+      C(config.description) expands to all active policy groups using that template.
     - For C(gathered), entries are filters. They may use C(config.name), C(config.description),
       or both.
     type: list
@@ -101,8 +103,10 @@ options:
       name:
         description:
         - "This can be one of the following:"
-        - When both O(config.name) and O(config.policy_id) are supplied, O(config.policy_id)
-          takes precedence as the primary key for resolution.
+        - When both O(config.name) and O(config.policy_id) are supplied and
+          O(config.name) is a template name, O(config.policy_id) takes precedence
+          as the primary key for resolution. If O(config.name) is already a
+          C(POLICY-GROUP-*) ID, that ID is used directly.
         - "a) Template Name - A name identifying the template (e.g., C(feature_enable), C(switch_freeform))."
         - "   A template name can be used by multiple policy groups and hence does not identify a policy group uniquely."
         - "b) Policy Group ID - A unique ID identifying a policy group (e.g., C(POLICY-GROUP-123456))."
@@ -116,15 +120,12 @@ options:
           Policy group IDs are server-generated and cannot be used to create new policy groups.
           Use a template name in O(config.name) together with O(config.description) to create new policy groups.
         - For O(state=deleted), if the ID is not found in the active policy-group view,
-          it is treated as already deleted. When O(deploy=true), the module performs a
-          targeted pending-delete cleanup lookup for that ID before deciding no work is needed.
-          It checks C(GET /policyGroups/{policy_id}) first and requires
-          C(markDeleted=true). If that does not find a pending record, it checks
-          C(GET /policyGroups?filter=source:<policy_id>) for generated child records
-          whose C(source) points at the original policy group ID. Supplying either the
-          original ID or the generated child ID is supported. If the matched child
-          record does not include C(switchIds), include O(config.switch_ids) so the
-          module can safely target C(switchActions/deploy).
+          it is treated as already deleted unless O(deploy=true) finds a matching
+          C(markDeleted=true) row in C(policySummary). Matching accepts the requested
+          ID as the hidden row's C(policyId), or as the C(source) value on a generated
+          child row. This means either the original ID or the generated child row ID
+          can work when it identifies the pending row returned by C(policySummary).
+          When matched, the module deploys the switches reported by C(policySummary).
         - For O(state=gathered), the ID is used directly to query the specific policy group by ID.
         - Required for O(state=merged) and O(state=deleted). Optional for O(state=gathered)
           where entries can filter by O(config.description) alone.
@@ -155,7 +156,7 @@ options:
           composite-key idempotency check is bypassed and C(description) becomes optional.
         - "When O(state=deleted):"
         - "  If provided with a template name, deletes the specific policy group matching (description, template_name)."
-        - "  If omitted with a template name, deletes ALL policy groups using that template."
+        - "  If omitted with a template name, deletes all active policy groups using that template."
         - "  Not required when name is a policy group ID."
         - When O(state=gathered), can be used by itself to gather all groups with that description,
           or with O(config.name) to gather the exact template+description match.
@@ -179,9 +180,11 @@ options:
       template_inputs:
         description:
         - Dictionary of name/value pairs passed to the policy template.
-        - For C(merged), non-empty inputs are pre-validated against the template
-          parameters endpoint before any policy group write is attempted. Controller
-          parameter-fetch failures degrade to controller-side validation.
+        - For C(merged), non-empty inputs are validated per entry against the template
+          parameters endpoint before that entry is sent to the controller. Entries
+          that fail validation are removed from the write bucket and reported in the
+          final task failure; valid entries continue through the normal create/update
+          flow. Controller parameter-fetch failures degrade to controller-side validation.
         - System-injected keys returned by gathered output are stripped before
           validation so gathered-to-merged round trips do not fail on controller-only
           fields.
@@ -217,7 +220,7 @@ options:
     - Use O(state=deleted) to remove policy groups from the fabric.
     - Use O(state=gathered) to export existing policy groups as playbook-compatible config.
     - "For O(state=gathered):"
-    - "  When O(config) is omitted, all policy groups on the fabric are returned."
+    - "  When O(config) is omitted, all active, user-manageable policy groups on the fabric are returned."
     - "  When O(config) is provided, results are filtered by the given criteria:"
     - "    O(config.name) with a C(POLICY-GROUP-*) ID returns that specific policy group."
     - "    O(config.name) with a template name returns all policy groups using that template."
@@ -243,8 +246,8 @@ notes:
   normal composite-key state machine and are returned under C(direct_actions).
 - C(create_additional_policy=true) bypasses idempotency checks and is returned
   under C(force_created), not the normal C(before)/C(after) state-machine lists.
-- For O(state=deleted) with only a template name (no description), ALL policy groups
-  using that template are expanded and deleted.
+- For O(state=deleted) with only a template name (no description), all active
+  policy groups using that template are expanded and deleted.
 - After creation, C(POST /switchActions/deploy) deploys the policy groups to the
   member switches when O(deploy=true). The C(policyActions/pushConfig) endpoint is
   not honoured for policy groups, so the switch-level deploy is the only deploy path.
@@ -263,12 +266,13 @@ notes:
   configuration is pushed. If O(deploy=false), step 3 is skipped and the
   switch running config is left untouched until a subsequent deploy."
 - "If a later C(state=deleted) run with O(deploy=true) targets a group already
-  pending deletion from a previous O(deploy=false) run, the module does not
-  relax normal query filters globally. It performs an isolated cleanup lookup
-  by C(POLICY-GROUP-*) ID, C(source:<policy_id>), or exact C(description) and
-  deploys the matched group's switches. Description-only cleanup fails when
-  multiple pending groups match; provide O(config.policy_id) or a
-  C(POLICY-GROUP-*) name in that case."
+  pending deletion from a previous O(deploy=false) run, the module keeps normal
+  active reads filtered but checks C(policySummary) for hidden C(markDeleted=true)
+  rows. It matches by requested ID as C(policyId), requested ID as generated-child
+  C(source), or exact description, then adds the matched pending switches to the
+  same consolidated C(switchActions/deploy) call used by active deletes. A mistyped
+  or already-clean target does not deploy unless C(policySummary) contains a
+  matching pending row."
 - "B(Ghost-record cleanup for PYTHON content-type templates:)"
 - After a direct C(DELETE) of a PYTHON content-type policy group (step 2 above),
   the controller internally creates a transient C(switch_freeform_config) artifact
@@ -276,11 +280,25 @@ notes:
   ghost records are automatically filtered out during normal query operations so
   they do not appear in C(gathered) output and do not affect idempotency checks
   on subsequent runs.
+- Query and gathered paths use C(policySummary) instead of C(GET /policyGroups)
+  because supported controller builds can return incorrect C(priority) and
+  C(markDeleted) values from C(GET /policyGroups). The module requests
+  C(filter=policyId:*POLICY-GROUP-*) and still filters policy group rows in Python.
 - Query and gathered paths filter out controller artifacts with a non-empty C(source)
-  field and pending-delete records with C(markDeleted=true). Normal state-machine reads
-  also exclude no-description policy groups because they cannot be indexed by the
-  composite key; ID-based direct actions and C(gathered) use broader reads when they
-  need to see no-description groups.
+  field and fully pending-delete records where C(policySummary.switches[].markDeleted)
+  is true for every switch. Normal state-machine reads also exclude no-description
+  policy groups because they cannot be indexed by the composite key; ID-based direct
+  actions and C(gathered) use broader reads when they need to see no-description groups.
+- C(state=merged) uses this active policy-summary view. A C(markDeleted=true) policy
+  group or a generated child row with non-empty C(source) does not satisfy idempotency.
+  Replaying the same desired config creates or updates an active group instead of
+  becoming a no-op against a pending-delete row. Pending-delete rows are consulted only
+  by the C(state=deleted) + O(deploy=true) cleanup path, and only through the
+  C(policySummary) validation described above.
+- Template-input schema validation is per-entry. Invalid entries are removed from
+  their write bucket and reported in the final failed result, while valid entries
+  in the same task can still be processed. Validation schema-fetch failures degrade
+  to controller-side validation for that template.
 """
 
 EXAMPLES = r"""
@@ -332,7 +350,7 @@ EXAMPLES = r"""
       - name: feature_enable
         description: "Enable LACP"
 
-- name: Delete ALL policy groups using a specific template (no description)
+- name: Delete all active policy groups using a specific template (no description)
   cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: deleted
@@ -368,7 +386,7 @@ EXAMPLES = r"""
       - name: feature_enable
         description: "Enable LACP"
 
-- name: Gather all policy groups on the fabric (no config needed)
+- name: Gather all active policy groups on the fabric (no config needed)
   cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: gathered
@@ -411,6 +429,69 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description:
+  - Whether the module changed controller state or issued a requested deploy/cleanup action.
+  type: bool
+  returned: always
+before:
+  description:
+  - Policy groups matched before normal state-machine operations.
+  type: list
+  elements: dict
+  returned: when C(state=merged) or C(state=deleted) uses the normal state-machine path
+after:
+  description:
+  - Policy groups after normal state-machine operations.
+  type: list
+  elements: dict
+  returned: when C(state=merged) or C(state=deleted) uses the normal state-machine path
+gathered:
+  description:
+  - Active, user-manageable policy groups exported as playbook-compatible config.
+  - Rows with C(markDeleted=true) and generated/internal rows with non-empty C(source)
+    are excluded.
+  type: list
+  elements: dict
+  returned: when C(state=gathered)
+force_created:
+  description:
+  - Policy groups created through O(config[].create_additional_policy=true).
+  - These are returned separately because duplicate composite identifiers cannot be
+    represented in the normal C(before)/C(after) state-machine collections.
+  type: list
+  elements: dict
+  returned: when force-created entries are processed
+direct_actions:
+  description:
+  - ID-based policy-group updates or deletes that bypassed the composite-key state machine.
+  - Used for no-description groups and description changes addressed by C(policy_id).
+  type: dict
+  returned: when direct-action entries are processed
+  contains:
+    updated:
+      description: Policy groups updated directly by controller ID.
+      type: list
+      elements: dict
+    deleted:
+      description: Policy groups deleted directly by controller ID.
+      type: list
+      elements: dict
+pending_deleted_cleanup:
+  description:
+  - Details for C(state=deleted) + O(deploy=true) cleanup of rows already hidden from
+    the active view by C(markDeleted=true) or non-empty C(source).
+  - Policy groups are validated through C(policySummary) before their switches are
+    added to the consolidated C(switchActions/deploy) request.
+  type: dict
+  returned: when pending-delete cleanup is scheduled
+template_input_validation_failed:
+  description:
+  - Per-entry template-input validation failures. Valid entries may already have been
+    processed before the module returns the final failed result.
+  type: list
+  elements: dict
+  returned: when one or more C(template_inputs) entries fail schema validation
 """
 
 import logging
@@ -469,9 +550,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sen
 # (see ``_validate_template_inputs_in_buckets`` below).  When ``True`` (the
 # default), every policy-group entry destined for a POST or PUT to the
 # controller is pre-flighted against the template's
-# ``GET /api/v1/manage/configTemplates/<name>/parameters`` schema before any
-# mutation runs, so users get a structured error message rather than a raw
-# 207 "controller rejected" failure.
+# ``GET /api/v1/manage/configTemplates/<name>/parameters`` schema. Invalid
+# entries are removed from their execution bucket and reported in the final
+# module result; valid entries can still be applied.
 #
 # Flip to ``False`` ONLY as a temporary escape hatch if the controller's
 # parameters endpoint produces false positives in the field -- this degrades
@@ -487,10 +568,9 @@ def _validate_template_inputs_in_buckets(
     normal_config: list[dict],
     state: str,
     orchestrator,
-    module: AnsibleModule,
     log: logging.Logger,
-) -> None:
-    """Pre-flight template-input schema validation for every outbound write.
+) -> list[dict]:
+    """Validate template inputs and remove invalid entries from write buckets.
 
     The policy-group create / update path POSTs ``{"policyGroups": [...]}``
     (bulk-create) or PUTs ``/policyGroups/{id}`` with a body that contains
@@ -499,12 +579,14 @@ def _validate_template_inputs_in_buckets(
     schema violations.  That feedback only arrives **after** the bulk call
     so we cannot easily surface a structured per-entry error from it.
 
-    This helper closes the gap:  for every entry that is going to carry
+    This helper closes the gap: for every entry that is going to carry
     ``templateInputs`` in its outbound body, fetch the template's parameter
     schema (cached per-task), strip the ND-injected SYSTEM_INJECTED keys
-    (so gathered -> merged round-trip is clean), and validate.  Any error
-    surfaces via a single aggregated ``fail_json`` before any mutation
-    runs.
+    (so gathered -> merged round-trip is clean), and validate. Invalid
+    entries are pruned from the bucket they came from and returned as
+    structured failures. The caller reports those failures after processing
+    the remaining valid entries, matching the policy module's per-entry
+    validation semantics.
 
     Skip rules (validation is a no-op when the corresponding write does not
     carry ``templateInputs``):
@@ -525,10 +607,9 @@ def _validate_template_inputs_in_buckets(
     forwards ``cluster_name`` (but NOT ``ticket_id``, since the parameters
     endpoint is a read endpoint that does not accept ticketId).
 
-    Errors are aggregated across every validated entry into a single
-    ``fail_json`` message that mirrors the per-item failure format used by
-    :py:meth:`PolicyGroupOrchestrator.create_bulk` for 207-Multi-Status
-    responses, so the same downstream parsing / display works for both.
+    Errors are aggregated across every validated entry into the returned
+    failure list. The bucket lists are mutated in-place so downstream create,
+    direct-action, and state-machine paths never send invalid entries.
 
     Args:
         force_create_items:   Bucket from ``main()`` partitioning -- entries
@@ -543,31 +624,32 @@ def _validate_template_inputs_in_buckets(
                               Used for its ``_request`` method and its
                               ``_apply_endpoint_params`` plumbing (so the
                               ``cluster_name`` query parameter is honoured).
-        module:               ``AnsibleModule`` for ``fail_json``.
         log:                  Logger -- ENTER / EXIT / per-entry pass / fail
                               lines are emitted at DEBUG; aggregated error
                               count at WARNING via the shared helper.
 
     Returns:
-        ``None``.  On validation failure, calls ``module.fail_json`` (does
-        not return).
+        List of structured per-entry validation failures. Empty when no
+        failures were found or validation was skipped.
     """
     if not _ENABLE_TEMPLATE_INPUT_VALIDATION:
         log.debug("Template-input validation disabled (kill switch); skipping.")
-        return
+        return []
     if state != "merged":
         log.debug("Template-input validation skipped: state=%s (no body carries templateInputs).", state)
-        return
+        return []
 
     # Build the union of write-bound entries.  Order is preserved so the
     # error message lists violations in the same order the user supplied
     # them.  The buckets are disjoint by construction (see ``main()``).
     candidates = (
-        [("force_create", e) for e in force_create_items] + [("direct_action", e) for e in direct_action_items] + [("normal", e) for e in normal_config]
+        [("force_create", entry) for entry in force_create_items]
+        + [("direct_action", entry) for entry in direct_action_items]
+        + [("normal", entry) for entry in normal_config]
     )
     if not candidates:
         log.debug("Template-input validation skipped: no write-bound entries.")
-        return
+        return []
 
     # Per-task fetch cache: {template_name: [param_def, ...]}.  Shared
     # across every entry so N policy groups with the same template incur
@@ -597,11 +679,17 @@ def _validate_template_inputs_in_buckets(
         len(normal_config),
     )
 
-    all_errors: list[str] = []
+    failures: list[dict] = []
+    valid_by_bucket: dict[str, list[dict]] = {
+        "force_create": [],
+        "direct_action": [],
+        "normal": [],
+    }
     for idx, (bucket, entry) in enumerate(candidates):
         raw_inputs = entry.get("template_inputs") or {}
         if not raw_inputs:
             log.debug("config[%d] (%s): no template_inputs -- skip validation.", idx, bucket)
+            valid_by_bucket[bucket].append(entry)
             continue
         template_name = entry.get("name", "") or ""
         # Defensive: the partitioning step always resolves POLICY-GROUP-*
@@ -614,6 +702,7 @@ def _validate_template_inputs_in_buckets(
                 bucket,
                 template_name,
             )
+            valid_by_bucket[bucket].append(entry)
             continue
 
         # Strip ND-injected control keys before validation so the
@@ -646,22 +735,36 @@ def _validate_template_inputs_in_buckets(
         )
         if entry_errors:
             # Prefix each error with a stable per-entry identifier so the
-            # aggregated message tells the user which config[] index hit
-            # which violation.  Uses ``description`` when available (the
+            # final report tells the user which config[] index hit which
+            # violation. Uses ``description`` when available (the
             # user's primary handle) and falls back to ``policy_id`` (for
             # direct-action / round-trip entries).
             ident = entry.get("description") or entry.get("policy_id") or "<unidentified>"
-            for err in entry_errors:
-                all_errors.append(f"config[{idx}] (bucket={bucket}, identifier={ident!r}): {err}")
+            failures.append(
+                {
+                    "index": idx,
+                    "bucket": bucket,
+                    "identifier": ident,
+                    "template_name": template_name,
+                    "errors": entry_errors,
+                    "entry": entry,
+                }
+            )
+            continue
+        valid_by_bucket[bucket].append(entry)
 
-    if all_errors:
+    force_create_items[:] = valid_by_bucket["force_create"]
+    direct_action_items[:] = valid_by_bucket["direct_action"]
+    normal_config[:] = valid_by_bucket["normal"]
+
+    if failures:
         log.error(
-            "Template-input validation failed for %d entry/entries; aborting before any controller call.",
-            len(all_errors),
+            "Template-input validation failed for %d entry/entries; continuing with valid entries.",
+            len(failures),
         )
-        module.fail_json(msg=("Template input validation failed for {0} entry/entries: ".format(len(all_errors)) + "; ".join(all_errors)))
     else:
         log.debug("Template-input validation passed for all %d candidate entries.", len(candidates))
+    return failures
 
 
 def _resolve_config(config, existing_groups, state, module, log):
@@ -824,14 +927,65 @@ def _resolve_config(config, existing_groups, state, module, log):
     return resolved
 
 
+def _pending_cleanup_candidates(config, existing_groups, log):
+    """Return delete+deploy entries absent from the active policy-group view.
+
+    The active view excludes ``markDeleted`` and ``source`` artifacts.  If a
+    delete target is missing there, the orchestrator checks policySummary for a
+    matching hidden ``markDeleted`` row before scheduling switch cleanup.
+    """
+    active_policy_ids = {group.get("policyId") for group in existing_groups if group.get("policyId")}
+    active_composites = {(group.get("description"), group.get("templateName")) for group in existing_groups if group.get("templateName")}
+    active_templates = {group.get("templateName") for group in existing_groups if group.get("templateName")}
+
+    candidates = []
+    for index, entry in enumerate(config or []):
+        name = entry.get("name") or ""
+        description = entry.get("description")
+        policy_group_id, _cleanup_description = PolicyGroupOrchestrator._cleanup_identity(entry)
+
+        if policy_group_id:
+            if policy_group_id in active_policy_ids:
+                continue
+            log.info(
+                "config[%d]: policy group ID '%s' absent from active view; checking policySummary for pending-delete cleanup.",
+                index,
+                policy_group_id,
+            )
+            candidates.append(entry)
+            continue
+
+        if description:
+            if (description, name) in active_composites:
+                continue
+            log.info(
+                "config[%d]: policy group '%s' description '%s' absent from active view; checking policySummary for pending-delete cleanup.",
+                index,
+                name,
+                description,
+            )
+            candidates.append(entry)
+            continue
+
+        if name and name not in active_templates:
+            log.info(
+                "config[%d]: template '%s' absent from active view; checking policySummary for pending-delete cleanup.",
+                index,
+                name,
+            )
+            candidates.append(entry)
+
+    return candidates
+
+
 def _handle_gathered_state(orchestrator, config, log):
     """Handle state=gathered: export existing policy groups as playbook-ready config.
 
     Modes:
-        - No config: Return ALL policy groups on the fabric.
-        - name=POLICY-GROUP-*: Return the specific policy group by ID.
-        - name=template_name: Return all policy groups using that template.
-        - name=template_name + description: Return the exact matching policy group.
+        - No config: Return all active, user-manageable policy groups on the fabric.
+        - name=POLICY-GROUP-*: Return the active policy group with that ID.
+        - name=template_name: Return active policy groups using that template.
+        - name=template_name + description: Return the active exact match.
 
     Args:
         orchestrator: PolicyGroupOrchestrator instance.
@@ -844,8 +998,8 @@ def _handle_gathered_state(orchestrator, config, log):
     raw_groups = []
 
     if not config:
-        # No config — fetch everything
-        log.info("Gathered: fetching all policy groups")
+        # No config — fetch the active user-managed view.
+        log.info("Gathered: fetching all active user-managed policy groups")
         raw_groups = orchestrator.query_all(include_no_description=True, deduplicate=False)
     else:
         for entry in config:
@@ -1101,9 +1255,9 @@ def main():
         pending_deleted_cleanup_config = []
         if state == "deleted" and module.params.get("deploy"):
             # Keep the user's original delete intent before POLICY-GROUP-* ID
-            # resolution drops already-absent active records.  A later cleanup
-            # pass uses only policy_id/POLICY-GROUP-* or exact description to
-            # find pending markDeleted records.
+            # resolution drops already-absent active records.  Those entries
+            # can be checked against policySummary for hidden markDeleted rows
+            # and then unioned into the normal delete deploy.
             pending_deleted_cleanup_config = [dict(entry) for entry in config]
 
         # --- Gathered state: bypass the state machine entirely ---
@@ -1122,6 +1276,14 @@ def main():
         existing_groups = None
         if config and state in ("merged", "deleted"):
             existing_groups = orchestrator.query_all(include_no_description=True, deduplicate=False)
+            if state == "deleted" and pending_deleted_cleanup_config:
+                cleanup_candidates = _pending_cleanup_candidates(
+                    pending_deleted_cleanup_config,
+                    existing_groups,
+                    log,
+                )
+                if cleanup_candidates:
+                    orchestrator.schedule_pending_deleted_cleanup(cleanup_candidates)
             resolved_config = _resolve_config(config, existing_groups, state, module, log)
             module.params["config"] = resolved_config
 
@@ -1133,7 +1295,6 @@ def main():
         force_create_items = []
         direct_action_items = []
         normal_config = []
-        active_delete_policy_ids = set()
         if state in ("merged", "deleted"):
             for entry in module.params.get("config") or []:
                 if entry.get("create_additional_policy", False):
@@ -1151,8 +1312,6 @@ def main():
                     direct_action_items.append(entry)
                 else:
                     normal_config.append(entry)
-                if state == "deleted" and entry.get("policy_id"):
-                    active_delete_policy_ids.add(entry["policy_id"])
             # Strip the bookkeeping field from normal_config entries before
             # they hit Pydantic validation; the state machine path doesn't
             # need ``_existing_description``.
@@ -1174,18 +1333,19 @@ def main():
         # Pre-flight template-input schema validation across every bucket
         # destined for a POST/PUT.  No-op for state=deleted (body never
         # carries templateInputs) and state=gathered (short-circuited
-        # earlier).  Fail-fast on schema violations so the user sees a
-        # structured per-entry error before any controller call runs.
+        # earlier). Invalid entries are removed from their execution bucket
+        # and reported after valid entries have been processed.
+        template_input_validation_failures: list[dict] = []
         if state == "merged":
-            _validate_template_inputs_in_buckets(
+            template_input_validation_failures = _validate_template_inputs_in_buckets(
                 force_create_items=force_create_items,
                 direct_action_items=direct_action_items,
                 normal_config=normal_config,
                 state=state,
                 orchestrator=orchestrator,
-                module=module,
                 log=log,
             )
+            module.params["config"] = normal_config
 
         force_created = False
         force_created_models: list = []
@@ -1205,6 +1365,7 @@ def main():
         # Surface results via a dedicated `direct_actions` key.
         direct_actions_result = {"updated": [], "deleted": []}
         if direct_action_items:
+            direct_delete_models = []
             for entry in direct_action_items:
                 pid = entry["policy_id"]
                 entry_for_model = {k: v for k, v in entry.items() if k != "_existing_description"}
@@ -1222,22 +1383,21 @@ def main():
                 elif state == "deleted":
                     model = PolicyGroupCreate.from_config(entry_for_model)
                     model.policy_id = pid
-                    if not module.check_mode:
-                        orchestrator.delete_bulk([model])
+                    direct_delete_models.append(model)
                     direct_actions_result["deleted"].append(model.model_dump(by_alias=False, exclude_none=True))
                     log.info("Direct-action: deleted policy group %s", pid)
+            if state == "deleted" and direct_delete_models and not module.check_mode:
+                orchestrator.delete_bulk(direct_delete_models)
 
         # Initialize and run StateMachine for normal items.  Deleted requests
         # can legitimately resolve to no active policy groups (for example an
         # unknown POLICY-GROUP-* ID that is already absent).  In that case,
         # avoid a second broad query_all from NDStateMachine initialization and
-        # let the pending-delete cleanup pass below decide whether there is any
-        # markDeleted/source artifact left to deploy.
+        # let the policySummary pending-delete cleanup pass below decide whether
+        # any hidden markDeleted switches should still be deployed.
         nd_state_machine = None
         if state == "deleted" and not normal_config:
-            log.info(
-                "Deleted state resolved to no active policy groups; skipping normal state-machine delete path."
-            )
+            log.info("Deleted state resolved to no active policy groups; skipping normal state-machine delete path.")
             result = {"changed": False}
         else:
             nd_state_machine = NDStateMachine(
@@ -1256,26 +1416,10 @@ def main():
             result = nd_state_machine.output.format()
 
         if state == "deleted" and pending_deleted_cleanup_config:
-            sent_delete_identifiers = set()
-            if nd_state_machine is not None:
-                sent_delete_identifiers = {
-                    item.get_identifier_value() for item in nd_state_machine.sent
-                }
-            cleanup_candidates = []
-            for entry in pending_deleted_cleanup_config:
-                policy_group_id, description = PolicyGroupOrchestrator._cleanup_identity(entry)
-                if policy_group_id and policy_group_id in active_delete_policy_ids:
-                    continue
-                name = entry.get("name") or ""
-                if description and (description, name) in sent_delete_identifiers:
-                    continue
-                cleanup_candidates.append(entry)
-
-            if cleanup_candidates:
-                pending_cleanup = orchestrator.deploy_pending_deleted_cleanup(cleanup_candidates)
-                if pending_cleanup["changed"]:
-                    result["changed"] = True
-                    result["pending_deleted_cleanup"] = pending_cleanup
+            pending_cleanup = orchestrator.deploy_scheduled_pending_deleted_cleanup()
+            if pending_cleanup["changed"]:
+                result["changed"] = True
+                result["pending_deleted_cleanup"] = pending_cleanup
 
         # Surface force-created items as a dedicated key so they're visible
         # even though identifier collisions prevent them from appearing in
@@ -1288,6 +1432,25 @@ def main():
         if direct_action_items:
             result["changed"] = True
             result["direct_actions"] = direct_actions_result
+
+        if template_input_validation_failures:
+            result["failed"] = True
+            result["template_input_validation_failed"] = template_input_validation_failures
+            failure_messages = []
+            for failure in template_input_validation_failures:
+                prefix = "config[{index}] (bucket={bucket}, identifier={identifier!r})".format(
+                    index=failure["index"],
+                    bucket=failure["bucket"],
+                    identifier=failure["identifier"],
+                )
+                failure_messages.extend(f"{prefix}: {err}" for err in failure["errors"])
+            module.fail_json(
+                msg=("Template input validation failed for {0} entry/entries; " "valid entries were processed. {1}").format(
+                    len(template_input_validation_failures),
+                    "; ".join(failure_messages),
+                ),
+                **result,
+            )
 
         log.info(
             "State management completed successfully. Changed: %s",

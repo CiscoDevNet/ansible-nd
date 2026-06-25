@@ -9,9 +9,10 @@ Provides all business logic for switch policy management on ND:
     - Idempotency diff calculation for merged, deleted states
     - Deploy orchestration (pushConfig for create/update, switchActions/deploy for delete)
     - Conditional delete flow:
-      deploy=true  → markDelete → switchActions/deploy
-      deploy=false → markDelete only (policy left in markDeleted state on controller;
-                     running config remains on the switch until the next deploy)
+      deploy=true  → markDelete → optional direct-DELETE fallback → switchActions/deploy
+      deploy=false → markDelete only for standard templates; optional direct-DELETE
+                     fallback for PYTHON content-type failures. Running config
+                     remains on the switch until the next deploy.
 
 The module file ``nd_manage_policy.py`` contains only DOCUMENTATION, argument_spec,
 and a thin ``main()`` that instantiates this class and calls ``manage_state()``.
@@ -150,9 +151,10 @@ class NDPolicyModule:
         - Create, update, delete_and_create actions
         - Bulk deploy via pushConfig (create/update) or switchActions/deploy (delete)
         - Conditional delete flow:
-          deploy=true  → markDelete → switchActions/deploy
-          deploy=false → markDelete only (policy left in markDeleted state on controller;
-                         running config remains on the switch until the next deploy)
+          deploy=true  → markDelete → optional direct-DELETE fallback → switchActions/deploy
+          deploy=false → markDelete only for standard templates; optional direct-DELETE
+                         fallback for PYTHON content-type failures. Running config
+                         remains on the switch until the next deploy.
 
     Schema models (from ``models.nd_manage_policies``):
         - ``PolicyCreate``      - single policy create request body
@@ -724,8 +726,10 @@ class NDPolicyModule:
 
         Full pipeline executed before state dispatch:
             1. **Pydantic validation** — each ``config[]`` entry is validated
-               against ``PlaybookPolicyConfig``.  Also applies defaults
-               (priority=500, description="", etc.)
+               against ``PlaybookPolicyConfig``.  It applies playbook-boundary
+               defaults such as ``description=""`` while preserving an omitted
+               ``priority`` as ``None`` so create/update logic can decide whether
+               to materialize the create default or preserve the existing value.
             2. **Resolve switch identifiers** — management IPv4 addresses →
                serial numbers via a fabric inventory API call.
             3. **Translate config** — flatten the two-level (globals + switch
@@ -781,13 +785,17 @@ class NDPolicyModule:
         Validates, normalizes, and prepares the config, then dispatches
         to the appropriate handler:
             - **merged**  - create / update / skip policies
-            - **deleted** - deploy=true: markDelete → switchActions/deploy
-                          - deploy=false: markDelete only (policy left in markDeleted
-                            state on controller; running config remains on the switch
-                            until the next deploy)
+            - **deleted** - deploy=true: markDelete → optional direct-DELETE fallback
+                            → switchActions/deploy
+                          - deploy=false: markDelete only for standard templates;
+                            optional direct-DELETE fallback for PYTHON content-type
+                            failures. Running config remains on the switch until
+                            the next deploy.
 
-        The entire task is treated as an atomic unit — any validation
-        failure aborts the run before any changes are made.
+        Upfront schema, switch-resolution, and cross-entry validation failures
+        abort before any controller mutation is sent. Later per-entry validation
+        or controller failures are recorded per result row; valid entries in the
+        same task may already have been processed.
 
         Returns:
             None.
@@ -1311,9 +1319,11 @@ class NDPolicyModule:
     def _build_lucene_filter(cls, **kwargs: Any) -> str:
         """Build a Lucene filter string from keyword arguments.
 
-        Values containing Lucene special characters are automatically
-        escaped/quoted so that descriptions like ``"policy: enable"``
-        do not break the query syntax.
+        Values containing Lucene special characters are automatically escaped
+        so that descriptions like ``"policy: enable"`` do not break the query
+        syntax. Spaces are intentionally left unescaped because ND's Lucene
+        endpoint tokenizes them; callers that need exact matching post-filter
+        the returned rows.
 
         Example::
 
@@ -1321,7 +1331,7 @@ class NDPolicyModule:
             # Returns: "switchId:FDO123 AND templateName:feature_enable"
 
             _build_lucene_filter(description="policy: enable (v2)")
-            # Returns: 'description:"policy: enable (v2)"'
+            # Returns: 'description:policy\\: enable \\(v2\\)'
 
         Args:
             **kwargs: Key-value pairs to include in the Lucene filter.
@@ -1444,9 +1454,11 @@ class NDPolicyModule:
             - self._policies_by_switch_cache:          {switchId: [policies]}
             - self._policies_by_switch_template_cache: {(switchId, templateName): [policies]}
 
-        After fetching, filters in Python code (not via the API) to exclude
-        internal sub-policies (``source != ""``) and ``markDeleted`` policies.
-        These fields are not supported as Lucene filter parameters by ND.
+        After fetching, filters in Python code to exclude internal sub-policies
+        (``source != ""``) and ``markDeleted`` policies. Positive source equality
+        works on the controller, but the active-view semantics needed here
+        require empty/negative-source and markDeleted filtering, so the module
+        applies those filters locally.
         """
         lucene_filter = self._build_prefetch_filter(config_entries)
         if lucene_filter:
@@ -1577,175 +1589,6 @@ class NDPolicyModule:
             return policies
         self.log.debug("Query returned non-dict response, returning empty list")
         return []
-
-    def _query_policy_by_id_raw(self, policy_id: str) -> dict | None:
-        """Query a single policy by ID without applying active-policy filters.
-
-        The normal policy cache intentionally excludes ``markDeleted`` and
-        ``source`` artifacts.  The delete+deploy cleanup path needs a narrow
-        way to inspect those records without fetching the whole fabric.
-        """
-        self.log.debug("Querying policy by ID for pending-delete cleanup: %s", policy_id)
-
-        ep = EpManagePoliciesGet()
-        ep.fabric_name = self.fabric_name
-        ep.policy_id = policy_id
-        if self.cluster_name:
-            ep.endpoint_params.cluster_name = self.cluster_name
-
-        self._record_call(ep, None)
-        try:
-            data = self.nd.request(ep.path, ep.verb)
-        except Exception as exc:  # noqa: BLE001
-            self.log.debug(
-                "Pending-delete cleanup policy-ID lookup failed for %s (%s: %s)",
-                policy_id,
-                type(exc).__name__,
-                exc,
-            )
-            return None
-        if isinstance(data, dict) and data.get("policyId"):
-            return data
-        return None
-
-    def _query_policies_by_source_raw(self, source_policy_id: str) -> list[dict]:
-        """Query policies whose ``source`` points at ``source_policy_id``.
-
-        Switch-freeform delete cleanup can leave a generated child policy with
-        a new ``policyId`` and ``source`` set to the original policy ID.  This
-        targeted list query finds that child without fetching every policy in
-        the fabric.
-        """
-        # Policy IDs are stored literally in ``source`` (for example
-        # ``POLICY-12345``). Escaping hyphens produces
-        # ``source:POLICY%5C-12345`` after URL encoding, which the controller
-        # does not match.
-        source_filter = f"source:{source_policy_id}"
-        return self._query_policies_raw(lucene_filter=source_filter)
-
-    @staticmethod
-    def _is_mark_deleted_record(record: dict) -> bool:
-        """Return True when the controller marks a record as pending delete."""
-        value = record.get("markDeleted", False)
-        if isinstance(value, bool):
-            return value
-        return str(value).lower() == "true"
-
-    @staticmethod
-    def _record_switch_id(record: dict) -> str:
-        """Return the switch identifier from either policy response key."""
-        return record.get("switchId") or record.get("serialNumber") or ""
-
-    @staticmethod
-    def _policy_record_key(record: dict) -> tuple:
-        """Build a stable best-effort key for deduplicating raw policy rows."""
-        return (
-            record.get("policyId"),
-            record.get("source"),
-            record.get("switchId") or record.get("serialNumber"),
-            record.get("templateName"),
-            record.get("description"),
-        )
-
-    def _find_pending_deleted_policies(self, want: dict) -> list[dict]:
-        """Find already-``markDeleted`` policies for a delete+deploy retry.
-
-        This helper is intentionally used only after the normal active-policy
-        delete lookup returned ``skip`` and only when ``deploy=true``.  It does
-        not relax the main cache filters used by merged/gathered/active delete.
-
-        Matching rules:
-        - Prefer policy ID via ``GET /policies/{policyId}``.  The returned
-          record is accepted only when ``markDeleted`` is true.
-        - If the ID GET does not find a pending-delete record, query
-          ``GET /policies?filter=source:<policyId>`` so generated child
-          policies can be found when their ``source`` points at the original
-          policy ID.
-        - Without a policy ID, require exact description.  The API call is
-          narrowed with ``description:<value>`` and then exact-matched in
-          Python because ND's Lucene search is tokenized.
-        - Template name is not used here because generated child records can
-          change template names (for example ``switch_freeform`` to
-          ``switch_freeform_config``).
-        """
-        policy_id = want.get("policyId")
-        description = want.get("description")
-        switch_id = want.get("switchId")
-
-        if not policy_id and not description:
-            self.log.debug(
-                "Pending-delete cleanup skipped: neither policyId nor description is available."
-            )
-            return []
-
-        matches: list[dict] = []
-        seen: set[tuple] = set()
-
-        def add_matching_candidates(candidates: list[dict]) -> None:
-            for candidate in candidates:
-                if not isinstance(candidate, dict):
-                    continue
-                if not self._is_mark_deleted_record(candidate):
-                    continue
-
-                candidate_policy_id = candidate.get("policyId")
-                candidate_source = candidate.get("source")
-                if policy_id:
-                    if candidate_policy_id != policy_id and candidate_source != policy_id:
-                        continue
-                    if (
-                        candidate_policy_id != policy_id
-                        and description
-                        and (candidate.get("description") or "") != description
-                    ):
-                        continue
-                    if switch_id and self._record_switch_id(candidate) != switch_id:
-                        continue
-                else:
-                    if (candidate.get("description") or "") != description:
-                        continue
-                    if switch_id and self._record_switch_id(candidate) != switch_id:
-                        continue
-
-                key = self._policy_record_key(candidate)
-                if key in seen:
-                    continue
-                seen.add(key)
-                matches.append(candidate)
-
-        if policy_id:
-            by_id = self._query_policy_by_id_raw(policy_id)
-            if by_id:
-                add_matching_candidates([by_id])
-            if not matches:
-                add_matching_candidates(self._query_policies_by_source_raw(policy_id))
-            if not matches and description:
-                desc_filter = self._build_lucene_filter(description=description)
-                add_matching_candidates(self._query_policies_raw(lucene_filter=desc_filter))
-        else:
-            desc_filter = self._build_lucene_filter(description=description)
-            add_matching_candidates(self._query_policies_raw(lucene_filter=desc_filter))
-
-        if not policy_id:
-            distinct_policy_ids = {
-                p.get("policyId") for p in matches if p.get("policyId")
-            }
-            if len(distinct_policy_ids) > 1:
-                raise NDModuleError(
-                    msg=(
-                        "Multiple pending markDeleted policies match description "
-                        f"{description!r} on switch {switch_id!r}. Provide a policy "
-                        "ID to safely deploy the pending delete cleanup."
-                    )
-                )
-
-        self.log.debug(
-            "Pending-delete cleanup matched %d policy record(s) for policy_id=%r description=%r",
-            len(matches),
-            policy_id,
-            description,
-        )
-        return matches
 
     # =========================================================================
     # Core: Build want / have
@@ -1905,8 +1748,11 @@ class NDPolicyModule:
         Note on intentional behavioural differences vs. the legacy
         per-id ``GET /policies/{policyId}`` endpoint:
             - Internal ND sub-policies (``source != ""``) are excluded
-              in Python code after the bulk GET (the API does not support
-              filtering on ``source``).
+              in Python code after the bulk GET.  Positive
+              ``source:<policyId>`` lookup works for pending-delete cleanup,
+              but the active-view exclusion is a ``source == ""`` /
+              ``source missing`` test that is not expressed in the list API
+              filter.
             - ``markDeleted`` policies are excluded in Python code after
               the bulk GET (the API does not support filtering on
               ``markDeleted``).
@@ -2364,7 +2210,7 @@ class NDPolicyModule:
         # after the new template is deployed (different templates produce
         # different config — the new one won't negate the old one).
         #
-        # The full markDelete → switch-deploy → direct-DELETE fallback
+        # The full markDelete → direct-DELETE fallback → switch-deploy
         # flow is shared with ``_execute_deleted`` Phase B and lives in
         # ``_delete_policies_with_fallback``.  Result rows are SUPPRESSED
         # here because Phase 4 below emits the combined ``policy_replace``
@@ -2733,15 +2579,18 @@ class NDPolicyModule:
         """Execute the computed actions for all deleted config entries.
 
         Collects all policy IDs to delete across all config entries, then
-        performs bulk API calls.  PYTHON content-type templates (e.g.
-        ``switch_freeform``) use direct DELETE; everything else uses the
-        normal markDelete (+ optional switch deploy) flow.
+        performs bulk API calls.  The module tries ``markDelete`` first for all
+        policies.  Policies whose markDelete response fails with the controller
+        error ``"content type PYTHON"`` are retried with direct DELETE; other
+        markDelete failures are reported without retry.
 
-            - deploy=true:  markDelete → switchActions/deploy           (2-step)
+            - deploy=true:  markDelete → optional direct-DELETE fallback
+                            → switchActions/deploy
             - deploy=false: markDelete only                              (1-step;
                             policy left in markDeleted state on controller,
                             running config remains on switch until next deploy)
-            - PYTHON-type:  direct DELETE (+ switchActions/deploy when deploy=true)
+            - PYTHON-type failures: direct DELETE fallback
+              (+ switchActions/deploy when deploy=true)
 
         Args:
             diff_results: list of diff result dicts from ``_get_diff_deleted_single``.
@@ -2755,16 +2604,18 @@ class NDPolicyModule:
         # Phase A: Register per-entry results and collect all policy IDs
         all_policy_ids_to_delete = []
         all_switch_ids = []
-        # Map policy ID → templateName so Phase B can route switch_freeform
-        # policies through a direct DELETE instead of markDelete.
+        # Map policy ID → templateName for clearer direct-DELETE fallback
+        # messages after markDelete reports a PYTHON content-type failure.
         policy_template_map: dict[str, str] = {}
-        # Map policy ID → switchId so we know which switches to deploy after
-        # direct DELETE of PYTHON-type policies.
+        # Map policy ID → switchId so the consolidated switch deploy can cover
+        # markDeleted policies, direct-DELETE fallbacks, and blind cleanup targets.
         policy_switch_map: dict[str, str] = {}
-        # Pending-delete records are already markDeleted/source artifacts
-        # hidden from the normal active-policy cache.  They need only a
-        # switch-level deploy, not another markDelete call.
-        pending_deleted_to_deploy: list[dict] = []
+        # Entries skipped by the active-policy cache may already be pending
+        # deletion (markDeleted/source child artifacts are intentionally
+        # filtered out of the cache).  Under deploy=true, we avoid extra
+        # controller validation GETs and blind-deploy the requested switch.
+        blind_pending_switch_ids: set[str] = set()
+        blind_pending_wants: list[dict] = []
 
         for diff_entry in diff_results:
             action = diff_entry["action"]
@@ -2803,16 +2654,15 @@ class NDPolicyModule:
                 self.log.info(f"Policy not found for deletion: " f"{want.get('templateName', want.get('policyId', 'switch-only'))}")
                 self._proposed.append(want)
 
-                if self.deploy:
-                    pending_deleted = self._find_pending_deleted_policies(want)
-                    if pending_deleted:
-                        self.log.info(
-                            "Found %d pending markDeleted policy record(s) for delete+deploy cleanup.",
-                            len(pending_deleted),
-                        )
-                        self._before.extend(pending_deleted)
-                        pending_deleted_to_deploy.extend(pending_deleted)
-                        continue
+                if self.deploy and want.get("switchId"):
+                    switch_id = want["switchId"]
+                    self.log.info(
+                        "Policy not found in active cache; scheduling blind delete cleanup deploy for switch %s.",
+                        switch_id,
+                    )
+                    blind_pending_switch_ids.add(switch_id)
+                    blind_pending_wants.append(want)
+                    continue
 
                 # Restore the GET path/verb captured in Phase 1 so the
                 # "already absent" row shows the actual lookup we made.
@@ -2890,12 +2740,27 @@ class NDPolicyModule:
                 # an extra per-entry row would just duplicate that information.
                 continue
 
-        if pending_deleted_to_deploy:
-            self._deploy_pending_deleted_policies(pending_deleted_to_deploy)
-
         # Phase B: Execute bulk API calls (skip if check_mode or nothing to delete)
-        if self.check_mode or not all_policy_ids_to_delete:
+        if self.check_mode:
             self.log.info("Skipping bulk delete: " f"{'check_mode' if self.check_mode else 'no policies to delete'}")
+            if blind_pending_switch_ids:
+                self._deploy_blind_pending_delete_switches(
+                    blind_pending_switch_ids,
+                    blind_pending_wants=blind_pending_wants,
+                )
+            self.log.debug("EXIT: _execute_deleted()")
+            return
+
+        if not all_policy_ids_to_delete and blind_pending_switch_ids:
+            self._deploy_blind_pending_delete_switches(
+                blind_pending_switch_ids,
+                blind_pending_wants=blind_pending_wants,
+            )
+            self.log.debug("EXIT: _execute_deleted()")
+            return
+
+        if not all_policy_ids_to_delete:
+            self.log.info("Skipping bulk delete: no policies to delete")
             self.log.debug("EXIT: _execute_deleted()")
             return
 
@@ -2903,7 +2768,7 @@ class NDPolicyModule:
         unique_policy_ids = list(dict.fromkeys(all_policy_ids_to_delete))
         self.log.info(f"Total policies to delete: {len(unique_policy_ids)} " f"(deduplicated from {len(all_policy_ids_to_delete)})")
 
-        # Dispatch the shared markDelete → switch-deploy → direct-DELETE
+        # Dispatch the shared markDelete → direct-DELETE fallback → switch-deploy
         # fallback flow.  See ``_delete_policies_with_fallback`` for the
         # full strategy (also used by ``_execute_merged`` Phase 3).
         # ``register_results=True`` because here we DO want per-step
@@ -2915,6 +2780,8 @@ class NDPolicyModule:
             policy_template_map=policy_template_map,
             context_label="markDelete",
             register_results=True,
+            extra_deploy_switch_ids=blind_pending_switch_ids,
+            extra_deploy_wants=blind_pending_wants,
         )
 
         self.log.debug("EXIT: _execute_deleted()")
@@ -3368,66 +3235,33 @@ class NDPolicyModule:
         data = self.nd.request(ep.path, ep.verb, deploy_payload)
         return data if isinstance(data, dict) else {}
 
-    def _deploy_pending_deleted_policies(self, policies: list[dict]) -> None:
-        """Deploy switches for policies already sitting in ``markDeleted`` state.
+    def _deploy_blind_pending_delete_switches(
+        self,
+        switch_ids: set[str] | list[str],
+        *,
+        blind_pending_wants: list[dict] | None = None,
+    ) -> None:
+        """Blind-deploy switches for active-cache misses under delete+deploy.
 
-        These policies were matched by ``_find_pending_deleted_policies`` after
-        the normal active delete lookup returned ``skip``.  They must not be
-        sent through markDelete again; the controller-side delete is already
-        staged and only the switch-level deploy is pending.
+        The active policy cache intentionally hides ``markDeleted`` records and
+        generated ``source`` artifacts.  When a requested delete target is not
+        present in that cache, ``state=deleted`` + ``deploy=true`` treats the
+        entry as a possible already-staged deletion and performs a switch-level
+        deploy without issuing additional validation GETs.
         """
-        unique_policies: list[dict] = []
-        seen: set[tuple] = set()
-        for policy in policies:
-            key = self._policy_record_key(policy)
-            if key in seen:
-                continue
-            seen.add(key)
-            unique_policies.append(policy)
-
-        policy_ids = [
-            p.get("policyId") for p in unique_policies if p.get("policyId")
-        ]
-        switch_ids = sorted(
-            {
-                switch_id
-                for switch_id in (self._record_switch_id(p) for p in unique_policies)
-                if switch_id
-            }
-        )
-
-        if not switch_ids:
-            self._clear_call()
-            self._register_result(
-                action="policy_pending_delete_deploy",
-                state="deleted",
-                operation_type=OperationType.DELETE,
-                return_code=-1,
-                message=(
-                    "Pending markDeleted policy record(s) were found, but none "
-                    "included a switchId/serialNumber for switchActions/deploy."
-                ),
-                success=False,
-                found=True,
-                diff={
-                    "action": "pending_markDeleted_switch_deploy_failed",
-                    "policy_ids": policy_ids,
-                },
-            )
+        unique_switch_ids = sorted({sid for sid in switch_ids if sid})
+        if not unique_switch_ids:
             return
 
-        payload = SwitchIds(switch_ids=switch_ids).to_request_dict()
+        payload = SwitchIds(switch_ids=unique_switch_ids).to_request_dict()
         if self.check_mode:
             self._record_call(self._wouldbe_switch_deploy_ep(), payload)
             deploy_data: dict = {}
             message = "OK (check_mode)"
         else:
-            deploy_data = self._api_deploy_switches(switch_ids)
-            self._log_deploy_status(deploy_data, "pending markDeleted cleanup")
-            message = (
-                f"Deployed pending delete cleanup to {len(switch_ids)} "
-                f"switch(es) for {len(policy_ids)} markDeleted policy record(s)"
-            )
+            deploy_data = self._api_deploy_switches(unique_switch_ids)
+            self._log_deploy_status(deploy_data, "blind pending delete cleanup")
+            message = f"Blind-deployed pending delete cleanup to {len(unique_switch_ids)} " "switch(es) for policy target(s) absent from the active cache"
 
         self._register_result(
             action="policy_pending_delete_deploy",
@@ -3436,12 +3270,13 @@ class NDPolicyModule:
             return_code=200,
             message=message,
             success=True,
-            found=True,
+            found=False,
             data=deploy_data,
             diff={
-                "action": "pending_markDeleted_switch_deploy",
-                "policy_ids": policy_ids,
-                "switch_ids": switch_ids,
+                "action": "blind_pending_delete_switch_deploy",
+                "switch_ids": unique_switch_ids,
+                "wants": blind_pending_wants or [],
+                "validation": "skipped_active_cache_miss",
             },
         )
 
@@ -3613,8 +3448,10 @@ class NDPolicyModule:
         policy_template_map: dict[str, str] | None = None,
         context_label: str,
         register_results: bool = True,
+        extra_deploy_switch_ids: set[str] | list[str] | None = None,
+        extra_deploy_wants: list[dict] | None = None,
     ) -> dict:
-        """Run the markDelete → switch-deploy → direct-DELETE fallback flow.
+        """Run the markDelete → direct-DELETE fallback → switch-deploy flow.
 
         Centralises the deletion orchestration that was previously
         duplicated between ``_execute_deleted`` Phase B (standalone
@@ -3641,14 +3478,14 @@ class NDPolicyModule:
         2. Classify the 207 response into succeeded /
            failed-PYTHON / failed-other buckets via
            ``_parse_mark_delete_response``.
-        3. If ``self.deploy`` and any markDelete-succeeded:
-           ``switchActions/deploy`` against the union of those
-           switches to push the removal config.
-        4. If any failed-PYTHON: direct ``DELETE /policies/<id>``
+        3. If any failed-PYTHON: direct ``DELETE /policies/<id>``
            via ``_direct_delete_policies``.
-        5. If ``self.deploy`` and any direct-deleted:
-           ``switchActions/deploy`` against the union of those
-           switches.
+        4. If ``self.deploy`` and any markDelete-succeeded, direct-deleted,
+           or blind pending-delete switch targets exist:
+           ``switchActions/deploy`` against the union of those switches to
+           push the removal config.  The deploy is intentionally performed
+           once after the direct-DELETE fallback so markDelete, direct-delete,
+           and blind pending cleanup switches are not redeployed separately.
 
         When ``self.deploy`` is False, both deploy steps are skipped —
         markDelete leaves the policy in markDeleted state on the
@@ -3679,6 +3516,12 @@ class NDPolicyModule:
                 distinguishable (e.g. ``"markDelete"`` vs.
                 ``"markDelete (delete_and_create)"``).
             register_results: Whether to push per-step result rows.
+            extra_deploy_switch_ids: Switch IDs from requested delete entries
+                that were absent from the active-policy cache under
+                ``deploy=true``.  These are included in the consolidated
+                switch deploy without additional controller validation GETs.
+            extra_deploy_wants: Original wanted entries that contributed
+                ``extra_deploy_switch_ids``.  Used only for result transparency.
 
         Returns:
             Dict with:
@@ -3691,7 +3534,14 @@ class NDPolicyModule:
                   ``mark_failed_other`` and ``failed_direct``;
                   policies whose removal could not be completed.
         """
+        blind_pending_switches = {switch_id for switch_id in (extra_deploy_switch_ids or []) if switch_id}
+
         if not policy_ids:
+            if self.deploy and blind_pending_switches:
+                self._deploy_blind_pending_delete_switches(
+                    blind_pending_switches,
+                    blind_pending_wants=extra_deploy_wants,
+                )
             return {
                 "mark_succeeded": [],
                 "mark_failed_python": [],
@@ -3749,34 +3599,7 @@ class NDPolicyModule:
                     },
                 )
 
-        # ── Step 2: switchActions/deploy for markDeleted (non-PYTHON) ──
-        if mark_succeeded and self.deploy:
-            normal_switches = list({policy_switch_map[pid] for pid in mark_succeeded if pid in policy_switch_map})
-            if normal_switches:
-                self.log.info(
-                    f"{context_label}: Step 2 - switchActions/deploy for " f"{len(normal_switches)} switch(es) to push removal config: " f"{normal_switches}"
-                )
-                deploy_data = self._api_deploy_switches(normal_switches)
-                self._log_deploy_status(deploy_data, context_label)
-
-                if register_results:
-                    self._register_result(
-                        action="policy_switch_deploy",
-                        state="deleted",
-                        operation_type=OperationType.DELETE,
-                        return_code=200,
-                        message=(f"Deployed removal config to {len(normal_switches)} " f"switch(es) for {len(mark_succeeded)} markDeleted policies"),
-                        success=True,
-                        found=True,
-                        diff={
-                            "action": "switch_deploy",
-                            "switch_ids": normal_switches,
-                            "policy_ids": mark_succeeded,
-                        },
-                    )
-            else:
-                self.log.warning(f"{context_label}: No switch IDs found for markDeleted policies — " "skipping switch deploy")
-        elif mark_succeeded and not self.deploy:
+        if mark_succeeded and not self.deploy:
             # deploy=false: markDelete already happened; switch-level deploy
             # is skipped so config remains on device but policy is marked
             # for deletion on the controller.  The next switch-level deploy
@@ -3827,36 +3650,44 @@ class NDPolicyModule:
                         },
                     )
 
-            # Deploy to affected switches so ND pushes the config removal
-            # to the devices.  Direct DELETE removes the policy record but
-            # the device still has the running config until we deploy.
-            # This MUST be last — switchActions/deploy is fabric-wide and
-            # would also push any pending markDeleted policy removals.
-            if deleted_direct and self.deploy:
-                affected_switches = list({policy_switch_map[pid] for pid in deleted_direct if pid in policy_switch_map})
-                if affected_switches:
-                    self.log.info(f"{context_label}: Deploying config to {len(affected_switches)} " f"switch(es) after direct DELETE: {affected_switches}")
-                    deploy_data = self._api_deploy_switches(affected_switches)
-                    self._log_deploy_status(deploy_data, context_label)
+        # ── Step 4: consolidated switchActions/deploy ─────────────────
+        # Deploy to affected switches so ND pushes the config removal to the
+        # devices.  Direct DELETE removes the policy record but the device
+        # still has the running config until we deploy.  The same switch-level
+        # deploy also clears any already-staged pending delete cleanup entries
+        # represented by ``blind_pending_switches``.
+        if self.deploy:
+            affected_switches = {policy_switch_map[pid] for pid in (*mark_succeeded, *deleted_direct) if pid in policy_switch_map}
+            affected_switches.update(blind_pending_switches)
+            affected_switches_list = sorted(affected_switches)
+            if affected_switches_list:
+                self.log.info(f"{context_label}: Consolidated switchActions/deploy for " f"{len(affected_switches_list)} switch(es): {affected_switches_list}")
+                deploy_data = self._api_deploy_switches(affected_switches_list)
+                self._log_deploy_status(deploy_data, context_label)
 
-                    if register_results:
-                        self._register_result(
-                            action="policy_switch_deploy",
-                            state="deleted",
-                            operation_type=OperationType.DELETE,
-                            return_code=207,
-                            message=(
-                                f"Deployed config to {len(affected_switches)} " f"switch(es) to push removal of directly-deleted " f"PYTHON-type policies"
-                            ),
-                            success=True,
-                            found=True,
-                            diff={
-                                "action": "switch_deploy",
-                                "switch_ids": affected_switches,
-                                "policy_ids": deleted_direct,
-                                "deploy_success": True,
-                            },
-                        )
+                if register_results:
+                    diff_payload = {
+                        "action": "switch_deploy",
+                        "switch_ids": affected_switches_list,
+                        "policy_ids": mark_succeeded + deleted_direct,
+                        "deploy_success": True,
+                    }
+                    if blind_pending_switches:
+                        diff_payload["blind_pending_delete_switch_ids"] = sorted(blind_pending_switches)
+                        diff_payload["blind_pending_delete_wants"] = extra_deploy_wants or []
+                        diff_payload["validation"] = "skipped_active_cache_miss"
+                    self._register_result(
+                        action="policy_switch_deploy",
+                        state="deleted",
+                        operation_type=OperationType.DELETE,
+                        return_code=200,
+                        message=(f"Deployed removal config to {len(affected_switches_list)} " "switch(es)"),
+                        success=True,
+                        found=True,
+                        diff=diff_payload,
+                    )
+            elif mark_succeeded or deleted_direct or blind_pending_switches:
+                self.log.warning(f"{context_label}: No switch IDs found for deleted policies — skipping switch deploy")
 
         if register_results and not mark_succeeded and not deleted_direct:
             self.log.info(f"{context_label}: No policies were successfully deleted — done")

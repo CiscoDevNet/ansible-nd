@@ -95,7 +95,7 @@ class PolicyGroupGathered(NDBaseModel):
     )
     source: str | None = Field(
         default=None,
-        description="Policy source",
+        description="Controller source marker; non-empty values identify generated/internal artifacts filtered from normal gathered output.",
     )
     template_inputs: dict[str, Any] | None = Field(
         default=None,

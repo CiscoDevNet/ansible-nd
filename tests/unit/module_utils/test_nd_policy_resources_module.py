@@ -1303,128 +1303,16 @@ def test_nd_policy_resources_module_00460() -> None:
     """
     # Summary
 
-    Verify pending-delete cleanup works when the user supplies either the
-    generated child policy ID or the original policy ID.  The direct ID GET is
-    accepted only when the returned record is already ``markDeleted``; otherwise
-    the helper falls back to a targeted ``source:<original_id>`` GET.
-
-    ## Classes and Methods
-
-    - ``NDPolicyModule._find_pending_deleted_policies``
-    """
-    child = {
-        "policyId": "POLICY-CHILD",
-        "source": "POLICY-ORIG",
-        "description": "cleanup me",
-        "templateName": "switch_freeform_config",
-        "switchId": "SN1",
-        "markDeleted": True,
-    }
-
-    module, nd, _log = _make_module()
-    nd.queue(child)
-
-    matches = module._find_pending_deleted_policies(
-        {
-            "policyId": "POLICY-CHILD",
-            "switchId": "SN1",
-        }
-    )
-
-    assert matches == [child]
-    assert len(nd.calls) == 1
-    assert "/policies/POLICY-CHILD" in nd.calls[0][0]
-
-    module, nd, _log = _make_module()
-    nd.queue({"policyId": "POLICY-ORIG", "markDeleted": False}, {"policies": [child]})
-
-    matches = module._find_pending_deleted_policies(
-        {
-            "policyId": "POLICY-ORIG",
-            "switchId": "SN1",
-        }
-    )
-
-    assert matches == [child]
-    assert len(nd.calls) == 2
-    assert "/policies/POLICY-ORIG" in nd.calls[0][0]
-    assert "filter=" in nd.calls[1][0]
-    assert "source" in nd.calls[1][0]
-    assert "POLICY" in nd.calls[1][0]
-
-
-def test_nd_policy_resources_module_00470() -> None:
-    """
-    # Summary
-
-    Verify pending-delete cleanup with no policy ID uses exact description
-    matching and switch post-filtering, so tokenized Lucene overmatches do not
-    trigger an unrelated switch deploy candidate.
-
-    ## Classes and Methods
-
-    - ``NDPolicyModule._find_pending_deleted_policies``
-    """
-    module, nd, _log = _make_module()
-    wanted = {
-        "policyId": "POLICY-WANTED",
-        "description": "target desc",
-        "switchId": "SN1",
-        "markDeleted": True,
-    }
-    wrong_desc = {
-        "policyId": "POLICY-WRONG-DESC",
-        "description": "target desc extra",
-        "switchId": "SN1",
-        "markDeleted": True,
-    }
-    wrong_switch = {
-        "policyId": "POLICY-WRONG-SW",
-        "description": "target desc",
-        "switchId": "SN2",
-        "markDeleted": True,
-    }
-    active = {
-        "policyId": "POLICY-ACTIVE",
-        "description": "target desc",
-        "switchId": "SN1",
-        "markDeleted": False,
-    }
-    nd.queue({"policies": [wanted, wrong_desc, wrong_switch, active]})
-
-    matches = module._find_pending_deleted_policies(
-        {"description": "target desc", "switchId": "SN1"}
-    )
-
-    assert matches == [wanted]
-    assert len(nd.calls) == 1
-    assert "filter=" in nd.calls[0][0]
-    assert "description" in nd.calls[0][0]
-    assert "target" in nd.calls[0][0]
-
-
-def test_nd_policy_resources_module_00480() -> None:
-    """
-    # Summary
-
-    Verify ``_execute_deleted`` turns an active-cache skip into a pending
-    markDeleted switch deploy when deploy=true, instead of registering the
-    normal "already absent" successful read row.
+    Verify an active-cache skip under ``state=deleted`` + ``deploy=true`` is
+    handled as a blind switch deploy.  No extra GET by policy ID/source is
+    issued to prove that a pending ``markDeleted`` record exists.
 
     ## Classes and Methods
 
     - ``NDPolicyModule._execute_deleted``
     """
     module, nd, _log = _make_module(params=_default_params(state="deleted", deploy=True))
-    child = {
-        "policyId": "POLICY-CHILD",
-        "source": "POLICY-ORIG",
-        "description": "cleanup me",
-        "templateName": "switch_freeform_config",
-        "switchId": "SN1",
-        "markDeleted": True,
-    }
-    nd.queue({}, {"policies": [child]}, {"status": "Configuration deployment completed"})
+    nd.queue({"status": "Configuration deployment completed"})
 
     module._execute_deleted(
         [
@@ -1446,10 +1334,92 @@ def test_nd_policy_resources_module_00480() -> None:
         ]
     )
 
-    assert len(module.results._tasks) == 1
+    assert len(nd.calls) == 1
+    assert "switchActions/deploy" in nd.calls[0][0]
+    assert nd.calls[0][2] == {"switchIds": ["SN1"]}
     task = module.results._tasks[0]
     assert task.metadata["action"] == "policy_pending_delete_deploy"
-    assert "switchActions/deploy" in task.path
-    assert task.payload == {"switchIds": ["SN1"]}
-    assert task.diff["policy_ids"] == ["POLICY-CHILD"]
+    assert task.diff["validation"] == "skipped_active_cache_miss"
     assert task.diff["switch_ids"] == ["SN1"]
+    assert task.result["found"] is False
+
+
+def test_nd_policy_resources_module_00470() -> None:
+    """
+    # Summary
+
+    Verify active markDelete switch targets and blind pending-delete switch
+    targets are deployed in one consolidated switchActions/deploy call.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._delete_policies_with_fallback``
+    """
+    module, nd, _log = _make_module(params=_default_params(state="deleted", deploy=True))
+    nd.queue(
+        {"policies": [{"policyId": "P-ACTIVE", "status": "success"}]},
+        {"status": "Configuration deployment completed"},
+    )
+
+    module._delete_policies_with_fallback(
+        ["P-ACTIVE"],
+        policy_switch_map={"P-ACTIVE": "SN1"},
+        context_label="markDelete",
+        register_results=True,
+        extra_deploy_switch_ids={"SN2"},
+        extra_deploy_wants=[{"policyId": "P-PENDING", "switchId": "SN2"}],
+    )
+
+    assert len(nd.calls) == 2
+    assert "markDelete" in nd.calls[0][0]
+    assert "switchActions/deploy" in nd.calls[1][0]
+    assert nd.calls[1][2] == {"switchIds": ["SN1", "SN2"]}
+    deploy_task = [
+        task for task in module.results._tasks if task.metadata["action"] == "policy_switch_deploy"
+    ][0]
+    assert deploy_task.diff["policy_ids"] == ["P-ACTIVE"]
+    assert deploy_task.diff["blind_pending_delete_switch_ids"] == ["SN2"]
+
+
+def test_nd_policy_resources_module_00480() -> None:
+    """
+    # Summary
+
+    Verify markDelete successes, direct-DELETE fallbacks, and blind pending
+    cleanup targets share one deploy call after the direct DELETE fallback has
+    completed.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._delete_policies_with_fallback``
+    """
+    module, nd, _log = _make_module(params=_default_params(state="deleted", deploy=True))
+    nd.queue(
+        {
+            "policies": [
+                {"policyId": "P-MARK", "status": "success"},
+                {
+                    "policyId": "P-PY",
+                    "status": "failed",
+                    "message": "Cannot delete content type PYTHON via markDelete",
+                },
+            ]
+        },
+        {},
+        {"status": "Configuration deployment completed"},
+    )
+
+    module._delete_policies_with_fallback(
+        ["P-MARK", "P-PY"],
+        policy_switch_map={"P-MARK": "SN1", "P-PY": "SN2"},
+        policy_template_map={"P-PY": "switch_freeform"},
+        context_label="markDelete",
+        register_results=True,
+        extra_deploy_switch_ids={"SN3"},
+    )
+
+    assert len(nd.calls) == 3
+    assert "markDelete" in nd.calls[0][0]
+    assert nd.calls[1][1] == HttpVerbEnum.DELETE
+    assert "switchActions/deploy" in nd.calls[2][0]
+    assert nd.calls[2][2] == {"switchIds": ["SN1", "SN2", "SN3"]}

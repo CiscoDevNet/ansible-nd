@@ -36,6 +36,7 @@ from ansible_collections.cisco.nd.plugins.modules import nd_manage_policy_group
 from ansible_collections.cisco.nd.plugins.modules.nd_manage_policy_group import (
     _handle_gathered_state,
     _looks_like_ipv4,
+    _pending_cleanup_candidates,
     _resolve_config,
     _resolve_switch_ips_in_config,
 )
@@ -521,6 +522,68 @@ def test_nd_policy_group_module_00230() -> None:
     assert result[0] == {"name": "normal", "description": "norm-d"}
     assert result[1]["policy_id"] == "POLICY-GROUP-1"
     assert {e["description"] for e in result[2:]} == {"b1", "b2"}
+
+
+# =============================================================================
+# Test: _pending_cleanup_candidates
+# =============================================================================
+
+
+def test_nd_policy_group_module_00240() -> None:
+    """
+    # Summary
+
+    Delete+deploy entries that are absent from the active policy-group view
+    are returned as pending-cleanup candidates.  The helper covers
+    policy ID, description+template, and template-only misses.
+
+    ## Classes and Methods
+
+    - ``_pending_cleanup_candidates``
+    """
+    existing = [
+        {"policyId": "POLICY-GROUP-ACTIVE", "templateName": "feature_enable", "description": "active"},
+    ]
+    config = [
+        {"name": "POLICY-GROUP-MISSING", "switch_ids": ["SN1"]},
+        {"name": "switch_freeform", "description": "missing desc", "switch_ids": ["SN2"]},
+        {"name": "missing_template", "switch_ids": ["SN3"]},
+    ]
+    log = ListLogger()
+
+    result = _pending_cleanup_candidates(config, existing, log)
+
+    assert result == config
+    assert len(log.info_msgs) == 3
+
+
+def test_nd_policy_group_module_00250() -> None:
+    """
+    # Summary
+
+    Delete+deploy entries that are present in the active policy-group view
+    are excluded from pending-cleanup scheduling because the normal
+    delete path will handle them.
+
+    ## Classes and Methods
+
+    - ``_pending_cleanup_candidates``
+    """
+    existing = [
+        {"policyId": "POLICY-GROUP-1", "templateName": "feature_enable", "description": "active"},
+        {"policyId": "POLICY-GROUP-2", "templateName": "switch_freeform", "description": "freeform"},
+    ]
+    config = [
+        {"name": "POLICY-GROUP-1", "switch_ids": ["SN1"]},
+        {"name": "feature_enable", "description": "active", "switch_ids": ["SN1"]},
+        {"name": "switch_freeform", "switch_ids": ["SN2"]},
+    ]
+    log = ListLogger()
+
+    result = _pending_cleanup_candidates(config, existing, log)
+
+    assert result == []
+    assert log.info_msgs == []
 
 
 # =============================================================================
@@ -1096,8 +1159,10 @@ def test_nd_policy_group_module_00500(monkeypatch: pytest.MonkeyPatch) -> None:
 # =============================================================================
 #
 # The hook lives in ``nd_manage_policy_group._validate_template_inputs_in_buckets``
-# and is called from ``main()`` immediately after bucket partitioning and
-# BEFORE any orchestrator mutation method runs.  These tests cover:
+# and is called from ``main()`` immediately after bucket partitioning.  It
+# removes invalid entries from their execution bucket, returns structured
+# failures, and lets ``main()`` process valid entries before returning the final
+# failed task result.  These tests cover:
 #
 # - Kill-switch (``_ENABLE_TEMPLATE_INPUT_VALIDATION = False``) skips
 #   everything cleanly.
@@ -1110,9 +1175,9 @@ def test_nd_policy_group_module_00500(monkeypatch: pytest.MonkeyPatch) -> None:
 # - ``cluster_name`` is forwarded onto the parameters endpoint (via the
 #   orchestrator's ``_apply_endpoint_params(..., with_ticket=False)`` shim).
 # - SYSTEM_INJECTED keys are stripped before validation (round-trip safety).
-# - Failure path aggregates errors across all entries into a single
-#   ``fail_json`` and identifies each violation by ``config[idx]`` /
-#   bucket / identifier.
+# - Failure path aggregates errors across all entries, identifies each
+#   violation by ``config[idx]`` / bucket / identifier, and prunes invalid
+#   entries from the downstream write buckets.
 # - Validation runs across all three buckets (force_create, direct_action,
 #   normal).
 
@@ -1143,15 +1208,15 @@ def _run_validation(
     if kill_switch is not None:
         monkeypatch.setattr(nd_manage_policy_group, "_ENABLE_TEMPLATE_INPUT_VALIDATION", kill_switch)
 
-    nd_manage_policy_group._validate_template_inputs_in_buckets(
+    failures = nd_manage_policy_group._validate_template_inputs_in_buckets(
         force_create_items=force_create_items or [],
         direct_action_items=direct_action_items or [],
         normal_config=normal_config or [],
         state=state,
         orchestrator=orch,
-        module=module,
         log=log,
     )
+    module.validation_failures = failures
     return module, log, orch
 
 
@@ -1424,45 +1489,42 @@ def test_nd_policy_group_module_00690(monkeypatch: pytest.MonkeyPatch) -> None:
     # Summary
 
     Verify ``_validate_template_inputs_in_buckets`` aggregates errors
-    across multiple failing entries into a single ``fail_json`` call
-    and includes the ``config[idx]``, bucket and identifier prefix on
-    every error line.
+    across multiple entries, preserves valid entries in their bucket, and
+    prunes invalid entries before downstream writes.
 
     ## Test
 
     - 2 entries on the same template; one passes, one has an unknown
-      key.  Result: ``fail_json`` called once, message references
-      ``config[1]`` and the bad key.
+      key.  Result: one structured failure references ``config[1]`` and
+      the bad key; only the valid entry remains in ``normal_config``.
 
     ## Classes and Methods
 
     - ``nd_manage_policy_group._validate_template_inputs_in_buckets``
     """
     schema = [{"name": "hostname", "parameterType": "string", "optional": True}]
-    module = FakeModule()
     log = ListLogger()
     orch = FakeValidationOrchestrator(responses=[_make_params_response(schema)])
+    normal_config = [
+        {"name": "tpl_a", "description": "ok", "template_inputs": {"hostname": "leaf-01"}},
+        {"name": "tpl_a", "description": "bad", "template_inputs": {"unknown_key": "x"}},
+    ]
 
-    with pytest.raises(FailJsonError):
-        nd_manage_policy_group._validate_template_inputs_in_buckets(
-            force_create_items=[],
-            direct_action_items=[],
-            normal_config=[
-                {"name": "tpl_a", "description": "ok", "template_inputs": {"hostname": "leaf-01"}},
-                {"name": "tpl_a", "description": "bad", "template_inputs": {"unknown_key": "x"}},
-            ],
-            state="merged",
-            orchestrator=orch,
-            module=module,
-            log=log,
-        )
+    failures = nd_manage_policy_group._validate_template_inputs_in_buckets(
+        force_create_items=[],
+        direct_action_items=[],
+        normal_config=normal_config,
+        state="merged",
+        orchestrator=orch,
+        log=log,
+    )
 
-    assert module.fail_json_called is not None
-    msg = module.fail_json_called["msg"]
-    assert "Template input validation failed" in msg
-    assert "config[1]" in msg
-    assert "bucket=normal" in msg
-    assert "unknown_key" in msg
+    assert len(failures) == 1
+    assert failures[0]["index"] == 1
+    assert failures[0]["bucket"] == "normal"
+    assert failures[0]["identifier"] == "bad"
+    assert "unknown_key" in "; ".join(failures[0]["errors"])
+    assert normal_config == [{"name": "tpl_a", "description": "ok", "template_inputs": {"hostname": "leaf-01"}}]
     # Only one request issued (cache hit on second entry)
     assert len(orch.request_calls) == 1
 
@@ -1472,50 +1534,53 @@ def test_nd_policy_group_module_00700(monkeypatch: pytest.MonkeyPatch) -> None:
     # Summary
 
     Verify ``_validate_template_inputs_in_buckets`` validates across
-    all three buckets (force_create, direct_action, normal) and the
-    error message tags each violation with the correct bucket name.
+    all three buckets (force_create, direct_action, normal) and tags each
+    returned failure with the correct bucket name.
 
     ## Test
 
-    - One failing entry per bucket -> 3 errors, each tagged with its
-      bucket name.
+    - One failing entry per bucket -> 3 failures, each tagged with its
+      bucket name, and all three buckets pruned empty.
 
     ## Classes and Methods
 
     - ``nd_manage_policy_group._validate_template_inputs_in_buckets``
     """
     schema = [{"name": "hostname", "parameterType": "string", "optional": True}]
-    module = FakeModule()
     log = ListLogger()
     # All three buckets use the same template -> single GET, three validations
     orch = FakeValidationOrchestrator(responses=[_make_params_response(schema)])
+    force_create_items = [
+        {"name": "tpl_a", "create_additional_policy": True, "template_inputs": {"bad_fc": 1}},
+    ]
+    direct_action_items = [
+        {"name": "tpl_a", "policy_id": "POLICY-GROUP-2", "description": "d2", "template_inputs": {"bad_da": 1}},
+    ]
+    normal_config = [
+        {"name": "tpl_a", "description": "d3", "template_inputs": {"bad_norm": 1}},
+    ]
 
-    with pytest.raises(FailJsonError):
-        nd_manage_policy_group._validate_template_inputs_in_buckets(
-            force_create_items=[
-                {"name": "tpl_a", "create_additional_policy": True, "template_inputs": {"bad_fc": 1}},
-            ],
-            direct_action_items=[
-                {"name": "tpl_a", "policy_id": "POLICY-GROUP-2", "description": "d2", "template_inputs": {"bad_da": 1}},
-            ],
-            normal_config=[
-                {"name": "tpl_a", "description": "d3", "template_inputs": {"bad_norm": 1}},
-            ],
-            state="merged",
-            orchestrator=orch,
-            module=module,
-            log=log,
-        )
+    failures = nd_manage_policy_group._validate_template_inputs_in_buckets(
+        force_create_items=force_create_items,
+        direct_action_items=direct_action_items,
+        normal_config=normal_config,
+        state="merged",
+        orchestrator=orch,
+        log=log,
+    )
 
-    assert module.fail_json_called is not None
-    msg = module.fail_json_called["msg"]
-    assert "bucket=force_create" in msg
-    assert "bucket=direct_action" in msg
-    assert "bucket=normal" in msg
-    # All three keys mentioned in errors
-    assert "bad_fc" in msg
-    assert "bad_da" in msg
-    assert "bad_norm" in msg
+    assert [failure["bucket"] for failure in failures] == [
+        "force_create",
+        "direct_action",
+        "normal",
+    ]
+    all_errors = "; ".join(err for failure in failures for err in failure["errors"])
+    assert "bad_fc" in all_errors
+    assert "bad_da" in all_errors
+    assert "bad_norm" in all_errors
+    assert force_create_items == []
+    assert direct_action_items == []
+    assert normal_config == []
 
 
 def test_nd_policy_group_module_00710(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1550,7 +1615,6 @@ def test_nd_policy_group_module_00710(monkeypatch: pytest.MonkeyPatch) -> None:
         ],
         state="merged",
         orchestrator=orch,
-        module=module,
         log=log,
     )
 
@@ -1570,37 +1634,35 @@ def test_nd_policy_group_module_00720(monkeypatch: pytest.MonkeyPatch) -> None:
 
     ## Test
 
-    - One entry with description="my_desc" -> error message contains
-      ``identifier='my_desc'``.
-    - One entry with policy_id but no description -> error message
-      contains ``identifier='POLICY-GROUP-X'``.
+    - One entry with description="my_desc" -> returned failure contains
+      ``identifier == "my_desc"``.
+    - One entry with policy_id but no description -> returned failure
+      contains ``identifier == "POLICY-GROUP-X"``.
 
     ## Classes and Methods
 
     - ``nd_manage_policy_group._validate_template_inputs_in_buckets``
     """
     schema = [{"name": "k", "parameterType": "string", "optional": True}]
-    module = FakeModule()
     log = ListLogger()
     orch = FakeValidationOrchestrator(responses=[_make_params_response(schema)])
 
-    with pytest.raises(FailJsonError):
-        nd_manage_policy_group._validate_template_inputs_in_buckets(
-            force_create_items=[],
-            direct_action_items=[],
-            normal_config=[
-                {"name": "tpl_a", "description": "my_desc", "template_inputs": {"unknown": "x"}},
-                {"name": "tpl_a", "policy_id": "POLICY-GROUP-X", "template_inputs": {"unknown": "y"}},
-            ],
-            state="merged",
-            orchestrator=orch,
-            module=module,
-            log=log,
-        )
+    failures = nd_manage_policy_group._validate_template_inputs_in_buckets(
+        force_create_items=[],
+        direct_action_items=[],
+        normal_config=[
+            {"name": "tpl_a", "description": "my_desc", "template_inputs": {"unknown": "x"}},
+            {"name": "tpl_a", "policy_id": "POLICY-GROUP-X", "template_inputs": {"unknown": "y"}},
+        ],
+        state="merged",
+        orchestrator=orch,
+        log=log,
+    )
 
-    msg = module.fail_json_called["msg"]
-    assert "identifier='my_desc'" in msg
-    assert "identifier='POLICY-GROUP-X'" in msg
+    assert [failure["identifier"] for failure in failures] == [
+        "my_desc",
+        "POLICY-GROUP-X",
+    ]
 
 
 def test_nd_policy_group_module_00730(monkeypatch: pytest.MonkeyPatch) -> None:

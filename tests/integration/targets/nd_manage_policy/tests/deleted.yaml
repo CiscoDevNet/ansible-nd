@@ -98,8 +98,8 @@
           - result.changed == true
       tags: deleted
 
-    # TC-2: Idempotence - delete same policy again
-    - name: "DELETED TC2 - Idempotence - delete clock_timezone again"
+    # TC-2: Repeat delete triggers blind pending-cleanup switch deploy
+    - name: "DELETED TC2 - Delete clock_timezone again triggers cleanup deploy"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: deleted
@@ -111,10 +111,10 @@
       register: result
       tags: deleted
 
-    - name: "DELETED TC2 - Verify idempotence"
+    - name: "DELETED TC2 - Verify cleanup deploy attempted"
       ansible.builtin.assert:
         that:
-          - result.changed == false
+          - result.changed == true
       tags: deleted
 
     # TC-3: Delete multiple policies by template name in one task
@@ -161,9 +161,10 @@
     ## TC5 - normal template pending cleanup     ##
     ##############################################
 
-    # Normal templates keep the original policy ID with markDeleted=true after
-    # deploy=false. The follow-up deploy=true run must find that same ID and
-    # deploy cleanup without issuing markDelete again.
+    # Normal templates can leave the original policy ID staged as
+    # markDeleted=true after deploy=false. The follow-up deploy=true run sees
+    # no active record and performs a blind switch deploy without issuing
+    # markDelete again.
     - name: "DELETED TC5 SETUP - Create a policy for markDelete test"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
@@ -219,7 +220,7 @@
           - result.changed == true
       tags: deleted
 
-    - name: "DELETED TC5B - Deploy pending markDeleted cleanup by policy ID"
+    - name: "DELETED TC5B - Blind deploy pending cleanup by policy ID"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: deleted
@@ -239,12 +240,13 @@
       tags: deleted
 
     ##############################################
-    ## TC5C - switch_freeform source child       ##
+    ## TC5C - switch_freeform pending cleanup    ##
     ##############################################
 
-    # switch_freeform deploy=false can leave a generated child whose
-    # source points at the original policy ID. The cleanup run must find that
-    # child by source even when the user provides only the original ID.
+    # switch_freeform deploy=false can leave running config or a generated
+    # cleanup artifact outside the active policy view. The cleanup run uses
+    # the requested switch as a blind deploy target without proving the child
+    # by source first.
     - name: "DELETED TC5C SETUP - Create switch_freeform policy for source cleanup"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
@@ -299,7 +301,7 @@
           - result.changed == true
       tags: deleted
 
-    - name: "DELETED TC5D - Deploy source-child pending cleanup by original policy ID"
+    - name: "DELETED TC5D - Blind deploy switch_freeform pending cleanup by original policy ID"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: deleted
@@ -311,7 +313,7 @@
       register: result
       tags: deleted
 
-    - name: "DELETED TC5D - Verify source-child pending cleanup deploy changed"
+    - name: "DELETED TC5D - Verify blind pending cleanup deploy changed"
       ansible.builtin.assert:
         that:
           - result.changed == true
