@@ -159,7 +159,7 @@ def _validate_customer_vlan_id_list(value):
 # same PR and replace per-field `Field(ge=1, le=4094)` constraints (native_vlan, customer_inner_vlan_id,
 # provider_vlan_id, access_vlan, ...) — the constraint is already enforced today, this is cosmetic/consistency
 # cleanup. Each branch currently carries its own copy of the validators because adding VLAN-specific code to the
-# loopback base branch (where types.py lives) is out of that branch's scope.
+# loopback base branch (where types.py lives) is out of that branch's scope. Tracked in CiscoDevNet/ansible-nd#347.
 # See AsciiDescription comment in models/types.py for why Optional[...] is used at runtime instead of `... | None`.
 AllowedVlans = Annotated[Optional[str], BeforeValidator(_validate_allowed_vlans)]
 """Trunk allowed-VLANs spec (`str | None`): 'none', 'all', or comma-separated VLAN ids/ranges in 1..4094."""
