@@ -315,7 +315,72 @@ def test_network_query_all_uses_unfiltered_read_at_scoped_threshold():
     object.__setattr__(orchestrator, "_request", request)
 
     assert orchestrator.query_all() == [{"networkName": "NET_0"}]
-    assert requested_paths == ["/api/v1/manage/fabrics/fab1/networks"]
+    assert requested_paths == ["/api/v1/manage/fabrics/fab1/networks?offset=0&max=10000"]
+
+
+def test_network_query_all_unfiltered_reads_500_networks_with_explicit_page_size():
+    orchestrator = _orchestrator()
+    requested_paths = []
+    networks = [{"networkName": f"NET_{index:03d}"} for index in range(500)]
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {
+            "networks": networks,
+            "metadata": {
+                "counts": {
+                    "total": 500,
+                    "remaining": 0,
+                }
+            },
+        }
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    result = orchestrator.query_all()
+
+    assert len(result) == 500
+    assert result[0]["networkName"] == "NET_000"
+    assert result[-1]["networkName"] == "NET_499"
+    assert requested_paths == ["/api/v1/manage/fabrics/fab1/networks?offset=0&max=10000"]
+
+
+def test_network_query_all_unfiltered_walks_paginated_results():
+    orchestrator = _orchestrator()
+    original_page_size = NDNetworkOrchestrator.unfiltered_query_page_size
+    NDNetworkOrchestrator.unfiltered_query_page_size = 200
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        if "offset=0" in kwargs["path"]:
+            return {
+                "networks": [{"networkName": f"NET_{index:03d}"} for index in range(200)],
+                "metadata": {"counts": {"total": 500, "remaining": 300}},
+            }
+        if "offset=200" in kwargs["path"]:
+            return {
+                "networks": [{"networkName": f"NET_{index:03d}"} for index in range(200, 400)],
+                "metadata": {"counts": {"total": 500, "remaining": 100}},
+            }
+        return {
+            "networks": [{"networkName": f"NET_{index:03d}"} for index in range(400, 500)],
+            "metadata": {"counts": {"total": 500, "remaining": 0}},
+        }
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    try:
+        result = orchestrator.query_all()
+    finally:
+        NDNetworkOrchestrator.unfiltered_query_page_size = original_page_size
+
+    assert len(result) == 500
+    assert requested_paths == [
+        "/api/v1/manage/fabrics/fab1/networks?offset=0&max=200",
+        "/api/v1/manage/fabrics/fab1/networks?offset=200&max=200",
+        "/api/v1/manage/fabrics/fab1/networks?offset=400&max=200",
+    ]
 
 
 def test_legacy_network_names_are_normalized():

@@ -64,6 +64,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     delete_retry_attempts: ClassVar[int] = 3
     delete_retry_delay: ClassVar[int] = 30
     scoped_query_threshold: ClassVar[int] = 5
+    unfiltered_query_page_size: ClassVar[int] = 10000
 
     def model_post_init(self, __context) -> None:
         if self.strategy is None:
@@ -249,6 +250,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
         scoped_network_names = self._query_scope_network_names()
         try:
+            if not scoped_network_names:
+                return self._query_all_unfiltered()
             if len(scoped_network_names) >= self.scoped_query_threshold:
                 return self._query_all_unfiltered()
             if len(scoped_network_names) > 1:
@@ -326,11 +329,59 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 seen.add(item_name)
 
     def _query_all_unfiltered(self) -> ResponseType:
-        endpoint = self._make_endpoint(self.strategy.networks_get_cls())
-        result = self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True, operation_type=OperationType.QUERY)
+        networks: list[dict[str, Any]] = []
+        offset = 0
+
+        while True:
+            endpoint = self._make_endpoint(self.strategy.networks_get_cls())
+            if hasattr(endpoint, "endpoint_params"):
+                endpoint.endpoint_params.max = self.unfiltered_query_page_size
+                endpoint.endpoint_params.offset = offset
+
+            result = self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True, operation_type=OperationType.QUERY)
+            page_items = self._network_items_from_query_result(result)
+            networks.extend(page_items)
+
+            if not self._has_more_unfiltered_pages(result, len(page_items), len(networks)):
+                break
+            if not page_items:
+                break
+            offset += len(page_items)
+
+        return self._normalize_query_network_items(networks)
+
+    @staticmethod
+    def _network_items_from_query_result(result: Any) -> list[dict[str, Any]]:
         if isinstance(result, dict):
-            return self._normalize_query_network_items(result.get("networks") or result.get("items") or [])
-        return self._normalize_query_network_items(result)
+            return result.get("networks") or result.get("items") or []
+        return result or []
+
+    @staticmethod
+    def _safe_int(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _has_more_unfiltered_pages(self, result: Any, page_count: int, total_seen: int) -> bool:
+        if not isinstance(result, dict):
+            return False
+
+        metadata = result.get("metadata") or {}
+        counts = metadata.get("counts") or {}
+        remaining = self._safe_int(counts.get("remaining"))
+        if remaining is not None:
+            return remaining > 0
+
+        total = self._safe_int(counts.get("total"))
+        if total is not None:
+            return total_seen < total
+
+        links = metadata.get("links") or {}
+        if links.get("next"):
+            return True
+
+        return page_count == self.unfiltered_query_page_size
 
     def _query_scope_network_names(self) -> list[str]:
         state = self.rest_send.params.get("state")
