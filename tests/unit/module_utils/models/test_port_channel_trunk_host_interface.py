@@ -105,7 +105,6 @@ SAMPLE_ANSIBLE_CONFIG = {
                 "bpdu_filter": "disable",
                 "link_type": "auto",
                 "description": "trunk to host",
-                "policy_type": "trunkPoHost",
                 "speed": "10Gb",
                 "duplex_mode": "auto",
                 "mtu": "jumbo",
@@ -166,7 +165,6 @@ def test_port_channel_trunk_host_interface_00100():
     assert instance.orphan_port is None
     assert instance.pfc is None
     assert instance.policy_type == "trunkPoHost"
-    assert instance.port_channel_id is None
     assert instance.port_channel_mode is None
     assert instance.port_type_edge_trunk is None
     assert instance.ports is None
@@ -279,31 +277,40 @@ def test_port_channel_trunk_host_interface_00120():
     [
         (["ethernet1/1", "ethernet1/2"], ["Ethernet1/1", "Ethernet1/2"]),
         (["Ethernet1/1"], ["Ethernet1/1"]),
-        (["e1/1"], ["E1/1"]),
+        # NX-OS abbreviations expand to the canonical Ethernet form so they match the wire key (idempotency).
+        (["e1/1"], ["Ethernet1/1"]),
+        (["eth1/1", "et1/1"], ["Ethernet1/1", "Ethernet1/1"]),
+        # Any casing of the full prefix canonicalizes to "Ethernet".
+        (["ETHERNET1/2", "etHernet1/3"], ["Ethernet1/2", "Ethernet1/3"]),
         ([], []),
         (None, None),
-        # Mixed and breakout-style names preserve everything after the first character.
-        (["ethernet1/1/1", "ETHERNET1/2"], ["Ethernet1/1/1", "ETHERNET1/2"]),
+        # Digits and separators after the alphabetic prefix are preserved (breakout/subinterface forms).
+        (["ethernet1/1/1"], ["Ethernet1/1/1"]),
     ],
     ids=[
-        "lowercase_to_capitalized",
-        "already_capitalized_passthrough",
-        "single_letter",
+        "lowercase_to_canonical",
+        "already_canonical_passthrough",
+        "single_letter_abbreviation",
+        "eth_and_et_abbreviations",
+        "uppercase_canonicalized",
         "empty_list",
         "none_passthrough",
-        "mixed_breakout",
+        "breakout_separators_preserved",
     ],
 )
 def test_port_channel_trunk_host_interface_00180(value, expected):
     """
     # Summary
 
-    Verify `normalize_ports` capitalizes the first character of each member interface name.
+    Verify `normalize_ports` expands any case-insensitive NX-OS abbreviation of a member interface name to ND's
+    canonical `Ethernet` form so user input round-trips against the wire key.
 
     ## Test
 
-    - Lowercase member names are capitalized
-    - Already-capitalized values pass through
+    - Lowercase and abbreviated member names (`e1/1`, `eth1/1`, `et1/1`) expand to `Ethernet...`
+    - Any casing of the full prefix canonicalizes to `Ethernet`
+    - Already-canonical values pass through unchanged
+    - Digits/separators after the prefix are preserved
     - Empty list and None pass through
 
     ## Classes and Methods
@@ -1067,19 +1074,22 @@ def test_port_channel_trunk_host_interface_00470():
     """
     # Summary
 
-    Verify `network_os` is a required field.
+    Verify `network_os` defaults to an empty `PortChannelTrunkHostNetworkOSModel` when omitted, so constructing
+    `config_data` without an explicit `network_os` does not raise a raw `ValidationError`.
 
     ## Test
 
     - Construct without network_os
-    - ValidationError raised
+    - config_data.network_os is a PortChannelTrunkHostNetworkOSModel with a None policy
 
     ## Classes and Methods
 
     - PortChannelTrunkHostConfigDataModel.__init__()
     """
-    with pytest.raises(ValidationError, match=r"network_os|networkOS"):
-        PortChannelTrunkHostConfigDataModel()
+    with does_not_raise():
+        instance = PortChannelTrunkHostConfigDataModel()
+    assert isinstance(instance.network_os, PortChannelTrunkHostNetworkOSModel)
+    assert instance.network_os.policy is None
 
 
 # =============================================================================
@@ -1394,19 +1404,26 @@ def test_port_channel_trunk_host_interface_00710():
     """
     # Summary
 
-    Verify `policy_type` round-trips as the API value in config output.
+    Verify `policy_type` is omitted from `to_config()` output (the field is hardcoded by the model and is
+    not in the argspec, so surfacing the wire form `"trunkPoHost"` back to playbooks would only confuse
+    assertions that compare against the snake_case Ansible convention).
 
     ## Test
 
-    - Stored "trunkPoHost" -> output "trunkPoHost" (no Ansible<->API translation; field is hardcoded by the model)
+    - From a full API response, to_config() does NOT include `policy_type` in the policy dict
+    - All other policy fields ARE present (sanity check that we only omitted policy_type)
 
     ## Classes and Methods
 
     - PortChannelTrunkHostInterfaceModel.to_config()
+    - PortChannelTrunkHostPolicyModel._strip_policy_type_in_config()
     """
     instance = PortChannelTrunkHostInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
     result = instance.to_config()
-    assert result["config_data"]["network_os"]["policy"]["policy_type"] == "trunkPoHost"
+    policy = result["config_data"]["network_os"]["policy"]
+    assert "policy_type" not in policy
+    assert policy["admin_state"] is True
+    assert policy["allowed_vlans"] == "100-200,300"
 
 
 def test_port_channel_trunk_host_interface_00720():
@@ -1536,7 +1553,9 @@ def test_port_channel_trunk_host_interface_00840():
     ## Test
 
     - Response with portChannelId and ptp fields constructs valid model
-    - portChannelId stored as response-only echo of interface_name
+    - `portChannelId` is a response-only echo of interface_name and is silently ignored (extra="ignore"), so it
+      never leaks into config-shaped output
+    - `ptp` is a modeled field and is stored
 
     ## Classes and Methods
 
@@ -1547,7 +1566,7 @@ def test_port_channel_trunk_host_interface_00840():
     response["configData"]["networkOS"]["policy"]["ptp"] = False
     with does_not_raise():
         instance = PortChannelTrunkHostInterfaceModel.from_response(response)
-    assert instance.config_data.network_os.policy.port_channel_id == "port-channel501"
+    assert not hasattr(instance.config_data.network_os.policy, "port_channel_id")
     assert instance.config_data.network_os.policy.ptp is False
 
 

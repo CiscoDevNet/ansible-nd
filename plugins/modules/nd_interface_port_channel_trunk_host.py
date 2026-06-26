@@ -311,7 +311,8 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS port-channel trunkPoHost interfaces only (interface_type C(portChannel), mode C(trunk), network_os_type C(nx-os), policy_type C(trunkPoHost)). These values are hardcoded by the module and are not user-configurable.
+- This module manages NX-OS port-channel trunkPoHost interfaces only (interface_type C(portChannel), mode C(trunk),
+  network_os_type C(nx-os), policy_type C(trunkPoHost)). These values are hardcoded by the module and are not user-configurable.
 - The port-channel policy is the source of truth for member interface configuration.
 """
 
@@ -600,6 +601,14 @@ def main():
         module_log.exception("NDStateMachineError during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module execution failed: {str(e)}"
+        if module.params.get("output_level") == "debug":
+            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
+        module.fail_json(msg=error_msg, **output)
+
+    except Exception as e:  # pylint: disable=broad-except
+        module_log.exception("Unhandled exception during module execution")
+        output = nd_state_machine.output.format() if nd_state_machine else {}
+        error_msg = f"Module failed: {str(e)}"
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)

@@ -12,7 +12,7 @@ for port-channel trunkPoHost interfaces. It inherits all shared port-channel log
 
 from __future__ import annotations
 
-from typing import ClassVar, Type
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import TrunkPoHostPolicyTypeEnum
@@ -38,7 +38,7 @@ class PortChannelTrunkHostInterfaceOrchestrator(PortChannelBaseOrchestrator):
     - Via inherited methods. See `PortChannelBaseOrchestrator` for full details.
     """
 
-    model_class: ClassVar[Type[NDBaseModel]] = PortChannelTrunkHostInterfaceModel
+    model_class: ClassVar[type[NDBaseModel]] = PortChannelTrunkHostInterfaceModel
 
     def _managed_policy_types(self) -> set[str]:
         """

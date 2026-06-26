@@ -37,7 +37,9 @@ from typing import Annotated, ClassVar, Literal, Optional  # Optional needed for
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
     Field,
+    SerializationInfo,
     field_validator,
+    model_serializer,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -59,6 +61,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.types import Ascii
 _ALLOWED_VLANS_SHAPE = re.compile(r"^(none|all|(\d+(-\d+)?)(,\d+(-\d+)?)*)$")
 # Single VLAN id or range token (e.g. "100" or "100-200"). Range bounds are validated separately.
 _VLAN_ID_OR_RANGE_SHAPE = re.compile(r"^\d+(-\d+)?$")
+
+# Splits an interface name into its leading alphabetic prefix and the rest (digits/separators).
+_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
+
+# Member interfaces of a port-channel are always physical ethernet ports, so the canonical wire prefix
+# is always "Ethernet". Any case-insensitive NX-OS abbreviation (e.g. "e", "eth", "ether") expands to the
+# full form so user input matches the wire key and idempotency holds.
+_CANONICAL_MEMBER_TYPE = "Ethernet"
 
 
 def _validate_vlan_id_or_range(token: str, field_name: str) -> None:
@@ -113,6 +123,10 @@ def _validate_allowed_vlans(value):
     """
     if value is None or value == "":
         return value
+    # TODO(4.2.1) interface-get-field-normalization
+    # ND echoes a single-id allowed_vlans as a JSON int (e.g. 250) on GET even though POST/PUT accept (and the
+    # spec types it as) a string. We coerce int -> str here so a GET response round-trips against the str the
+    # user supplied and idempotency comparisons stay stable. Remove when the GET-side retype is fixed.
     if isinstance(value, int) and not isinstance(value, bool):
         value = str(value)
     if not isinstance(value, str):
@@ -209,6 +223,10 @@ class PortChannelTrunkHostPolicyModel(NDNestedModel):
     ### ValueError
 
     - If `allowed_vlans` is set and does not match `none`, `all`, or comma-separated VLAN ranges.
+
+    ### AssertionError
+
+    - If the wrapped model serializer receives a non-`dict` from the handler (see `_strip_policy_type_in_config`).
     """
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
@@ -246,7 +264,6 @@ class PortChannelTrunkHostPolicyModel(NDNestedModel):
     policy_type: TrunkPoHostPolicyTypeEnum = Field(
         default=TrunkPoHostPolicyTypeEnum.TRUNK_PO_HOST, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)"
     )
-    port_channel_id: str | None = Field(default=None, alias="portChannelId", description="Port-channel id (response-only echo of interface_name)")
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Configure as edge trunk port (PortFast on trunk)")
     ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['Ethernet1/1', 'Ethernet1/2'])")
@@ -314,23 +331,85 @@ class PortChannelTrunkHostPolicyModel(NDNestedModel):
         """
         # Summary
 
-        Normalize each member interface name to ND API convention (e.g. `ethernet1/1` -> `Ethernet1/1`).
+        Normalize each member interface name to ND's canonical `Ethernet` form so that any user-supplied casing or
+        NX-OS abbreviation round-trips against the wire form. Members are always physical ethernet ports. Examples:
+
+        - `ethernet1/1` -> `Ethernet1/1`
+        - `ETHERNET1/1` -> `Ethernet1/1`
+        - `eth1/1` -> `Ethernet1/1` (abbreviation expanded)
+        - `e1/1` -> `Ethernet1/1` (abbreviation expanded)
+        - `Ethernet1/1` -> `Ethernet1/1` (idempotent)
+
+        Because the wire key is matched exactly, an abbreviated prefix that is not expanded would never match ND's
+        `Ethernet...` form, silently breaking idempotency (the port-channel re-deploys on every run). Any
+        case-insensitive prefix of `Ethernet` (`e`, `et`, `eth`, ...) is therefore expanded to the full canonical
+        name; an unrecognized prefix falls back to Title case so it still round-trips. Only the leading alphabetic
+        run is rewritten; digits and separators are preserved verbatim.
 
         ## Raises
 
         None
         """
-        if value is None:
-            return value
         if not isinstance(value, list):
             return value
-        normalized = []
-        for name in value:
-            if isinstance(name, str) and name:
-                normalized.append(name[0].upper() + name[1:])
-            else:
-                normalized.append(name)
-        return normalized
+        return [cls._normalize_member_name(name) for name in value]
+
+    @staticmethod
+    def _normalize_member_name(name):
+        """
+        # Summary
+
+        Normalize a single member interface name to ND's canonical `Ethernet` form (see `normalize_ports`).
+        Non-string or empty values are returned unchanged.
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(name, str) or not name:
+            return name
+        match = _INTERFACE_NAME_PREFIX_RE.match(name)
+        if not match:
+            return name
+        prefix, rest = match.groups()
+        if _CANONICAL_MEMBER_TYPE.lower().startswith(prefix.lower()):
+            return _CANONICAL_MEMBER_TYPE + rest
+        return prefix[0].upper() + prefix[1:].lower() + rest
+
+    @model_serializer(mode="wrap")
+    def _strip_policy_type_in_config(self, handler, info: SerializationInfo):
+        """
+        # Summary
+
+        Omit `policy_type` from `to_config()` output while leaving payload and diff modes untouched.
+
+        The field is hardcoded by the model (frozen at `TrunkPoHostPolicyTypeEnum.TRUNK_PO_HOST`), is excluded
+        from the Ansible argspec, and is therefore not something the user supplies or needs surfaced back.
+        The wire form `"trunkPoHost"` would otherwise appear under the `policy_type` key in
+        `before`/`after`/`gathered` output and confuse playbooks that compare against the Ansible
+        snake_case convention. Payload and diff serialization still emit the wire value so the POST/PUT
+        body and the round-trip diff comparison line up with what ND returns.
+
+        Implemented as a wrap-mode model serializer because `exclude_none=True` on `to_config()` evaluates
+        the field value before serialization runs — returning None from a field_serializer is too late to
+        drop the key.
+
+        ## Raises
+
+        ### AssertionError
+
+        - If the wrapped handler returns a non-`dict`. A model-level serializer always serializes to a `dict`,
+          so this is an invariant check that fails loudly rather than silently leaving `policy_type` in the
+          config output.
+        """
+        result = handler(self)
+        if not isinstance(result, dict):
+            raise AssertionError(f"Expected dict from model serialization, got {type(result).__name__}")
+        mode = (info.context or {}).get("mode", "payload")
+        if mode == "config":
+            result.pop("policy_type", None)
+            result.pop("policyType", None)
+        return result
 
 
 class PortChannelTrunkHostNetworkOSModel(NDNestedModel):
@@ -360,7 +439,7 @@ class PortChannelTrunkHostConfigDataModel(NDNestedModel):
     """
 
     mode: Literal["trunk"] = Field(default="trunk", alias="mode", frozen=True)
-    network_os: PortChannelTrunkHostNetworkOSModel = Field(alias="networkOS")
+    network_os: PortChannelTrunkHostNetworkOSModel = Field(default_factory=PortChannelTrunkHostNetworkOSModel, alias="networkOS")
 
 
 class PortChannelTrunkHostInterfaceModel(NDBaseModel):
