@@ -12,7 +12,7 @@ defines the model class and managed policy types.
 
 from __future__ import annotations
 
-from typing import ClassVar, Type
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import TrunkVpcHostPolicyTypeEnum
@@ -38,7 +38,7 @@ class TrunkVpcHostInterfaceOrchestrator(VpcInterfaceBaseOrchestrator):
     - Via inherited methods. See `VpcInterfaceBaseOrchestrator` for full details.
     """
 
-    model_class: ClassVar[Type[NDBaseModel]] = TrunkVpcHostInterfaceModel
+    model_class: ClassVar[type[NDBaseModel]] = TrunkVpcHostInterfaceModel
 
     def _managed_policy_types(self) -> set[str]:
         """

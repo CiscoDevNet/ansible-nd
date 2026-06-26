@@ -346,35 +346,42 @@ def test_vpc_trunk_host_interface_00155_allowed_vlans_rejects(value):
     [
         (["ethernet1/1", "ethernet1/2"], ["Ethernet1/1", "Ethernet1/2"]),
         (["Ethernet1/1"], ["Ethernet1/1"]),
-        (["e1/1"], ["E1/1"]),
+        # NX-OS abbreviations expand to the canonical Ethernet form so they match the wire key (idempotency).
+        (["e1/1"], ["Ethernet1/1"]),
+        (["eth1/1", "et1/1"], ["Ethernet1/1", "Ethernet1/1"]),
+        # Any casing of the full prefix canonicalizes to "Ethernet".
+        (["ETHERNET1/2", "etHernet1/3"], ["Ethernet1/2", "Ethernet1/3"]),
         ([], []),
         (None, None),
-        (["ethernet1/1/1", "ETHERNET1/2"], ["Ethernet1/1/1", "ETHERNET1/2"]),
+        (["ethernet1/1/1"], ["Ethernet1/1/1"]),
     ],
     ids=[
-        "lowercase_to_capitalized",
-        "already_capitalized_passthrough",
-        "single_letter",
+        "lowercase_to_canonical",
+        "already_canonical_passthrough",
+        "single_letter_expanded",
+        "abbreviations_expanded",
+        "any_casing_canonicalized",
         "empty_list",
         "none_passthrough",
-        "mixed_breakout",
+        "breakout_preserved",
     ],
 )
 def test_vpc_trunk_host_interface_00180_peer1(value, expected):
     """
     # Summary
 
-    Verify `normalize_member_ports` capitalizes the first character of each peer1 member name.
+    Verify `normalize_member_ports` expands each peer1 member name to ND's canonical `Ethernet` form.
 
     ## Test
 
-    - Lowercase member names are capitalized
-    - Already-capitalized values pass through
-    - Empty list and None pass through
+    - Lowercase and abbreviated member names (`e1/1`, `eth1/1`, `et1/1`) expand to `Ethernet...`
+    - Any casing of the full prefix canonicalizes to `Ethernet`
+    - Already-canonical values pass through; empty list and None pass through; breakout suffixes are preserved
 
     ## Classes and Methods
 
     - TrunkVpcHostPolicyModel.normalize_member_ports()
+    - TrunkVpcHostPolicyModel._normalize_member_name()
     """
     with does_not_raise():
         instance = TrunkVpcHostPolicyModel(peer1_member_ports=value)
@@ -386,9 +393,10 @@ def test_vpc_trunk_host_interface_00180_peer1(value, expected):
     [
         (["ethernet1/1", "ethernet1/2"], ["Ethernet1/1", "Ethernet1/2"]),
         (["Ethernet1/1"], ["Ethernet1/1"]),
+        (["eth1/1"], ["Ethernet1/1"]),
         (None, None),
     ],
-    ids=["lowercase_to_capitalized", "already_capitalized_passthrough", "none_passthrough"],
+    ids=["lowercase_to_canonical", "already_canonical_passthrough", "abbreviation_expanded", "none_passthrough"],
 )
 def test_vpc_trunk_host_interface_00185_peer2(value, expected):
     """
@@ -403,6 +411,7 @@ def test_vpc_trunk_host_interface_00185_peer2(value, expected):
     ## Classes and Methods
 
     - TrunkVpcHostPolicyModel.normalize_member_ports()
+    - TrunkVpcHostPolicyModel._normalize_member_name()
     """
     with does_not_raise():
         instance = TrunkVpcHostPolicyModel(peer2_member_ports=value)
@@ -699,13 +708,15 @@ def test_vpc_trunk_host_interface_00425_to_config_keeps_single_vlan():
     """
     # Summary
 
-    Verify `to_config()` keeps `allowed_vlans` and `native_vlan` as single fields (does NOT expand to per-peer).
+    Verify `to_config()` keeps `allowed_vlans` and `native_vlan` as single fields (does NOT expand to per-peer) and
+    drops the frozen, argspec-excluded `policy_type` so it does not leak into before/after/gathered output.
     The expansion only happens for payload mode; config / diff modes use the wire-echo (single) shape so idempotency works.
 
     ## Test
 
     - to_config() returns the snake_case fields `allowed_vlans` and `native_vlan`
     - `peer1_allowed_vlans` / `peer2_allowed_vlans` / `peer1_native_vlan` / `peer2_native_vlan` are NOT in the config
+    - `policy_type` / `policyType` are NOT in the config (frozen scaffolding suppressed)
 
     ## Classes and Methods
 
@@ -721,6 +732,8 @@ def test_vpc_trunk_host_interface_00425_to_config_keeps_single_vlan():
     assert "peer2_allowed_vlans" not in policy
     assert "peer1_native_vlan" not in policy
     assert "peer2_native_vlan" not in policy
+    assert "policy_type" not in policy
+    assert "policyType" not in policy
 
 
 def test_vpc_trunk_host_interface_00430_payload_with_vlan_mapping():

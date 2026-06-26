@@ -43,6 +43,7 @@ from typing import Annotated, ClassVar, Literal, Optional  # Optional needed for
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
     Field,
+    SerializationInfo,
     field_validator,
     model_serializer,
 )
@@ -66,6 +67,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.types import Ascii
 _ALLOWED_VLANS_SHAPE = re.compile(r"^(none|all|(\d+(-\d+)?)(,\d+(-\d+)?)*)$")
 # Single VLAN id or range token (e.g. "100" or "100-200"). Range bounds are validated separately.
 _VLAN_ID_OR_RANGE_SHAPE = re.compile(r"^\d+(-\d+)?$")
+
+# Splits an interface name into its leading alphabetic prefix and the rest (digits/separators).
+_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
+
+# Member interfaces of a vPC are always physical ethernet ports, so the canonical wire prefix is always
+# "Ethernet". Any case-insensitive NX-OS abbreviation (e.g. "e", "eth", "ether") expands to the full form so
+# user input matches the wire key and idempotency holds.
+_CANONICAL_MEMBER_TYPE = "Ethernet"
 
 
 def _validate_vlan_id_or_range(token: str, field_name: str) -> None:
@@ -115,6 +124,10 @@ def _validate_allowed_vlans(value):
     """
     if value is None or value == "":
         return value
+    # TODO(4.2.1) interface-get-field-normalization
+    # ND echoes a single-id allowed_vlans as a JSON int (e.g. 250) on GET even though POST/PUT accept (and the
+    # spec types it as) a string. We coerce int -> str here so a GET response round-trips against the str the
+    # user supplied and idempotency comparisons stay stable. Remove when the GET-side retype is fixed.
     if isinstance(value, int) and not isinstance(value, bool):
         value = str(value)
     if not isinstance(value, str):
@@ -227,7 +240,8 @@ class TrunkVpcHostPolicyModel(NDNestedModel):
     )
 
     # --- Trunk-Specific Single-Valued Fields (collapsed by ND on read; fanned out per-peer on write) ---
-    # TODO(4.2.1) ND trunkVpcHost wire echoes single `allowedVlans` / `nativeVlan` even though the create schema requires
+    # TODO(4.2.1) vpc-interface-peer-vlan-collapse
+    # ND trunkVpcHost wire echoes single `allowedVlans` / `nativeVlan` even though the create schema requires
     # per-peer `peer1AllowedVlans` / `peer2AllowedVlans` and `peer1NativeVlan` / `peer2NativeVlan`. ND also rejects
     # divergent per-peer values at the API layer (HTTP 400 "should be consistent"). We expose single user-facing fields
     # and split them back to per-peer keys via `expand_per_peer_fields` for the write so idempotency matches the wire echo.
@@ -354,28 +368,39 @@ class TrunkVpcHostPolicyModel(NDNestedModel):
 
     # --- Serializers ---
 
-    # TODO(4.2.1) trunkVpcHost wire echoes single `allowedVlans` and `nativeVlan` even though the create schema
+    # TODO(4.2.1) vpc-interface-peer-vlan-collapse
+    # trunkVpcHost wire echoes single `allowedVlans` and `nativeVlan` even though the create schema
     # requires per-peer `peer1AllowedVlans` / `peer2AllowedVlans` and `peer1NativeVlan` / `peer2NativeVlan`. ND also
     # rejects divergent per-peer values at the API layer (HTTP 400 "should be consistent"). We expose single user
     # fields and split them back to the per-peer keys on the write side so idempotency works against the actual wire shape.
     @model_serializer(mode="wrap")
-    def expand_per_peer_fields(self, handler, info):
+    def expand_per_peer_fields(self, handler, info: SerializationInfo):
         """
         # Summary
 
-        Split single-value user-facing fields into the per-peer keys the ND write API expects, so they round-trip
-        correctly against ND's read response. Specifically, `allowedVlans` and `nativeVlan` are collapsed by ND on
-        read but the create schema accepts only per-peer keys. On payload serialization (context `mode == "payload"`),
-        we expand each to both per-peer keys. In all other modes (config / diff), the fields are left as-is so they
-        match the wire echo and keep the diff symmetric.
+        Single wrap-mode model serializer for the policy block, applying two ND-specific adjustments keyed off the
+        serialization `mode` context:
+
+        - On payload serialization (`mode == "payload"`), split the single user-facing `allowedVlans` / `nativeVlan`
+          into the per-peer `peer1AllowedVlans` / `peer2AllowedVlans` and `peer1NativeVlan` / `peer2NativeVlan` keys the
+          ND create/update schema requires. ND collapses each pair back to a single field on read, so config / diff
+          modes leave the fields as-is and the diff stays symmetric.
+        - On config serialization (`mode == "config"`), drop the frozen, argspec-excluded `policy_type` so it does not
+          leak into `before` / `after` / `gathered` output. Payload and diff modes keep the wire value so the POST/PUT
+          body and the round-trip diff line up with what ND returns.
 
         ## Raises
 
-        None
+        ### AssertionError
+
+        - If the wrapped handler returns a non-`dict`. A model-level serializer always serializes to a `dict`, so this
+          is an invariant check that fails loudly rather than silently mis-serializing.
         """
         data = handler(self)
-        context = getattr(info, "context", None) or {}
-        if context.get("mode") == "payload":
+        if not isinstance(data, dict):
+            raise AssertionError(f"Expected dict from model serialization, got {type(data).__name__}")
+        mode = (info.context or {}).get("mode", "payload")
+        if mode == "payload":
             if "allowedVlans" in data:
                 vlans = data.pop("allowedVlans")
                 data["peer1AllowedVlans"] = vlans
@@ -384,6 +409,9 @@ class TrunkVpcHostPolicyModel(NDNestedModel):
                 vlan = data.pop("nativeVlan")
                 data["peer1NativeVlan"] = vlan
                 data["peer2NativeVlan"] = vlan
+        if mode == "config":
+            data.pop("policy_type", None)
+            data.pop("policyType", None)
         return data
 
     # --- Validators ---
@@ -394,23 +422,47 @@ class TrunkVpcHostPolicyModel(NDNestedModel):
         """
         # Summary
 
-        Normalize each member interface name to ND API convention (e.g. `ethernet1/1` -> `Ethernet1/1`).
+        Normalize each per-peer member interface name to ND's canonical `Ethernet` form so any user-supplied casing or
+        NX-OS abbreviation round-trips against the wire form. Members are always physical ethernet ports. Examples:
+
+        - `ethernet1/1` -> `Ethernet1/1`
+        - `eth1/1` -> `Ethernet1/1` (abbreviation expanded)
+        - `e1/1` -> `Ethernet1/1` (abbreviation expanded)
+        - `Ethernet1/1` -> `Ethernet1/1` (idempotent)
+
+        An abbreviated prefix that is not expanded would never match ND's `Ethernet...` wire key, silently breaking
+        idempotency (the vPC re-deploys on every run). Only the leading alphabetic run is rewritten; digits and
+        separators are preserved verbatim.
 
         ## Raises
 
         None
         """
-        if value is None:
-            return value
         if not isinstance(value, list):
             return value
-        normalized = []
-        for name in value:
-            if isinstance(name, str) and name:
-                normalized.append(name[0].upper() + name[1:])
-            else:
-                normalized.append(name)
-        return normalized
+        return [cls._normalize_member_name(name) for name in value]
+
+    @staticmethod
+    def _normalize_member_name(name):
+        """
+        # Summary
+
+        Normalize a single member interface name to ND's canonical `Ethernet` form (see `normalize_member_ports`).
+        Non-string or empty values are returned unchanged.
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(name, str) or not name:
+            return name
+        match = _INTERFACE_NAME_PREFIX_RE.match(name)
+        if not match:
+            return name
+        prefix, rest = match.groups()
+        if _CANONICAL_MEMBER_TYPE.lower().startswith(prefix.lower()):
+            return _CANONICAL_MEMBER_TYPE + rest
+        return prefix[0].upper() + prefix[1:].lower() + rest
 
 
 class TrunkVpcHostNetworkOSModel(NDNestedModel):
@@ -460,7 +512,8 @@ class TrunkVpcHostInterfaceModel(NDBaseModel):
     """
 
     # --- Identifier Configuration ---
-    # TODO(4.2.1) A vPC interface is a single fabric-level resource, but ND echoes it from BOTH peer switches in
+    # TODO(4.2.1) vpc-interface-dual-peer-duplicate
+    # A vPC interface is a single fabric-level resource, but ND echoes it from BOTH peer switches in
     # the per-switch `/interfaces` GET (with identical `configData` and only `switchId` / `peerSwitchId` swapping).
     # Using a composite (switch_ip, interface_name) identifier caused `_manage_override_deletions` to delete the
     # peer-side duplicate. The identifier is therefore `interface_name` only; `switch_ip` is kept as a field for

@@ -476,7 +476,6 @@ EXAMPLES = r"""
     config_actions:
       deploy: false
     state: merged
-
 """
 
 RETURN = r"""
@@ -655,6 +654,14 @@ def main():
         module_log.exception("NDStateMachineError during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module execution failed: {str(e)}"
+        if module.params.get("output_level") == "debug":
+            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
+        module.fail_json(msg=error_msg, **output)
+
+    except Exception as e:  # pylint: disable=broad-except
+        module_log.exception("Unhandled exception during module execution")
+        output = nd_state_machine.output.format() if nd_state_machine else {}
+        error_msg = f"Module failed: {str(e)}"
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
