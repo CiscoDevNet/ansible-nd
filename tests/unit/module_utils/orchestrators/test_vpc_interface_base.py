@@ -119,8 +119,17 @@ def responses_vpc_base(key: str):
     return load_fixture("test_vpc_interface_base")[key]
 
 
-def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> RestSend:
-    """Build a `RestSend` wired to the file-based `Sender` and the real `ResponseHandler`."""
+def _build_rest_send(
+    gen_responses: ResponseGenerator,
+    fabric_name: str = "fabric_1",
+    state: str | None = None,
+    config: list[dict] | None = None,
+) -> RestSend:
+    """Build a `RestSend` wired to the file-based `Sender` and the real `ResponseHandler`.
+
+    `state` and `config` populate `rest_send.params` so `query_all`'s `_switches_to_query` scoping
+    (fabric-wide for `overridden`, config-scoped otherwise) and its config-preference dedup can be exercised.
+    """
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
     sender.gen = gen_responses
@@ -130,7 +139,13 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    rest_send = RestSend({"check_mode": False, "fabric_name": fabric_name})
+    params: dict = {"check_mode": False, "fabric_name": fabric_name}
+    if state is not None:
+        params["state"] = state
+    if config is not None:
+        params["config"] = config
+
+    rest_send = RestSend(params)
     rest_send.sender = sender
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
@@ -138,9 +153,14 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     return rest_send
 
 
-def _build_orchestrator(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> _StubVpcOrchestrator:
+def _build_orchestrator(
+    gen_responses: ResponseGenerator,
+    fabric_name: str = "fabric_1",
+    state: str | None = None,
+    config: list[dict] | None = None,
+) -> _StubVpcOrchestrator:
     """Construct a `_StubVpcOrchestrator` with the file-based `RestSend` injected."""
-    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name)
+    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, state=state, config=config)
     return _StubVpcOrchestrator(rest_send=rest_send)
 
 
@@ -418,12 +438,14 @@ def test_vpc_interface_base_00310() -> None:
     """
     # Summary
 
-    Verify `_inject_peer_switch_id` is a safe no-op when there is no nested policy to inject into.
+    Verify `_inject_peer_switch_id` raises `RuntimeError` when there is no nested `policy` block to inject into. A
+    vPC interface always needs a peer serial, so a policy-less payload is structurally invalid and must fail fast
+    rather than be silently sent to ND as a one-sided vPC.
 
     ## Test
 
-    - Payload with no `policy` key is returned unchanged (no `peerSwitchId` added, no KeyError)
-    - Payload with no `configData` key is returned unchanged
+    - Payload with no `policy` key raises `RuntimeError` matching `missing the 'configData.networkOS.policy' block`
+    - Payload with no `configData` key raises the same `RuntimeError`
 
     ## Classes and Methods
 
@@ -436,11 +458,15 @@ def test_vpc_interface_base_00310() -> None:
     gen_responses = ResponseGenerator(responses())
     instance = _build_orchestrator(gen_responses)
 
+    match = r"missing the 'configData\.networkOS\.policy' block"
+
     no_policy: dict = {"configData": {"networkOS": {}}}
-    assert instance._inject_peer_switch_id(no_policy, "FDO22222BBB") == {"configData": {"networkOS": {}}}
+    with pytest.raises(RuntimeError, match=match):
+        instance._inject_peer_switch_id(no_policy, "FDO22222BBB")
 
     no_config: dict = {"interfaceName": "vpc501"}
-    assert instance._inject_peer_switch_id(no_config, "FDO22222BBB") == {"interfaceName": "vpc501"}
+    with pytest.raises(RuntimeError, match=match):
+        instance._inject_peer_switch_id(no_config, "FDO22222BBB")
 
 
 # =============================================================================
@@ -903,6 +929,8 @@ def test_vpc_interface_base_00900() -> None:
     - The kept entry carries `switchIp` of the lower-`switchId` peer (192.168.1.1 / FDO11111AAA)
     - Request count is exactly 4: summary + switches-list + one interface GET per switch (locks the scan cost)
 
+    `state=overridden` keeps `query_all` fabric-wide so both peers are scanned and the per-peer dedup is exercised.
+
     ## Classes and Methods
 
     - VpcInterfaceBaseOrchestrator.query_all()
@@ -919,7 +947,7 @@ def test_vpc_interface_base_00900() -> None:
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        instance = _build_orchestrator(gen_responses)
+        instance = _build_orchestrator(gen_responses, state="overridden")
         result = instance.query_all()
 
     assert isinstance(result, list)
@@ -948,6 +976,8 @@ def test_vpc_interface_base_00910() -> None:
     - The single switch returns one managed `accessVpcHost` vPC interface with no `interfaceName`
     - `query_all` returns `[]` (the nameless entry is skipped, not raised on)
 
+    `state=overridden` keeps `query_all` fabric-wide so the switch is scanned.
+
     ## Classes and Methods
 
     - VpcInterfaceBaseOrchestrator.query_all()
@@ -962,7 +992,7 @@ def test_vpc_interface_base_00910() -> None:
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        instance = _build_orchestrator(gen_responses)
+        instance = _build_orchestrator(gen_responses, state="overridden")
         result = instance.query_all()
 
     assert result == []
@@ -1008,6 +1038,8 @@ def test_vpc_interface_base_00940() -> None:
     - The switch's interfaces endpoint returns 404 (no body)
     - `query_all` returns `[]`
 
+    `state=overridden` keeps `query_all` fabric-wide so the 404 switch is still visited and skipped.
+
     ## Classes and Methods
 
     - VpcInterfaceBaseOrchestrator.query_all()
@@ -1022,7 +1054,123 @@ def test_vpc_interface_base_00940() -> None:
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        instance = _build_orchestrator(gen_responses)
+        instance = _build_orchestrator(gen_responses, state="overridden")
+        result = instance.query_all()
+
+    assert result == []
+
+
+def test_vpc_interface_base_00920() -> None:
+    """
+    # Summary
+
+    Verify `query_all` scopes its per-switch interface-list fan-out to switches named in the user config when
+    `state` is not `overridden`, rather than querying every switch in the fabric (CLAUDE.md performance rule).
+
+    ## Test
+
+    - Fabric has two switches (192.168.1.1, 192.168.1.2), but config names only 192.168.1.1
+    - state is `merged` (non-overridden), so `_switches_to_query` returns only the config switch
+    - Only the config switch's interfaces are fetched; the second switch is never queried (the response generator
+      yields exactly three responses — summary, switch list, switch-1 interfaces — and would raise if a second
+      per-switch GET were issued)
+    - Result contains only the `accessVpcHost` vPC on the config switch, stamped with the config `switchIp`
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator._switches_to_query()
+    - VpcInterfaceBaseOrchestrator.query_all()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_vpc_base(f"{method_name}a")
+        yield responses_vpc_base(f"{method_name}b")
+        yield responses_vpc_base(f"{method_name}c")
+
+    gen_responses = ResponseGenerator(responses())
+
+    config = [{"switch_ip": "192.168.1.1", "interface_name": "vpc501"}]
+
+    with does_not_raise():
+        instance = _build_orchestrator(gen_responses, state="merged", config=config)
+        result = instance.query_all()
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "vpc501"
+    assert result[0]["switchIp"] == "192.168.1.1"
+
+
+def test_vpc_interface_base_00950() -> None:
+    """
+    # Summary
+
+    Verify the per-peer dedup keeps the peer whose `switchIp` the user actually configured, so idempotency holds
+    even when the user names the HIGHER-`switchId` peer. A vPC is returned on both peers; without this preference
+    the dedup would canonicalize to the lower-`switchId` peer (192.168.1.1) and the existing-state identifier would
+    never match a config naming 192.168.1.2, churning a spurious delete + recreate under `overridden`.
+
+    ## Test
+
+    - `state=overridden` so both peers are scanned (192.168.1.1 / FDO11111AAA and 192.168.1.2 / FDO22222BBB)
+    - Config names vpc501 on the higher-`switchId` peer 192.168.1.2
+    - The deduped entry carries `switchIp` 192.168.1.2 (the configured peer), not the lower-`switchId` default
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.query_all()
+    - VpcInterfaceBaseOrchestrator._prefers_candidate()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        for suffix in ("a", "b", "c", "d"):
+            yield responses_vpc_base(f"{method_name}{suffix}")
+
+    gen_responses = ResponseGenerator(responses())
+
+    config = [{"switch_ip": "192.168.1.2", "interface_name": "vpc501"}]
+
+    with does_not_raise():
+        instance = _build_orchestrator(gen_responses, state="overridden", config=config)
+        result = instance.query_all()
+
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "vpc501"
+    assert result[0]["switchIp"] == "192.168.1.2"
+
+
+def test_vpc_interface_base_00960() -> None:
+    """
+    # Summary
+
+    Verify `query_all` tolerates malformed per-switch bodies without aborting the whole run: a `configData: null`
+    interface is filtered out via the null-safe policy-type accessor, and a non-dict interfaces body is skipped via
+    the `isinstance(result, dict)` guard. Neither raises `AttributeError`.
+
+    ## Test
+
+    - `state=overridden` so both switches are scanned
+    - Switch A returns a vPC interface with `configData: null` (policy type resolves to None → filtered out)
+    - Switch B returns a bare list as its DATA body (non-dict → skipped by the isinstance guard)
+    - `query_all` returns `[]` rather than raising
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.query_all()
+    - VpcInterfaceBaseOrchestrator._policy_type()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        for suffix in ("a", "b", "c", "d"):
+            yield responses_vpc_base(f"{method_name}{suffix}")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        instance = _build_orchestrator(gen_responses, state="overridden")
         result = instance.query_all()
 
     assert result == []

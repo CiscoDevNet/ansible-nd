@@ -45,6 +45,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPut,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import requires_bulk_support
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
@@ -63,9 +64,9 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     Each create/update reads the `vpcPair` record for the primary switch to obtain the peer serial, which is
     then injected as `peerSwitchId` in the payload. Lookups are cached per orchestrator instance.
 
-    Mutation methods (`create`, `update`) queue deploys for bulk execution. `delete` queues vPC interfaces for
-    bulk removal via `interfaceActions/remove` and bulk deploy. Call `remove_pending` and `deploy_pending` after
-    all mutations are complete.
+    Mutation methods (`create`, `update`) queue deploys for bulk execution. `delete` issues an immediate
+    per-interface `DELETE /interfaces/{name}` (the bulk `interfaceActions/remove` endpoint rejects vPC interfaces;
+    see the `TODO(4.2.1)` below) and queues a deploy. Call `deploy_pending` after all mutations are complete.
 
     ## Raises
 
@@ -82,7 +83,8 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     - Via `query_all` if the query API request fails.
     """
 
-    # TODO(4.2.1) The bulk `/api/v1/manage/fabrics/{fabric}/interfaceActions/remove` endpoint returns
+    # TODO(4.2.1) vpc-interface-bulk-delete-silent-fail
+    # The bulk `/api/v1/manage/fabrics/{fabric}/interfaceActions/remove` endpoint returns
     # `{"status":"Failed","message":"Invalid Interface"}` inside a 207 for vPC interfaces (lab-verified). The
     # per-interface `DELETE /interfaces/{name}` endpoint works (returns 204). We therefore disable bulk delete and
     # use the per-interface DELETE via `delete_endpoint`.
@@ -163,16 +165,22 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Inject `peerSwitchId` into the nested `configData.networkOS.policy` block of an interface payload. The model
-        already nests `peer_switch_id` under `policy`, so this just sets the value if not already present.
+        Inject `peerSwitchId` into the nested `configData.networkOS.policy` block of an interface payload. Every vPC
+        interface requires a peer serial, so a payload without a `policy` block is structurally invalid and is rejected
+        here rather than silently sent to ND as a one-sided vPC.
 
         ## Raises
 
-        None
+        ### RuntimeError
+
+        - If the payload has no `configData.networkOS.policy` block to inject `peerSwitchId` into.
         """
-        policy = payload.get("configData", {}).get("networkOS", {}).get("policy")
-        if policy is not None:
-            policy["peerSwitchId"] = peer_serial
+        policy = (payload.get("configData") or {}).get("networkOS", {}).get("policy")
+        if policy is None:
+            raise RuntimeError(
+                f"vPC interface payload is missing the 'configData.networkOS.policy' block required to inject 'peerSwitchId'; received: {payload!r}"
+            )
+        policy["peerSwitchId"] = peer_serial
         return payload
 
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
@@ -257,6 +265,7 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception as e:
             raise RuntimeError(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
 
+    @requires_bulk_support("supports_bulk_create")
     def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
         """
         # Summary
@@ -315,18 +324,104 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
+    def _switches_to_query(self) -> dict[str, str]:
+        """
+        # Summary
+
+        Return the `{switch_ip: switch_id}` subset that `query_all` should scan.
+
+        For `state: overridden` the scope is fabric-wide, so the full switch map is returned. For every other state
+        the state machine only consults existing interfaces identified by `switch_ip` values present in the user
+        config, so only those switches are returned. This keeps the interface-list request count proportional to
+        config size rather than fabric size (CLAUDE.md performance rule: no per-switch fan-out over the whole fabric).
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `FabricContext.switch_map` if the switches API query fails.
+        """
+        switch_map = self.fabric_context.switch_map
+        if self.rest_send.params.get("state") == "overridden":
+            return switch_map
+        config_items = self.rest_send.params.get("config") or []
+        config_ips = {item.get("switch_ip") for item in config_items if item.get("switch_ip")}
+        return {ip: sid for ip, sid in switch_map.items() if ip in config_ips}
+
+    def _configured_switch_ip_by_interface_name(self) -> dict[str, str]:
+        """
+        # Summary
+
+        Map each config `interface_name` to the user-supplied `switch_ip`. A vPC interface spans two peers and ND
+        returns it on both; this lets `query_all` pick the peer whose IP the user actually configured so the existing
+        state's composite identifier `(switch_ip, interface_name)` matches the proposed identifier and the run stays
+        idempotent regardless of which peer the user names.
+
+        ## Raises
+
+        None
+        """
+        mapping: dict[str, str] = {}
+        for item in self.rest_send.params.get("config") or []:
+            name = item.get("interface_name")
+            switch_ip = item.get("switch_ip")
+            if name and switch_ip:
+                mapping[name] = switch_ip
+        return mapping
+
+    @staticmethod
+    def _policy_type(iface: dict) -> str | None:
+        """
+        # Summary
+
+        Return `configData.networkOS.policy.policyType` for an interface dict, tolerating a missing or null value at
+        any level of the nested chain (ND occasionally returns `configData: null`).
+
+        ## Raises
+
+        None
+        """
+        config_data = iface.get("configData") or {}
+        network_os = config_data.get("networkOS") or {}
+        policy = network_os.get("policy") or {}
+        return policy.get("policyType")
+
+    def _managed_vpc_interfaces(self, switch_ip: str, switch_id: str, managed_types: set[str]) -> list[dict]:
+        """
+        # Summary
+
+        Fetch one switch's interface list and return the vPC interfaces whose policy type this orchestrator manages,
+        each enriched with the `switchIp` of the switch it was read from. Tolerates a missing body (`not_found_ok`) and
+        a non-dict body (the `isinstance` guard) without raising.
+
+        ## Raises
+
+        ### Exception
+
+        - If the interface-list request fails (propagated to `query_all`'s wrapper).
+        """
+        api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+        interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
+        managed = [iface for iface in interfaces if iface.get("interfaceType") == "vpc" and self._policy_type(iface) in managed_types]
+        for iface in managed:
+            iface["switchIp"] = switch_ip
+        return managed
+
     def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
         """
         # Summary
 
-        Validate the fabric context and query all interfaces across ALL switches in the fabric, filtering for
-        vPC interfaces with policy types managed by this orchestrator (as defined by `_managed_policy_types()`).
+        Validate the fabric context and query interfaces, filtering for vPC interfaces with policy types managed by
+        this orchestrator (as defined by `_managed_policy_types()`).
+
+        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`, and
+        limited to switches named in the user config for all other states.
 
         Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
 
-        Each returned interface dict is enriched with a `switch_ip` field so that the model has routing context.
-        vPC interfaces are de-duplicated by `interfaceName` (ND returns each vPC twice — once per peer); the entry
-        with the alphabetically-lower `switchId` is kept as the canonical representative.
+        Each returned interface dict is enriched with a `switchIp` field so that the model can be constructed with the
+        composite identifier `(switch_ip, interface_name)`.
 
         ## Raises
 
@@ -339,29 +434,52 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         managed_types = self._managed_policy_types()
         try:
             self.validate_prerequisites()
-            # TODO(4.2.1) ND returns each vPC interface TWICE — once per peer switch — with identical configData.
-            # Dedupe by interfaceName, keeping the entry whose URL-path `switchId` is alphabetically lower so the
-            # chosen representative is stable across runs. Without this dedupe, `_manage_override_deletions` would
-            # see the peer-side copy as "not in proposed" and queue a spurious delete.
+            configured_ip_by_name = self._configured_switch_ip_by_interface_name()
+            # TODO(4.2.1) vpc-interface-dual-peer-duplicate
+            # ND returns each vPC interface TWICE — once per peer switch — with identical configData. Dedupe by
+            # interfaceName. When the interface is in the user config, keep the peer whose switchIp the user supplied so
+            # idempotency holds regardless of which peer they name; otherwise keep the alphabetically-lower switchId for
+            # a stable representative. Without this dedupe, `_manage_override_deletions` would see the peer-side copy as
+            # "not in proposed" and queue a spurious delete.
             interfaces_by_name: dict[str, tuple[str, dict]] = {}
-            for switch_ip, switch_id in self.fabric_context.switch_map.items():
-                api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-                if not result:
-                    continue
-                interfaces = result.get("interfaces", []) or []
-                vpc_interfaces = [iface for iface in interfaces if iface.get("interfaceType") == "vpc"]
-                managed = [
-                    iface for iface in vpc_interfaces if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_types
-                ]
-                for iface in managed:
-                    iface["switchIp"] = switch_ip
+            for switch_ip, switch_id in self._switches_to_query().items():
+                for iface in self._managed_vpc_interfaces(switch_ip, switch_id, managed_types):
                     name = iface.get("interfaceName")
                     if name is None:
                         continue
                     existing = interfaces_by_name.get(name)
-                    if existing is None or switch_id < existing[0]:
+                    if self._prefers_candidate(name, switch_id, switch_ip, existing, configured_ip_by_name):
                         interfaces_by_name[name] = (switch_id, iface)
             return [entry[1] for entry in interfaces_by_name.values()]
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
+
+    @staticmethod
+    def _prefers_candidate(
+        name: str,
+        switch_id: str,
+        switch_ip: str,
+        existing: tuple[str, dict] | None,
+        configured_ip_by_name: dict[str, str],
+    ) -> bool:
+        """
+        # Summary
+
+        Decide whether a newly-seen per-peer copy of a vPC interface should replace the one already kept for `name`.
+        Prefer the peer whose `switch_ip` the user configured (idempotency); when neither peer is the configured one
+        (or the interface is not in config, e.g. an `overridden` deletion candidate), prefer the alphabetically-lower
+        `switch_id` for a stable representative.
+
+        ## Raises
+
+        None
+        """
+        if existing is None:
+            return True
+        configured_ip = configured_ip_by_name.get(name)
+        if configured_ip is not None:
+            if switch_ip == configured_ip:
+                return True
+            if existing[1].get("switchIp") == configured_ip:
+                return False
+        return switch_id < existing[0]
