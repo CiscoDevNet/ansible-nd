@@ -12,7 +12,7 @@ check whether networks still reference a VRF before attempting deletion.
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -33,8 +33,8 @@ class NetworksGetEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin, OffsetM
     Endpoint-specific query parameters for the list networks endpoint.
     """
 
-    service_network: Optional[bool] = Field(default=None, description="Whether to include service networks")
-    sort: Optional[str] = Field(default=None, min_length=1, description="Sort field and direction (e.g. 'networkName:asc')")
+    service_network: bool | None = Field(default=None, description="Whether to include service networks")
+    sort: str | None = Field(default=None, min_length=1, description="Sort field and direction (e.g. 'networkName:asc')")
 
 
 class EpManageFabricsNetworksGet(FabricNameMixin, NDEndpointBaseModel):

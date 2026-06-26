@@ -20,7 +20,7 @@ Endpoints covered:
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
