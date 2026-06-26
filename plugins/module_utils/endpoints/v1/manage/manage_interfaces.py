@@ -17,8 +17,12 @@ in the ND Manage API.
   (POST /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces)
 - `EpManageInterfacesPut` - Update a specific interface
   (PUT /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
+- `EpManageInterfacesDelete` - Delete a virtual interface (loopback, SVI); not supported for physical ethernet
+  (DELETE /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
 - `EpManageInterfacesDeploy` - Deploy interface configurations
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/deploy)
+- `EpManageInterfacesNormalize` - Reset physical interface configurations to default
+  (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/normalize)
 - `EpManageInterfacesRemove` - Bulk delete interfaces
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/remove)
 """
@@ -31,13 +35,31 @@ from urllib.parse import quote
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ClusterNameMixin,
     FabricNameMixin,
+    FilterMixin,
     InterfaceNameMixin,
+    MaxMixin,
+    NetworkNameMixin,
+    OffsetMixin,
     SwitchSerialNumberMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
+
+
+class ManageInterfacesListEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin, NetworkNameMixin, OffsetMixin, EndpointQueryParams):
+    """
+    Endpoint-specific query parameters for listing switch interfaces.
+
+    These match the query parameters exposed by
+    ``/fabrics/{fabricName}/switches/{switchId}/interfaces`` in manage.json.
+    """
+
+    sort: str | None = Field(default=None, min_length=1, description="Sort field and direction")
+    config_only: bool | None = Field(default=None, description="Return config-only interface data")
 
 
 class _EpManageInterfacesBase(FabricNameMixin, SwitchSerialNumberMixin, InterfaceNameMixin, NDEndpointBaseModel):
@@ -88,7 +110,15 @@ class _EpManageInterfacesBase(FabricNameMixin, SwitchSerialNumberMixin, Interfac
         segments = ["fabrics", quote(self.fabric_name, safe=""), "switches", quote(self.switch_sn, safe=""), "interfaces"]
         if self.interface_name is not None:
             segments.append(quote(self.interface_name, safe=""))
-        return BasePath.path(*segments)
+        base_path = BasePath.path(*segments)
+        query_string = self._query_string()
+        if query_string:
+            return f"{base_path}?{query_string}"
+        return base_path
+
+    def _query_string(self) -> str:
+        """Return optional query string for endpoint subclasses."""
+        return ""
 
     def set_identifiers(self, identifier: IdentifierKey = None):
         """
@@ -158,6 +188,14 @@ class EpManageInterfacesListGet(_EpManageInterfacesBase):
     class_name: Literal["EpManageInterfacesListGet"] = Field(
         default="EpManageInterfacesListGet", frozen=True, description="Class name for backward compatibility"
     )
+    endpoint_params: ManageInterfacesListEndpointParams = Field(
+        default_factory=ManageInterfacesListEndpointParams,
+        description="Endpoint-specific query parameters",
+    )
+
+    def _query_string(self) -> str:
+        """Return list endpoint query string."""
+        return self.endpoint_params.to_query_string()
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -241,6 +279,46 @@ class EpManageInterfacesPut(_EpManageInterfacesBase):
         return HttpVerbEnum.PUT
 
 
+class EpManageInterfacesDelete(_EpManageInterfacesBase):
+    """
+    # Summary
+
+    Delete a specific interface configuration.
+
+    - Path: `/api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name}`
+    - Verb: DELETE
+
+    This endpoint works for virtual interfaces (loopback, SVI) only. For physical ethernet interfaces, the API returns
+    HTTP 500 ("Interface cannot be deleted!!!").
+
+    To reset physical interfaces to their default state, see `EpManageInterfacesNormalize` and set the payload to an
+    appropriate default config (for example `module_utils/models/interfaces/interface_default_config.py`).
+
+    ## Raises
+
+    ### ValueError
+
+    - Via inherited `path` property if `fabric_name`, `switch_sn`, or `interface_name` is not set.
+    """
+
+    class_name: Literal["EpManageInterfacesDelete"] = Field(
+        default="EpManageInterfacesDelete", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.DELETE`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.DELETE
+
+
 class EpManageInterfacesDeploy(FabricNameMixin, NDEndpointBaseModel):
     """
     # Summary
@@ -278,6 +356,58 @@ class EpManageInterfacesDeploy(FabricNameMixin, NDEndpointBaseModel):
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "deploy")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.POST`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.POST
+
+
+class EpManageInterfacesNormalize(FabricNameMixin, NDEndpointBaseModel):
+    """
+    # Summary
+
+    Normalize interface configurations on switches.
+
+    - Path: `/api/v1/manage/fabrics/{fabric_name}/interfaceActions/normalize`
+    - Verb: POST
+    - Body: `{"interfaceType": "ethernet", "configData": {...}, "switchInterfaces": [{"interfaceName": "...", "switchId": "..."}]}`
+
+    ## Raises
+
+    ### ValueError
+
+    - Via `path` property if `fabric_name` is not set.
+    """
+
+    class_name: Literal["EpManageInterfacesNormalize"] = Field(
+        default="EpManageInterfacesNormalize", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the normalize endpoint path.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `fabric_name` is not set before accessing `path`.
+        """
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "normalize")
 
     @property
     def verb(self) -> HttpVerbEnum:

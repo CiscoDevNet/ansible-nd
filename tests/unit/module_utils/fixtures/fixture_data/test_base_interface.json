@@ -93,5 +93,113 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/remove",
         "MESSAGE": "Internal Server Error",
         "DATA": {"error": "boom"}
+    },
+
+    "test_base_interface_00820a": {
+        "TEST_NOTES": [
+            "Issue #301: switches list returns only 192.168.12.151; the two other model_instances (10.1.1.99, 10.1.1.100)",
+            "are unresolvable and must be aggregated into a single RuntimeError without consuming a capableSwitches response."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+
+    "test_base_interface_00830a": {
+        "TEST_NOTES": ["Issue #302: switches list resolves the target IP before the capability GET."],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_base_interface_00830b": {
+        "TEST_NOTES": ["Issue #302: capableSwitches GET returns 404; in check_mode the failure is softened to a warning."],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+
+    "test_base_interface_00840a": {
+        "TEST_NOTES": ["Issue #302: switches list resolves the target IP before the capability GET."],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_base_interface_00840b": {
+        "TEST_NOTES": ["Issue #302: capableSwitches returns 200 with empty switches; offender warning in check_mode."],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {"switches": []}
+    },
+
+    "test_base_interface_00850a": {
+        "TEST_NOTES": ["Issue #302 regression guard: switches list resolves the target IP before the capability GET."],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_base_interface_00850b": {
+        "TEST_NOTES": ["Issue #302 regression guard: capability mismatch must still raise outside check_mode."],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {"switches": []}
+    },
+    "test_base_interface_00860a": {
+        "TEST_NOTES": [
+            "preflight() delegation: switches list resolves the target IP before the capability GET."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_base_interface_00860b": {
+        "TEST_NOTES": [
+            "preflight() delegation: capableSwitches returns 200 with empty switches; offender warning in check_mode proves preflight() routed to validate_switches_capable."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": []
+        }
     }
 }

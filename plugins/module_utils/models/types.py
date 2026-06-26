@@ -1,4 +1,5 @@
 # Copyright: (c) 2026, Allen Robel (@allenrobel)
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -21,9 +22,10 @@ applied consistently across model files (e.g. all `description` fields share the
 from __future__ import annotations
 
 import ipaddress
+import re
 from typing import Annotated, Optional  # Optional required here; see AsciiDescription comment below
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import AfterValidator, BeforeValidator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import AfterValidator, BeforeValidator, Field
 
 
 def ascii_only(value: str | None) -> str | None:
@@ -113,3 +115,33 @@ IPv4CIDR = Annotated[Optional[str], BeforeValidator(validate_ipv4_cidr)]
 
 IPv6CIDR = Annotated[Optional[str], BeforeValidator(validate_ipv6_cidr)]
 """IPv6 interface address in CIDR notation (`str | None`). Layer with `Field(...)` for alias/description as usual."""
+
+# Fabric name rules (verified against ND 4.2.x GUI):
+#   - Allowed chars: a-z, A-Z, 0-9, _, -
+#   - Must start AND end with an alphanumeric (no leading/trailing _ or -)
+#   - Numbers alone are not allowed (must contain at least one letter)
+#   - Length 1-64 (enforced by the regex itself)
+_FABRIC_NAME_RE = re.compile(
+    r"^(?=.*[A-Za-z])"  # at least one letter (rejects all-digit)
+    r"[A-Za-z0-9]"  # start: alphanumeric
+    r"(?:[A-Za-z0-9_-]{0,62}"  # middle: up to 62 inner chars
+    r"[A-Za-z0-9])?$"  # end: alphanumeric (skipped if length is 1)
+)
+
+
+def _validate_fabric_name(value: str) -> str:
+    """Validate that a fabric name matches ND's naming constraints."""
+    if not _FABRIC_NAME_RE.match(value):
+        raise ValueError(
+            f"Invalid fabric name {value!r}. Allowed chars: a-z, A-Z, 0-9, _, -. "
+            "Must start and end with an alphanumeric character, must contain at "
+            "least one letter, and must be 1-64 characters."
+        )
+    return value
+
+
+NdFabricName = Annotated[
+    str,
+    Field(alias="name", min_length=1, max_length=64, description="Fabric name"),
+    AfterValidator(_validate_fabric_name),
+]
