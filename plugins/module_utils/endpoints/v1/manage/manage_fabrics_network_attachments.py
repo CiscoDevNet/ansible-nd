@@ -15,7 +15,7 @@ Endpoints covered:
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
