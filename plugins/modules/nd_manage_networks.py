@@ -7,7 +7,7 @@
 DOCUMENTATION = r"""
 ---
 module: nd_manage_networks
-version_added: "1.0.0"
+version_added: "2.0.0"
 short_description: Manage Network definitions on Cisco Nexus Dashboard
 description:
   - Manage Network definitions across standalone, Multisite, and Multicluster fabric topologies.
