@@ -15,7 +15,7 @@ description:
 author:
   - Akshayanat C S (@achengam)
 options:
-  fabric:
+  fabric_name:
     description:
       - Name of the fabric to operate on.
     type: str
@@ -329,7 +329,7 @@ options:
         type: list
         elements: dict
         suboptions:
-          fabric:
+          fabric_name:
             description: Child fabric name.
             type: str
             required: true
@@ -484,7 +484,7 @@ extends_documentation_fragment:
 EXAMPLES = r"""
 - name: Create an L2-only Network on a standalone fabric
   cisco.nd.nd_manage_networks:
-    fabric: fab1
+    fabric_name: fab1
     state: merged
     config:
       - network_name: Network_BLUE
@@ -498,7 +498,7 @@ EXAMPLES = r"""
 
 - name: Create a Network and attach it to a switch interface
   cisco.nd.nd_manage_networks:
-    fabric: fab1
+    fabric_name: fab1
     state: merged
     config:
       - network_name: Network_BLUE
@@ -517,7 +517,7 @@ EXAMPLES = r"""
 
 - name: Create an L3 Network associated with a VRF
   cisco.nd.nd_manage_networks:
-    fabric: fab1
+    fabric_name: fab1
     state: merged
     config:
       - network_name: Network_L3
@@ -533,7 +533,7 @@ EXAMPLES = r"""
 
 - name: Create Network on a parent fabric with child fabric overrides
   cisco.nd.nd_manage_networks:
-    fabric: msd_parent
+    fabric_name: msd_parent
     state: merged
     config:
       - network_name: Network_PARENT
@@ -542,20 +542,20 @@ EXAMPLES = r"""
         vlan_id: 2030
         vlan_name: Network_PARENT_VLAN
         child_fabric_config:
-          - fabric: child_fabric_1
+          - fabric_name: child_fabric_1
             multicast_group_address: 239.1.1.30
-          - fabric: child_fabric_2
+          - fabric_name: child_fabric_2
             enable_ir: false
 
 - name: Gather Networks on a child fabric
   cisco.nd.nd_manage_networks:
-    fabric: child_fabric_1
+    fabric_name: child_fabric_1
     state: gathered
     config: []
 
 - name: Delete a Network
   cisco.nd.nd_manage_networks:
-    fabric: fab1
+    fabric_name: fab1
     state: deleted
     config:
       - network_name: Network_BLUE
@@ -613,7 +613,7 @@ def network_parent_argument_spec():
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        fabric=dict(type="str", required=True),
+        fabric_name=dict(type="str", required=True),
         state=dict(
             type="str",
             default="merged",
@@ -634,7 +634,7 @@ def main():
     )
 
     try:
-        fabric_name: str = module.params["fabric"]
+        fabric_name: str = module.params["fabric_name"]
 
         # Resolve the Network strategy from the ND API
         nd_module = NDModule(module)

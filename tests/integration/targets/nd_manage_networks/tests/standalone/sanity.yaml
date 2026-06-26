@@ -84,7 +84,7 @@
 
 - name: Standalone Sanity TC1 - Merged
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_sanity_merge_conf }}"
     output_level: debug
@@ -94,7 +94,7 @@
 
 - name: Standalone Sanity TC1 - Gather After Merged
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: "{{ nd_network_standalone_sanity_merge_conf }}"
   register: standalone_sanity_gathered
@@ -111,7 +111,7 @@
 
 - name: Standalone Sanity TC2 - Replaced
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: replaced
     config: "{{ nd_network_standalone_sanity_replace_conf }}"
     output_level: debug
@@ -121,7 +121,7 @@
 
 - name: Standalone Sanity TC2 - Gather After Replaced
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: "{{ nd_network_standalone_sanity_replace_conf }}"
   register: standalone_sanity_replaced_gathered
@@ -138,7 +138,7 @@
 
 - name: Standalone Sanity TC3 - Deleted
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ nd_network_standalone_sanity_delete_conf }}"
     output_level: debug
@@ -148,7 +148,7 @@
 
 - name: Standalone Sanity TC3 - Gather After Deleted
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: "{{ nd_network_standalone_sanity_delete_conf }}"
   register: standalone_sanity_deleted_gathered

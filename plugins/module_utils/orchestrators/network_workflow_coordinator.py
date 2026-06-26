@@ -135,7 +135,7 @@ class NetworkWorkflowCoordinator:
                             "config[{idx}].child_fabric_config is only valid "
                             "when the target fabric is a multisite or "
                             "multicluster parent. Target fabric "
-                            f"'{module_args.get('fabric')}' resolved as "
+                            f"'{module_args.get('fabric_name')}' resolved as "
                             f"'{fabric_type}'."
                         ).format(idx=idx)
                     )
@@ -201,7 +201,7 @@ class NetworkWorkflowCoordinator:
         directly. All write operations must be driven by the parent fabric.
         """
         state = module_args.get("state")
-        fabric_name = module_args.get("fabric")
+        fabric_name = module_args.get("fabric_name")
 
         if state == "gathered":
             module_args["config"] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
@@ -235,7 +235,7 @@ class NetworkWorkflowCoordinator:
           6. Aggregate all results into a structured response.
         """
         log_type = "multicluster" if "multicluster" in fabric_type else "multisite"
-        parent_fabric = module_args.get("fabric")
+        parent_fabric = module_args.get("fabric_name")
         state = module_args.get("state", "merged")
         config: list[dict] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
 
@@ -253,7 +253,7 @@ class NetworkWorkflowCoordinator:
 
             if state != "deleted":
                 for child_cfg in child_configs:
-                    child_fabric_name = child_cfg.get("fabric")
+                    child_fabric_name = child_cfg.get("fabric_name")
                     if child_fabric_name not in child_member_name_set:
                         self.module.fail_json(
                             msg=(
@@ -327,7 +327,7 @@ class NetworkWorkflowCoordinator:
         single task entry so only one module call is needed per child fabric.
         """
         child_cfg = copy.deepcopy(child_cfg)
-        child_fabric_name: str = child_cfg.pop("fabric")
+        child_fabric_name: str = child_cfg.pop("fabric_name")
 
         # Inherit the Network name from the parent Network definition
         child_cfg["network_name"] = parent_network.get("network_name")
@@ -942,7 +942,7 @@ class NetworkWorkflowCoordinator:
         """
         scoped = copy.deepcopy(result)
         scoped.pop("child_fabric", None)
-        scoped["fabric"] = fabric
+        scoped["fabric_name"] = fabric
         scoped["fabric_type"] = fabric_type
         scoped.setdefault("invocation", result.get("invocation"))
         return scoped

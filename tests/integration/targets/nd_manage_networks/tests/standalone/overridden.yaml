@@ -74,7 +74,7 @@
 
 - name: Overridden TC1 - Seed Networks
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_over_seed_conf }}"
   register: overridden_seed_result
@@ -85,7 +85,7 @@
 
 - name: Overridden TC2 - Override Networks
   cisco.nd.nd_manage_networks: &override_conf
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: overridden
     config: "{{ nd_network_standalone_over_conf }}"
     output_level: debug
@@ -106,7 +106,7 @@
 
 - name: Overridden TC2 - Gather Networks
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: "{{ nd_network_overridden_seed }}"
   register: gathered_result

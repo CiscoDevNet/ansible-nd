@@ -134,7 +134,7 @@ class NetworkChildConfigModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
 
-    fabric: str
+    fabric_name: str
     network_id: int | None = Field(default=None, alias="networkId")
     vlan_id: int | None = Field(default=None, alias="vlanId")
     vlan_name: str | None = Field(default=None, alias="vlanName")

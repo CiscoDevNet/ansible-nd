@@ -20,7 +20,7 @@
 
 - name: Network Setup - Delete Test Networks
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ target_network_delete_config }}"
   register: nd_network_cleanup_result

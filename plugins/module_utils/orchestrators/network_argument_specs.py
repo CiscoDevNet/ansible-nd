@@ -126,7 +126,7 @@ def network_base_argument_spec():
 
 
 def _child_fabric_config_element_spec():
-    spec = dict(fabric=dict(type="str", required=True))
+    spec = dict(fabric_name=dict(type="str", required=True))
     spec.update(_shared_network_fields(defaults=False))
     return spec
 

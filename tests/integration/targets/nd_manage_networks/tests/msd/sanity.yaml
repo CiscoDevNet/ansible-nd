@@ -24,7 +24,7 @@
         rt_auto: true
         enable_ir: false
         child_fabric_config:
-          - fabric: "{{ nd_network_msd_child_fabric }}"
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
             network_id: "{{ nd_network_base_id + 20 }}"
             vlan_id: "{{ nd_network_base_vlan + 20 }}"
             vlan_name: ansible_nd_net_msd_sanity
@@ -47,7 +47,7 @@
 
 - name: MSD Sanity TC1 - Merge Parent Network
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_msd_sanity_conf }}"
     output_level: debug
@@ -66,7 +66,7 @@
 
 - name: MSD Sanity TC2 - Gather Parent Network
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: "{{ nd_network_msd_sanity_conf }}"
   register: msd_sanity_gathered
@@ -82,7 +82,7 @@
 
 - name: MSD Sanity TC3 - Delete Parent Network
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ target_network_delete_config }}"
     output_level: debug

@@ -52,7 +52,7 @@
 
 - name: Gathered TC1 - Seed Networks
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_gathered_conf }}"
   register: gathered_seed_result
@@ -61,7 +61,7 @@
 
 - name: Gathered TC2 - Gather Networks
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: "{{ nd_network_standalone_gathered_conf }}"
   register: gathered_result

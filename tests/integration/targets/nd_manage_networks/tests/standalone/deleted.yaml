@@ -64,7 +64,7 @@
 
 - name: Deleted TC1 - Create Networks
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_delete_seed_conf }}"
   register: delete_base_result
@@ -73,7 +73,7 @@
 
 - name: Deleted TC2 - Delete Networks
   cisco.nd.nd_manage_networks: &delete_conf
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ nd_network_standalone_delete_conf }}"
     output_level: debug
@@ -91,7 +91,7 @@
 
 - name: Deleted TC2 - Gather Networks
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: "{{ nd_network_standalone_delete_conf }}"
   register: gathered_result

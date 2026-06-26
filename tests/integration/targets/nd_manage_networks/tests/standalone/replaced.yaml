@@ -58,7 +58,7 @@
 
 - name: Replaced TC1 - Create Base Network
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_replace_base_conf }}"
   register: replace_base_result
@@ -67,7 +67,7 @@
 
 - name: Replaced TC2 - Replace Network
   cisco.nd.nd_manage_networks: &replace_conf
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: replaced
     config: "{{ nd_network_standalone_replace_conf }}"
     output_level: debug
@@ -84,7 +84,7 @@
 
 - name: Replaced TC2 - Gather Networks
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: "{{ nd_network_standalone_replace_conf }}"
   register: gathered_result

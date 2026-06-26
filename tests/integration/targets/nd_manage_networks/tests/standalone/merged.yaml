@@ -90,7 +90,7 @@
 
 - name: Merged TC1 - Merge Network
   cisco.nd.nd_manage_networks: &merged_conf
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_merged_conf }}"
     output_level: debug
@@ -109,7 +109,7 @@
 
 - name: Merged TC1 - Gather Networks
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: "{{ nd_network_standalone_merged_conf }}"
   register: gathered_result

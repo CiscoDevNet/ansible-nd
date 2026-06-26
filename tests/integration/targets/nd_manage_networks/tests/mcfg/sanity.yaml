@@ -39,7 +39,7 @@
         rt_auto: true
         enable_ir: false
         child_fabric_config:
-          - fabric: "{{ nd_network_mcfg_child_fabric }}"
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
             network_id: "{{ nd_network_base_id + 30 }}"
             vlan_id: "{{ nd_network_base_vlan + 30 }}"
             vlan_name: ansible_nd_net_mcfg_sanity
@@ -62,7 +62,7 @@
 
 - name: MCFG Sanity TC1 - Merge Parent Network
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_mcfg_sanity_conf }}"
     output_level: debug
@@ -81,7 +81,7 @@
 
 - name: MCFG Sanity TC2 - Gather Parent Network
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: "{{ nd_network_mcfg_sanity_conf }}"
   register: mcfg_sanity_gathered
@@ -97,7 +97,7 @@
 
 - name: MCFG Sanity TC2 - Gather Child Network Directly
   cisco.nd.nd_manage_networks:
-    fabric: "{{ nd_network_mcfg_child_fabric }}"
+    fabric_name: "{{ nd_network_mcfg_child_fabric }}"
     state: gathered
     config: []
   register: mcfg_sanity_child_gathered
@@ -113,7 +113,7 @@
 
 - name: MCFG Sanity TC3 - Merge Parent Network Idempotence
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_mcfg_sanity_conf }}"
     output_level: debug
@@ -130,7 +130,7 @@
 
 - name: MCFG Sanity TC4 - Delete Parent Network
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ target_network_delete_config }}"
     output_level: debug
@@ -147,7 +147,7 @@
 
 - name: MCFG Sanity TC4 - Delete Parent Network Idempotence
   cisco.nd.nd_manage_networks:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ target_network_delete_config }}"
     output_level: debug
@@ -164,7 +164,7 @@
 
 - name: MCFG Sanity TC5 - Reject Write Operation on Child Fabric
   cisco.nd.nd_manage_networks:
-    fabric: "{{ nd_network_mcfg_child_fabric }}"
+    fabric_name: "{{ nd_network_mcfg_child_fabric }}"
     state: merged
     config: "{{ nd_network_mcfg_sanity_parent_expected }}"
   register: mcfg_sanity_child_write

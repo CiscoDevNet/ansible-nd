@@ -63,6 +63,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     strategy: BaseNetworkStrategy | None = None
     delete_retry_attempts: ClassVar[int] = 3
     delete_retry_delay: ClassVar[int] = 30
+    scoped_query_threshold: ClassVar[int] = 5
 
     def model_post_init(self, __context) -> None:
         if self.strategy is None:
@@ -248,6 +249,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
         scoped_network_names = self._query_scope_network_names()
         try:
+            if len(scoped_network_names) >= self.scoped_query_threshold:
+                return self._query_all_unfiltered()
             if len(scoped_network_names) > 1:
                 return self._query_all_scoped(scoped_network_names)
             endpoint = self._make_endpoint(self.strategy.networks_get_cls())
@@ -273,11 +276,10 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         ordered_names = list(dict.fromkeys(network_names))
         try:
             self._append_scoped_network_items(networks, seen, self._query_all_scoped_batch(ordered_names), ordered_names)
+            return networks
         except Exception:
-            pass
-
-        for network_name in [name for name in ordered_names if name not in seen]:
-            self._append_scoped_network_items(networks, seen, self._query_all_scoped_one(network_name), [network_name])
+            for network_name in ordered_names:
+                self._append_scoped_network_items(networks, seen, self._query_all_scoped_one(network_name), [network_name])
         return networks
 
     def _query_all_scoped_batch(self, network_names: list[str]) -> list[dict[str, Any]]:

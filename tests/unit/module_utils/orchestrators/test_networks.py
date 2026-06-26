@@ -121,7 +121,7 @@ def test_parent_config_accepts_child_fabric_overrides():
             "is_l2only": True,
             "child_fabric_config": [
                 {
-                    "fabric": "child1",
+                    "fabric_name": "child1",
                     "vlan_id": 2301,
                     "gateway_ipv4_address": "192.0.2.1/24",
                 }
@@ -129,7 +129,7 @@ def test_parent_config_accepts_child_fabric_overrides():
         }
     )
 
-    assert model.to_config()["child_fabric_config"][0]["fabric"] == "child1"
+    assert model.to_config()["child_fabric_config"][0]["fabric_name"] == "child1"
 
 
 def test_child_task_inherits_parent_network_identity_and_layer_fields():
@@ -145,7 +145,7 @@ def test_child_task_inherits_parent_network_identity_and_layer_fields():
             "vrf_name": "NA",
             "is_l2only": True,
         },
-        child_cfg={"fabric": "child1"},
+        child_cfg={"fabric_name": "child1"},
         child_tasks_dict={},
         child_fabric_data={"fabricName": "child1", "fabricState": "member", "clusterName": "cluster1"},
         state="merged",
@@ -190,7 +190,7 @@ def test_child_task_exception_returns_structured_network_failure():
     assert result["failed"] is True
     assert "nac-msd-fabric2" in result["msg"]
     child = result["child_fabrics"][0]
-    assert child["fabric"] == "nac-msd-fabric2"
+    assert child["fabric_name"] == "nac-msd-fabric2"
     assert child["fabric_type"] == "multicluster_child"
     assert child["failed"] is True
     assert child["msg"] == "child network route failed"
@@ -250,7 +250,7 @@ def test_network_query_all_scopes_targeted_state_reads_with_batch_filter():
     ]
 
 
-def test_network_query_all_scoped_falls_back_for_missing_batch_items():
+def test_network_query_all_scoped_falls_back_when_batch_query_fails():
     strategy = StandaloneNetworkStrategy(
         fabric_name="fab1",
         fabric_data={"managementType": "vxlanIbgp"},
@@ -273,6 +273,8 @@ def test_network_query_all_scoped_falls_back_for_missing_batch_items():
     def request(**kwargs):
         requested_paths.append(kwargs["path"])
         if len(requested_paths) == 1:
+            raise RuntimeError("batch filter rejected")
+        if "BLUE_NET" in kwargs["path"]:
             return {"networks": [{"networkName": "BLUE_NET"}]}
         return {"networks": [{"networkName": "GREEN_NET"}]}
 
@@ -284,8 +286,36 @@ def test_network_query_all_scoped_falls_back_for_missing_batch_items():
     ]
     assert requested_paths == [
         "/api/v1/manage/fabrics/fab1/networks?max=2&filter=%28networkName%3ABLUE_NET%20OR%20networkName%3AGREEN_NET%29",
+        "/api/v1/manage/fabrics/fab1/networks?filter=networkName%3ABLUE_NET",
         "/api/v1/manage/fabrics/fab1/networks?filter=networkName%3AGREEN_NET",
     ]
+
+
+def test_network_query_all_uses_unfiltered_read_at_scoped_threshold():
+    strategy = StandaloneNetworkStrategy(
+        fabric_name="fab1",
+        fabric_data={"managementType": "vxlanIbgp"},
+    )
+    orchestrator = NDNetworkOrchestrator(
+        rest_send=RestSend(
+            {
+                "state": "merged",
+                "config": [{"network_name": f"NET_{index}"} for index in range(5)],
+                "check_mode": False,
+            }
+        ),
+        strategy=strategy,
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {"networks": [{"networkName": "NET_0"}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    assert orchestrator.query_all() == [{"networkName": "NET_0"}]
+    assert requested_paths == ["/api/v1/manage/fabrics/fab1/networks"]
 
 
 def test_legacy_network_names_are_normalized():
