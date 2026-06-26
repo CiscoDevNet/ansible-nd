@@ -7,7 +7,7 @@
 DOCUMENTATION = r"""
 ---
 module: nd_manage_vrfs
-version_added: "1.0.0"
+version_added: "2.0.0"
 short_description: Manages VRF definitions on Cisco Nexus Dashboard.
 description:
   - Manages VRF definitions on Cisco Nexus Dashboard across standalone,
