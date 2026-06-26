@@ -412,7 +412,6 @@ EXAMPLES = r"""
     config_actions:
       deploy: false
     state: merged
-
 """
 
 RETURN = r"""
