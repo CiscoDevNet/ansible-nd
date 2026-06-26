@@ -22,7 +22,7 @@
         vrf_description: Ansible ND VRF MSD override keep seed
         deploy: false
         child_fabric_config:
-          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
             adv_host_routes: false
       - vrf_name: ansible-msd-over-remove
         vrf_id: "{{ nd_vrf_base_id + 23 }}"
@@ -30,7 +30,7 @@
         vrf_description: Ansible ND VRF MSD override remove seed
         deploy: false
         child_fabric_config:
-          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
             adv_host_routes: false
     nd_vrf_msd_over_config:
       - vrf_name: ansible-msd-over-keep
@@ -46,7 +46,7 @@
         static_default_route: false
         deploy: false
         child_fabric_config:
-          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
             adv_host_routes: true
             adv_default_routes: false
             static_default_route: false
@@ -84,7 +84,7 @@
 
 - name: MSD Overridden TC1 - Seed VRFs
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_msd_over_seed_conf }}"
   register: msd_over_seed_result
@@ -95,7 +95,7 @@
 
 - name: MSD Overridden TC2 - Override VRFs
   cisco.nd.nd_manage_vrfs: &msd_over_conf
-    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: overridden
     config: "{{ nd_vrf_msd_over_conf }}"
     output_level: debug
@@ -117,7 +117,7 @@
 
 - name: MSD Overridden TC2 - Gather Parent VRFs
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: gathered
     config: []
   register: msd_over_gathered

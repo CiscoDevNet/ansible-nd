@@ -27,7 +27,7 @@
         static_default_route: false
         deploy: false
         child_fabric_config:
-          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
             adv_host_routes: true
             adv_default_routes: false
             static_default_route: false
@@ -64,7 +64,7 @@
 
 - name: MSD Gathered TC1 - Seed VRF
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_msd_gathered_conf }}"
   register: msd_gathered_seed_result
@@ -75,7 +75,7 @@
 
 - name: MSD Gathered TC2 - Gather Parent VRFs
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: gathered
     config: []
   register: msd_parent_gathered
@@ -95,7 +95,7 @@
 
 - name: MSD Gathered TC3 - Gather Child VRFs Directly
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_msd_child_fabric }}"
+    fabric_name: "{{ nd_vrf_msd_child_fabric }}"
     state: gathered
     config: []
   register: msd_child_gathered

@@ -144,7 +144,7 @@ def _child_fabric_config_element_spec():
     """Argument spec for one entry inside child_fabric_config."""
     spec = dict(
         # Identity (required)
-        fabric=dict(type="str", required=True),
+        fabric_name=dict(type="str", required=True),
         # L3VNI without VLAN
         l3vni_wo_vlan=dict(type="bool"),
         # Advertising overrides

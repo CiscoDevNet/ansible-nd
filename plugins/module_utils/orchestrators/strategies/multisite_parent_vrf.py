@@ -70,7 +70,7 @@ class MultisiteParentVrfStrategy(StandaloneVrfStrategy):
         child_state = "replaced" if state == "overridden" else state
 
         return {
-            "fabric": child_fabric_name,
+            "fabric_name": child_fabric_name,
             "state": child_state,
             "config": child_configs,
         }

@@ -341,7 +341,7 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
     }
 
     standalone = VrfConfigModel.from_config(config).to_config()
-    parent = VrfParentConfigModel.from_config(dict(config, child_fabric_config=[{"fabric": "AK-VXLAN"}])).to_config()
+    parent = VrfParentConfigModel.from_config(dict(config, child_fabric_config=[{"fabric_name": "AK-VXLAN"}])).to_config()
 
     for parsed in (standalone, parent):
         assert parsed["deploy"] is False
@@ -652,12 +652,12 @@ def test_vrfs_00080_query_all_scopes_targeted_state_reads():
     ]
 
 
-def test_vrfs_00081_query_all_scoped_falls_back_for_missing_batch_items():
+def test_vrfs_00081_query_all_scoped_falls_back_when_batch_query_fails():
     """
     # Summary
 
-    Verify batched scoped reads fill in names not returned by the batch query
-    using the legacy per-name filter path.
+    Verify scoped reads use the per-name filter fallback only when the batched
+    scoped query itself fails.
     """
     orchestrator = _orchestrator_for_request_tests(
         {
@@ -673,6 +673,8 @@ def test_vrfs_00081_query_all_scoped_falls_back_for_missing_batch_items():
     def request(**kwargs):
         requested_paths.append(kwargs["path"])
         if len(requested_paths) == 1:
+            raise RuntimeError("batch filter rejected")
+        if "ansible-vrf-b" in kwargs["path"]:
             return {"vrfs": [{"vrfName": "ansible-vrf-b"}]}
         return {"vrfs": [{"vrfName": "ansible-vrf-a"}]}
 
@@ -684,8 +686,34 @@ def test_vrfs_00081_query_all_scoped_falls_back_for_missing_batch_items():
     ]
     assert requested_paths == [
         "/api/v1/manage/fabrics/AK-VXLAN/vrfs?max=2&filter=%28vrfName%3Aansible-vrf-a%20OR%20vrfName%3Aansible-vrf-b%29",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3Aansible-vrf-b",
         "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3Aansible-vrf-a",
     ]
+
+
+def test_vrfs_00082_query_all_uses_unfiltered_read_at_scoped_threshold():
+    """
+    # Summary
+
+    Verify large targeted VRF configs avoid a large Lucene filter and use the
+    normal fabric GET instead.
+    """
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "merged",
+            "config": [{"vrf_name": f"ansible-vrf-{index}"} for index in range(5)],
+        }
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {"vrfs": [{"vrfName": "ansible-vrf-0"}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    assert orchestrator.query_all() == [{"vrfName": "ansible-vrf-0"}]
+    assert requested_paths == ["/api/v1/manage/fabrics/AK-VXLAN/vrfs"]
 
 
 def test_vrfs_00085_query_all_does_not_scope_overridden_reads():

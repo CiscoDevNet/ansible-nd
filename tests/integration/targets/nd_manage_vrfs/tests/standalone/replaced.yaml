@@ -105,7 +105,7 @@
 
 - name: Replaced TC1 - Create Base VRF
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_replace_base_conf }}"
   register: replace_base_result
@@ -114,7 +114,7 @@
 
 - name: Replaced TC2 - Replace VRF
   cisco.nd.nd_manage_vrfs: &replace_conf
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: replaced
     config: "{{ nd_vrf_standalone_replace_conf }}"
     output_level: debug
@@ -131,7 +131,7 @@
 
 - name: Replaced TC2 - Gather VRFs
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: []
   register: gathered_result

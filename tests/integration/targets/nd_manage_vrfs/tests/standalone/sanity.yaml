@@ -158,7 +158,7 @@
 
 - name: Standalone Sanity TC1 - Merged
   cisco.nd.nd_manage_vrfs: &standalone_sanity_merge
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_sanity_merge_conf }}"
     output_level: debug
@@ -168,7 +168,7 @@
 
 - name: Standalone Sanity TC1 - Gather After Merged
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: []
   register: standalone_sanity_gathered
@@ -198,7 +198,7 @@
 
 - name: Standalone Sanity TC2 - Replaced
   cisco.nd.nd_manage_vrfs: &standalone_sanity_replace
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: replaced
     config: "{{ nd_vrf_standalone_sanity_replace_conf }}"
     output_level: debug
@@ -208,7 +208,7 @@
 
 - name: Standalone Sanity TC2 - Gather After Replaced
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: []
   register: standalone_sanity_replaced_gathered
@@ -238,7 +238,7 @@
 
 - name: Standalone Sanity TC3 - Overridden
   cisco.nd.nd_manage_vrfs: &standalone_sanity_override
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: overridden
     config: "{{ nd_vrf_standalone_sanity_override_conf }}"
     output_level: debug
@@ -248,7 +248,7 @@
 
 - name: Standalone Sanity TC3 - Gather After Overridden
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: []
   register: standalone_sanity_overridden_gathered
@@ -288,7 +288,7 @@
 
 - name: Standalone Sanity TC4 - Deleted
   cisco.nd.nd_manage_vrfs: &standalone_sanity_delete
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ nd_vrf_standalone_sanity_delete_conf }}"
     output_level: debug
@@ -298,7 +298,7 @@
 
 - name: Standalone Sanity TC4 - Gather After Deleted
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ target_fabric }}"
+    fabric_name: "{{ target_fabric }}"
     state: gathered
     config: []
   register: standalone_sanity_deleted_gathered
@@ -328,13 +328,13 @@
 
 - name: Standalone Sanity TC5 - Reject child_fabric_config on Standalone Fabric
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_standalone_fabric }}"
+    fabric_name: "{{ nd_vrf_standalone_fabric }}"
     state: merged
     config:
       - vrf_name: ansible-std-sanity-child-cfg
         vrf_id: "{{ nd_vrf_base_id + 43 }}"
         child_fabric_config:
-          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
             adv_host_routes: true
   register: standalone_child_config_result
   ignore_errors: true

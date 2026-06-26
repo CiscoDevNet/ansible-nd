@@ -22,7 +22,7 @@
         vrf_description: Ansible ND VRF MCFG replaced base
         deploy: false
         child_fabric_config:
-          - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
             adv_host_routes: false
       - vrf_name: ansible-mcfg-repl-parent
         vrf_id: "{{ nd_vrf_base_id + 39 }}"
@@ -41,7 +41,7 @@
         max_ibgp_paths: 4
         deploy: false
         child_fabric_config:
-          - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
             adv_host_routes: true
             adv_default_routes: false
             static_default_route: false
@@ -91,7 +91,7 @@
 
 - name: MCFG Replaced TC1 - Create Base VRF
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_mcfg_replace_base_conf }}"
   register: mcfg_replace_base_result
@@ -102,7 +102,7 @@
 
 - name: MCFG Replaced TC2 - Replace Parent and Child VRF
   cisco.nd.nd_manage_vrfs: &mcfg_replace_conf
-    fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: replaced
     config: "{{ nd_vrf_mcfg_replace_conf }}"
     output_level: debug
@@ -124,7 +124,7 @@
 
 - name: MCFG Replaced TC2 - Gather Parent VRFs
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: gathered
     config: []
   register: mcfg_replace_parent_gathered
@@ -161,7 +161,7 @@
 
 - name: MCFG Replaced TC2 - Gather Child VRFs
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_mcfg_child_fabric }}"
+    fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
     state: gathered
     config: []
   register: mcfg_replace_child_gathered

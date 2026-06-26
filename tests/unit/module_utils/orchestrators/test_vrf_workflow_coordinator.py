@@ -68,7 +68,7 @@ class _ParentStrategy:
 
     def build_child_task_args(self, child_fabric_name, vrf_configs, state):
         return {
-            "fabric": child_fabric_name,
+            "fabric_name": child_fabric_name,
             "state": state,
             "config": vrf_configs,
         }
@@ -163,12 +163,12 @@ def test_vrf_workflow_coordinator_00002_standalone_rejects_child_fabric_config()
     when the target fabric is standalone.
     """
     module_args = {
-        "fabric": "AK-VXLAN",
+        "fabric_name": "AK-VXLAN",
         "state": "merged",
         "config": [
             {
                 "vrf_name": "ansible-vrf",
-                "child_fabric_config": [{"fabric": "child"}],
+                "child_fabric_config": [{"fabric_name": "child"}],
             }
         ],
     }
@@ -193,7 +193,7 @@ def test_vrf_workflow_coordinator_00003_child_rejects_direct_attach():
     before workflow execution.
     """
     module_args = {
-        "fabric": "AK-VXLAN",
+        "fabric_name": "AK-VXLAN",
         "state": "gathered",
         "config": [
             {
@@ -327,7 +327,7 @@ def test_vrf_workflow_coordinator_00004_child_write_ignores_null_parser_defaults
     direct-child write rejection message.
     """
     module_args = {
-        "fabric": "AK-VXLAN",
+        "fabric_name": "AK-VXLAN",
         "state": "merged",
         "config": [
             {
@@ -361,7 +361,7 @@ def test_vrf_workflow_coordinator_00005_attach_fields_map_to_api_payload():
     mapped to the correct Manage API attachment payload locations.
     """
     module_args = {
-        "fabric": "AK-VXLAN",
+        "fabric_name": "AK-VXLAN",
         "state": "merged",
         "config": [
             {
@@ -452,7 +452,7 @@ def test_vrf_workflow_coordinator_00010_parent_child_results_keep_state_machine_
     assert result["workflow"] == "Multisite Parent with Child Fabric Processing"
 
     parent = result["parent_fabric"]
-    assert parent["fabric"] == "msd_p"
+    assert parent["fabric_name"] == "msd_p"
     assert parent["fabric_type"] == "multisite_parent"
     assert parent["after"] == parent_result["after"]
     assert parent["api_paths"] == parent_result["api_paths"]
@@ -460,7 +460,7 @@ def test_vrf_workflow_coordinator_00010_parent_child_results_keep_state_machine_
     assert "child_fabric" not in parent
 
     child = result["child_fabrics"][0]
-    assert child["fabric"] == "AK-VXLAN"
+    assert child["fabric_name"] == "AK-VXLAN"
     assert child["fabric_type"] == "multisite_child"
     assert child["after"] == child_result["after"]
     assert child["api_paths"] == child_result["api_paths"]
@@ -504,7 +504,7 @@ def test_vrf_workflow_coordinator_00011_child_exception_returns_structured_failu
     assert result["failed"] is True
     assert "AK-VXLAN" in result["msg"]
     child = result["child_fabrics"][0]
-    assert child["fabric"] == "AK-VXLAN"
+    assert child["fabric_name"] == "AK-VXLAN"
     assert child["fabric_type"] == "multisite_child"
     assert child["failed"] is True
     assert child["msg"] == "child route failed"
@@ -520,7 +520,7 @@ def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks
     from child tasks, and the parent deploy runs after child processing.
     """
     module_args = {
-        "fabric": "msd_p",
+        "fabric_name": "msd_p",
         "state": "merged",
         "output_level": "debug",
         "config": [
@@ -530,7 +530,7 @@ def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks
                 "attach": [{"ip_address": "192.168.1.224"}],
                 "child_fabric_config": [
                     {
-                        "fabric": "AK-VXLAN",
+                        "fabric_name": "AK-VXLAN",
                         "adv_default_routes": False,
                     }
                 ],
@@ -782,13 +782,13 @@ def test_vrf_workflow_coordinator_00050_deleted_ignores_child_fabric_config():
     execute child fabric tasks.
     """
     module_args = {
-        "fabric": "msd_p",
+        "fabric_name": "msd_p",
         "state": "deleted",
         "output_level": "debug",
         "config": [
             {
                 "vrf_name": "ansible-msd-vrf",
-                "child_fabric_config": [{"fabric": "not-a-member"}],
+                "child_fabric_config": [{"fabric_name": "not-a-member"}],
             }
         ],
     }
@@ -921,7 +921,7 @@ def test_vrf_workflow_coordinator_00070_deleted_deploys_before_delete():
     deploy_type=vrf while ignoring deploy=false.
     """
     module_args = {
-        "fabric": "msd_p",
+        "fabric_name": "msd_p",
         "state": "deleted",
         "output_level": "debug",
         "config": [
@@ -986,7 +986,7 @@ def test_vrf_workflow_coordinator_00075_deleted_empty_config_deletes_state_machi
     query or rewriting proposed config.
     """
     module_args = {
-        "fabric": "msd_p",
+        "fabric_name": "msd_p",
         "state": "deleted",
         "output_level": "debug",
         "config": [],
@@ -1083,7 +1083,7 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
     machine deletes them, while leaving retained VRFs to the normal flow.
     """
     module_args = {
-        "fabric": "msd_p",
+        "fabric_name": "msd_p",
         "state": "overridden",
         "output_level": "debug",
         "config": [
@@ -1208,7 +1208,7 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
 
 def test_vrf_workflow_coordinator_check_mode_deleted_skips_deploy_and_wait():
     module_args = {
-        "fabric": "msd_p",
+        "fabric_name": "msd_p",
         "state": "deleted",
         "output_level": "debug",
         "config": [
@@ -1262,7 +1262,7 @@ def test_vrf_workflow_coordinator_check_mode_deleted_skips_deploy_and_wait():
 
 def test_vrf_workflow_coordinator_deleted_deploys_pending_vrfs_before_delete():
     module_args = {
-        "fabric": "MCFG_C",
+        "fabric_name": "MCFG_C",
         "state": "deleted",
         "config": [],
         "timeout": 30,
@@ -1309,7 +1309,7 @@ def test_vrf_workflow_coordinator_deleted_deploys_pending_vrfs_before_delete():
 
 def test_vrf_workflow_coordinator_delete_all_parent_cleanup_uses_vrf_deploy_scope():
     coordinator = VrfWorkflowCoordinator(
-        module=_Module({"fabric": "MCFG_C", "state": "deleted", "config": []}),
+        module=_Module({"fabric_name": "MCFG_C", "state": "deleted", "config": []}),
         strategy=_McfgParentStrategy(),
     )
 
@@ -1336,7 +1336,7 @@ def test_vrf_workflow_coordinator_mcfg_parent_uses_manage_deploy_endpoint():
 
 def test_vrf_workflow_coordinator_check_mode_attachment_phase_returns_planned_payload():
     module_args = {
-        "fabric": "msd_p",
+        "fabric_name": "msd_p",
         "state": "merged",
         "config": [
             {
@@ -1391,7 +1391,7 @@ def test_vrf_workflow_coordinator_00085_overridden_new_vrf_does_not_query_missin
     without querying attachments for the new VRF before it exists on ND.
     """
     module_args = {
-        "fabric": "msd_p",
+        "fabric_name": "msd_p",
         "state": "overridden",
         "output_level": "debug",
         "config": [
@@ -1506,7 +1506,7 @@ def test_vrf_workflow_coordinator_00090_delete_precheck_blocks_network_reference
     the target VRF.
     """
     module_args = {
-        "fabric": "msd_p",
+        "fabric_name": "msd_p",
         "state": "deleted",
         "output_level": "debug",
         "config": [{"vrf_name": "ansible-msd-vrf"}],

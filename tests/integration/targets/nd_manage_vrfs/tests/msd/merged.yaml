@@ -67,7 +67,7 @@
         deploy: "{{ nd_vrf_msd_attach_block | length > 0 }}"
         deploy_type: vrf
         child_fabric_config:
-          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
             l3vni_wo_vlan: false
             adv_host_routes: true
             adv_default_routes: false
@@ -100,7 +100,7 @@
         netflow_enable: false
         deploy: false
         child_fabric_config:
-          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
             l3vni_wo_vlan: true
             adv_host_routes: false
             adv_default_routes: true
@@ -144,7 +144,7 @@
 
 - name: MSD Merged TC1 - Merge Parent and Child VRF
   cisco.nd.nd_manage_vrfs: &msd_merged_conf
-    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_msd_merged_conf }}"
     output_level: debug
@@ -162,7 +162,7 @@
       - msd_merged_result.workflow == "Multisite Parent with Child Fabric Processing"
       - msd_merged_result.parent_fabric.fabric_type == "multisite_parent"
       - msd_merged_result.child_fabrics | length == 1
-      - msd_merged_result.child_fabrics[0].fabric == nd_vrf_msd_child_fabric
+      - msd_merged_result.child_fabrics[0].fabric_name == nd_vrf_msd_child_fabric
       - msd_merged_result.child_fabrics[0].fabric_type == "multisite_child"
   when: nd_vrf_run_msd | bool
   tags:
@@ -171,7 +171,7 @@
 
 - name: MSD Merged TC1 - Gather Parent VRFs
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: gathered
     config: []
   register: msd_parent_gathered
@@ -191,7 +191,7 @@
 
 - name: MSD Merged TC1 - Gather Child VRFs
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_msd_child_fabric }}"
+    fabric_name: "{{ nd_vrf_msd_child_fabric }}"
     state: gathered
     config: []
   register: msd_child_gathered

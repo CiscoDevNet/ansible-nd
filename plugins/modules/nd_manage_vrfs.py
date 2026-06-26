@@ -25,7 +25,7 @@ description:
 author:
   - Akshayanat C S (@achengam)
 options:
-  fabric:
+  fabric_name:
     description:
       - Name of the fabric to operate on.
       - The module auto-detects whether this is a standalone, parent,
@@ -405,7 +405,7 @@ options:
         type: list
         elements: dict
         suboptions:
-          fabric:
+          fabric_name:
             description: Name of the child fabric.
             type: str
             required: true
@@ -475,7 +475,7 @@ EXAMPLES = r"""
 # ── Standalone fabric — create a VRF and attach it to a switch ───────────────
 - name: Create VRF on standalone fabric and deploy by switch
   cisco.nd.nd_manage_vrfs:
-    fabric: fab1
+    fabric_name: fab1
     state: merged
     config:
       - vrf_name: VRF_BLUE
@@ -516,7 +516,7 @@ EXAMPLES = r"""
 # ── Standalone fabric — create VRF with TRM ──────────────────────────────────
 - name: Create VRF with Tenant Routed Multicast enabled
   cisco.nd.nd_manage_vrfs:
-    fabric: fab1
+    fabric_name: fab1
     state: merged
     config:
       - vrf_name: VRF_MCAST
@@ -531,7 +531,7 @@ EXAMPLES = r"""
 # ── Standalone fabric — create user-defined VRF template payload ─────────────
 - name: Create user-defined VRF
   cisco.nd.nd_manage_vrfs:
-    fabric: fab1
+    fabric_name: fab1
     state: merged
     config:
       - vrf_name: VRF_CUSTOM
@@ -546,7 +546,7 @@ EXAMPLES = r"""
 # ── MSD parent fabric — create VRF with child fabric-instance overrides ──────
 - name: Create VRF on MSD parent with per-child fabric-instance overrides
   cisco.nd.nd_manage_vrfs:
-    fabric: msd_parent
+    fabric_name: msd_parent
     state: merged
     config:
       - vrf_name: VRF_BLUE
@@ -567,10 +567,10 @@ EXAMPLES = r"""
         deploy: true
         deploy_type: vrf
         child_fabric_config:
-          - fabric: child_fabric_1
+          - fabric_name: child_fabric_1
             l3vni_wo_vlan: false
             adv_host_routes: true
-          - fabric: child_fabric_2
+          - fabric_name: child_fabric_2
             adv_default_routes: false
             static_default_route: false
             bgp_password: abcdef12
@@ -579,7 +579,7 @@ EXAMPLES = r"""
 # ── MCFG parent fabric — create VRF with child fabric-instance overrides ─────
 - name: Create VRF on MCFG parent with child fabric overrides
   cisco.nd.nd_manage_vrfs:
-    fabric: mcfg_parent
+    fabric_name: mcfg_parent
     state: merged
     config:
       - vrf_name: VRF_GREEN
@@ -595,7 +595,7 @@ EXAMPLES = r"""
         export_vpn_rt:
           - "65000:50040"
         child_fabric_config:
-          - fabric: cluster_child_1
+          - fabric_name: cluster_child_1
             adv_host_routes: true
             netflow_enable: true
             nf_monitor: MON1
@@ -603,14 +603,14 @@ EXAMPLES = r"""
 # ── Child fabric — gathered only ────────────────────────────────────────────────
 - name: Gathered VRFs on a child fabric (write ops must go through parent)
   cisco.nd.nd_manage_vrfs:
-    fabric: child_fabric_1
+    fabric_name: child_fabric_1
     state: gathered
     config: []
 
 # ── Delete VRFs ──────────────────────────────────────────────────────────────
 - name: Delete a VRF
   cisco.nd.nd_manage_vrfs:
-    fabric: fab1
+    fabric_name: fab1
     state: deleted
     config:
       - vrf_name: VRF_BLUE
@@ -618,7 +618,7 @@ EXAMPLES = r"""
 # ── Replace VRF configuration ───────────────────────────────────────────────
 - name: Replace VRF configuration (full replace)
   cisco.nd.nd_manage_vrfs:
-    fabric: fab1
+    fabric_name: fab1
     state: replaced
     config:
       - vrf_name: VRF_BLUE
@@ -672,7 +672,7 @@ child_fabrics:
   description:
     - Per-child-fabric results for MSD or MCFG parent workflows.
     - Each entry contains the same state-machine and API trace fields as a
-      standalone result, plus the child fabric name.
+      standalone result, plus C(fabric_name).
   returned: when a parent workflow processes one or more child fabrics
   type: list
   elements: dict
@@ -762,7 +762,7 @@ def vrf_parent_argument_spec():
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        fabric=dict(type="str", required=True),
+        fabric_name=dict(type="str", required=True),
         state=dict(
             type="str",
             default="merged",
@@ -782,7 +782,7 @@ def main():
     )
 
     try:
-        fabric_name: str = module.params["fabric"]
+        fabric_name: str = module.params["fabric_name"]
 
         # Resolve the VRF strategy from the ND API
         nd_module = NDModule(module)

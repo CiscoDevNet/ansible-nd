@@ -184,7 +184,7 @@ class VrfChildConfigModel(NDNestedModel):
     overrides for fabric-instance settings such as TRM, advertising,
     BGP authentication, netflow, and MVPN route-target settings.
 
-    All fields except ``fabric`` are optional; absent fields mean "inherit
+    All fields except ``fabric_name`` are optional; absent fields mean "inherit
     the parent setting".
 
     Based on: nd_manage_vrfs.py config.child_fabric_config suboptions
@@ -194,7 +194,7 @@ class VrfChildConfigModel(NDNestedModel):
 
     # --- Identity ---
 
-    fabric: str = Field(
+    fabric_name: str = Field(
         description="Name of the child fabric",
     )
 

@@ -22,7 +22,7 @@
         vrf_description: Ansible ND VRF MCFG deleted test
         deploy: false
         child_fabric_config:
-          - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
             adv_host_routes: true
             adv_default_routes: false
             static_default_route: false
@@ -57,7 +57,7 @@
 
 - name: MCFG Deleted TC1 - Create VRF
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_mcfg_delete_conf }}"
   register: mcfg_delete_seed_result
@@ -68,7 +68,7 @@
 
 - name: MCFG Deleted TC2 - Delete Parent VRF With Ignored Child Config
   cisco.nd.nd_manage_vrfs: &mcfg_delete_conf
-    fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: deleted
     config: "{{ nd_vrf_mcfg_delete_conf }}"
     output_level: debug
@@ -91,7 +91,7 @@
 
 - name: MCFG Deleted TC2 - Gather Parent VRFs
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: gathered
     config: []
   register: mcfg_delete_gathered

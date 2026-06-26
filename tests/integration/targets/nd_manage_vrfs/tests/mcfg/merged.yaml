@@ -57,7 +57,7 @@
         deploy: "{{ nd_vrf_mcfg_attach_block | length > 0 }}"
         deploy_type: vrf
         child_fabric_config:
-          - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
             adv_host_routes: true
             adv_default_routes: false
             static_default_route: false
@@ -86,7 +86,7 @@
         static_default_route: true
         deploy: false
         child_fabric_config:
-          - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
             l3vni_wo_vlan: true
             adv_host_routes: false
             adv_default_routes: true
@@ -130,7 +130,7 @@
 
 - name: MCFG Merged TC1 - Merge Parent and Child VRF
   cisco.nd.nd_manage_vrfs: &mcfg_merged_conf
-    fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_mcfg_merged_conf }}"
     output_level: debug
@@ -148,7 +148,7 @@
       - mcfg_merged_result.workflow == "Multicluster Parent with Child Fabric Processing"
       - mcfg_merged_result.parent_fabric.fabric_type == "multicluster_parent"
       - mcfg_merged_result.child_fabrics | length == 1
-      - mcfg_merged_result.child_fabrics[0].fabric == nd_vrf_mcfg_child_fabric
+      - mcfg_merged_result.child_fabrics[0].fabric_name == nd_vrf_mcfg_child_fabric
       - mcfg_merged_result.child_fabrics[0].fabric_type == "multicluster_child"
   when: nd_vrf_run_mcfg | bool
   tags:
@@ -157,7 +157,7 @@
 
 - name: MCFG Merged TC1 - Gather Parent VRFs
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: gathered
     config: []
   register: mcfg_merged_parent_gathered
@@ -224,7 +224,7 @@
 
 - name: MCFG Merged TC1 - Gather Child VRFs
   cisco.nd.nd_manage_vrfs:
-    fabric: "{{ nd_vrf_mcfg_child_fabric }}"
+    fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
     state: gathered
     config: []
   register: mcfg_merged_child_gathered
