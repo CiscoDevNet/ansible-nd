@@ -18,7 +18,7 @@
 # CLEANUP - Ensure clean state before tests
 #############################################################################
 - name: Clean up any existing test fabrics before starting tests
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -31,7 +31,7 @@
 # TEST 1: STATE MERGED - Create fabric using merged state
 #############################################################################
 - name: "TEST 1a: Create eBGP fabric using state merged (first run)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -49,7 +49,7 @@
   tags: [test_merged, test_merged_create]
 
 - name: "TEST 1b: Create eBGP fabric using state merged (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -67,7 +67,7 @@
   tags: [test_merged, test_merged_idempotent]
 
 - name: "TEST 1c: Update eBGP fabric using state merged (modify existing)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -117,7 +117,7 @@
           fabric_mtu: 9216
           l2_host_interface_mtu: 9216
           tenant_dhcp: true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: false
           nxapi_http_port: 80
@@ -265,7 +265,7 @@
 # TEST 2: STATE REPLACED - Create and manage fabric using replaced state
 #############################################################################
 - name: "TEST 2a: Create eBGP fabric using state replaced (first run)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
@@ -317,9 +317,9 @@
           fabric_mtu: 9000              # Different from default 9216
           l2_host_interface_mtu: 9000  # Different from default 9216
           tenant_dhcp: false            # Different from default true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
-          nxapi_http: true              # Different from default false
+          nxapi_http: true
           nxapi_http_port: 80
           snmp_trap: false              # Different from default true
           anycast_border_gateway_advertise_physical_ip: true  # Different from default false
@@ -366,7 +366,7 @@
   tags: [test_replaced, test_replaced_create]
 
 - name: "TEST 2b: Create eBGP fabric using state replaced (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
@@ -418,7 +418,7 @@
           fabric_mtu: 9000
           l2_host_interface_mtu: 9000
           tenant_dhcp: false
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: true
           nxapi_http_port: 80
@@ -467,7 +467,7 @@
   tags: [test_replaced, test_replaced_idempotent]
 
 - name: "TEST 2c: Update eBGP fabric using state replaced (complete replacement with minimal config)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
@@ -487,6 +487,7 @@
           bgp_asn_range: "65000-65100"
           site_id: "65004"
           banner: "^ Updated via replaced state ^"
+          nxapi: false
   register: ebgp_replaced_result_3
   tags: [test_replaced, test_replaced_update]
 
@@ -897,7 +898,7 @@
 # TEST 3: Demonstrate difference between merged and replaced states
 #############################################################################
 - name: "TEST 3: Create eBGP fabric for merged vs replaced comparison"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
@@ -906,14 +907,14 @@
   tags: [test_comparison]
 
 - name: "TEST 3a: Partial update using merged state (should merge changes)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: merged
     config:
       - fabric_name: "{{ ebgp_test_fabric_deleted }}"
         category: fabric
         management:
-          bgp_asn: "65004"              # Different from default ASN
+          bgp_asn: "65004"
           # bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65100"
           fabric_mtu: 8000       # Only updating MTU
@@ -930,7 +931,7 @@
   tags: [test_comparison, test_merged_partial]
 
 - name: "TEST 3b: Partial update using replaced state (should replace entire config)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
@@ -958,7 +959,7 @@
 # TEST 4: STATE DELETED - Delete fabrics
 #############################################################################
 - name: "TEST 4a: Delete eBGP fabric using state deleted"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -976,7 +977,7 @@
   tags: [test_deleted, test_deleted_delete]
 
 - name: "TEST 4b: Delete eBGP fabric using state deleted (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -997,7 +998,7 @@
 # TEST 5: Multiple fabric operations in single task
 #############################################################################
 - name: "TEST 5: Multiple eBGP fabric operations in single task"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -1047,7 +1048,7 @@
           fabric_mtu: 9216
           l2_host_interface_mtu: 9216
           tenant_dhcp: true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: false
           nxapi_http_port: 80
@@ -1126,7 +1127,7 @@
           fabric_mtu: 9216
           l2_host_interface_mtu: 9216
           tenant_dhcp: true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: false
           nxapi_http_port: 80
@@ -1175,7 +1176,7 @@
 # FINAL CLEANUP - Clean up all test fabrics
 #############################################################################
 - name: "CLEANUP: Delete all test eBGP fabrics"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -1194,7 +1195,7 @@
   debug:
     msg: |
       ========================================================
-      TEST SUMMARY for cisco.nd.nd_manage_fabric_ebgp module:
+      TEST SUMMARY for cisco.nd.nd_manage_fabric_ebgp_vxlan module:
       ========================================================
       ✓ TEST 1: STATE MERGED
         - Create fabric: {{ 'PASSED' if ebgp_merged_result_1 is changed else 'FAILED' }}

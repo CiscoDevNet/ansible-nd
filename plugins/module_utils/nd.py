@@ -5,19 +5,19 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
-from functools import reduce
 
-from copy import deepcopy
 import os
 import shutil
 import tempfile
-from ansible.module_utils.basic import json
-from ansible.module_utils.basic import env_fallback
-from ansible.module_utils.six import PY3
-from ansible.module_utils.six.moves.urllib.parse import urlencode
+from copy import deepcopy
+from functools import reduce
+
 from ansible.module_utils._text import to_native, to_text
+from ansible.module_utils.basic import env_fallback, json
 from ansible.module_utils.connection import Connection
+from ansible.module_utils.six.moves.urllib.parse import urlencode
 from ansible_collections.cisco.nd.plugins.module_utils.constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
+from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 
 def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
@@ -61,47 +61,8 @@ def sanitize(obj_to_sanitize, keys=None, values=None, recursive=True, remove_non
         raise TypeError("object to sanitize can only be of type list or dict. Got {}".format(type(obj_to_sanitize)))
 
 
-if PY3:
-
-    def cmp(a, b):
-        return (a > b) - (a < b)
-
-
-def issubset(subset, superset):
-    """Recurse through a nested dictionary and check if it is a subset of another."""
-
-    if type(subset) is not type(superset):
-        return False
-
-    if not isinstance(subset, dict):
-        if isinstance(subset, list):
-            if len(subset) != len(superset):
-                return False
-
-            remaining = list(superset)
-            for item in subset:
-                for index, candidate in enumerate(remaining):
-                    if issubset(item, candidate) and issubset(candidate, item):
-                        del remaining[index]
-                        break
-                else:
-                    return False
-            return True
-        return subset == superset
-
-    for key, value in subset.items():
-        if value is None:
-            continue
-
-        if key not in superset:
-            return False
-
-        superset_value = superset.get(key)
-
-        if not issubset(value, superset_value):
-            return False
-
-    return True
+def cmp(a, b):
+    return (a > b) - (a < b)
 
 
 def update_qs(params):

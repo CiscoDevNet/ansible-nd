@@ -293,7 +293,7 @@ fabric_config_ebgp:
     fabric_mtu: 9216
     l2_host_interface_mtu: 9216
     tenant_dhcp: true
-    nxapi: false
+    nxapi: true
     nxapi_https_port: 443
     nxapi_http: false
     nxapi_http_port: 80

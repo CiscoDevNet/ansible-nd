@@ -1,0 +1,1142 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for tests/unit/module_utils/orchestrators/test_ethernet_access_interface.py",
+        "Each key matches a test function + suffix (a/b/c/...) per CLAUDE.md unit-test conventions.",
+        "The fixtures simulate ND responses for:",
+        "  - GET /api/v1/manage/fabrics/{fabric_name}/summary  (fabric_summary via FabricContext)",
+        "  - GET /api/v1/manage/fabrics/{fabric_name}/switches (switch_map via FabricContext)",
+        "  - GET /api/v1/manage/fabrics/{fabric_name}/switches/{sn}/interfaces (EpManageInterfacesListGet per switch)"
+    ],
+    "test_query_all_happy_path_00400a": {
+        "TEST_NOTES": [
+            "Fabric summary: fabric exists (for validate_prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a",
+            "fabricStatus": "default"
+        }
+    },
+    "test_query_all_happy_path_00400b": {
+        "TEST_NOTES": [
+            "Switch list: two switches in fabric_1"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_query_all_happy_path_00400c": {
+        "TEST_NOTES": [
+            "Interfaces for switch FDO11111AAA: one accessHost, one trunkHost (should be filtered out).",
+            "Expect: only the accessHost interface is retained."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 20,
+                                "description": "host-1"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "allowedVlans": "1-100"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_query_all_happy_path_00400d": {
+        "TEST_NOTES": [
+            "Interfaces for switch FDO22222BBB: one accessHost."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet2/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 30
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_query_all_fabric_not_found_00420a": {
+        "TEST_NOTES": [
+            "Fabric summary: 404 not found; validate_prerequisites should raise RuntimeError."
+        ],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+    "test_query_all_deployment_frozen_00430a": {
+        "TEST_NOTES": [
+            "Fabric summary reports fabricStatus=frozen; validate_prerequisites should raise RuntimeError.",
+            "Only the summary response is seeded: query_all must raise before any switch/interface fetch."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a",
+            "fabricStatus": "frozen"
+        }
+    },
+    "test_query_all_config_scoped_00410a": {
+        "TEST_NOTES": [
+            "Fabric summary: fabric exists (for validate_prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a",
+            "fabricStatus": "default"
+        }
+    },
+    "test_query_all_config_scoped_00410b": {
+        "TEST_NOTES": [
+            "Switch list: two switches in fabric_1; only 192.168.1.10 is named in the config."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.10",
+                    "switchId": "FDO10101AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.11",
+                    "switchId": "FDO11111BBB"
+                }
+            ]
+        }
+    },
+    "test_query_all_config_scoped_00410c": {
+        "TEST_NOTES": [
+            "Interfaces for switch FDO10101AAA (192.168.1.10): one accessHost.",
+            "Switch FDO11111BBB (192.168.1.11) is absent from the config and must never be requested."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO10101AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 40
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_query_all_overridden_fabric_wide_00415a": {
+        "TEST_NOTES": [
+            "Fabric summary: fabric exists (for validate_prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a",
+            "fabricStatus": "default"
+        }
+    },
+    "test_query_all_overridden_fabric_wide_00415b": {
+        "TEST_NOTES": [
+            "Switch list: two switches in fabric_1; both are queried because state is overridden."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.20",
+                    "switchId": "FDO20202CCC"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.21",
+                    "switchId": "FDO21212DDD"
+                }
+            ]
+        }
+    },
+    "test_query_all_overridden_fabric_wide_00415c": {
+        "TEST_NOTES": [
+            "Interfaces for switch FDO20202CCC (192.168.1.20): one accessHost."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO20202CCC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 50
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_query_all_overridden_fabric_wide_00415d": {
+        "TEST_NOTES": [
+            "Interfaces for switch FDO21212DDD (192.168.1.21): one accessHost."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO21212DDD/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet2/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 60
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_create_pc_member_blocked_00500a": {
+        "TEST_NOTES": [
+            "00500: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_create_pc_member_blocked_00500b": {
+        "TEST_NOTES": [
+            "00500: interfaceList -- Ethernet1/1 is an existing member of port-channel 10"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_create_pc_member_whitelisted_00510a": {
+        "TEST_NOTES": [
+            "00510: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_create_pc_member_whitelisted_00510b": {
+        "TEST_NOTES": [
+            "00510: interfaceList -- Ethernet1/1 is an existing member of port-channel 10"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_create_pc_member_whitelisted_00510c": {
+        "TEST_NOTES": [
+            "00510: POST create -- only the whitelisted `description` field changes, so it is allowed"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "ok"
+        }
+    },
+    "test_create_not_pc_member_00520a": {
+        "TEST_NOTES": [
+            "00520: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_create_not_pc_member_00520b": {
+        "TEST_NOTES": [
+            "00520: interfaceList -- Ethernet1/1 has no portChannelId, so it is not a port-channel member"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 5
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_create_not_pc_member_00520c": {
+        "TEST_NOTES": [
+            "00520: POST create -- non-whitelisted access_vlan is allowed because the interface is not a PC member"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "ok"
+        }
+    },
+    "test_update_pc_member_blocked_00530a": {
+        "TEST_NOTES": [
+            "00530: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_blocked_00530b": {
+        "TEST_NOTES": [
+            "00530: interfaceList -- Ethernet1/1 is an existing member of port-channel 10"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_create_bulk_pc_member_blocked_00540a": {
+        "TEST_NOTES": [
+            "00540: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_create_bulk_pc_member_blocked_00540b": {
+        "TEST_NOTES": [
+            "00540: interfaceList -- Ethernet1/1 is an existing member of port-channel 10"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_merged_whitelisted_00550a": {
+        "TEST_NOTES": [
+            "00550: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_merged_whitelisted_00550b": {
+        "TEST_NOTES": [
+            "00550: interfaceList -- Ethernet1/1 is a port-channel member that already has accessVlan=10 and mtu=jumbo set on the wire.",
+            "Simulates the state:merged case: the existing-side values are present in the post-merge model handed to update()."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 10,
+                                "mtu": "jumbo"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_merged_whitelisted_00550c": {
+        "TEST_NOTES": [
+            "00550: PUT response -- update succeeded"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F1",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_update_pc_member_merged_unwhitelisted_00560a": {
+        "TEST_NOTES": [
+            "00560: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_merged_unwhitelisted_00560b": {
+        "TEST_NOTES": [
+            "00560: interfaceList -- Ethernet1/1 is a port-channel member with accessVlan=10 already on the wire.",
+            "Simulates the state:merged case where the user genuinely changes accessVlan (10 -> 100) on a PC member."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 10
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_string_typed_wire_00565a": {
+        "TEST_NOTES": [
+            "00565: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_string_typed_wire_00565b": {
+        "TEST_NOTES": [
+            "00565: interfaceList -- Ethernet1/1 is a port-channel member whose stormControlBroadcastLevel is echoed by ND as the STRING \"50\".",
+            "The model coerces storm_control_broadcast_level to float 50.0; the comparison must coerce both sides identically (50.0 == 50.0) rather than 50.0 != \"50\".",
+            "Regression for the float-vs-raw-wire type mismatch that wrongly flagged an unchanged non-whitelisted field on an idempotent re-run."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "stormControlBroadcastLevel": "50"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_string_typed_wire_00565c": {
+        "TEST_NOTES": [
+            "00565: PUT response -- update succeeded (no spurious port-channel restriction raised)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F1",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_delete_pc_member_blocked_00570a": {
+        "TEST_NOTES": [
+            "00570: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_delete_pc_member_blocked_00570b": {
+        "TEST_NOTES": [
+            "00570: interfaceList -- Ethernet1/1 is a port-channel member; delete must refuse to normalize"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_pc_member_blocked_00580a": {
+        "TEST_NOTES": [
+            "00580: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_pc_member_blocked_00580b": {
+        "TEST_NOTES": [
+            "00580: interfaceList -- Ethernet1/1 is a port-channel member; delete_bulk must refuse"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_not_pc_member_00590a": {
+        "TEST_NOTES": [
+            "00590: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_delete_not_pc_member_00590b": {
+        "TEST_NOTES": [
+            "00590: interfaceList -- Ethernet1/1 with no portChannelId; delete proceeds to queue normalize"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 100
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_overridden_skips_pc_00600a": {
+        "TEST_NOTES": [
+            "00600: switch_map fetch -- resolves both 192.168.1.1 and 192.168.1.2"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_overridden_skips_pc_00600b": {
+        "TEST_NOTES": [
+            "00600: interfaceList for FDO11111AAA -- Ethernet1/1 IS a port-channel 10 member (must be skipped under state:overridden)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_overridden_skips_pc_00600c": {
+        "TEST_NOTES": [
+            "00600: interfaceList for FDO22222BBB -- Ethernet1/2 is NOT a PC member (must be normalized under state:overridden)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 200
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_deleted_raises_pc_00610a": {
+        "TEST_NOTES": [
+            "00610: switch_map fetch -- resolves 192.168.1.1"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_deleted_raises_pc_00610b": {
+        "TEST_NOTES": [
+            "00610: interfaceList -- Ethernet1/1 IS a PC 10 member (must raise under state:deleted because user named it explicitly)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_unresettable_class_c_00595a": {
+        "TEST_NOTES": [
+            "00595: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_delete_unresettable_class_c_00595b": {
+        "TEST_NOTES": [
+            "00595: interfaceList -- Ethernet1/1 carries bandwidth=1500000 (a Class C field that normalize cannot clear).",
+            "Dispatcher must route this delete to the reset queue (per-interface PUT) instead of the normalize queue."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 100,
+                                "bandwidth": 1500000
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_mixed_class_c_00620a": {
+        "TEST_NOTES": [
+            "00620: switch_map fetch -- resolves both 192.168.1.1 and 192.168.1.2"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_mixed_class_c_00620b": {
+        "TEST_NOTES": [
+            "00620: interfaceList for FDO11111AAA -- Ethernet1/1 carries inheritBandwidth=2000000 (Class C) -> reset queue."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "inheritBandwidth": 2000000
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_mixed_class_c_00620c": {
+        "TEST_NOTES": [
+            "00620: interfaceList for FDO22222BBB -- Ethernet1/2 has no Class C field -> normalize queue."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 200
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_reset_partial_failure_00630a": {
+        "TEST_NOTES": ["00630: first per-interface PUT reset succeeds (Ethernet1/1)"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F1",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_reset_partial_failure_00630b": {
+        "TEST_NOTES": ["00630: second per-interface PUT reset fails (Ethernet1/2) -> remove_pending raises with partial-state detail"],
+        "RETURN_CODE": 500,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F2",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {}
+    }
+}

@@ -13,14 +13,15 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 
 DOCUMENTATION = r"""
 ---
-module: nd_manage_fabric_ibgp
-version_added: "1.4.0"
+module: nd_manage_fabric_ibgp_vxlan
+version_added: "2.0.0"
 short_description: Manage iBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
 - Manage iBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
 - It supports creating, updating, replacing, and deleting iBGP VXLAN fabrics.
 author:
 - Mike Wiebe (@mwiebe)
+- Matt Tarkington (@mtarking)
 options:
   config:
     description:
@@ -59,7 +60,7 @@ options:
         description:
         - The license tier for the fabric.
         type: str
-        default: premier
+        default: essentials
         choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
@@ -76,7 +77,7 @@ options:
         description:
         - The telemetry collection type.
         type: str
-        default: outOfBand
+        default: inBand
       telemetry_streaming_protocol:
         description:
         - The telemetry streaming protocol.
@@ -86,12 +87,12 @@ options:
         description:
         - The telemetry source interface.
         type: str
-        default: ""
+        default: loopback0
       telemetry_source_vrf:
         description:
         - The telemetry source VRF.
         type: str
-        default: ""
+        default: default
       security_domain:
         description:
         - The security domain associated with the fabric.
@@ -271,7 +272,6 @@ options:
             - MVPN VRI ID range (minimum 1, maximum 65535) for vPC.
             - Applicable when TRM is enabled with IPv6 underlay, or mvpn_vrf_route_import_id is enabled with IPv4 underlay.
             type: str
-            default: ""
           vrf_route_import_id_reallocation:
             description:
             - One time VRI ID re-allocation based on MVPN VRI ID Range.
@@ -395,12 +395,12 @@ options:
             default: "0.0.0.0"
           bgp_loopback_id:
             description:
-            - The BGP loopback interface ID (0-1023).
+            - The BGP routing loopback interface ID (0-1023).
             type: int
             default: 0
           nve_loopback_id:
             description:
-            - The NVE loopback interface ID (0-1023).
+            - The NVE VTEP loopback interface ID (0-1023).
             type: int
             default: 1
           anycast_loopback_id:
@@ -425,7 +425,7 @@ options:
             default: ""
           link_state_routing_tag:
             description:
-            - The link state routing tag.
+            - The link state underlay routing tag.
             type: str
             default: UNDERLAY
           bgp_authentication:
@@ -781,7 +781,7 @@ options:
             description:
             - Enable NX-API (HTTPS).
             type: bool
-            default: false
+            default: true
           nxapi_https_port:
             description:
             - The NX-API HTTPS port (1-65535).
@@ -887,7 +887,6 @@ options:
             - "Flowlet aging timer in microseconds. Valid range depends on platform: Cloud Scale (CS)=1-2000000,
               Silicon One (S1)=1-1024."
             type: int
-            default: 1
           flowlet_dscp:
             description:
             - DSCP values for flowlet load balancing. Numeric (0-63) with ranges/comma, or named values.
@@ -907,7 +906,6 @@ options:
             description:
             - PFC watch interval in milliseconds (101-1000). Leave blank for system default (100ms).
             type: int
-            default: 101
           ptp:
             description:
             - Enable Precision Time Protocol (PTP).
@@ -1326,6 +1324,11 @@ options:
             - Enable onboarding of smart switches to Hypershield for firewall service.
             type: bool
             default: false
+          enable_dpu_pinning:
+            description:
+            - Enable pinning of VRFs and networks to specific DPUs on smart switches.
+            type: bool
+            default: false
           connectivity_domain_name:
             description:
             - Domain name to connect to Hypershield.
@@ -1458,12 +1461,10 @@ options:
             description:
             - Enable real-time backup.
             type: bool
-            default: false
           scheduled_backup:
             description:
             - Enable scheduled backup.
             type: bool
-            default: false
           scheduled_backup_time:
             description:
             - The scheduled backup time.
@@ -1575,7 +1576,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only iBGP VXLAN fabric type (C(vxlanIbgp)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
 - The O(config.management.bgp_asn) field is required when creating a fabric.
@@ -1584,7 +1585,7 @@ notes:
 
 EXAMPLES = r"""
 - name: Create an iBGP VXLAN fabric using state merged
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: merged
     config:
       - fabric_name: my_fabric
@@ -1664,7 +1665,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Update specific fields on an existing fabric using state merged (partial update)
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: merged
     config:
       - fabric_name: my_fabric
@@ -1677,7 +1678,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Create or fully replace an iBGP VXLAN fabric using state replaced
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: replaced
     config:
       - fabric_name: my_fabric
@@ -1761,7 +1762,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Replace fabric with only required fields (all optional settings revert to defaults)
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: replaced
     config:
       - fabric_name: my_fabric
@@ -1774,7 +1775,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Enforce exact fabric inventory using state overridden (deletes unlisted fabrics)
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: overridden
     config:
       - fabric_name: fabric_east
@@ -1830,14 +1831,14 @@ EXAMPLES = r"""
   register: result
 
 - name: Delete a specific fabric using state deleted
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: deleted
     config:
       - fabric_name: my_fabric
   register: result
 
 - name: Delete multiple fabrics in a single task
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: deleted
     config:
       - fabric_name: fabric_east
@@ -1852,8 +1853,8 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp import FabricIbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp import ManageIbgpFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import ManageIbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 
 
@@ -1866,6 +1867,7 @@ def main():
         supports_check_mode=True,
     )
 
+    nd_state_machine = None
     try:
         # Initialize StateMachine
         nd_state_machine = NDStateMachine(
@@ -1880,9 +1882,13 @@ def main():
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except NDStateMachineError as e:
-        module.fail_json(msg=str(e))
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=str(e), **output)
     except Exception as e:
-        module.fail_json(msg=f"Module execution failed: {str(e)}")
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=f"Module execution failed: {str(e)}", **output)
 
 
 if __name__ == "__main__":
