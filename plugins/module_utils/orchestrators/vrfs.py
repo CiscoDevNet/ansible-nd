@@ -105,6 +105,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     delete_retry_attempts: ClassVar[int] = 3
     delete_retry_delay: ClassVar[int] = 30
     scoped_query_threshold: ClassVar[int] = 5
+    unfiltered_query_page_size: ClassVar[int] = 10000
 
     def model_post_init(self, __context) -> None:
         if self.strategy is None:
@@ -424,6 +425,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         """GET all VRFs for the fabric."""
         scoped_vrf_names = self._query_scope_vrf_names()
         try:
+            if not scoped_vrf_names:
+                return self._query_all_unfiltered()
             if len(scoped_vrf_names) >= self.scoped_query_threshold:
                 return self._query_all_unfiltered()
             if len(scoped_vrf_names) > 1:
@@ -504,16 +507,64 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     def _query_all_unfiltered(self) -> ResponseType:
         """GET all VRFs without a filter fallback."""
-        endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
-        result = self._request(
-            path=endpoint.path,
-            verb=endpoint.verb,
-            not_found_ok=True,
-            operation_type=OperationType.QUERY,
-        )
+        vrfs: list[dict[str, Any]] = []
+        offset = 0
+
+        while True:
+            endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
+            if hasattr(endpoint, "endpoint_params"):
+                endpoint.endpoint_params.max = self.unfiltered_query_page_size
+                endpoint.endpoint_params.offset = offset
+
+            result = self._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                not_found_ok=True,
+                operation_type=OperationType.QUERY,
+            )
+            page_items = self._vrf_items_from_query_result(result)
+            vrfs.extend(page_items)
+
+            if not self._has_more_unfiltered_pages(result, len(page_items), len(vrfs)):
+                break
+            if not page_items:
+                break
+            offset += len(page_items)
+
+        return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(vrfs))
+
+    @staticmethod
+    def _vrf_items_from_query_result(result: Any) -> list[dict[str, Any]]:
         if isinstance(result, dict):
-            return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result.get("vrfs") or result.get("items") or []))
-        return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result))
+            return result.get("vrfs") or result.get("items") or []
+        return result or []
+
+    @staticmethod
+    def _safe_int(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _has_more_unfiltered_pages(self, result: Any, page_count: int, total_seen: int) -> bool:
+        if not isinstance(result, dict):
+            return False
+
+        metadata = result.get("metadata") or {}
+        counts = metadata.get("counts") or {}
+        remaining = self._safe_int(counts.get("remaining"))
+        if remaining is not None:
+            return remaining > 0
+
+        total = self._safe_int(counts.get("total"))
+        if total is not None:
+            return total_seen < total
+
+        links = metadata.get("links") or {}
+        if links.get("next"):
+            return True
+
+        return page_count == self.unfiltered_query_page_size
 
     def _query_scope_vrf_names(self) -> list[str]:
         """Return VRF names safe to use for targeted current-state discovery."""

@@ -713,7 +713,56 @@ def test_vrfs_00082_query_all_uses_unfiltered_read_at_scoped_threshold():
     object.__setattr__(orchestrator, "_request", request)
 
     assert orchestrator.query_all() == [{"vrfName": "ansible-vrf-0"}]
-    assert requested_paths == ["/api/v1/manage/fabrics/AK-VXLAN/vrfs"]
+    assert requested_paths == ["/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=10000"]
+
+
+def test_vrfs_00083_query_all_unfiltered_walks_paginated_results():
+    """
+    # Summary
+
+    Verify unfiltered reads follow max/offset pagination instead of relying on
+    the controller default page size.
+    """
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "gathered",
+            "config": [],
+        }
+    )
+    original_page_size = NDVrfOrchestrator.unfiltered_query_page_size
+    NDVrfOrchestrator.unfiltered_query_page_size = 200
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        if "offset=0" in kwargs["path"]:
+            return {
+                "vrfs": [{"vrfName": f"ansible-vrf-{index:03d}"} for index in range(200)],
+                "metadata": {"counts": {"total": 500, "remaining": 300}},
+            }
+        if "offset=200" in kwargs["path"]:
+            return {
+                "vrfs": [{"vrfName": f"ansible-vrf-{index:03d}"} for index in range(200, 400)],
+                "metadata": {"counts": {"total": 500, "remaining": 100}},
+            }
+        return {
+            "vrfs": [{"vrfName": f"ansible-vrf-{index:03d}"} for index in range(400, 500)],
+            "metadata": {"counts": {"total": 500, "remaining": 0}},
+        }
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    try:
+        result = orchestrator.query_all()
+    finally:
+        NDVrfOrchestrator.unfiltered_query_page_size = original_page_size
+
+    assert len(result) == 500
+    assert requested_paths == [
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=200",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=200&max=200",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=400&max=200",
+    ]
 
 
 def test_vrfs_00085_query_all_does_not_scope_overridden_reads():
