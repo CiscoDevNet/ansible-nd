@@ -97,7 +97,7 @@ class EpManageFabricsNetworkAttachmentsPost(_EpManageFabricsNetworkAttachmentsBa
 
 
 class EpManageFabricsNetworkAttachmentsExportPost(_EpManageFabricsNetworkAttachmentsBase):
-    """POST /fabrics/{fabricName}/networkAttachment/export."""
+    """POST /fabrics/{fabricName}/networkAttachments/export."""
 
     class_name: Literal["EpManageFabricsNetworkAttachmentsExportPost"] = Field(
         default="EpManageFabricsNetworkAttachmentsExportPost",
@@ -111,7 +111,7 @@ class EpManageFabricsNetworkAttachmentsExportPost(_EpManageFabricsNetworkAttachm
         query_string = self.endpoint_params.to_query_string()
         if self.fabric_name is None:
             raise ValueError("fabric_name must be set before accessing path")
-        path = BasePath.path("fabrics", self.fabric_name, "networkAttachment", "export")
+        path = BasePath.path("fabrics", self.fabric_name, "networkAttachments", "export")
         if query_string:
             return f"{path}?{query_string}"
         return path

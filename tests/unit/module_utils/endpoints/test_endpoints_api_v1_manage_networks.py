@@ -108,7 +108,7 @@ def test_manage_network_attachments_00200() -> None:
 
     assert attach.path == "/api/v1/manage/fabrics/fab1/networkAttachments?ticketId=CHG123"
     assert attach.verb == HttpVerbEnum.POST
-    assert export.path == "/api/v1/manage/fabrics/fab1/networkAttachment/export?clusterName=cluster1"
+    assert export.path == "/api/v1/manage/fabrics/fab1/networkAttachments/export?clusterName=cluster1"
     assert export.verb == HttpVerbEnum.POST
     assert query.path == "/api/v1/manage/fabrics/fab1/networkAttachments/query?max=100&isConsolidated=false&includeAll=true"
     assert query.verb == HttpVerbEnum.POST
