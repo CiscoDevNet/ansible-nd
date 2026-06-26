@@ -562,6 +562,87 @@ EXAMPLES = r"""
         is_l2only: true
 """
 RETURN = r"""
+changed:
+  description: Whether the module changed Network, attachment, or deployment state.
+  returned: always
+  type: bool
+before:
+  description: Network configuration present on ND before the operation.
+  returned: always
+  type: list
+  elements: dict
+after:
+  description: Network configuration present on ND after the operation.
+  returned: always
+  type: list
+  elements: dict
+diff:
+  description: Configuration diff calculated by the module.
+  returned: always
+  type: list
+  elements: dict
+fabric_type:
+  description:
+    - Resolved fabric topology used by the workflow.
+    - Values include V(standalone), V(multisite_parent), V(multisite_child),
+      V(multicluster_parent), and V(multicluster_child).
+  returned: always
+  type: str
+workflow:
+  description: Human-readable workflow path selected for the operation.
+  returned: always
+  type: str
+parent_fabric:
+  description:
+    - Parent fabric result for MSD or MCFG parent workflows that execute child
+      fabric tasks.
+    - Contains the same state-machine and API trace fields as a standalone
+      result, plus C(fabric_name).
+  returned: when a parent workflow processes one or more child fabrics
+  type: dict
+child_fabrics:
+  description:
+    - Per-child-fabric results for MSD or MCFG parent workflows.
+    - Each entry contains the same state-machine and API trace fields as a
+      standalone result, plus C(fabric_name).
+  returned: when a parent workflow processes one or more child fabrics
+  type: list
+  elements: dict
+api_paths:
+  description: REST API paths called by the module.
+  returned: with verbosity C(-vv) or C(output_level=debug)
+  type: list
+  elements: str
+api_verbs:
+  description: REST API verbs called by the module.
+  returned: with verbosity C(-vv) or C(output_level=debug)
+  type: list
+  elements: str
+api_payload:
+  description: REST request payloads sent to ND.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+api_response:
+  description: Raw normalized REST responses returned by ND.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+api_result:
+  description: Response-handler result for each REST call.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+api_diff:
+  description: Per-REST-call diff data recorded by the result infrastructure.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+api_metadata:
+  description: Per-REST-call metadata recorded by the result infrastructure.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
 """
 
 from ansible.module_utils.basic import AnsibleModule
