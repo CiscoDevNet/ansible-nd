@@ -567,6 +567,7 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec, NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_fabric_resolver import (
     NetworkFabricResolver,
 )
@@ -632,6 +633,7 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
     )
+    require_pydantic(module)
 
     try:
         fabric_name: str = module.params["fabric_name"]
