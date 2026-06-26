@@ -8,6 +8,9 @@ from typing import ClassVar, Dict, List, Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    FieldSerializationInfo,
+    SecretStr,
+    field_serializer,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -67,10 +70,22 @@ class FabricBgpDetailsModel(NDNestedModel):
     disable_peer_as_check: Optional[bool] = Field(
         default=None, alias="disablePeerAsCheck"
     )
-    auth_key: Optional[str] = Field(default=None, alias="authKey")
+    auth_key: Optional[SecretStr] = Field(default=None, alias="authKey")
     auth_key_encryption_type: Optional[str] = Field(
         default=None, alias="authKeyEncryptionType"
     )
+
+    @field_serializer("auth_key")
+    def serialize_auth_key(
+        self, value: Optional[SecretStr], info: FieldSerializationInfo
+    ) -> Optional[str]:
+        """Serialize auth_key: plaintext for API payload, masked everywhere else."""
+        if value is None:
+            return None
+        mode = (info.context or {}).get("mode")
+        if mode == "payload":
+            return value.get_secret_value()
+        return "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
 
 
 class StaticRouteModel(NDNestedModel):

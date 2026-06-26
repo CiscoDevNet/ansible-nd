@@ -981,3 +981,130 @@ def test_l3out_01200():
     # auth_key has no_log
     fabric_details_opts = routing_opts["fabric1_details"]["options"]
     assert fabric_details_opts["auth_key"]["no_log"] is True
+
+
+# =============================================================================
+# auth_key SecretStr regression tests
+# =============================================================================
+
+
+class TestAuthKeySecretHandling:
+    """Regression tests: auth_key must not leak in diff, before/after, or config output."""
+
+    AUTH_KEY_PLAINTEXT = "SuperSecretBGPKey123"
+    AUTH_KEY_MASKED = "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+
+    def _build_model_with_auth_key(self):
+        """Create an L3OutModel with auth_key set in routing_details."""
+        return L3OutModel.from_config(
+            {
+                "name": "test-secret-l3out",
+                "fabric1_name": "Fabric1",
+                "fabric2_name": "Fabric2",
+                "vrf1_name": "vrf1",
+                "vrf2_name": "vrf2",
+                "configured_fabrics": "both",
+                "ip_version": "ipv4",
+                "connectivity_details": {
+                    "routing_interface_type": "routed",
+                },
+                "routing_details": {
+                    "routing_protocol": "bgp",
+                    "fabric1_details": {
+                        "local_asn": "65001",
+                        "auth_key": self.AUTH_KEY_PLAINTEXT,
+                        "auth_key_encryption_type": "7",
+                    },
+                },
+            }
+        )
+
+    def test_auth_key_masked_in_to_config(self):
+        """auth_key must be masked in to_config() (before/after output)."""
+        model = self._build_model_with_auth_key()
+        config = model.to_config()
+
+        auth_key_value = config["routing_details"]["fabric1_details"]["auth_key"]
+        assert auth_key_value == self.AUTH_KEY_MASKED
+        assert self.AUTH_KEY_PLAINTEXT not in str(config)
+
+    def test_auth_key_masked_in_to_diff_dict(self):
+        """auth_key must be masked in to_diff_dict() (diff comparison)."""
+        model = self._build_model_with_auth_key()
+        diff_dict = model.to_diff_dict()
+
+        auth_key_value = diff_dict["routingDetails"]["fabric1Details"]["authKey"]
+        assert auth_key_value == self.AUTH_KEY_MASKED
+        assert self.AUTH_KEY_PLAINTEXT not in str(diff_dict)
+
+    def test_auth_key_plaintext_in_to_payload(self):
+        """auth_key must be plaintext in to_payload() (sent to API)."""
+        model = self._build_model_with_auth_key()
+        payload = model.to_payload()
+
+        auth_key_value = payload["routingDetails"]["fabric1Details"]["authKey"]
+        assert auth_key_value == self.AUTH_KEY_PLAINTEXT
+
+    def test_auth_key_diff_ignores_different_values(self):
+        """Two models with different auth_key values must produce no diff (both masked)."""
+        model_a = self._build_model_with_auth_key()
+
+        model_b = L3OutModel.from_config(
+            {
+                "name": "test-secret-l3out",
+                "fabric1_name": "Fabric1",
+                "fabric2_name": "Fabric2",
+                "vrf1_name": "vrf1",
+                "vrf2_name": "vrf2",
+                "configured_fabrics": "both",
+                "ip_version": "ipv4",
+                "connectivity_details": {
+                    "routing_interface_type": "routed",
+                },
+                "routing_details": {
+                    "routing_protocol": "bgp",
+                    "fabric1_details": {
+                        "local_asn": "65001",
+                        "auth_key": "DifferentSecretKey456",
+                        "auth_key_encryption_type": "7",
+                    },
+                },
+            }
+        )
+
+        # Both should have same masked value in diff dict
+        diff_a = model_a.to_diff_dict()
+        diff_b = model_b.to_diff_dict()
+        assert diff_a["routingDetails"]["fabric1Details"]["authKey"] == diff_b["routingDetails"]["fabric1Details"]["authKey"]
+
+        # get_diff should report no difference (masked values are equal)
+        assert model_a.get_diff(model_b) is True
+
+    def test_auth_key_absent_when_none(self):
+        """auth_key must not appear in output when not set."""
+        model = L3OutModel.from_config(
+            {
+                "name": "test-no-auth",
+                "fabric1_name": "Fabric1",
+                "fabric2_name": "Fabric2",
+                "vrf1_name": "vrf1",
+                "vrf2_name": "vrf2",
+                "configured_fabrics": "both",
+                "ip_version": "ipv4",
+                "connectivity_details": {
+                    "routing_interface_type": "routed",
+                },
+                "routing_details": {
+                    "routing_protocol": "bgp",
+                    "fabric1_details": {
+                        "local_asn": "65001",
+                    },
+                },
+            }
+        )
+
+        config = model.to_config()
+        assert "auth_key" not in config["routing_details"]["fabric1_details"]
+
+        payload = model.to_payload()
+        assert "authKey" not in payload["routingDetails"]["fabric1Details"]
