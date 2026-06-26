@@ -287,8 +287,8 @@ options:
     - Use O(state=overridden) to enforce the configuration as the single source of truth.
       The resources on ND will be modified to exactly match the configuration.
       Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
-    - Use O(state=deleted) to remove the specified vPC interfaces via the C(interfaceActions/remove) API.
-      Member ethernet interfaces on both peers are reverted to their fabric default configuration.
+    - Use O(state=deleted) to remove the specified vPC interfaces via a per-interface C(DELETE) request to the
+      interfaces endpoint. Member ethernet interfaces on both peers are reverted to their fabric default configuration.
     type: str
     default: merged
     choices: [ merged, replaced, overridden, deleted ]
@@ -297,8 +297,11 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS vPC accessVpcHost interfaces only (interface_type C(vpc), mode C(access), network_os_type C(nx-os), policy_type C(accessVpcHost)). These values are hardcoded by the module and are not user-configurable.
-- The primary switch supplied in O(config[].switch_ip) must already be in a vPC pair (managed by M(cisco.nd.nd_manage_vpc_pair)). The peer serial is auto-resolved from the pair record.
+- This module manages NX-OS vPC accessVpcHost interfaces only (interface_type C(vpc), mode C(access),
+  network_os_type C(nx-os), policy_type C(accessVpcHost)). These values are hardcoded by the module and are
+  not user-configurable.
+- The primary switch supplied in O(config[].switch_ip) must already be in a vPC pair (managed by
+  M(cisco.nd.nd_manage_vpc_pair)). The peer serial is auto-resolved from the pair record.
 - C(peer1) refers to the switch supplied in O(config[].switch_ip); C(peer2) refers to the auto-resolved peer.
 """
 
@@ -586,6 +589,14 @@ def main():
         module_log.exception("NDStateMachineError during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module execution failed: {str(e)}"
+        if module.params.get("output_level") == "debug":
+            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
+        module.fail_json(msg=error_msg, **output)
+
+    except Exception as e:  # pylint: disable=broad-except
+        module_log.exception("Unhandled exception during module execution")
+        output = nd_state_machine.output.format() if nd_state_machine else {}
+        error_msg = f"Module failed: {str(e)}"
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
