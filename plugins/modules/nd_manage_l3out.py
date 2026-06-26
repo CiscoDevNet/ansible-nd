@@ -26,7 +26,7 @@ description:
 - Supports multiple connectivity types (routed, subInterface, svi) and routing protocols (BGP, static).
 - Requires ND 4.1 or later.
 author:
-- Cisco Systems, Inc.
+- Slawomir Kaszlikowski (@skaszlik)
 options:
   fabric_name:
     description:
