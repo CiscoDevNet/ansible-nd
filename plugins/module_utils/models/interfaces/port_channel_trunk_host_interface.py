@@ -54,6 +54,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     StormControlActionEnum,
     TrunkPoHostPolicyTypeEnum,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
@@ -207,7 +208,7 @@ class PortChannelTrunkHostVlanMappingEntryModel(NDNestedModel):
     provider_vlan_id: int | None = Field(default=None, alias="providerVlanId", ge=1, le=4094, description="Provider VLAN id")
 
 
-class PortChannelTrunkHostPolicyModel(NDNestedModel):
+class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
     """
     # Summary
 
