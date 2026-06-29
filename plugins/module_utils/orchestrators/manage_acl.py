@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
-from typing import Any, ClassVar, Type
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_acl import (
@@ -66,14 +66,14 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
     deleted (whole ACL), gathered (query only).
     """
 
-    model_class: ClassVar[Type[NDBaseModel]] = AclModel
+    model_class: ClassVar[type[NDBaseModel]] = AclModel
 
     # Endpoint bindings (required by NDBaseOrchestrator)
-    create_endpoint: Type[NDEndpointBaseModel] = EpManageAclPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpManageAclPut
-    delete_endpoint: Type[NDEndpointBaseModel] = EpManageAclDelete
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageAclGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageAclsGet
+    create_endpoint: type[NDEndpointBaseModel] = EpManageAclPost
+    update_endpoint: type[NDEndpointBaseModel] = EpManageAclPut
+    delete_endpoint: type[NDEndpointBaseModel] = EpManageAclDelete
+    query_one_endpoint: type[NDEndpointBaseModel] = EpManageAclGet
+    query_all_endpoint: type[NDEndpointBaseModel] = EpManageAclsGet
 
     # Fabric scope injected at orchestrator construction time
     fabric_name: str = ""
@@ -296,7 +296,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
                 return acl
         return None
 
-    def _entries_equal(self, e1: Dict, e2: Dict) -> bool:
+    def _entries_equal(self, e1: dict, e2: dict) -> bool:
         fields = [
             "sequence_number", "action", "protocol", "src", "dst",
             "remark_comment", "custom_protocol",
@@ -306,7 +306,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
         ]
         return all(e1.get(f) == e2.get(f) for f in fields)
 
-    def _acls_equal(self, acl1: Dict, acl2: Dict) -> bool:
+    def _acls_equal(self, acl1: dict, acl2: dict) -> bool:
         if acl1["name"] != acl2["name"] or acl1.get("type") != acl2.get("type"):
             return False
         entries1 = {e["sequence_number"]: e for e in acl1.get("entries", [])}
@@ -344,7 +344,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
     # API write helpers
     # -------------------------------------------------------------------------
 
-    def _create_acl(self, acl: Dict) -> Dict:
+    def _create_acl(self, acl: dict) -> dict:
         ep = self.create_endpoint()
         ep.fabric_name = self.fabric_name
         data = {"accessControlLists": [self._acl_to_api(acl)]}
@@ -356,13 +356,13 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
                     raise Exception("Failed to create ACL '{0}': {1}".format(acl["name"], item))
         return result or {}
 
-    def _update_acl(self, acl: Dict) -> Dict:
+    def _update_acl(self, acl: dict) -> dict:
         ep = self.update_endpoint()
         ep.fabric_name = self.fabric_name
         ep.acl_name = acl["name"]
         return self._request(path=ep.path, verb=ep.verb, data=self._acl_to_api(acl)) or {}
 
-    def _delete_acl(self, acl_name: str) -> Dict:
+    def _delete_acl(self, acl_name: str) -> dict:
         ep = self.delete_endpoint()
         ep.fabric_name = self.fabric_name
         ep.acl_name = acl_name

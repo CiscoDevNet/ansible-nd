@@ -380,7 +380,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import Res
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
 
-def main():
+def main() -> None:
     argument_spec = nd_argument_spec()
     argument_spec.update(AclModel.get_argument_spec())
 
