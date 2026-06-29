@@ -26,6 +26,7 @@ Endpoints:
 from __future__ import absolute_import, annotations, division, print_function
 
 from typing import Literal, Optional
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
@@ -82,11 +83,7 @@ class _EpManageL3OutBase(FabricNameMixin, NDEndpointBaseModel):
     def _build_item_path(self) -> str:
         """Build path for item operations: /api/v1/manage/l3Outs/{l3OutName}"""
         if self.l3out_name is None:
-            raise ValueError(
-                "{0}.path: l3out_name must be set before accessing path.".format(
-                    type(self).__name__
-                )
-            )
+            raise ValueError("{0}.path: l3out_name must be set before accessing path.".format(type(self).__name__))
         return BasePath.path("l3Outs", self.l3out_name)
 
 
@@ -116,7 +113,7 @@ class EpManageL3OutsGet(_EpManageL3OutBase):
     def path(self) -> str:
         base_path = self._build_collection_path()
         if self.fabric_name:
-            return f"{base_path}?fabricName={self.fabric_name}"
+            return f"{base_path}?fabricName={quote(self.fabric_name, safe='')}"
         return base_path
 
     @property

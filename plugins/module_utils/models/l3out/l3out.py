@@ -4,17 +4,17 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import ClassVar, Dict, List, Literal, Optional
+from typing import Any, ClassVar, Dict, List, Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     FieldSerializationInfo,
     SecretStr,
     field_serializer,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-
 
 # =============================================================================
 # Nested Models - Bottom-up hierarchy
@@ -39,51 +39,29 @@ class FabricBgpDetailsModel(NDNestedModel):
     """BGP peering details for a fabric in L3Out routing configuration."""
 
     local_asn: Optional[str] = Field(default=None, alias="localAsn")
-    ipv4_peering_details: Optional[Ipv4PeeringModel] = Field(
-        default=None, alias="ipv4PeeringDetails"
-    )
-    ipv6_peering_details: Optional[Ipv6PeeringModel] = Field(
-        default=None, alias="ipv6PeeringDetails"
-    )
-    advertise_host_routes: Optional[bool] = Field(
-        default=None, alias="advertiseHostRoutes"
-    )
-    advertise_default_route: Optional[bool] = Field(
-        default=None, alias="advertiseDefaultRoute"
-    )
-    configure_static_default_route: Optional[bool] = Field(
-        default=None, alias="configureStaticDefaultRoute"
-    )
-    soft_reconfiguration_inbound: Optional[str] = Field(
-        default=None, alias="softReconfigurationInbound"
-    )
+    ipv4_peering_details: Optional[Ipv4PeeringModel] = Field(default=None, alias="ipv4PeeringDetails")
+    ipv6_peering_details: Optional[Ipv6PeeringModel] = Field(default=None, alias="ipv6PeeringDetails")
+    advertise_host_routes: Optional[bool] = Field(default=None, alias="advertiseHostRoutes")
+    advertise_default_route: Optional[bool] = Field(default=None, alias="advertiseDefaultRoute")
+    configure_static_default_route: Optional[bool] = Field(default=None, alias="configureStaticDefaultRoute")
+    soft_reconfiguration_inbound: Optional[str] = Field(default=None, alias="softReconfigurationInbound")
     default_originate: Optional[bool] = Field(default=None, alias="defaultOriginate")
-    log_neighbor_change: Optional[bool] = Field(
-        default=None, alias="logNeighborChange"
-    )
-    allow_as_in_asn_occurence_number: Optional[int] = Field(
-        default=None, alias="allowAsInAsnOccurenceNumber"
-    )
+    log_neighbor_change: Optional[bool] = Field(default=None, alias="logNeighborChange")
+    allow_as_in_asn_occurence_number: Optional[int] = Field(default=None, alias="allowAsInAsnOccurenceNumber")
     as_override: Optional[bool] = Field(default=None, alias="asOverride")
     no_prepend: Optional[bool] = Field(default=None, alias="noPrepend")
     replace_as: Optional[bool] = Field(default=None, alias="replaceAs")
-    disable_peer_as_check: Optional[bool] = Field(
-        default=None, alias="disablePeerAsCheck"
-    )
+    disable_peer_as_check: Optional[bool] = Field(default=None, alias="disablePeerAsCheck")
     auth_key: Optional[SecretStr] = Field(default=None, alias="authKey")
-    auth_key_encryption_type: Optional[str] = Field(
-        default=None, alias="authKeyEncryptionType"
-    )
+    auth_key_encryption_type: Optional[str] = Field(default=None, alias="authKeyEncryptionType")
 
     @field_serializer("auth_key")
-    def serialize_auth_key(
-        self, value: Optional[SecretStr], info: FieldSerializationInfo
-    ) -> Optional[str]:
-        """Serialize auth_key: plaintext for API payload, masked everywhere else."""
+    def serialize_auth_key(self, value: Optional[SecretStr], info: FieldSerializationInfo) -> Optional[str]:
+        """Serialize auth_key: plaintext for API payload and diff, masked everywhere else."""
         if value is None:
             return None
         mode = (info.context or {}).get("mode")
-        if mode == "payload":
+        if mode in ("payload", "diff"):
             return value.get_secret_value()
         return "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
 
@@ -111,19 +89,11 @@ class RoutingDetailsModel(NDNestedModel):
     bfd: Optional[bool] = Field(default=None, alias="bfd")
     hold_interval: Optional[int] = Field(default=None, alias="holdInterval")
     keep_alive_interval: Optional[int] = Field(default=None, alias="keepAliveInterval")
-    fabric1_details: Optional[FabricBgpDetailsModel] = Field(
-        default=None, alias="fabric1Details"
-    )
-    fabric2_details: Optional[FabricBgpDetailsModel] = Field(
-        default=None, alias="fabric2Details"
-    )
+    fabric1_details: Optional[FabricBgpDetailsModel] = Field(default=None, alias="fabric1Details")
+    fabric2_details: Optional[FabricBgpDetailsModel] = Field(default=None, alias="fabric2Details")
     # Static routing fields
-    fabric1_static_routes: Optional[List[StaticRouteModel]] = Field(
-        default=None, alias="fabric1StaticRoutes"
-    )
-    fabric2_static_routes: Optional[List[StaticRouteModel]] = Field(
-        default=None, alias="fabric2StaticRoutes"
-    )
+    fabric1_static_routes: Optional[List[StaticRouteModel]] = Field(default=None, alias="fabric1StaticRoutes")
+    fabric2_static_routes: Optional[List[StaticRouteModel]] = Field(default=None, alias="fabric2StaticRoutes")
 
 
 class SwitchDetailsModel(NDNestedModel):
@@ -133,12 +103,8 @@ class SwitchDetailsModel(NDNestedModel):
     interface_name: str = Field(alias="interfaceName")
     interface_ipv4_address: Optional[str] = Field(default=None, alias="ipv4Address")
     interface_ipv6_address: Optional[str] = Field(default=None, alias="ipv6Address")
-    interface_description: Optional[str] = Field(
-        default=None, alias="interfaceDescription"
-    )
-    interface_admin_state: Optional[bool] = Field(
-        default=None, alias="interfaceAdminState"
-    )
+    interface_description: Optional[str] = Field(default=None, alias="interfaceDescription")
+    interface_admin_state: Optional[bool] = Field(default=None, alias="interfaceAdminState")
     netflow: Optional[bool] = Field(default=None, alias="netflow")
     netflow_monitor: Optional[str] = Field(default=None, alias="netflowMonitor")
 
@@ -153,12 +119,8 @@ class LinkModel(NDNestedModel):
     vlan_id: Optional[int] = Field(default=None, alias="vlanId")
     ipv4_pim: Optional[bool] = Field(default=None, alias="ipv4Pim")
     ipv6_pim: Optional[bool] = Field(default=None, alias="ipv6Pim")
-    switch1_details: Optional[SwitchDetailsModel] = Field(
-        default=None, alias="switch1Details"
-    )
-    switch2_details: Optional[SwitchDetailsModel] = Field(
-        default=None, alias="switch2Details"
-    )
+    switch1_details: Optional[SwitchDetailsModel] = Field(default=None, alias="switch1Details")
+    switch2_details: Optional[SwitchDetailsModel] = Field(default=None, alias="switch2Details")
 
 
 class ConnectivityDetailsModel(NDNestedModel):
@@ -166,6 +128,20 @@ class ConnectivityDetailsModel(NDNestedModel):
 
     routing_interface_type: str = Field(alias="routingInterfaceType")
     links: Optional[List[LinkModel]] = Field(default=None, alias="links")
+
+    @model_validator(mode="after")
+    def validate_connectivity_type_requirements(self) -> "ConnectivityDetailsModel":
+        """Validate type-specific field requirements for connectivity details."""
+        if not self.links:
+            return self
+
+        interface_type = self.routing_interface_type
+        for idx, link in enumerate(self.links):
+            if interface_type == "subInterface" and link.dot1q_id is None:
+                raise ValueError(f"links[{idx}]: 'dot1q_id' is required when " f"routing_interface_type is 'subInterface'.")
+            if interface_type == "svi" and link.vlan_id is None:
+                raise ValueError(f"links[{idx}]: 'vlan_id' is required when " f"routing_interface_type is 'svi'.")
+        return self
 
 
 # =============================================================================
@@ -191,9 +167,7 @@ class L3OutModel(NDBaseModel):
     # --- Identifier Configuration ---
 
     identifiers: ClassVar[Optional[List[str]]] = ["name"]
-    identifier_strategy: ClassVar[
-        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
-    ] = "single"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
 
     # --- Serialization Configuration ---
 
@@ -211,15 +185,24 @@ class L3OutModel(NDBaseModel):
     tenant2_name: Optional[str] = Field(default=None, alias="tenant2Name")
     configured_fabrics: Optional[str] = Field(default=None, alias="configuredFabrics")
     ip_version: Optional[str] = Field(default=None, alias="ipVersion")
-    connectivity_details: Optional[ConnectivityDetailsModel] = Field(
-        default=None, alias="connectivityDetails"
-    )
-    routing_details: Optional[RoutingDetailsModel] = Field(
-        default=None, alias="routingDetails"
-    )
+    connectivity_details: Optional[ConnectivityDetailsModel] = Field(default=None, alias="connectivityDetails")
+    routing_details: Optional[RoutingDetailsModel] = Field(default=None, alias="routingDetails")
 
     # Module-side field (not sent to API)
     attach: Optional[bool] = Field(default=None)
+
+    # --- Overrides ---
+
+    def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
+        """Export for diff comparison with secrets as plaintext for accurate change detection."""
+        return self.model_dump(
+            by_alias=True,
+            exclude_none=True,
+            exclude=self.exclude_from_diff or None,
+            mode="json",
+            context={"mode": "diff"},
+            **kwargs,
+        )
 
     # --- Argument Spec ---
 
@@ -297,7 +280,7 @@ class L3OutModel(NDBaseModel):
         # Fabric peering details spec (for BGP)
         fabric_peering_details_spec = dict(
             auth_key=dict(type="str", no_log=True),
-            auth_key_encryption_type=dict(type="str", choices=["3", "7"]),
+            auth_key_encryption_type=dict(type="str", choices=["3des", "type6", "type7"]),
             advertise_host_routes=dict(type="bool"),
             advertise_default_route=dict(type="bool"),
             configure_static_default_route=dict(type="bool"),
@@ -325,12 +308,8 @@ class L3OutModel(NDBaseModel):
                 choices=["static", "bgp"],
             ),
             # Static routing fields
-            fabric1_static_routes=dict(
-                type="list", elements="dict", options=static_route_spec
-            ),
-            fabric2_static_routes=dict(
-                type="list", elements="dict", options=static_route_spec
-            ),
+            fabric1_static_routes=dict(type="list", elements="dict", options=static_route_spec),
+            fabric2_static_routes=dict(type="list", elements="dict", options=static_route_spec),
             # BGP routing fields
             auth=dict(type="bool"),
             bfd=dict(type="bool"),

@@ -103,9 +103,7 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
         one is cheap until resolution is actually needed.
         """
         if fabric_name not in self._fabric_contexts:
-            self._fabric_contexts[fabric_name] = FabricContext(
-                rest_send=self.rest_send, fabric_name=fabric_name
-            )
+            self._fabric_contexts[fabric_name] = FabricContext(rest_send=self.rest_send, fabric_name=fabric_name)
         return self._fabric_contexts[fabric_name]
 
     @staticmethod
@@ -157,13 +155,9 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
 
         for link in conn.links:
             if link.switch1_details and self._is_ip_address(link.switch1_details.switch_id):
-                link.switch1_details.switch_id = self._resolve_switch_id(
-                    fabric1, link.switch1_details.switch_id
-                )
+                link.switch1_details.switch_id = self._resolve_switch_id(fabric1, link.switch1_details.switch_id)
             if link.switch2_details and self._is_ip_address(link.switch2_details.switch_id):
-                link.switch2_details.switch_id = self._resolve_switch_id(
-                    fabric2, link.switch2_details.switch_id
-                )
+                link.switch2_details.switch_id = self._resolve_switch_id(fabric2, link.switch2_details.switch_id)
 
     @staticmethod
     def _validate_bulk_response(result: ResponseType, operation: str) -> None:
@@ -197,10 +191,7 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
                 failed_items.append(f"'{name}': {message}")
 
         if failed_items:
-            raise RuntimeError(
-                f"{operation} partially failed. "
-                f"Failed items: {'; '.join(failed_items)}"
-            )
+            raise RuntimeError(f"{operation} partially failed. " f"Failed items: {'; '.join(failed_items)}")
 
     def create(self, model_instance: L3OutModel, **kwargs) -> ResponseType:
         """
@@ -223,9 +214,7 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
             self._validate_bulk_response(result, "Create L3Out")
             return result
         except Exception as e:
-            raise RuntimeError(
-                f"Create failed for {model_instance.get_identifier_value()}: {e}"
-            ) from e
+            raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
     def create_bulk(self, model_instances: List[L3OutModel], **kwargs) -> ResponseType:
         """
@@ -268,9 +257,7 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
                 operation_type=OperationType.UPDATE,
             )
         except Exception as e:
-            raise RuntimeError(
-                f"Update failed for {model_instance.get_identifier_value()}: {e}"
-            ) from e
+            raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
     def delete(self, model_instance: L3OutModel, **kwargs) -> ResponseType:
         """
@@ -285,9 +272,7 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
                 operation_type=OperationType.DELETE,
             )
         except Exception as e:
-            raise RuntimeError(
-                f"Delete failed for {model_instance.get_identifier_value()}: {e}"
-            ) from e
+            raise RuntimeError(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
 
     def delete_bulk(self, model_instances: List[L3OutModel], **kwargs) -> ResponseType:
         """
@@ -322,13 +307,9 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
                 verb=api_endpoint.verb,
             )
         except Exception as e:
-            raise RuntimeError(
-                f"Query failed for {model_instance.get_identifier_value()}: {e}"
-            ) from e
+            raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(
-        self, model_instance: Optional[NDBaseModel] = None, **kwargs
-    ) -> ResponseType:
+    def query_all(self, model_instance: Optional[NDBaseModel] = None, **kwargs) -> ResponseType:
         """
         Query all L3Outs, filtered by fabric name.
 
@@ -408,10 +389,7 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
                             if status == "failed" and "not found" in message.lower():
                                 not_found_names.append(item.get("name", "unknown"))
                             elif status_code >= 400:
-                                raise RuntimeError(
-                                    f"Failed to attach/detach L3Out "
-                                    f"'{item.get('name', 'unknown')}': {item}"
-                                )
+                                raise RuntimeError(f"Failed to attach/detach L3Out " f"'{item.get('name', 'unknown')}': {item}")
 
                     # If we have "not found" errors and more retries, wait and retry
                     if not_found_names and attempt < max_retries:
@@ -420,10 +398,7 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
 
                     # Final attempt or no not-found errors - check for failures
                     if not_found_names:
-                        raise RuntimeError(
-                            f"L3Out(s) not found after {max_retries} retries: "
-                            f"{', '.join(not_found_names)}"
-                        )
+                        raise RuntimeError(f"L3Out(s) not found after {max_retries} retries: " f"{', '.join(not_found_names)}")
 
                 return result or {}
 
@@ -437,6 +412,4 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
                 raise
 
         # Should not reach here, but just in case
-        raise RuntimeError(
-            f"Attach operation failed after {max_retries + 1} attempts"
-        )
+        raise RuntimeError(f"Attach operation failed after {max_retries + 1} attempts")

@@ -118,3 +118,57 @@
   ansible.builtin.assert:
     that:
       - nm_merged_update_bgp_idem is not changed
+
+# --- MERGED: Management-IP switch_id resolution idempotency ---
+
+- name: "MERGED MGMT-IP: Re-apply BGP L3Out using management IPs instead of serials (check mode)"
+  cisco.nd.nd_manage_l3out: &merge_l3out_bgp_mgmt_ip
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ test_l3out_bgp_name }}"
+        fabric1_name: "{{ test_fabric1_name }}"
+        fabric2_name: "{{ test_fabric2_name }}"
+        vrf1_name: "{{ test_vrf1_name }}"
+        vrf2_name: "{{ test_vrf2_name }}"
+        tenant1_name: "{{ test_tenant1_name }}"
+        tenant2_name: "{{ test_tenant2_name }}"
+        configured_fabrics: both
+        ip_version: ipv4
+        connectivity_details:
+          routing_interface_type: routed
+          links:
+            - mtu: 9216
+              ipv4_mask_length: 30
+              switch1_details:
+                switch_id: "{{ test_switch1_mgmt_ip }}"
+                interface_name: "{{ test_switch1_interface }}"
+                interface_ipv4_address: 10.0.0.1
+              switch2_details:
+                switch_id: "{{ test_switch2_mgmt_ip }}"
+                interface_name: "{{ test_switch2_interface }}"
+                interface_ipv4_address: 10.0.0.2
+        routing_details:
+          routing_protocol: bgp
+          auth: false
+          bfd: true
+          hold_interval: 240
+          keep_alive_interval: 60
+          fabric1_details:
+            advertise_default_route: true
+            ipv4_peering_details:
+              ipv4_route_map_in: rm-in
+              ipv4_route_map_out: rm-out
+    state: merged
+  check_mode: true
+  register: cm_merged_mgmt_ip_idem
+
+- name: "MERGED MGMT-IP: Re-apply BGP L3Out using management IPs (normal mode)"
+  cisco.nd.nd_manage_l3out: *merge_l3out_bgp_mgmt_ip
+  register: nm_merged_mgmt_ip_idem
+
+- name: "MERGED MGMT-IP: Verify no change when using management IPs for existing L3Out"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_mgmt_ip_idem is not changed
+      - nm_merged_mgmt_ip_idem is not changed

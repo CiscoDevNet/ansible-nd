@@ -196,7 +196,7 @@ options:
                     description:
                     - Admin state of the interface.
                     type: bool
-                  interface_interface_ipv4_address:
+                  interface_ipv4_address:
                     description:
                     - IPv4 address assigned to the L3Out interface.
                     type: str
@@ -239,7 +239,7 @@ options:
                     description:
                     - Admin state of the interface.
                     type: bool
-                  interface_interface_ipv4_address:
+                  interface_ipv4_address:
                     description:
                     - IPv4 address assigned to the L3Out interface.
                     type: str
@@ -306,12 +306,16 @@ options:
               auth_key:
                 description:
                 - BGP authentication key.
+                - This field is not logged in module output (no_log).
                 type: str
               auth_key_encryption_type:
                 description:
                 - Encryption type for the authentication key.
+                - C(3des) - 3DES encryption.
+                - C(type6) - Type 6 encryption.
+                - C(type7) - Type 7 encryption.
                 type: str
-                choices: [ "3", "7" ]
+                choices: [ 3des, type6, type7 ]
               advertise_host_routes:
                 description:
                 - Advertise host routes.
@@ -396,12 +400,16 @@ options:
               auth_key:
                 description:
                 - BGP authentication key.
+                - This field is not logged in module output (no_log).
                 type: str
               auth_key_encryption_type:
                 description:
                 - Encryption type for the authentication key.
+                - C(3des) - 3DES encryption.
+                - C(type6) - Type 6 encryption.
+                - C(type7) - Type 7 encryption.
                 type: str
-                choices: [ "3", "7" ]
+                choices: [ 3des, type6, type7 ]
               advertise_host_routes:
                 description:
                 - Advertise host routes.
@@ -823,7 +831,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_l3ou
     L3OutOrchestrator,
 )
 
-
 # Fields required by the OpenAPI l3Out schema for create/update operations
 _WRITE_STATE_REQUIRED_FIELDS = [
     "fabric1_name",
@@ -851,10 +858,7 @@ def _validate_config_for_state(module: AnsibleModule) -> None:
 
     if state == "deleted" and not config:
         module.fail_json(
-            msg=(
-                "The 'config' parameter is required for state=deleted. "
-                "Provide a list of L3Outs to delete, each with at least a 'name' field."
-            )
+            msg=("The 'config' parameter is required for state=deleted. " "Provide a list of L3Outs to delete, each with at least a 'name' field.")
         )
 
     if state not in ("merged", "replaced"):
@@ -910,9 +914,7 @@ def _handle_attachments(nd_state_machine: NDStateMachine, check_mode: bool) -> d
                     if status == "failed":
                         name = item.get("name", "unknown")
                         message = item.get("message", "No details")
-                        result["attachment_failures"].append(
-                            f"'{name}': {message}"
-                        )
+                        result["attachment_failures"].append(f"'{name}': {message}")
 
         result["attachment_changed"] = True
     except Exception as e:
@@ -943,6 +945,13 @@ def main():
             model_orchestrator=L3OutOrchestrator,
         )
 
+        # Pre-normalize: resolve management IP switch_id values to serials
+        # before diffing. ND stores serials, so proposed items using IPs would
+        # otherwise always appear "changed" vs. the serial-based current state.
+        if module.params.get("state") in ("merged", "replaced"):
+            for item in nd_state_machine.proposed:
+                nd_state_machine.model_orchestrator._resolve_links(item)
+
         # Manage state (merged, replaced, deleted)
         nd_state_machine.manage_state()
 
@@ -958,9 +967,7 @@ def main():
         if attach_result["attachment_failures"]:
             output.setdefault("warnings", [])
             for failure in attach_result["attachment_failures"]:
-                output["warnings"].append(
-                    f"Attachment operation failed: {failure}"
-                )
+                output["warnings"].append(f"Attachment operation failed: {failure}")
 
         module.exit_json(**output)
 

@@ -1013,7 +1013,7 @@ class TestAuthKeySecretHandling:
                     "fabric1_details": {
                         "local_asn": "65001",
                         "auth_key": self.AUTH_KEY_PLAINTEXT,
-                        "auth_key_encryption_type": "7",
+                        "auth_key_encryption_type": "type7",
                     },
                 },
             }
@@ -1029,13 +1029,12 @@ class TestAuthKeySecretHandling:
         assert self.AUTH_KEY_PLAINTEXT not in str(config)
 
     def test_auth_key_masked_in_to_diff_dict(self):
-        """auth_key must be masked in to_diff_dict() (diff comparison)."""
+        """auth_key must be plaintext in to_diff_dict() for accurate change detection."""
         model = self._build_model_with_auth_key()
         diff_dict = model.to_diff_dict()
 
         auth_key_value = diff_dict["routingDetails"]["fabric1Details"]["authKey"]
-        assert auth_key_value == self.AUTH_KEY_MASKED
-        assert self.AUTH_KEY_PLAINTEXT not in str(diff_dict)
+        assert auth_key_value == self.AUTH_KEY_PLAINTEXT
 
     def test_auth_key_plaintext_in_to_payload(self):
         """auth_key must be plaintext in to_payload() (sent to API)."""
@@ -1046,7 +1045,7 @@ class TestAuthKeySecretHandling:
         assert auth_key_value == self.AUTH_KEY_PLAINTEXT
 
     def test_auth_key_diff_ignores_different_values(self):
-        """Two models with different auth_key values must produce no diff (both masked)."""
+        """Two models with different auth_key values must be detected as different."""
         model_a = self._build_model_with_auth_key()
 
         model_b = L3OutModel.from_config(
@@ -1066,19 +1065,19 @@ class TestAuthKeySecretHandling:
                     "fabric1_details": {
                         "local_asn": "65001",
                         "auth_key": "DifferentSecretKey456",
-                        "auth_key_encryption_type": "7",
+                        "auth_key_encryption_type": "type7",
                     },
                 },
             }
         )
 
-        # Both should have same masked value in diff dict
+        # Diff dicts should show different plaintext values for comparison
         diff_a = model_a.to_diff_dict()
         diff_b = model_b.to_diff_dict()
-        assert diff_a["routingDetails"]["fabric1Details"]["authKey"] == diff_b["routingDetails"]["fabric1Details"]["authKey"]
+        assert diff_a["routingDetails"]["fabric1Details"]["authKey"] != diff_b["routingDetails"]["fabric1Details"]["authKey"]
 
-        # get_diff should report no difference (masked values are equal)
-        assert model_a.get_diff(model_b) is True
+        # get_diff should detect a change (different auth_key values)
+        assert model_a.get_diff(model_b) is False
 
     def test_auth_key_absent_when_none(self):
         """auth_key must not appear in output when not set."""

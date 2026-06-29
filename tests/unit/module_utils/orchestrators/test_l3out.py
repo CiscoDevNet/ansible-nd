@@ -1030,9 +1030,7 @@ def test_l3out_00940() -> None:
     instance = L3OutOrchestrator(rest_send=rest_send)
 
     mock_ctx = MagicMock()
-    mock_ctx.get_switch_id.side_effect = RuntimeError(
-        "No switch found with fabricManagementIp '10.99.99.99' in fabric 'DC1-Fabric'."
-    )
+    mock_ctx.get_switch_id.side_effect = RuntimeError("No switch found with fabricManagementIp '10.99.99.99' in fabric 'DC1-Fabric'.")
 
     with patch.object(instance, "_get_fabric_context", return_value=mock_ctx):
         with pytest.raises(RuntimeError, match=r"No switch found.*10\.99\.99\.99"):
