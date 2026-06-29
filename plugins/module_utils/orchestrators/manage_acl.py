@@ -181,18 +181,11 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
         for acl in config:
             name = acl.get("name", "")
             if not re.match(r"^[a-zA-Z0-9_-]+$", name):
-                raise ValueError(
-                    "ACL name '{0}' is invalid. Only alphanumeric characters, "
-                    "underscores, and hyphens are allowed.".format(name)
-                )
+                raise ValueError("ACL name '{0}' is invalid. Only alphanumeric characters, " "underscores, and hyphens are allowed.".format(name))
             if len(name) > 63:
-                raise ValueError(
-                    "ACL name '{0}' exceeds the maximum length of 63 characters.".format(name)
-                )
+                raise ValueError("ACL name '{0}' exceeds the maximum length of 63 characters.".format(name))
             if state in ("merged", "replaced") and not acl.get("type"):
-                raise ValueError(
-                    "ACL '{0}': 'type' is required when state is '{1}'".format(name, state)
-                )
+                raise ValueError("ACL '{0}': 'type' is required when state is '{1}'".format(name, state))
             for entry in acl.get("entries", []):
                 self._validate_entry(name, entry)
 
@@ -203,35 +196,25 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
 
         if action == "remark":
             if not entry.get("remark_comment"):
-                raise ValueError(
-                    "ACL '{0}' entry {1}: 'remark_comment' is required for remark entries".format(acl_name, seq_num)
-                )
+                raise ValueError("ACL '{0}' entry {1}: 'remark_comment' is required for remark entries".format(acl_name, seq_num))
             return
 
         for field in ("protocol", "src", "dst"):
             if not entry.get(field):
-                raise ValueError(
-                    "ACL '{0}' entry {1}: '{2}' is required for permit/deny entries".format(acl_name, seq_num, field)
-                )
+                raise ValueError("ACL '{0}' entry {1}: '{2}' is required for permit/deny entries".format(acl_name, seq_num, field))
 
         protocol = entry.get("protocol")
         if protocol == "custom" and entry.get("custom_protocol") is None:
-            raise ValueError(
-                "ACL '{0}' entry {1}: 'custom_protocol' is required when protocol is 'custom'".format(acl_name, seq_num)
-            )
+            raise ValueError("ACL '{0}' entry {1}: 'custom_protocol' is required when protocol is 'custom'".format(acl_name, seq_num))
 
         if protocol in ("tcp", "udp"):
             self._validate_port_options(acl_name, entry, "src")
             self._validate_port_options(acl_name, entry, "dst")
 
         if entry.get("icmp_option") and protocol != "icmp":
-            raise ValueError(
-                "ACL '{0}' entry {1}: 'icmp_option' is only valid for icmp protocol".format(acl_name, seq_num)
-            )
+            raise ValueError("ACL '{0}' entry {1}: 'icmp_option' is only valid for icmp protocol".format(acl_name, seq_num))
         if entry.get("tcp_option") and protocol != "tcp":
-            raise ValueError(
-                "ACL '{0}' entry {1}: 'tcp_option' is only valid for tcp protocol".format(acl_name, seq_num)
-            )
+            raise ValueError("ACL '{0}' entry {1}: 'tcp_option' is only valid for tcp protocol".format(acl_name, seq_num))
 
     def _validate_port_options(self, acl_name: str, entry: dict[str, Any], prefix: str) -> None:
         """Validate port action and range consistency for a given direction."""
@@ -251,15 +234,11 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
                 )
             if start > end:
                 raise ValueError(
-                    "ACL '{0}' entry {1}: '{2}_port_range_start' must be less than or equal "
-                    "to '{2}_port_range_end'".format(acl_name, seq_num, prefix)
+                    "ACL '{0}' entry {1}: '{2}_port_range_start' must be less than or equal " "to '{2}_port_range_end'".format(acl_name, seq_num, prefix)
                 )
         else:
             if entry.get("{0}_port".format(prefix)) is None:
-                raise ValueError(
-                    "ACL '{0}' entry {1}: '{2}_port' is required when {2}_port_action "
-                    "is '{3}'".format(acl_name, seq_num, prefix, port_action)
-                )
+                raise ValueError("ACL '{0}' entry {1}: '{2}_port' is required when {2}_port_action " "is '{3}'".format(acl_name, seq_num, prefix, port_action))
 
     # -------------------------------------------------------------------------
     # Current state retrieval
@@ -298,11 +277,23 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
 
     def _entries_equal(self, e1: dict, e2: dict) -> bool:
         fields = [
-            "sequence_number", "action", "protocol", "src", "dst",
-            "remark_comment", "custom_protocol",
-            "src_port_action", "src_port", "src_port_range_start", "src_port_range_end",
-            "dst_port_action", "dst_port", "dst_port_range_start", "dst_port_range_end",
-            "icmp_option", "tcp_option",
+            "sequence_number",
+            "action",
+            "protocol",
+            "src",
+            "dst",
+            "remark_comment",
+            "custom_protocol",
+            "src_port_action",
+            "src_port",
+            "src_port_range_start",
+            "src_port_range_end",
+            "dst_port_action",
+            "dst_port",
+            "dst_port_range_start",
+            "dst_port_range_end",
+            "icmp_option",
+            "tcp_option",
         ]
         return all(e1.get(f) == e2.get(f) for f in fields)
 
