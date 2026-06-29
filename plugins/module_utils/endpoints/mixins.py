@@ -20,6 +20,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 
 
+class AclNameMixin(BaseModel):
+    """Mixin for endpoints that require acl_name parameter."""
+
+    acl_name: Optional[str] = Field(default=None, min_length=1, max_length=63, description="ACL name")
+
+
 class ClusterNameMixin(BaseModel):
     """Mixin for endpoints that require cluster_name parameter."""
 
