@@ -1522,11 +1522,10 @@ class NDPolicyModule:
         positive equality on ``source`` works, and negation is rejected).
         Both are applied as client-side post-filters on the prefetched list.
 
-        # FUTURE(4.2.1): ``templateName`` and ``source`` negation are not
-        #   supported as Lucene filter terms in the current ND API.  Both are
-        #   applied as client-side post-filters on the prefetched list.  If
-        #   server-side support is added in a later release, narrowing here
-        #   would reduce the response payload and eliminate the post-filter pass.
+        # TODO(4.2.1): Track ND API support for richer policy Lucene filters so
+        #   this prefetch can narrow on the server instead of client-side
+        #   post-filtering.  Needed forms are source-empty filtering and
+        #   filtering on both templateName and switchId with multiple values.
         """
         if not config_entries:
             return None
