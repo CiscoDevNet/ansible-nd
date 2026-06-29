@@ -138,6 +138,22 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         """
         return
 
+    def preflight_create(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Pre-mutation hook invoked by `NDStateMachine` with only the items diffed as create (`new`) — before any
+        create/update API call, so it fails fast in check mode too. Distinct from `preflight`, which receives the
+        full proposed set; this hook sees the create-only subset so subclasses can enforce create-specific
+        requirements without rejecting legitimate policy-less updates. Base implementation is a no-op; interface
+        orchestrators override to require a policy on create.
+
+        ## Raises
+
+        None
+        """
+        return
+
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:

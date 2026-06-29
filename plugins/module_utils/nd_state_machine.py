@@ -176,6 +176,11 @@ class NDStateMachine:
                 if not self.ignore_errors:
                     raise NDStateMachineError(error_msg) from e
 
+        # Fail fast before any mutation if a create item carries no policy (issue #350). Create-only:
+        # a merged/replaced update may legitimately omit a policy that already exists on the switch, and
+        # state: deleted does not route through here, so only genuine new items are validated.
+        self.model_orchestrator.preflight_create(items_to_create)
+
         # Execute updates (always individual)
         for item in items_to_update:
             self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}")

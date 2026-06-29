@@ -601,6 +601,38 @@ class TestPreflightNoOp:
 
 
 # =============================================================================
+# Test: preflight_create() generic no-op hook
+# =============================================================================
+
+
+class TestPreflightCreateNoOp:
+    """Tests for the generic preflight_create() pre-mutation hook on NDBaseOrchestrator.
+
+    NDStateMachine invokes preflight_create() with only the create (`new`) subset before any
+    create/update API call. The base implementation must be a no-op so non-interface orchestrators
+    (local_user, fabric_*) are unaffected even when an item carries no policy; interface orchestrators
+    override it to require a policy on create (issue #350).
+    """
+
+    def test_preflight_create_returns_none_and_issues_no_request(self):
+        """preflight_create() on the generic base returns None and makes no API call."""
+        # No responses seeded: any HTTP attempt would StopIteration.
+        rest_send = _make_rest_send([])
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+
+        assert orch.preflight_create([StubModel(name="a"), StubModel(name="b")]) is None
+        assert results._tasks == []
+
+    def test_preflight_create_accepts_empty_sequence(self):
+        """preflight_create() tolerates an empty create set."""
+        rest_send = _make_rest_send([])
+        orch = _make_orchestrator(rest_send, results=None)
+
+        assert orch.preflight_create([]) is None
+
+
+# =============================================================================
 # Test: model_class must be a ClassVar, never a pydantic field (issue #344)
 # =============================================================================
 
