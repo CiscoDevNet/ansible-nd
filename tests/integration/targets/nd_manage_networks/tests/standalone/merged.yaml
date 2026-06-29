@@ -3,7 +3,7 @@
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing Merged Tests - [nd_manage_networks]                    +"
+      - "+     Executing Merged Tests - [nd_manage_networks]              +"
       - "----------------------------------------------------------------"
   tags: merged
 
@@ -46,6 +46,22 @@
           }
         ] if nd_network_run_attach | bool else []
       }}
+    nd_network_deploy_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_network_standalone_switch,
+            'vlan_id': nd_network_base_vlan + 1,
+            'interfaces': [
+              {
+                'mode': 'access',
+                'interface_range': nd_network_standalone_interface
+              }
+            ],
+            'deploy': true
+          }
+        ] if nd_network_run_attach | bool else []
+      }}
   delegate_to: localhost
   tags: merged
 
@@ -72,6 +88,29 @@
         routing_tag: 12345
         netflow_enable: false
         deploy: false
+    nd_network_merged_deploy_config:
+      - network_name: ansible-nd-net-merged-l2
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 1 }}"
+        vlan_id: "{{ nd_network_base_vlan + 1 }}"
+        vlan_name: ansible_nd_net_merged_l2_vlan
+        rt_auto: true
+        enable_ir: false
+        attach: "{{ nd_network_deploy_attach_block }}"
+        deploy: true
+        deploy_type: switch
+      - network_name: ansible-nd-net-merged-l3
+        is_l2only: false
+        network_id: "{{ nd_network_base_id + 2 }}"
+        vlan_id: "{{ nd_network_base_vlan + 2 }}"
+        vlan_name: ansible_nd_net_merged_l3_vlan
+        vrf_name: "{{ nd_network_l3_vrf_name }}"
+        gateway_ipv4_address: 10.91.2.1/24
+        arp_suppression: true
+        routing_tag: 12345
+        netflow_enable: false
+        deploy: true
+        deploy_type: network
   delegate_to: localhost
   tags: merged
 
@@ -83,7 +122,25 @@
 - name: Merged - Prepare Configuration
   vars:
     file: standalone_merged
-    network_conf: "{{ nd_network_merged_config if nd_network_run_l3 | bool else [nd_network_merged_config[0]] }}"
+    network_conf: >-
+      {{
+        nd_network_merged_config
+        if nd_network_run_l3 | bool
+        else [nd_network_merged_config[0]]
+      }}
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged - Prepare Deploy Configuration
+  vars:
+    file: standalone_merged_deploy
+    network_conf: >-
+      {{
+        nd_network_merged_deploy_config
+        if nd_network_run_l3 | bool
+        else [nd_network_merged_deploy_config[0]]
+      }}
   ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
   when: nd_network_run_standalone | bool
   tags: merged
@@ -134,5 +191,36 @@
   ansible.builtin.assert:
     that:
       - merged_idempotent.changed == false
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged TC3 - Deploy Previously Staged Network
+  cisco.nd.nd_manage_networks: &merged_deploy_conf
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_standalone_merged_deploy_conf }}"
+    output_level: debug
+  register: merged_deploy_result
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged TC3 - Assert Deploy Attempt
+  ansible.builtin.assert:
+    that:
+      - merged_deploy_result.changed == true
+      - merged_deploy_result.fabric_type == "standalone"
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged TC4 - Deploy Idempotence
+  cisco.nd.nd_manage_networks: *merged_deploy_conf
+  register: merged_deploy_idempotent
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged TC4 - Assert Deploy Idempotence
+  ansible.builtin.assert:
+    that:
+      - merged_deploy_idempotent.changed == false
   when: nd_network_run_standalone | bool
   tags: merged

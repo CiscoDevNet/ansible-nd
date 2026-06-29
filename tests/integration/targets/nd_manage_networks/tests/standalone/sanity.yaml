@@ -3,7 +3,7 @@
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing Standalone Sanity Tests - [nd_manage_networks]         +"
+      - "+     Executing Standalone Sanity Tests - [nd_manage_networks]   +"
       - "----------------------------------------------------------------"
   tags: sanity
 
@@ -83,7 +83,7 @@
   tags: sanity
 
 - name: Standalone Sanity TC1 - Merged
-  cisco.nd.nd_manage_networks:
+  cisco.nd.nd_manage_networks: &standalone_sanity_merge
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_sanity_merge_conf }}"
@@ -109,8 +109,21 @@
   when: nd_network_run_standalone | bool
   tags: sanity
 
+- name: Standalone Sanity TC1 - Merged Idempotence
+  cisco.nd.nd_manage_networks: *standalone_sanity_merge
+  register: standalone_sanity_merged_idempotent
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC1 - Assert Merged Idempotence
+  ansible.builtin.assert:
+    that:
+      - standalone_sanity_merged_idempotent.changed == false
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
 - name: Standalone Sanity TC2 - Replaced
-  cisco.nd.nd_manage_networks:
+  cisco.nd.nd_manage_networks: &standalone_sanity_replace
     fabric_name: "{{ target_fabric }}"
     state: replaced
     config: "{{ nd_network_standalone_sanity_replace_conf }}"
@@ -136,8 +149,21 @@
   when: nd_network_run_standalone | bool
   tags: sanity
 
+- name: Standalone Sanity TC2 - Replaced Idempotence
+  cisco.nd.nd_manage_networks: *standalone_sanity_replace
+  register: standalone_sanity_replaced_idempotent
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC2 - Assert Replaced Idempotence
+  ansible.builtin.assert:
+    that:
+      - standalone_sanity_replaced_idempotent.changed == false
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
 - name: Standalone Sanity TC3 - Deleted
-  cisco.nd.nd_manage_networks:
+  cisco.nd.nd_manage_networks: &standalone_sanity_delete
     fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ nd_network_standalone_sanity_delete_conf }}"
@@ -160,5 +186,18 @@
     nd_data: "{{ standalone_sanity_deleted_gathered }}"
     test_data: "{{ nd_network_standalone_sanity_delete_conf }}"
     present: false
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC3 - Deleted Idempotence
+  cisco.nd.nd_manage_networks: *standalone_sanity_delete
+  register: standalone_sanity_deleted_idempotent
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC3 - Assert Deleted Idempotence
+  ansible.builtin.assert:
+    that:
+      - standalone_sanity_deleted_idempotent.changed == false
   when: nd_network_run_standalone | bool
   tags: sanity

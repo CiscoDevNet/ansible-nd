@@ -1,4 +1,132 @@
 ---
 - name: Test Entry Point - [nd_manage_networks - mcfg - deleted]
-  ansible.builtin.import_tasks: sanity.yaml
-  tags: deleted
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MCFG Deleted Tests - [nd_manage_networks]        +"
+      - "----------------------------------------------------------------"
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted - Build Parent and Child Network Config
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_mcfg_parent_fabric }}"
+    nd_network_mcfg_delete_seed:
+      - network_name: ansible-nd-net-mcfg-deleted
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 271 }}"
+        vlan_id: "{{ nd_network_base_vlan + 271 }}"
+        vlan_name: ansible_nd_net_mcfg_deleted
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+            network_id: "{{ nd_network_base_id + 271 }}"
+            vlan_id: "{{ nd_network_base_vlan + 271 }}"
+            vlan_name: ansible_nd_net_mcfg_deleted
+    nd_network_mcfg_delete_request:
+      - network_name: ansible-nd-net-mcfg-deleted
+        is_l2only: true
+  delegate_to: localhost
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted - Prepare Seed Configuration
+  vars:
+    file: mcfg_delete_seed
+    network_conf: "{{ nd_network_mcfg_delete_seed }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted - Prepare Delete Configuration
+  vars:
+    file: mcfg_delete
+    network_conf: "{{ nd_network_mcfg_delete_request }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC1 - Create Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_mcfg_delete_seed_conf }}"
+  register: mcfg_delete_seed_result
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC2 - Delete Parent Network
+  cisco.nd.nd_manage_networks: &mcfg_delete_conf
+    fabric_name: "{{ target_fabric }}"
+    state: deleted
+    config: "{{ nd_network_mcfg_delete_conf }}"
+    output_level: debug
+  register: mcfg_delete_result
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC2 - Assert Delete
+  ansible.builtin.assert:
+    that:
+      - mcfg_delete_result.changed == true
+      - mcfg_delete_result.fabric_type == "multicluster_parent"
+      - mcfg_delete_result.child_fabrics is not defined
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC2 - Gather Parent Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_mcfg_delete_conf }}"
+  register: mcfg_delete_gathered
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC2 - Validate Network Removed
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ mcfg_delete_gathered }}"
+    test_data: "{{ nd_network_mcfg_delete_seed_conf }}"
+    present: false
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC3 - Idempotence
+  cisco.nd.nd_manage_networks: *mcfg_delete_conf
+  register: mcfg_delete_idempotent
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - mcfg_delete_idempotent.changed == false
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted

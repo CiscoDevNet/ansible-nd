@@ -1,5 +1,192 @@
 ---
 - name: Test Entry Point - [nd_manage_networks - mcfg - overridden]
-  ansible.builtin.import_tasks: sanity.yaml
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MCFG Overridden Tests - [nd_manage_networks]     +"
+      - "----------------------------------------------------------------"
   when: nd_network_run_overridden | bool
-  tags: overridden
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden - Build Parent and Child Network Config
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_mcfg_parent_fabric }}"
+    target_network_delete_config:
+      - network_name: ansible-nd-net-mcfg-over-seed
+        is_l2only: true
+      - network_name: ansible-nd-net-mcfg-over-keep
+        is_l2only: true
+    nd_network_mcfg_over_seed:
+      - network_name: ansible-nd-net-mcfg-over-seed
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 261 }}"
+        vlan_id: "{{ nd_network_base_vlan + 261 }}"
+        vlan_name: ansible_nd_net_mcfg_over_seed
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+            network_id: "{{ nd_network_base_id + 261 }}"
+            vlan_id: "{{ nd_network_base_vlan + 261 }}"
+            vlan_name: ansible_nd_net_mcfg_over_seed
+      - network_name: ansible-nd-net-mcfg-over-keep
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 262 }}"
+        vlan_id: "{{ nd_network_base_vlan + 262 }}"
+        vlan_name: ansible_nd_net_mcfg_over_keep
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+            network_id: "{{ nd_network_base_id + 262 }}"
+            vlan_id: "{{ nd_network_base_vlan + 262 }}"
+            vlan_name: ansible_nd_net_mcfg_over_keep
+    nd_network_mcfg_over_config:
+      - network_name: ansible-nd-net-mcfg-over-keep
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 262 }}"
+        vlan_id: "{{ nd_network_base_vlan + 262 }}"
+        vlan_name: ansible_nd_net_mcfg_over_keep_updated
+        rt_auto: true
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+            network_id: "{{ nd_network_base_id + 262 }}"
+            vlan_id: "{{ nd_network_base_vlan + 262 }}"
+            vlan_name: ansible_nd_net_mcfg_over_keep_updated
+  delegate_to: localhost
+  when: nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden - Prepare Seed Configuration
+  vars:
+    file: mcfg_over_seed
+    network_conf: "{{ nd_network_mcfg_over_seed }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden - Prepare Override Configuration
+  vars:
+    file: mcfg_over
+    network_conf: "{{ nd_network_mcfg_over_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC1 - Seed Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_mcfg_over_seed_conf }}"
+  register: mcfg_over_seed_result
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC2 - Override Networks
+  cisco.nd.nd_manage_networks: &mcfg_over_conf
+    fabric_name: "{{ target_fabric }}"
+    state: overridden
+    config: "{{ nd_network_mcfg_over_conf }}"
+    output_level: debug
+  register: mcfg_over_result
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC2 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - mcfg_over_result.changed == true
+      - mcfg_over_result.fabric_type == "multicluster_parent"
+      - mcfg_over_result.child_fabrics | length == 1
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC2 - Gather Parent Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: []
+  register: mcfg_over_gathered
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC2 - Validate Remaining Network
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ mcfg_over_gathered }}"
+    test_data: "{{ nd_network_mcfg_over_conf }}"
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC2 - Validate Removed Network
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ mcfg_over_gathered }}"
+    test_data:
+      - network_name: ansible-nd-net-mcfg-over-seed
+    present: false
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC3 - Idempotence
+  cisco.nd.nd_manage_networks: *mcfg_over_conf
+  register: mcfg_over_idempotent
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - mcfg_over_idempotent.changed == false
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - mcfg
+    - overridden
