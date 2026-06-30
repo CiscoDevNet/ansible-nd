@@ -120,6 +120,7 @@ options:
                     description:
                     - Priority for PIM DR election on the interface.
                     - Valid range is 1-4294967295.
+                    - The controller applies a default of C(1) when unset.
                     type: int
                   hsrp:
                     description:
