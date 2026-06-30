@@ -33,9 +33,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricResourcesPost,
     EpManageFabricResourcesActionsRemovePost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsGet
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.switch_data_models import (
     SwitchDataModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.constants import (
+    FABRIC_TYPE_STRING_MAP,
+    is_pool_supported,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import FabricSwitchInventory
 from ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.resource_manager_diff import ResourceManagerDiffEngine
@@ -83,6 +88,12 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         self.fabric = nd.params.get("fabric_name") or nd.params.get("fabric")
         self.state = nd.params["state"]
         self.config = nd.params.get("config") or []
+        self.fabric_type = None
+        if self.config:
+            self.fabric_type = self._get_fabric_type()
+
+            # Enforce fabric/pool compatibility before any further processing.
+            self._validate_pool_support_precheck()
 
         # ND-compatible tracking dicts
         self.changed_dict = [{"merged": [], "deleted": [], "gathered": [], "debugs": []}]
@@ -116,6 +127,51 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             self.state,
             len(self.config),
         )
+
+    def _get_fabric_type(self) -> str:
+        """Fetch the fabric and return ``management.type`` for validation context."""
+        ep = EpManageFabricsGet(fabric_name=self.fabric)
+        self.log.debug("_get_fabric_type: querying fabric details for fabric=%s", self.fabric)
+        fabric_data = self.nd.request(ep.path, ep.verb)
+
+        if not isinstance(fabric_data, dict):
+            raise ValueError("Unable to determine fabric type for fabric '{0}': invalid fabric response".format(self.fabric))
+
+        management = fabric_data.get("management")
+        fabric_type = management.get("type") if isinstance(management, dict) else None
+
+        if not isinstance(fabric_type, str) or not fabric_type.strip():
+            raise ValueError(
+                "Unable to determine fabric type for fabric '{0}': missing management.type".format(self.fabric)
+            )
+
+        fabric_type = fabric_type.strip()
+        if fabric_type not in FABRIC_TYPE_STRING_MAP:
+            raise ValueError(
+                "Unsupported fabric type '{0}' for fabric '{1}'".format(fabric_type, self.fabric)
+            )
+
+        self.log.debug("_get_fabric_type: resolved management.type='%s' for fabric=%s", fabric_type, self.fabric)
+        return fabric_type
+
+    def _validate_pool_support_precheck(self):
+        """Fail fast when any provided pool_name is unsupported by the target fabric."""
+        for idx, item in enumerate(self.config):
+            if not isinstance(item, dict):
+                continue
+            pool_name = item.get("pool_name")
+            if pool_name is None:
+                continue
+
+            pool_name_str = str(pool_name).strip()
+            if not pool_name_str:
+                continue
+
+            if not is_pool_supported(self.fabric_type, pool_name_str):
+                raise ValueError(
+                    "pool_name '{0}' in config index {1} is not supported for fabric type '{2}'"
+                    .format(pool_name_str, idx, self.fabric_type)
+                )
 
     # ------------------------------------------------------------------
     # Results registration helper
@@ -205,13 +261,23 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 raise ValueError("'config' element is mandatory for state '{0}'".format(self.state))
             return []
 
+        fabric_type = getattr(self, "fabric_type", None)
+
         if self.state != "gathered":
             self._validate_required_fields_compat()
-            return ResourceManagerDiffEngine.validate_configs(self.config, self.state, log=self.log)
+            return ResourceManagerDiffEngine.validate_configs(
+                self.config,
+                self.state,
+                log=self.log,
+                fabric_type=fabric_type,
+            )
 
         for idx, item in enumerate(self.config):
             try:
-                ResourceManagerConfigModel.model_validate(item, context={"state": self.state})
+                ResourceManagerConfigModel.model_validate(
+                    item,
+                    context={"state": self.state, "fabric_type": fabric_type},
+                )
             except ValidationError as exc:
                 error_detail = exc.errors() if hasattr(exc, "errors") else str(exc)
                 error_msg = f"Gathered filter validation failed for config index {idx}: {error_detail}"
@@ -882,34 +948,38 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         # Validate that all items in the response indicate success (not failure status)
         failed_items = []
         for idx, resp_item in enumerate(batch_response.resources):
+            entity_name = resp_item.get("entityName") if isinstance(resp_item, dict) else resp_item.entity_name
+            status = resp_item.get("status") if isinstance(resp_item, dict) else resp_item.status
+            message = resp_item.get("message") if isinstance(resp_item, dict) else resp_item.message
+
             # Log each response item for debugging
             self.log.debug(
                 "_validate_batch_create_response_for_failures: response_item[%s] entity_name=%s, status=%s, message=%s",
                 idx,
-                resp_item.entity_name,
-                resp_item.status,
-                resp_item.message,
+                entity_name,
+                status,
+                message,
             )
 
             # Check if status indicates failure (if status is present and not success-like)
-            if resp_item.status:
-                status_lower = resp_item.status.lower()
+            if status:
+                status_lower = str(status).lower()
                 # Recognized success status values
                 if status_lower not in ("success", "created", "ok", "succeeded"):
                     failed_items.append(
                         {
                             "index": idx,
-                            "entity_name": resp_item.entity_name or "unknown",
-                            "status": resp_item.status,
-                            "message": resp_item.message or "no details provided",
+                            "entity_name": entity_name or "unknown",
+                            "status": status,
+                            "message": message or "no details provided",
                         }
                     )
                     self.log.error(
                         "_validate_batch_create_response_for_failures: response_item[%s] has failure status: entity_name=%s, status=%s, message=%s",
                         idx,
-                        resp_item.entity_name,
-                        resp_item.status,
-                        resp_item.message,
+                        entity_name,
+                        status,
+                        message,
                     )
 
         if failed_items:
@@ -956,31 +1026,35 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
 
         failed_items = []
         for idx, resp_item in enumerate(remove_response.resources):
+            resource_value = resp_item.get("resourceValue") if isinstance(resp_item, dict) else resp_item.resource_value
+            status = resp_item.get("status") if isinstance(resp_item, dict) else resp_item.status
+            message = resp_item.get("message") if isinstance(resp_item, dict) else resp_item.message
+
             self.log.debug(
                 "_validate_remove_response_for_failures: response_item[%s] resource_value=%s, status=%s, message=%s",
                 idx,
-                resp_item.resource_value,
-                resp_item.status,
-                resp_item.message,
+                resource_value,
+                status,
+                message,
             )
 
-            if resp_item.status:
-                status_lower = resp_item.status.lower()
+            if status:
+                status_lower = str(status).lower()
                 if status_lower not in ("success", "deleted", "ok", "succeeded"):
                     failed_items.append(
                         {
                             "index": idx,
-                            "resource_value": resp_item.resource_value or "unknown",
-                            "status": resp_item.status,
-                            "message": resp_item.message or "no details provided",
+                            "resource_value": resource_value or "unknown",
+                            "status": status,
+                            "message": message or "no details provided",
                         }
                     )
                     self.log.error(
                         "_validate_remove_response_for_failures: response_item[%s] has failure status: resource_value=%s, status=%s, message=%s",
                         idx,
-                        resp_item.resource_value,
-                        resp_item.status,
-                        resp_item.message,
+                        resource_value,
+                        status,
+                        message,
                     )
 
         if failed_items:
@@ -1117,10 +1191,17 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         }
 
         for resp_item in batch_response.resources:
-            self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)})
+            if isinstance(resp_item, dict):
+                resp_item_data = resp_item
+                resp_item_entity_name = resp_item.get("entityName")
+            else:
+                resp_item_data = resp_item.model_dump(by_alias=True, exclude_none=True)
+                resp_item_entity_name = resp_item.entity_name
+
+            self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item_data})
             # GAP-5: Validate that the API response fields match what we sent.
-            if resp_item.entity_name is not None:
-                norm_key = ResourceManagerDiffEngine._normalize_entity_key(resp_item.entity_name, log=self.log)
+            if resp_item_entity_name is not None:
+                norm_key = ResourceManagerDiffEngine._normalize_entity_key(resp_item_entity_name, log=self.log)
                 matched_cfg = cfg_by_entity.get(norm_key)
                 if matched_cfg is not None:
                     ResourceManagerDiffEngine.validate_resource_api_fields(self.nd, matched_cfg, resp_item, "Resource", log=self.log)
@@ -1271,7 +1352,11 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         self._validate_remove_response_for_failures(remove_response, len(resource_ids))
 
         for resp_item in remove_response.resources:
-            self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)})
+            if isinstance(resp_item, dict):
+                resp_item_data = resp_item
+            else:
+                resp_item_data = resp_item.model_dump(by_alias=True, exclude_none=True)
+            self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item_data})
 
         self.log.info(
             "manage_deleted: Successfully deleted %s resource(s): %s",

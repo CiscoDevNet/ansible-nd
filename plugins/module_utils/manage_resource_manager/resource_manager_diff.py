@@ -312,6 +312,7 @@ class ResourceManagerDiffEngine:
         config: dict[str, Any] | list[dict[str, Any]],
         state: str,
         log: logging.Logger,
+        fabric_type: str | None = None,
     ) -> list[ResourceManagerConfigModel]:
         """Validate raw module config and return typed resource configurations.
 
@@ -319,7 +320,7 @@ class ResourceManagerDiffEngine:
             config: Raw config dict or list of dicts from module parameters.
             state: Requested module state.
             log: Logger instance.
-
+            fabric_type: Optional fabric type string for context in validation.
         Returns:
             list of validated ``ResourceManagerConfigModel`` objects.
         """
@@ -331,7 +332,10 @@ class ResourceManagerDiffEngine:
         validated_configs: list[ResourceManagerConfigModel] = []
         for idx, cfg in enumerate(configs_list):
             try:
-                validated = ResourceManagerConfigModel.model_validate(cfg, context={"state": state})
+                validated = ResourceManagerConfigModel.model_validate(
+                    cfg,
+                    context={"state": state, "fabric_type": fabric_type},
+                )
                 validated_configs.append(validated)
             except ValidationError as e:
                 error_detail = e.errors() if hasattr(e, "errors") else str(e)
@@ -704,11 +708,14 @@ class ResourceManagerDiffEngine:
             ValueError: When any provided field does not match the API response.
         """
         mismatches: list[str] = []
+        api_entity_name = ResourceManagerDiffEngine._resource_attr(api_resource, "entity_name", "entityName")
+        api_pool_name = ResourceManagerDiffEngine._resource_attr(api_resource, "pool_name", "poolName")
+        api_resource_value = ResourceManagerDiffEngine._resource_attr(api_resource, "resource_value", "resourceValue")
 
         # entity_name: tilde-order-insensitive comparison
         if resource_cfg.entity_name is not None:
             cfg_norm = ResourceManagerDiffEngine._normalize_entity_key(resource_cfg.entity_name, log=log)
-            api_norm = ResourceManagerDiffEngine._normalize_entity_key(api_resource.entity_name, log=log) if api_resource.entity_name else None
+            api_norm = ResourceManagerDiffEngine._normalize_entity_key(api_entity_name, log=log) if api_entity_name else None
 
             log.debug(
                 "validate_resource_api_fields: checking entity_name — cfg_norm='%s', api_norm='%s'",
@@ -719,9 +726,9 @@ class ResourceManagerDiffEngine:
                 log.debug(
                     "validate_resource_api_fields: entity_name MISMATCH — provided='%s', API='%s'",
                     resource_cfg.entity_name,
-                    api_resource.entity_name,
+                    api_entity_name,
                 )
-                mismatches.append(f"entity_name: provided '{resource_cfg.entity_name}', API reports '{api_resource.entity_name}'")
+                mismatches.append(f"entity_name: provided '{resource_cfg.entity_name}', API reports '{api_entity_name}'")
             else:
                 log.debug(
                     "validate_resource_api_fields: entity_name OK — '%s' matches API",
@@ -730,27 +737,27 @@ class ResourceManagerDiffEngine:
         else:
             log.debug(
                 "validate_resource_api_fields: entity_name not provided in cfg — skipping check (api_entity_name='%s')",
-                api_resource.entity_name,
+                api_entity_name,
             )
 
         # pool_name: exact match
         if resource_cfg.pool_name is not None:
             cfg_pool_norm = ResourceManagerDiffEngine._normalize_pool_name(resource_cfg.pool_name, log=log)
-            api_pool_norm = ResourceManagerDiffEngine._normalize_pool_name(api_resource.pool_name, log=log)
+            api_pool_norm = ResourceManagerDiffEngine._normalize_pool_name(api_pool_name, log=log)
             log.debug(
                 "validate_resource_api_fields: checking pool_name — cfg='%s' (norm='%s'), api='%s' (norm='%s')",
                 resource_cfg.pool_name,
                 cfg_pool_norm,
-                api_resource.pool_name,
+                api_pool_name,
                 api_pool_norm,
             )
             if cfg_pool_norm != api_pool_norm:
                 log.debug(
                     "validate_resource_api_fields: pool_name MISMATCH — provided='%s', API='%s'",
                     resource_cfg.pool_name,
-                    api_resource.pool_name,
+                    api_pool_name,
                 )
-                mismatches.append(f"pool_name: provided '{resource_cfg.pool_name}', API reports '{api_resource.pool_name}'")
+                mismatches.append(f"pool_name: provided '{resource_cfg.pool_name}', API reports '{api_pool_name}'")
             else:
                 log.debug(
                     "validate_resource_api_fields: pool_name OK — '%s' matches API",
@@ -759,7 +766,7 @@ class ResourceManagerDiffEngine:
         else:
             log.debug(
                 "validate_resource_api_fields: pool_name not provided in cfg — skipping check (api_pool_name='%s')",
-                api_resource.pool_name,
+                api_pool_name,
             )
 
         # resource vs resource_value: IPv4/v6-aware comparison
@@ -767,25 +774,25 @@ class ResourceManagerDiffEngine:
             log.debug(
                 "validate_resource_api_fields: checking resource value — cfg='%s', api='%s'",
                 resource_cfg.resource,
-                api_resource.resource_value,
+                api_resource_value,
             )
-            if not ResourceManagerDiffEngine._compare_resource_values(api_resource.resource_value, resource_cfg.resource, log=log):
+            if not ResourceManagerDiffEngine._compare_resource_values(api_resource_value, resource_cfg.resource, log=log):
                 log.debug(
                     "validate_resource_api_fields: resource value MISMATCH — provided='%s', API='%s'",
                     resource_cfg.resource,
-                    api_resource.resource_value,
+                    api_resource_value,
                 )
-                mismatches.append(f"resource: provided '{resource_cfg.resource}', API reports '{api_resource.resource_value}'")
+                mismatches.append(f"resource: provided '{resource_cfg.resource}', API reports '{api_resource_value}'")
             else:
                 log.debug(
                     "validate_resource_api_fields: resource value OK — '%s' matches API '%s'",
                     resource_cfg.resource,
-                    api_resource.resource_value,
+                    api_resource_value,
                 )
         else:
             log.debug(
                 "validate_resource_api_fields: resource not provided in cfg — skipping check (api_resource_value='%s')",
-                api_resource.resource_value,
+                api_resource_value,
             )
 
         if mismatches:

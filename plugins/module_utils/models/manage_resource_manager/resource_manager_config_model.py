@@ -32,6 +32,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_ma
     PoolType,
     ScopeType,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.constants import is_pool_supported
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     field_validator,
@@ -332,6 +333,27 @@ class ResourceManagerConfigModel(NDBaseModel):
             raise ValueError("pool_name '{0}' is not valid for pool_type 'ID'".format(pool_name))
         if allowed_scopes is not None and scope_type not in allowed_scopes:
             raise ValueError("scope_type '{0}' is not valid for pool_name '{1}'. Allowed scope_types: {2}".format(scope_type, pool_name, allowed_scopes))
+        return self
+
+    @model_validator(mode="after")
+    def validate_pool_support_for_fabric(self, info: Any) -> "ResourceManagerConfigModel":
+        """Validate pool_name is supported for the current fabric type.
+
+        Expects ``fabric_type`` in validation context when invoked from the
+        resource-manager module flow. If context is omitted, validation is
+        skipped to preserve model reusability.
+        """
+        if self.pool_name is None:
+            return self
+
+        fabric_type = (info.context or {}).get("fabric_type") if info else None
+        if not fabric_type:
+            return self
+
+        if not is_pool_supported(fabric_type, self.pool_name):
+            raise ValueError(
+                "pool_name '{0}' is not supported for fabric type '{1}'".format(self.pool_name, fabric_type)
+            )
         return self
 
     @model_validator(mode="after")

@@ -35,6 +35,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_ma
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
     NDModuleError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import HAS_PYDANTIC
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
@@ -58,14 +59,14 @@ def _config(**overrides):
 def _response(**overrides):
     """Build a resource response model with optional overrides."""
     data = {
-        "resourceId": 101,
-        "entityName": "loopback0",
-        "poolName": "LOOPBACK_ID",
-        "resourceValue": "10",
-        "scopeDetails": {
-            "scopeType": "device",
-            "switchId": "SER1",
-            "switchIp": "192.0.2.10",
+        "resource_id": 101,
+        "entity_name": "loopback0",
+        "pool_name": "LOOPBACK_ID",
+        "resource_value": "10",
+        "scope_details": {
+            "scope_type": "device",
+            "switch_id": "SER1",
+            "switch_ip": "192.0.2.10",
         },
     }
     data.update(overrides)
@@ -395,6 +396,9 @@ def test_main_generic_exception_debug_includes_traceback():
 
 def test_resource_manager_config_rejects_unknown_id_pool_name():
     """Unknown ID pool names remain invalid for modifying states."""
+    if not HAS_PYDANTIC:
+        pytest.skip("Strict validator behavior requires pydantic runtime")
+
     with pytest.raises(Exception, match="pool_name 'WRONG_POOL' is not valid"):
         ResourceManagerConfigModel.model_validate(
             {
@@ -656,7 +660,7 @@ def test_resource_manager_exit_module_verbose_output_uses_api_keys_only():
 # =========================================================================
 
 
-def _mock_nd_module(fabric="fabric-1", state="merged", config=None, check_mode=False):
+def _mock_nd_module(fabric="fabric-1", state="merged", config=None, check_mode=False, fabric_type="vxlanIbgp"):
     """Create a mock NDModule with request method for API calls."""
     nd = MagicMock()
     nd.params = {
@@ -668,6 +672,17 @@ def _mock_nd_module(fabric="fabric-1", state="merged", config=None, check_mode=F
     nd.module = MagicMock()
     nd.module.check_mode = check_mode
     nd.request = MagicMock(return_value=[])
+
+    def _request_side_effect(path, *args, **kwargs):
+        if isinstance(path, str):
+            prefix = "/api/v1/manage/fabrics/"
+            if path.startswith(prefix):
+                tail = path[len(prefix) :].split("?", 1)[0]
+                if "/" not in tail:
+                    return {"management": {"type": fabric_type}}
+        return nd.request.return_value
+
+    nd.request.side_effect = _request_side_effect
     return nd
 
 
@@ -1540,10 +1555,12 @@ def test_manage_state_merged_uses_filtered_candidate_get():
         module.manage_state()
 
     paths = [call.args[0] for call in nd.request.call_args_list]
-    assert "poolName=LOOPBACK_ID" in paths[0]
-    assert "switchId=SER1" in paths[0]
-    assert "max=500" in paths[0]
-    assert "offset=0" in paths[0]
+    resource_paths = [path for path in paths if "/resources" in path]
+    assert resource_paths
+    assert "poolName=LOOPBACK_ID" in resource_paths[0]
+    assert "switchId=SER1" in resource_paths[0]
+    assert "max=500" in resource_paths[0]
+    assert "offset=0" in resource_paths[0]
 
 
 def test_manage_state_deleted_uses_filtered_candidate_get():
@@ -1568,12 +1585,15 @@ def test_manage_state_deleted_uses_filtered_candidate_get():
         module = NDResourceManagerModule(nd, results, log=LOG)
         module.manage_state()
 
-    path = nd.request.call_args_list[0].args[0]
+    paths = [call.args[0] for call in nd.request.call_args_list]
+    resource_paths = [path for path in paths if "/resources" in path]
+    assert resource_paths
+    path = resource_paths[0]
     assert "poolName=LOOPBACK_ID" in path
     assert "switchId=SER1" in path
     assert "max=500" in path
     assert "offset=0" in path
-    assert len(nd.request.call_args_list) == 1
+    assert len(resource_paths) == 1
 
 
 def test_manage_state_gathered_uses_filtered_candidate_get():
@@ -1607,11 +1627,69 @@ def test_manage_state_gathered_uses_filtered_candidate_get():
         module = NDResourceManagerModule(nd, results, log=LOG)
         module.manage_state()
 
-    path = nd.request.call_args_list[0].args[0]
+    paths = [call.args[0] for call in nd.request.call_args_list]
+    resource_paths = [path for path in paths if "/resources" in path]
+    assert resource_paths
+    path = resource_paths[0]
     assert "poolName=LOOPBACK_ID" in path
     assert "switchId=SER1" in path
     assert "filter=entityName:loopback0" in path
     assert module.changed_dict[0]["gathered"]  # pylint: disable=protected-access
+
+
+def test_manage_resource_manager_merged_rejects_unsupported_pool_for_fabric_type():
+    """Merged config fails fast when pool_name is unsupported for the fabric type."""
+    nd = _mock_nd_module(
+        state="merged",
+        fabric_type="vxlanIbgp",
+        config=[
+            {
+                "entity_name": "router_id_a",
+                "pool_type": "ID",
+                "pool_name": "ROUTER_ID_POOL",
+                "scope_type": "fabric",
+                "resource": "100",
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="not supported for fabric type"):
+        NDResourceManagerModule(nd, Results(), log=LOG)
+
+
+def test_manage_resource_manager_deleted_rejects_unsupported_pool_for_fabric_type():
+    """Deleted config fails fast when pool_name is unsupported for the fabric type."""
+    nd = _mock_nd_module(
+        state="deleted",
+        fabric_type="vxlanIbgp",
+        config=[
+            {
+                "entity_name": "router_id_a",
+                "pool_type": "ID",
+                "pool_name": "ROUTER_ID_POOL",
+                "scope_type": "fabric",
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="not supported for fabric type"):
+        NDResourceManagerModule(nd, Results(), log=LOG)
+
+
+def test_manage_resource_manager_gathered_rejects_unsupported_pool_filter_for_fabric_type():
+    """Gathered filters fail fast when pool_name is unsupported for the fabric type."""
+    nd = _mock_nd_module(
+        state="gathered",
+        fabric_type="vxlanIbgp",
+        config=[
+            {
+                "pool_name": "ROUTER_ID_POOL",
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="not supported for fabric type"):
+        NDResourceManagerModule(nd, Results(), log=LOG)
 
 
 def test_validate_input_gathered_with_partial_filter():
@@ -2482,6 +2560,9 @@ def test_manage_deleted_logs_deletion():
 
 def test_validate_input_gathered_invalid_filter_raises():
     """Gathered validation wraps model validation errors with index context."""
+    if not HAS_PYDANTIC:
+        pytest.skip("Strict validator behavior requires pydantic runtime")
+
     module = _resource_manager()
     module.state = "gathered"
     module.config = [{"scope_type": "not_a_valid_scope"}]
