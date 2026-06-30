@@ -9,27 +9,8 @@ module: nd_manage_policy_group
 short_description: Manage policy groups on Cisco Nexus Dashboard (ND)
 version_added: "2.0.0"
 description:
-- Manage policy groups on Cisco Nexus Dashboard (ND)
-- Policy groups apply a template to multiple switches simultaneously.
-- Normal idempotent create/update/delete operations identify policy groups by
-  the composite key C(description, template_name).
-- C(POLICY-GROUP-*) IDs can also be supplied. The module resolves the ID to the
-  controller's template name and description before normal state-machine work.
-- Some ID-based operations bypass the normal state-machine path and are sent
-  directly by policy group ID, including groups with no description and updates that
-  change the description of an existing group. These direct actions are reported
-  under the C(direct_actions) return key instead of C(before)/C(after).
-- C(create_additional_policy=true) bypasses idempotency and always creates
-  another policy group. These force-created groups are reported under
-  C(force_created) because duplicate composite identifiers cannot be represented
-  in the normal before/after collections.
-- The module is validation-first but B(not) a rollback transaction. Input validation
-  and duplicate checks run before write operations; after controller writes begin,
-  later API or deploy failures can leave earlier successful operations in place.
-- Template-input schema validation is per-entry. If one policy-group entry has invalid
-  O(config[].template_inputs), that entry is reported as failed, but other valid entries in
-  the same C(merged) task can still be created, updated, or deployed. The final task
-  result is failed when any entry fails.
+- Manage policy groups on Cisco Nexus Dashboard (ND).
+- Policy groups apply one template to multiple switches.
 author:
 - L Nikhil Sri Krishna (@nisaikri)
 options:
@@ -42,124 +23,131 @@ options:
   deploy:
     description:
     - Whether to deploy changes after create/update/delete operations.
-    - When C(true), the module pushes the affected switches via
-      C(POST /switchActions/deploy) after the controller-side change
-      (create / update / markDelete + fallback DELETE) succeeds.
-    - When C(false), changes are staged on the controller but never deployed
-      to the switches.
-    - "B(Why switchActions/deploy and not pushConfig:)"
-    - The ND C(POST /policyActions/pushConfig) endpoint is B(not) honoured for
-      policy groups (it only operates on policies). So unlike C(nd_manage_policy),
-      this module has no per-policy deploy path — every deploy step is a
-      switch-level deploy.
-    - "B(Deploy target — which switches receive the deploy:)"
+    - When V(false), changes are staged on the controller but running config is
+      not deployed to the switches until a later deploy.
+    - Policy groups have no per-policy deploy path. The ND
+      C(policyActions/pushConfig) operation is B(not) honoured for policy groups,
+      so every O(deploy=true) path uses switch-level deploy.
     - For C(create), the deploy target is the new policy group's member switches.
     - For C(update), the deploy target is the B(union of the new member set and
-      the removed member set) (i.e. B(post-update members) ∪ B(removed members)).
+      the removed member set), meaning B(post-update members) plus B(removed members).
       The removed members are included so the controller pushes the negative
       (removal) configuration to switches that no longer belong to the policy group.
       This formula covers all three sub-cases identically, switches added only,
       switches removed only, and switches added-and-removed in the same task.
-    - For C(delete) (both C(markDelete)-succeeded and direct-DELETE fallback),
-      the deploy target is a single consolidated call against the union of all
-      affected switches across every policy group being deleted in this task.
-    - If a later C(delete) run uses O(deploy=true) for a policy group already
-      pending deletion from a previous O(deploy=false) run, the normal active
-      policy-group view will not return C(markDeleted=true) rows or generated
-      child rows with non-empty C(source). The module reads C(policySummary)
-      with C(filter=policyId:*POLICY-GROUP-*) and matches hidden
-      C(markDeleted=true) rows by requested ID as C(policyId), requested ID as
-      generated-child C(source), or exact description. Only matched pending-delete
-      rows contribute switches to the consolidated C(switchActions/deploy) target.
+    - For C(delete), the module calls C(markDelete) once with all policy group IDs.
+      The operation returns C(207 Multi-Status) with per-policy success or failure
+      status.
+    - For policy groups where C(markDelete) fails, typically PYTHON content-type
+      templates such as C(switch_freeform) and C(switch_freeform_config), the module
+      falls back to direct C(DELETE). This fallback is unconditional on the
+      C(markDelete) failure and is B(not) gated by O(deploy).
+    - For C(delete) with O(deploy=true), C(markDelete)-succeeded groups and direct
+      C(DELETE) fallback groups are followed by one consolidated switch-level deploy
+      against the union of all affected switches. With O(deploy=false), the
+      switch-level deploy step is skipped and running config remains on the switches
+      until a later deploy.
+    - If a later C(delete) run uses O(deploy=true) for a policy group already pending
+      deletion from a previous O(deploy=false) run, the normal active policy-group
+      view will not return C(markDeleted=true) rows or generated child rows with
+      non-empty C(source). The module reads C(policySummary) with
+      C(filter=policyId:*POLICY-GROUP-*) and matches hidden C(markDeleted=true) rows
+      by requested ID as C(policyId), requested ID as generated-child C(source), or
+      exact description. Only matched pending-delete rows contribute switches to the
+      consolidated switch-level deploy target, so a mistyped or already-clean target
+      does not deploy unless C(policySummary) contains a matching pending row.
     - For user-mentioned policy groups listed in O(config) whose desired state
-      already matches the controller (no diff), C(switchActions/deploy) is still
+      already matches the controller with no diff, switch-level deploy is still
       issued against the existing member switches so the user-expressed deploy
       intent is honoured.
-    - B(Warning) — Because every C(deploy=true) step uses C(POST /switchActions/deploy),
-      whenever the targeted policy groups have any member switches, the controller will
-      deploy B(every pending configuration change staged for those switches), not only
-      the policy-group changes performed by this task. The ND controller does not
-      provide a per-task or staged-only variant of the switch-level deploy endpoint.
-      Use O(deploy=false) to stage policy-group changes without triggering a switch-level
-      deploy.
+    - Because every O(deploy=true) step uses switch-level deploy, whenever the
+      targeted policy groups have member switches, the controller deploys B(every
+      pending configuration change staged for those switches), not only the
+      policy-group changes performed by this task. The ND controller does not provide
+      a per-task or staged-only variant of switch-level deploy. Use O(deploy=false)
+      to stage policy-group changes without triggering switch-level deploy.
     type: bool
     default: true
   config:
     description:
     - List of policy group configurations.
-    - Required for C(merged) and C(deleted). Optional for C(gathered); when omitted
-      with C(gathered), all active, user-manageable policy groups on the fabric
-      are returned. Policy groups with C(markDeleted=true) and generated/internal
-      rows with non-empty C(source) are excluded.
-    - For C(merged), C(config.name) is required. If C(config.name) is a template name,
-      C(config.description) is also required unless C(create_additional_policy=true).
-    - For C(deleted), C(config.name) is required. A template name without
-      C(config.description) expands to all active policy groups using that template.
-    - For C(gathered), entries are filters. They may use C(config.name), C(config.description),
-      or both.
+    - Required for C(merged) and C(deleted). Optional for C(gathered).
+    - For C(merged), O(config[].name) is required. If O(config[].name) is a
+      template name, O(config[].description) is also required unless
+      O(config[].create_additional_policy=true).
+    - For C(deleted), O(config[].name) is required. A template name without
+      O(config[].description) expands to all active policy groups using that template.
+    - For C(gathered), entries are filters. They may use O(config[].name),
+      O(config[].description), or both. See O(state) for the gathered filter matrix.
     type: list
     elements: dict
     suboptions:
       name:
         description:
-        - "This can be one of the following:"
-        - When both O(config.name) and O(config.policy_id) are supplied and
-          O(config.name) is a template name, O(config.policy_id) takes precedence
-          as the primary key for resolution. If O(config.name) is already a
+        - Template name (for example, C(feature_enable) or C(switch_freeform)) or
+          policy group ID (for example, C(POLICY-GROUP-123456)).
+        - When both O(config[].name) and O(config[].policy_id) are supplied and
+          O(config[].name) is a template name, O(config[].policy_id) takes precedence
+          as the primary key for resolution. If O(config[].name) is already a
           C(POLICY-GROUP-*) ID, that ID is used directly.
-        - "a) Template Name - A name identifying the template (e.g., C(feature_enable), C(switch_freeform))."
-        - "   A template name can be used by multiple policy groups and hence does not identify a policy group uniquely."
-        - "b) Policy Group ID - A unique ID identifying a policy group (e.g., C(POLICY-GROUP-123456))."
-        - "   Policy Group ID MUST be used for modifying specific policy groups since template names cannot uniquely identify"
-        - "   a policy group without O(config.description)."
-        - "B(Policy Group ID resolution:)"
+        - Template names can be used by multiple policy groups and do not identify a
+          policy group uniquely without O(config[].description).
         - When a C(POLICY-GROUP-*) ID is provided, the module queries the controller to resolve it
           to its corresponding C(template_name) and C(description). The resolved values are then used
           internally as the composite key for state machine operations (create/update/delete).
-        - For O(state=merged), if the ID is not found on the controller, the module fails with an error.
+        - For C(merged), if the ID is not found on the controller, the module fails with an error.
           Policy group IDs are server-generated and cannot be used to create new policy groups.
-          Use a template name in O(config.name) together with O(config.description) to create new policy groups.
-        - For O(state=deleted), if the ID is not found in the active policy-group view,
+          Use a template name in O(config[].name) together with O(config[].description)
+          to create new policy groups.
+        - For C(deleted), if the ID is not found in the active policy-group view,
           it is treated as already deleted unless O(deploy=true) finds a matching
           C(markDeleted=true) row in C(policySummary). Matching accepts the requested
           ID as the hidden row's C(policyId), or as the C(source) value on a generated
           child row. This means either the original ID or the generated child row ID
           can work when it identifies the pending row returned by C(policySummary).
           When matched, the module deploys the switches reported by C(policySummary).
-        - For O(state=gathered), the ID is used directly to query the specific policy group by ID.
-        - Required for O(state=merged) and O(state=deleted). Optional for O(state=gathered)
-          where entries can filter by O(config.description) alone.
+        - For C(gathered), the ID is used directly to query the specific policy group by ID.
+        - Required for C(merged) and C(deleted). Optional for C(gathered) where
+          entries can filter by O(config[].description) alone.
         type: str
       policy_id:
         description:
         - The unique policy group ID assigned by the controller (e.g., C(POLICY-GROUP-123456)).
-        - Populated automatically in O(state=gathered) output to support round-trip operations.
-        - When provided together with O(config.name) (template name) and O(config.description),
+        - Populated automatically in C(state=gathered) output to support round-trip operations.
+        - When provided together with O(config[].name) as a template name and
+          O(config[].description),
           this field is used as the authoritative key for ID-based resolution, bypassing the
           composite (description, template_name) lookup.
-        - Optional for O(state=merged) and O(state=deleted).
-        - Not used as a C(state=gathered) filter. To gather one policy group by ID, set
-          O(config.name) to the C(POLICY-GROUP-*) value.
+        - This is B(not) an alias for O(config[].name).
+        - Use snake-case O(config[].policy_id). C(policyId) is not an alias.
+        - Optional for C(merged) and C(deleted).
+        - Not used as a C(state=gathered) filter. To gather one policy group by ID,
+          set O(config[].name) to the C(POLICY-GROUP-*) value.
+        - ID-based updates for no-description groups or description changes bypass
+          the normal composite-key state machine and are returned under
+          C(direct_actions), not normal C(before)/C(after).
         - When an ID-based C(merged) update changes the group's description, the request
           bypasses the composite-key merge state machine and is sent as a direct
           C(PUT /policyGroups/{policy_id}) payload. Always include the intended
-          C(switch_ids) on these entries — B(omitting C(switch_ids) on a direct-ID PUT
+          O(config[].switch_ids) on these entries — B(omitting O(config[].switch_ids) on a direct-ID PUT
           will replace the group's member set with an empty list), removing the policy
           group from every switch it previously covered.
         type: str
       description:
         description:
         - Description of the policy group.
-        - Used together with O(config.name) as the unique identifier when name is a template name.
-        - Required when O(state=merged) and name is a template name (not a policy group ID),
-          B(unless) O(config.create_additional_policy=true) is set — in which case the
-          composite-key idempotency check is bypassed and C(description) becomes optional.
-        - "When O(state=deleted):"
-        - "  If provided with a template name, deletes the specific policy group matching (description, template_name)."
-        - "  If omitted with a template name, deletes all active policy groups using that template."
-        - "  Not required when name is a policy group ID."
-        - When O(state=gathered), can be used by itself to gather all groups with that description,
-          or with O(config.name) to gather the exact template+description match.
+        - Used together with template-name O(config[].name) as the normal composite
+          key, C(description, template_name).
+        - Required when C(state=merged) and O(config[].name) is a template name,
+          B(unless) O(config[].create_additional_policy=true) is set. In that case,
+          the composite-key idempotency check is bypassed and O(config[].description)
+          becomes optional.
+        - For C(deleted), if provided with a template name, deletes the specific policy
+          group matching C(description, template_name). If omitted with a template name,
+          deletes all active policy groups using that template. Not required when
+          O(config[].name) is a policy group ID.
+        - For C(gathered), can be used by itself to gather all groups with that description,
+          or with O(config[].name) to gather the exact template+description match.
         type: str
       switch_ids:
         description:
@@ -183,8 +171,9 @@ options:
         - For C(merged), non-empty inputs are validated per entry against the template
           parameters endpoint before that entry is sent to the controller. Entries
           that fail validation are removed from the write bucket and reported in the
-          final task failure; valid entries continue through the normal create/update
-          flow. Controller parameter-fetch failures degrade to controller-side validation.
+          final task failure; valid entries can still be created, updated, or
+          deployed. The final task result is failed when any entry fails. Controller
+          parameter-fetch failures degrade to controller-side validation.
         - System-injected keys returned by gathered output are stripped before
           validation so gathered-to-merged round trips do not fail on controller-only
           fields.
@@ -193,21 +182,23 @@ options:
         description:
         - A flag indicating if a policy group should be created even if an identical one already exists.
         - When V(true), the policy group is always created without idempotency checks.
-        - O(config.description) is not required when this is V(true).
+        - O(config[].description) is not required when this is V(true).
         - Only applicable when O(state=merged).
+        - Force-created groups are returned under C(force_created), not the normal
+          C(before)/C(after) state-machine lists, because duplicate composite
+          identifiers cannot be represented in those collections.
         type: bool
         default: false
   ticket_id:
     description:
-    - Change Control Ticket ID to associate with mutation operations
-      (C(POST)/C(PUT)/C(DELETE)/C(markDelete)).
+    - Change Control Ticket ID to associate with create/update operations,
+      C(markDelete), and direct C(DELETE).
     - Required when Change Control is enabled on the ND controller.
     - Must start with a letter and contain only letters, digits, underscores,
       or hyphens (max 64 characters).
-    - B(Note) — C(POST /switchActions/deploy) does not accept a C(ticketId)
-      parameter, so the deploy step is B(not) bound to the supplied ticket.
-      Only the controller-side mutations (C(POST)/C(PUT)/C(DELETE)/C(markDelete))
-      carry the ticket.
+    - B(Note) - switch-level deploy does not accept a C(ticketId) parameter, so
+      deploy steps are B(not) bound to the supplied ticket. Only controller-side
+      mutation operations carry the ticket.
     type: str
   cluster_name:
     description:
@@ -216,18 +207,24 @@ options:
   state:
     description:
     - The desired state of the policy group resources on the Cisco Nexus Dashboard.
-    - Use O(state=merged) to create new policy groups and update existing ones.
-    - Use O(state=deleted) to remove policy groups from the fabric.
-    - Use O(state=gathered) to export existing policy groups as playbook-compatible config.
-    - "For O(state=gathered):"
-    - "  When O(config) is omitted, all active, user-manageable policy groups on the fabric are returned."
-    - "  When O(config) is provided, results are filtered by the given criteria:"
-    - "    O(config.name) with a C(POLICY-GROUP-*) ID returns that specific policy group."
-    - "    O(config.name) with a template name returns all policy groups using that template."
-    - "    O(config.name) with a template name and O(config.description) returns the exact match."
-    - "    O(config.description) without O(config.name) returns all policy groups with that description."
+    - Use C(merged) to create new policy groups and update existing ones.
+    - Use C(deleted) to remove policy groups from the fabric.
+    - Use C(gathered) to export existing policy groups as playbook-compatible config.
+      When O(config) is omitted, all active, user-manageable policy groups on the
+      fabric are returned. When O(config) is provided, results are filtered by the
+      provided criteria.
+    - For C(gathered), O(config[].name) with a C(POLICY-GROUP-*) ID returns that
+      specific policy group.
+    - For C(gathered), O(config[].name) with a template name returns all policy
+      groups using that template.
+    - For C(gathered), O(config[].name) with a template name and
+      O(config[].description) returns the exact match.
+    - For C(gathered), O(config[].description) without O(config[].name) returns all
+      policy groups with that description.
     - The output under the C(gathered) return key can be used directly as O(config)
-      with O(state=merged) for round-trip operations.
+      with C(state=merged) for round-trip operations.
+    - C(state=gathered) excludes policy groups with C(markDeleted=true) and
+      generated/internal rows with non-empty C(source).
     type: str
     default: merged
     choices: [ merged, deleted, gathered ]
@@ -235,46 +232,11 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- Policy groups are identified by (description, template_name) composite key.
-- The O(config.name) field can be a template name or a C(POLICY-GROUP-xxxxx) ID.
-- When using a policy group ID, it is resolved to its template name and description
-  by querying the controller. The resolved values are used as the composite key
-  for all subsequent state machine operations.
-- If O(config.policy_id) is present, it takes precedence over O(config.name) for
-  C(merged) and C(deleted), including gathered round-trip input.
-- ID-based updates for no-description groups or description changes bypass the
-  normal composite-key state machine and are returned under C(direct_actions).
-- C(create_additional_policy=true) bypasses idempotency checks and is returned
-  under C(force_created), not the normal C(before)/C(after) state-machine lists.
-- For O(state=deleted) with only a template name (no description), all active
-  policy groups using that template are expanded and deleted.
-- After creation, C(POST /switchActions/deploy) deploys the policy groups to the
-  member switches when O(deploy=true). The C(policyActions/pushConfig) endpoint is
-  not honoured for policy groups, so the switch-level deploy is the only deploy path.
-- "B(Deletion behavior:)"
-- "Deletion uses a three-step controller-side flow:"
-- "  1. C(POST /policyGroups/actions/markDelete) is called once with all policy group IDs.
-  The endpoint returns 207 Multi-Status with per-policy success/failure status."
-- "  2. For policy groups where C(markDelete) failed (typically PYTHON content-type
-  templates such as C(switch_freeform) and C(switch_freeform_config) — the controller
-  rejects C(markDelete) for these), the module falls back to a direct
-  C(DELETE /policyGroups/{id}) call. This fallback is B(unconditional) on the
-  C(markDelete) failure and is B(not) gated by O(deploy)."
-- "  3. If O(deploy=true), a single consolidated C(POST /switchActions/deploy)
-  is issued against the union of all affected switches (from both
-  C(markDelete)-succeeded and direct-DELETE groups) so the negative (removal)
-  configuration is pushed. If O(deploy=false), step 3 is skipped and the
-  switch running config is left untouched until a subsequent deploy."
-- "If a later C(state=deleted) run with O(deploy=true) targets a group already
-  pending deletion from a previous O(deploy=false) run, the module keeps normal
-  active reads filtered but checks C(policySummary) for hidden C(markDeleted=true)
-  rows. It matches by requested ID as C(policyId), requested ID as generated-child
-  C(source), or exact description, then adds the matched pending switches to the
-  same consolidated C(switchActions/deploy) call used by active deletes. A mistyped
-  or already-clean target does not deploy unless C(policySummary) contains a
-  matching pending row."
+- The module is validation-first but B(not) a rollback transaction. Input validation
+  and duplicate checks run before write operations. After controller writes begin,
+  later API or deploy failures can leave earlier successful operations in place.
 - "B(Ghost-record cleanup for PYTHON content-type templates:)"
-- After a direct C(DELETE) of a PYTHON content-type policy group (step 2 above),
+- After a direct C(DELETE) of a PYTHON content-type policy group,
   the controller internally creates a transient C(switch_freeform_config) artifact
   with a non-empty C(source) field referencing the deleted policy group. These
   ghost records are automatically filtered out during normal query operations so
@@ -295,10 +257,6 @@ notes:
   becoming a no-op against a pending-delete row. Pending-delete rows are consulted only
   by the C(state=deleted) + O(deploy=true) cleanup path, and only through the
   C(policySummary) validation described above.
-- Template-input schema validation is per-entry. Invalid entries are removed from
-  their write bucket and reported in the final failed result, while valid entries
-  in the same task can still be processed. Validation schema-fetch failures degrade
-  to controller-side validation for that template.
 """
 
 EXAMPLES = r"""
