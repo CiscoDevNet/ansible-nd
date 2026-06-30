@@ -342,5 +342,5 @@ class L3OutModel(NDBaseModel):
                 default="merged",
                 choices=["merged", "replaced", "deleted"],
             ),
-            config=dict(type="list", elements="dict", default=[], options=l3out_spec),
+            config=dict(type="list", elements="dict", required=True, options=l3out_spec),
         )

@@ -23,6 +23,7 @@ short_description: Manage L3Outs (Layer-3 Outs) on Cisco Nexus Dashboard
 description:
 - Manage L3Out (Layer-3 Out) configurations on Cisco Nexus Dashboard (ND).
 - L3Outs provide connectivity between ND-managed fabrics and external networks.
+- It supports creating, updating, and deleting L3Out configurations.
 - Supports multiple connectivity types (routed, subInterface, svi) and routing protocols (BGP, static).
 - Requires ND 4.1 or later.
 author:
@@ -51,7 +52,7 @@ options:
     - A list of dictionaries containing L3Out configurations.
     type: list
     elements: dict
-    default: []
+    required: true
     suboptions:
       name:
         description:
