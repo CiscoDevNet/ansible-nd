@@ -125,6 +125,7 @@ options:
                     description:
                     - Enable HSRP on the interface.
                     - When V(true), the other C(hsrp_*) and C(preempt)/C(mac) fields take effect.
+                    - No HSRP sub-options are strictly required; the controller applies defaults for any left unset (e.g. C(hsrp_group) and C(hsrp_version) default to C(1)).
                     type: bool
                   hsrp_vip:
                     description:
@@ -138,6 +139,7 @@ options:
                     description:
                     - HSRP group number.
                     - Valid range is 0-4095.
+                    - The controller applies a default of C(1) when unset.
                     type: int
                   hsrp_groupv6:
                     description:
@@ -148,6 +150,7 @@ options:
                   hsrp_version:
                     description:
                     - HSRP protocol version.
+                    - The controller applies a default of C(1) when unset.
                     type: int
                     choices: [1, 2]
                   hsrp_priority:
