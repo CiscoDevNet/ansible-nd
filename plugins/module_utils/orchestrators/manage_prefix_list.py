@@ -23,10 +23,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageIpv6PrefixListsPost,
     EpManageIpv6PrefixListsPut,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.manage_prefix_list import PrefixListModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+
+_QUERY_PAGE_SIZE = 100
 
 # Per-item ``status`` values in a 207 Multi-Status body that count as a failure. Anything else --
 # ``success``, missing, empty, or future progress tokens -- is tolerated so informational rows do
@@ -127,6 +130,18 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         """
         return self.rest_send.params.get("fabric_name")
 
+    @property
+    def cluster_name(self) -> str | None:
+        """
+        Return optional ``cluster_name`` from module params.
+
+        The Manage prefix-list API exposes ``clusterName`` on every operation.
+        Keeping this as a top-level module parameter lets the orchestrator apply
+        the same query parameter consistently to list, item, create, update, and
+        bulk-delete endpoints.
+        """
+        return self.rest_send.params.get("cluster_name")
+
     def _config_for_version(self, version: str) -> dict[str, Any]:
         """Return the endpoint classes and payload keys for the given ip_version, failing fast on unknown values."""
         try:
@@ -148,6 +163,116 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             else:
                 raise ValueError(f"Unsupported ip_version '{version}' for prefix list '{model.name}'. Expected 'ipv4' or 'ipv6'.")
         return grouped
+
+    def _configure_endpoint(
+        self,
+        api_endpoint: NDEndpointBaseModel,
+        max_records: int | None = None,
+        offset: int | None = None,
+    ) -> NDEndpointBaseModel:
+        """Attach shared fabric and query parameters before endpoint path generation."""
+        api_endpoint.fabric_name = self.fabric_name
+        endpoint_params = getattr(api_endpoint, "endpoint_params", None)
+        if endpoint_params is None:
+            return api_endpoint
+        if self.cluster_name is not None and hasattr(endpoint_params, "cluster_name"):
+            endpoint_params.cluster_name = self.cluster_name
+        if max_records is not None and hasattr(endpoint_params, "max"):
+            endpoint_params.max = max_records
+        if offset is not None and hasattr(endpoint_params, "offset"):
+            endpoint_params.offset = offset
+        return api_endpoint
+
+    @staticmethod
+    def _coerce_int(value: Any) -> int | None:
+        """Return ``value`` as int when possible, otherwise ``None``."""
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _raw_items_from_params(params: dict[str, Any]) -> list[dict[str, Any]]:
+        """Return module ``config`` as a list of dictionaries."""
+        config = params.get("config") or []
+        if isinstance(config, dict):
+            config = [config]
+        return [item for item in config if isinstance(item, dict)]
+
+    def _proposed_identifiers(self) -> list[tuple[str, str]]:
+        """Return unique ``(ip_version, name)`` identifiers from raw module config."""
+        identifiers: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in self._raw_items_from_params(self.rest_send.params):
+            model = PrefixListModel.from_config(item)
+            identifier = model.get_identifier_value()
+            if not isinstance(identifier, tuple) or len(identifier) != 2:
+                continue
+            normalized = (str(identifier[0]), str(identifier[1]))
+            if normalized not in seen:
+                seen.add(normalized)
+                identifiers.append(normalized)
+        return identifiers
+
+    def _should_use_scoped_query(self) -> bool:
+        """Return whether initialization can query only proposed prefix-list identities."""
+        state = self.rest_send.params.get("state")
+        return state in {"merged", "replaced", "deleted"} and bool(self._raw_items_from_params(self.rest_send.params))
+
+    def _query_one_existing(self, version: str, name: str) -> dict[str, Any] | None:
+        """Fetch one existing prefix list, returning ``None`` when it is absent."""
+        config = self._config_for_version(version)
+        api_endpoint = self._configure_endpoint(config["get"]())
+        api_endpoint.set_identifiers((version, name))
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+        if not result:
+            return None
+        result["ipVersion"] = version
+        return result
+
+    def _query_proposed_existing(self) -> list[dict[str, Any]]:
+        """Fetch only the existing prefix lists named by module ``config``."""
+        results: list[dict[str, Any]] = []
+        for version, name in self._proposed_identifiers():
+            item = self._query_one_existing(version, name)
+            if item is not None:
+                results.append(item)
+        return results
+
+    def _has_next_page(self, result: dict[str, Any], page_count: int, offset: int) -> bool:
+        """Determine whether another offset/max page should be fetched."""
+        if page_count == 0:
+            return False
+        meta = result.get("meta") or {}
+        counts = meta.get("counts") or {}
+        total = self._coerce_int(counts.get("total"))
+        if total is not None:
+            return offset + page_count < total
+        remaining = self._coerce_int(counts.get("remaining"))
+        if remaining is not None:
+            return remaining > 0
+        return page_count == _QUERY_PAGE_SIZE
+
+    def _query_all_for_version(self, version: str) -> list[dict[str, Any]]:
+        """Fetch all prefix lists for one address family using explicit offset/max pagination."""
+        config = self._config_for_version(version)
+        results: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            api_endpoint = self._configure_endpoint(config["list"](), max_records=_QUERY_PAGE_SIZE, offset=offset)
+            raw = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            if not raw:
+                break
+            page = raw.get(config["list_key"], []) or []
+            for item in page:
+                item["ipVersion"] = version
+                results.append(item)
+            if not self._has_next_page(raw, len(page), offset):
+                break
+            offset += _QUERY_PAGE_SIZE
+        return results
 
     @staticmethod
     def _raise_on_207_failures(result: Any, operation: str) -> None:
@@ -177,20 +302,18 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
     def _bulk_create_for_version(self, version: str, items: list[PrefixListModel]) -> ResponseType:
         """Send a single bulk-create request for all items of the given ip_version and check the 207 body."""
         config = self._config_for_version(version)
-        api_endpoint = config["post"]()
-        api_endpoint.fabric_name = self.fabric_name
+        api_endpoint = self._configure_endpoint(config["post"]())
         payload = {config["list_key"]: [item.to_payload() for item in items]}
-        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.CREATE)
         self._raise_on_207_failures(result, "create")
         return result
 
     def _bulk_delete_for_version(self, version: str, names: list[str]) -> ResponseType:
         """Send a single bulk-delete request for the given prefix list names and check the 207 body."""
         config = self._config_for_version(version)
-        api_endpoint = config["bulk_delete"]()
-        api_endpoint.fabric_name = self.fabric_name
+        api_endpoint = self._configure_endpoint(config["bulk_delete"]())
         payload = {config["names_key"]: names}
-        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.DELETE)
         self._raise_on_207_failures(result, "delete")
         return result
 
@@ -205,10 +328,9 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         """Update an existing prefix list via the PUT endpoint."""
         try:
             config = self._config_for_version(str(model_instance.ip_version))
-            api_endpoint = config["put"]()
-            api_endpoint.fabric_name = self.fabric_name
+            api_endpoint = self._configure_endpoint(config["put"]())
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload())
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.UPDATE)
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -223,8 +345,7 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         """Retrieve a single prefix list by name and ip_version."""
         try:
             config = self._config_for_version(str(model_instance.ip_version))
-            api_endpoint = config["get"]()
-            api_endpoint.fabric_name = self.fabric_name
+            api_endpoint = self._configure_endpoint(config["get"]())
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
             return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
         except Exception as e:
@@ -238,14 +359,12 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         ``PrefixListModel.from_response()`` can populate the ``ip_version`` field.
         """
         try:
+            if self._should_use_scoped_query():
+                return self._query_proposed_existing()
+
             results = []
-            for version, config in _VERSION_CONFIG.items():
-                api_endpoint = config["list"]()
-                api_endpoint.fabric_name = self.fabric_name
-                raw = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-                for item in raw.get(config["list_key"], []) or []:
-                    item["ipVersion"] = version
-                    results.append(item)
+            for version in _VERSION_CONFIG:
+                results.extend(self._query_all_for_version(version))
             return results
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e

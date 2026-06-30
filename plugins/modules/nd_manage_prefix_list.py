@@ -30,6 +30,11 @@ options:
     - The name of the fabric that owns the prefix lists.
     type: str
     required: true
+  cluster_name:
+    description:
+    - The name of the Nexus Dashboard cluster where the prefix-list operation is executed.
+    - Use this option for multi-cluster deployments where the target fabric is managed by a specific cluster.
+    type: str
   config:
     description:
     - The list of prefix lists to configure.

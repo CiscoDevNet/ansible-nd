@@ -254,6 +254,23 @@ def test_endpoints_ipv4_prefix_lists_00090():
     assert instance.verb == HttpVerbEnum.POST
 
 
+def test_endpoints_ipv4_prefix_lists_00100():
+    """
+    # Summary
+
+    Verify bulk-delete action endpoints include optional clusterName query params.
+
+    ## Classes and Methods
+
+    - EpManageIpv4PrefixListsBulkDelete.path
+    """
+    instance = EpManageIpv4PrefixListsBulkDelete()
+    instance.fabric_name = "SITE1"
+    instance.endpoint_params.cluster_name = "CLUSTER-1"
+
+    assert instance.path.endswith("/ipv4PrefixListActions/remove?clusterName=CLUSTER-1")
+
+
 # =============================================================================
 # Test: IPv6 Endpoints
 # =============================================================================

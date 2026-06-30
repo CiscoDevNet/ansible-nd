@@ -23,11 +23,12 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.manage_prefix_list import PrefixListModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_prefix_list import ManagePrefixListOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
@@ -40,7 +41,12 @@ def responses_manage_prefix_list(key: str):
     return load_fixture("test_manage_prefix_list")[key]
 
 
-def _build_rest_send(gen_responses: ResponseGenerator, config: list | None = None) -> RestSend:
+def _build_rest_send(
+    gen_responses: ResponseGenerator,
+    config: list | None = None,
+    state: str | None = None,
+    cluster_name: str | None = None,
+) -> RestSend:
     """Build a `RestSend` wired to a file-based `Sender` and `ResponseHandler`."""
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
@@ -52,6 +58,10 @@ def _build_rest_send(gen_responses: ResponseGenerator, config: list | None = Non
     response_handler.commit()
 
     params = {"check_mode": False, "fabric_name": "SITE1", "config": config or []}
+    if state is not None:
+        params["state"] = state
+    if cluster_name is not None:
+        params["cluster_name"] = cluster_name
     rest_send = RestSend(params)
     rest_send.sender = sender
     rest_send.response_handler = response_handler
@@ -519,6 +529,78 @@ def test_manage_prefix_list_00130() -> None:
     assert result == []
 
 
+def test_manage_prefix_list_00135() -> None:
+    """
+    # Summary
+
+    Verify ``query_all`` uses scoped single-item lookups for item states.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.query_all
+    - ManagePrefixListOrchestrator._query_proposed_existing
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("ipv4_single_prefix_list")
+
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS"}
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, config=[config], state="merged")
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert len(result) == 1
+    assert result[0]["ipVersion"] == "ipv4"
+    assert rest_send.path.endswith("/ipv4PrefixLists/PL-IPV4-BORDERS")
+
+
+def test_manage_prefix_list_00136() -> None:
+    """
+    # Summary
+
+    Verify full ``query_all`` scans follow offset/max pagination for overridden state.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.query_all
+    - ManagePrefixListOrchestrator._query_all_for_version
+    """
+
+    def responses():
+        yield {
+            "RETURN_CODE": 200,
+            "METHOD": "GET",
+            "MESSAGE": "OK",
+            "DATA": {
+                "ipv4PrefixLists": [{"name": "PL-IPV4-PAGE-1", "entries": []}],
+                "meta": {"counts": {"remaining": 1}},
+            },
+        }
+        yield {
+            "RETURN_CODE": 200,
+            "METHOD": "GET",
+            "MESSAGE": "OK",
+            "DATA": {
+                "ipv4PrefixLists": [{"name": "PL-IPV4-PAGE-2", "entries": []}],
+                "meta": {"counts": {"remaining": 0}},
+            },
+        }
+        yield responses_manage_prefix_list("empty_ipv6_lists")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, state="overridden")
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert [row["name"] for row in result] == ["PL-IPV4-PAGE-1", "PL-IPV4-PAGE-2"]
+    assert {row["ipVersion"] for row in result} == {"ipv4"}
+
+
 # =============================================================================
 # Test: create / create_bulk (207 Multi-Status)
 # =============================================================================
@@ -543,7 +625,8 @@ def test_manage_prefix_list_00140() -> None:
     gen_responses = ResponseGenerator(responses())
     config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS", "entries": [{"sequence_number": 10, "action": "permit", "prefix": "10.0.0.0/8"}]}
     rest_send = _build_rest_send(gen_responses, config=[config])
-    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    results = Results()
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send, results=results)
     model = PrefixListModel.from_config(config)
 
     with does_not_raise():
@@ -556,6 +639,34 @@ def test_manage_prefix_list_00140() -> None:
     assert body["ipv4PrefixLists"][0]["name"] == "PL-IPV4-BORDERS"
     assert body["ipv4PrefixLists"][0]["entries"][0]["sequenceNumber"] == 10
     assert "ipv4" in result
+    assert results.metadata[-1]["action"] == OperationType.CREATE.value
+
+
+def test_manage_prefix_list_00145() -> None:
+    """
+    # Summary
+
+    Verify ``cluster_name`` is applied to mutating endpoint query params.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator._configure_endpoint
+    - ManagePrefixListOrchestrator.create_bulk
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("create_ipv4_207_success")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS", "entries": [{"sequence_number": 10, "action": "permit", "prefix": "10.0.0.0/8"}]}
+    rest_send = _build_rest_send(gen_responses, config=[config], cluster_name="CLUSTER-1")
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with does_not_raise():
+        instance.create_bulk([model])
+
+    assert rest_send.path.endswith("/ipv4PrefixLists?clusterName=CLUSTER-1")
 
 
 def test_manage_prefix_list_00150() -> None:
@@ -669,7 +780,8 @@ def test_manage_prefix_list_00180() -> None:
     gen_responses = ResponseGenerator(responses())
     config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS", "entries": [{"sequence_number": 10, "action": "permit", "prefix": "10.0.1.0/24"}]}
     rest_send = _build_rest_send(gen_responses, config=[config])
-    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    results = Results()
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send, results=results)
     model = PrefixListModel.from_config(config)
 
     with does_not_raise():
@@ -678,6 +790,7 @@ def test_manage_prefix_list_00180() -> None:
     assert rest_send.verb == HttpVerbEnum.PUT.value
     assert rest_send.path.endswith("/ipv4PrefixLists/PL-IPV4-BORDERS")
     assert rest_send.committed_payload["name"] == "PL-IPV4-BORDERS"
+    assert results.metadata[-1]["action"] == OperationType.UPDATE.value
 
 
 # =============================================================================
@@ -704,7 +817,8 @@ def test_manage_prefix_list_00190() -> None:
     gen_responses = ResponseGenerator(responses())
     config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS"}
     rest_send = _build_rest_send(gen_responses, config=[config])
-    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    results = Results()
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send, results=results)
     model = PrefixListModel.from_config(config)
 
     with does_not_raise():
@@ -714,6 +828,7 @@ def test_manage_prefix_list_00190() -> None:
     assert rest_send.path.endswith("/ipv4PrefixListActions/remove")
     assert rest_send.committed_payload == {"ipv4PrefixListNames": ["PL-IPV4-BORDERS"]}
     assert "ipv4" in result
+    assert results.metadata[-1]["action"] == OperationType.DELETE.value
 
 
 def test_manage_prefix_list_00200() -> None:

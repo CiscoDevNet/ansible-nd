@@ -255,12 +255,15 @@ class _EpManagePrefixListsBulkDeleteBase(FabricNameMixin, NDEndpointBaseModel):
 
     # Address-family action segment, set by the per-family subclasses below.
     _action_segment: ClassVar[str] = ""
+    endpoint_params: PrefixListsEndpointParams = Field(default_factory=PrefixListsEndpointParams)
 
     @property
     def path(self) -> str:
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), self._action_segment, "remove")
+        base = BasePath.path("fabrics", quote(self.fabric_name, safe=""), self._action_segment, "remove")
+        qs = self.endpoint_params.to_query_string()
+        return f"{base}?{qs}" if qs else base
 
 
 class EpManageIpv4PrefixListsBulkDelete(_EpManagePrefixListsBulkDeleteBase):

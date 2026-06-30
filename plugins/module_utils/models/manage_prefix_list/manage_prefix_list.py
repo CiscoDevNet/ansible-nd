@@ -293,6 +293,10 @@ class PrefixListModel(NDBaseModel):
                 type="str",
                 required=True,
             ),
+            cluster_name=dict(
+                type="str",
+                required=False,
+            ),
             config=dict(
                 type="list",
                 elements="dict",

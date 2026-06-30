@@ -519,6 +519,7 @@ def test_manage_prefix_list_00170() -> None:
 
     # Top-level fields
     assert spec["fabric_name"] == {"type": "str", "required": True}
+    assert spec["cluster_name"] == {"type": "str", "required": False}
 
     # Config structure
     config = spec["config"]
