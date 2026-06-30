@@ -249,6 +249,9 @@ notes:
   schema validation, switch IP resolution, empty-description checks for
   O(use_desc_as_key=true), and duplicate description+switch checks run before
   write operations.
+- O(config[].description) has C(default=""). When updating by policy ID, omitting
+  O(config[].description) uses that default, so include the existing description
+  if it should be preserved.
 - Template-input validation is per-entry, so invalid policy entries are reported as
   failures while valid entries can still be created, updated, deleted, or deployed.
   The final task result is failed when any entry fails. Failures returned after
