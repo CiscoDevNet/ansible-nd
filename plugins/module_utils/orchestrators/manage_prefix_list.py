@@ -91,11 +91,9 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
     ``ipVersion`` key into each raw API response dict so ``PrefixListModel``
     can deserialise them correctly.
 
-    .. note::
-       Tenant-scoped prefix lists are not yet fully supported for idempotency. The
-       create payload carries a bare ``name`` plus ``tenantName``, but the controller
-       returns (and keys delete/update on) the composite ``"<tenantName>~<name>"``.
-       Until that round-trip is normalised, use prefix lists in the default tenant.
+    Tenant-scoped prefix lists are modeled with bare ``name`` plus ``tenant_name`` for
+    Ansible config, and with the API's fully qualified ``"<tenantName>~<name>"`` form
+    for item lookups, updates, and bulk deletes.
 
     The ``fabric_name`` field is read from ``rest_send.params`` (populated by
     ``NDStateMachine`` from the validated module params).
@@ -201,16 +199,16 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             config = [config]
         return [item for item in config if isinstance(item, dict)]
 
-    def _proposed_identifiers(self) -> list[tuple[str, str]]:
-        """Return unique ``(ip_version, name)`` identifiers from raw module config."""
-        identifiers: list[tuple[str, str]] = []
-        seen: set[tuple[str, str]] = set()
+    def _proposed_identifiers(self) -> list[tuple[str, str | None, str]]:
+        """Return unique ``(ip_version, tenant_name, name)`` identifiers from raw module config."""
+        identifiers: list[tuple[str, str | None, str]] = []
+        seen: set[tuple[str, str | None, str]] = set()
         for item in self._raw_items_from_params(self.rest_send.params):
             model = PrefixListModel.from_config(item)
             identifier = model.get_identifier_value()
-            if not isinstance(identifier, tuple) or len(identifier) != 2:
+            if not isinstance(identifier, tuple) or len(identifier) != 3:
                 continue
-            normalized = (str(identifier[0]), str(identifier[1]))
+            normalized = (str(identifier[0]), identifier[1], str(identifier[2]))
             if normalized not in seen:
                 seen.add(normalized)
                 identifiers.append(normalized)
@@ -221,11 +219,11 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         state = self.rest_send.params.get("state")
         return state in {"merged", "replaced", "deleted"} and bool(self._raw_items_from_params(self.rest_send.params))
 
-    def _query_one_existing(self, version: str, name: str) -> dict[str, Any] | None:
+    def _query_one_existing(self, version: str, tenant_name: str | None, name: str) -> dict[str, Any] | None:
         """Fetch one existing prefix list, returning ``None`` when it is absent."""
         config = self._config_for_version(version)
         api_endpoint = self._configure_endpoint(config["get"]())
-        api_endpoint.set_identifiers((version, name))
+        api_endpoint.set_identifiers((version, tenant_name, name))
         result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
         if not result:
             return None
@@ -235,8 +233,8 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
     def _query_proposed_existing(self) -> list[dict[str, Any]]:
         """Fetch only the existing prefix lists named by module ``config``."""
         results: list[dict[str, Any]] = []
-        for version, name in self._proposed_identifiers():
-            item = self._query_one_existing(version, name)
+        for version, tenant_name, name in self._proposed_identifiers():
+            item = self._query_one_existing(version, tenant_name, name)
             if item is not None:
                 results.append(item)
         return results
@@ -359,6 +357,8 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         ``PrefixListModel.from_response()`` can populate the ``ip_version`` field.
         """
         try:
+            PrefixListModel.validate_config_for_state(self._raw_items_from_params(self.rest_send.params), self.rest_send.params.get("state", ""))
+
             if self._should_use_scoped_query():
                 return self._query_proposed_existing()
 
@@ -398,7 +398,7 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             result = {}
             for version, models in grouped.items():
                 if models:
-                    result[version] = self._bulk_delete_for_version(version, [m.name for m in models])
+                    result[version] = self._bulk_delete_for_version(version, [m.api_name for m in models])
             return result
         except Exception as e:
             raise Exception(f"Bulk delete failed: {e}") from e

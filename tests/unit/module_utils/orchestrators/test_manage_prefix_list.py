@@ -293,7 +293,7 @@ def test_manage_prefix_list_00070() -> None:
     ## Test
 
     - Two models with same name but different ip_version have different identifier values
-    - get_identifier_value() returns (ip_version, name) tuple
+    - get_identifier_value() returns (ip_version, tenant_name, name) tuple
 
     ## Classes and Methods
 
@@ -302,8 +302,8 @@ def test_manage_prefix_list_00070() -> None:
     ipv4 = PrefixListModel(ip_version="ipv4", name="PL-SHARED")
     ipv6 = PrefixListModel(ip_version="ipv6", name="PL-SHARED")
 
-    assert ipv4.get_identifier_value() == ("ipv4", "PL-SHARED")
-    assert ipv6.get_identifier_value() == ("ipv6", "PL-SHARED")
+    assert ipv4.get_identifier_value() == ("ipv4", None, "PL-SHARED")
+    assert ipv6.get_identifier_value() == ("ipv6", None, "PL-SHARED")
     assert ipv4.get_identifier_value() != ipv6.get_identifier_value()
 
 
@@ -339,11 +339,12 @@ def test_manage_prefix_list_00080() -> None:
     model = PrefixListModel(ip_version="ipv4", name="PL-TEST")
     identifier = model.get_identifier_value()
 
-    # Verify identifier is a tuple (ip_version, name)
+    # Verify identifier is a tuple (ip_version, tenant_name, name)
     assert isinstance(identifier, tuple)
-    assert len(identifier) == 2
+    assert len(identifier) == 3
     assert identifier[0] == "ipv4"
-    assert identifier[1] == "PL-TEST"
+    assert identifier[1] is None
+    assert identifier[2] == "PL-TEST"
 
 
 # =============================================================================
@@ -544,7 +545,7 @@ def test_manage_prefix_list_00135() -> None:
     def responses():
         yield responses_manage_prefix_list("ipv4_single_prefix_list")
 
-    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS"}
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS", "entries": [{"sequence_number": 10, "action": "permit", "prefix": "10.0.0.0/8"}]}
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses, config=[config], state="merged")
     instance = ManagePrefixListOrchestrator(rest_send=rest_send)
@@ -555,6 +556,30 @@ def test_manage_prefix_list_00135() -> None:
     assert len(result) == 1
     assert result[0]["ipVersion"] == "ipv4"
     assert rest_send.path.endswith("/ipv4PrefixLists/PL-IPV4-BORDERS")
+
+
+def test_manage_prefix_list_00137() -> None:
+    """
+    # Summary
+
+    Verify ``query_all`` rejects write-state configs without entries before API reads.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.query_all
+    - PrefixListModel.validate_config_for_state
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("ipv4_single_prefix_list")
+
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS"}
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, config=[config], state="merged")
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+
+    with pytest.raises(Exception, match="entries is required"):
+        instance.query_all()
 
 
 def test_manage_prefix_list_00136() -> None:
@@ -883,6 +908,33 @@ def test_manage_prefix_list_00210() -> None:
     assert rest_send.committed_payload == {"ipv4PrefixListNames": ["PL-IPV4-BORDERS"]}
 
 
+def test_manage_prefix_list_00215() -> None:
+    """
+    # Summary
+
+    Verify tenant-scoped bulk delete sends fully qualified prefix list names.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.delete_bulk
+    - PrefixListModel.api_name
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("bulk_delete_ipv4_207_success")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "tenant_name": "TENANT1", "name": "PL-IPV4-BORDERS"}
+    rest_send = _build_rest_send(gen_responses, config=[config])
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with does_not_raise():
+        instance.delete_bulk([model])
+
+    assert rest_send.committed_payload == {"ipv4PrefixListNames": ["TENANT1~PL-IPV4-BORDERS"]}
+
+
 # =============================================================================
 # Test: query_one (GET item)
 # =============================================================================
@@ -914,3 +966,29 @@ def test_manage_prefix_list_00220() -> None:
     assert rest_send.verb == HttpVerbEnum.GET.value
     assert rest_send.path.endswith("/ipv4PrefixLists/PL-IPV4-BORDERS")
     assert result["name"] == "PL-IPV4-BORDERS"
+
+
+def test_manage_prefix_list_00230() -> None:
+    """
+    # Summary
+
+    Verify ``query_one`` GETs tenant-scoped prefix lists by fully qualified API name.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.query_one
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("ipv4_single_prefix_list")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "tenant_name": "TENANT1", "name": "PL-IPV4-BORDERS"}
+    rest_send = _build_rest_send(gen_responses, config=[config])
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with does_not_raise():
+        instance.query_one(model)
+
+    assert rest_send.path.endswith("/ipv4PrefixLists/TENANT1~PL-IPV4-BORDERS")

@@ -196,6 +196,22 @@ def test_endpoints_ipv4_prefix_lists_00070():
     assert instance.prefix_list_name == "PL-IPV4-BORDERS"
 
 
+def test_endpoints_ipv4_prefix_lists_00075():
+    """
+    # Summary
+
+    Verify tenant-aware identifiers set the fully qualified API prefix-list name.
+
+    ## Classes and Methods
+
+    - EpManageIpv4PrefixListsGet.set_identifiers()
+    """
+    with does_not_raise():
+        instance = EpManageIpv4PrefixListsGet()
+        instance.set_identifiers(("ipv4", "TENANT1", "PL-IPV4-BORDERS"))
+    assert instance.prefix_list_name == "TENANT1~PL-IPV4-BORDERS"
+
+
 def test_endpoints_ipv4_prefix_lists_00080():
     """
     # Summary

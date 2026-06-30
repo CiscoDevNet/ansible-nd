@@ -167,6 +167,36 @@ def test_manage_prefix_list_00040() -> None:
         PrefixListModel(**bad_config)
 
 
+def test_manage_prefix_list_00045() -> None:
+    """
+    # Summary
+
+    Verify IPv6 prefixes and masks are normalized for stable diff comparison.
+
+    ## Classes and Methods
+
+    - PrefixListEntryModel.normalize_prefix
+    - PrefixListEntryModel.normalize_mask
+    """
+    model = PrefixListModel.from_config(
+        {
+            "ip_version": "ipv6",
+            "name": "PL-IPV6-NORMALIZE",
+            "entries": [
+                {
+                    "sequence_number": 10,
+                    "action": "permit",
+                    "prefix": "2001:0db8:0000:0000:0000:0000:0000:0000/32",
+                    "mask": "ffff:ffff:0000:0000:0000:0000:0000:0000",
+                }
+            ],
+        }
+    )
+
+    assert model.entries[0].prefix == "2001:db8::/32"
+    assert model.entries[0].mask == "ffff:ffff::"
+
+
 # =============================================================================
 # Test: PrefixListModel semantic validators
 # =============================================================================
@@ -367,8 +397,8 @@ def test_manage_prefix_list_00120() -> None:
     ## Test
 
     - identifier_strategy is "composite"
-    - identifiers is ["ip_version", "name"]
-    - get_identifier_value() returns (ip_version, name) tuple
+    - identifiers is ["ip_version", "tenant_name", "name"]
+    - get_identifier_value() returns (ip_version, tenant_name, name) tuple
 
     ## Classes and Methods
 
@@ -377,10 +407,10 @@ def test_manage_prefix_list_00120() -> None:
     - PrefixListModel.get_identifier_value
     """
     assert PrefixListModel.identifier_strategy == "composite"
-    assert PrefixListModel.identifiers == ["ip_version", "name"]
+    assert PrefixListModel.identifiers == ["ip_version", "tenant_name", "name"]
 
     model = PrefixListModel(**SAMPLE_IPV4_CONFIG)
-    assert model.get_identifier_value() == ("ipv4", "PL-IPV4-BORDERS")
+    assert model.get_identifier_value() == ("ipv4", "TENANT1", "PL-IPV4-BORDERS")
 
 
 # =============================================================================
@@ -414,6 +444,32 @@ def test_manage_prefix_list_00130() -> None:
     assert len(model.entries) == 2
     assert model.entries[0].sequence_number == 10
     assert model.last_update_timestamp == "2026-06-12T10:00:00Z"
+
+
+def test_manage_prefix_list_00135() -> None:
+    """
+    # Summary
+
+    Verify tenant-scoped API names are normalized from tenant~name to bare name plus tenant_name.
+
+    ## Classes and Methods
+
+    - PrefixListModel.normalize_tenant_scoped_name
+    - PrefixListModel.api_name
+    """
+    model = PrefixListModel.from_response(
+        {
+            "ipVersion": "ipv4",
+            "name": "TENANT1~PL-SHARED",
+            "tenantName": "TENANT1",
+            "entries": [{"sequenceNumber": 10, "action": "permit", "prefix": "10.0.0.0/8"}],
+        }
+    )
+
+    assert model.name == "PL-SHARED"
+    assert model.tenant_name == "TENANT1"
+    assert model.api_name == "TENANT1~PL-SHARED"
+    assert model.get_identifier_value() == ("ipv4", "TENANT1", "PL-SHARED")
 
 
 def test_manage_prefix_list_00140() -> None:
@@ -548,6 +604,25 @@ def test_manage_prefix_list_00170() -> None:
     assert entries["required"] is False
 
 
+def test_manage_prefix_list_00175() -> None:
+    """
+    # Summary
+
+    Verify state-dependent entries validation.
+
+    ## Classes and Methods
+
+    - PrefixListModel.validate_config_for_state
+    """
+    config = [{"ip_version": "ipv4", "name": "PL-IPV4-BORDERS"}]
+
+    with pytest.raises(ValueError, match="entries is required"):
+        PrefixListModel.validate_config_for_state(config, "merged")
+
+    with does_not_raise():
+        PrefixListModel.validate_config_for_state(config, "deleted")
+
+
 # =============================================================================
 # Test: edge cases
 # =============================================================================
@@ -576,5 +651,37 @@ def test_manage_prefix_list_00180() -> None:
     )
 
     assert ipv4.get_identifier_value() != ipv6.get_identifier_value()
-    assert ipv4.get_identifier_value() == ("ipv4", "PL-SHARED")
-    assert ipv6.get_identifier_value() == ("ipv6", "PL-SHARED")
+    assert ipv4.get_identifier_value() == ("ipv4", None, "PL-SHARED")
+    assert ipv6.get_identifier_value() == ("ipv6", None, "PL-SHARED")
+
+
+def test_manage_prefix_list_00190() -> None:
+    """
+    # Summary
+
+    Verify same prefix list name can coexist across tenants.
+
+    ## Classes and Methods
+
+    - PrefixListModel composite identifier handling
+    """
+    tenant_a = PrefixListModel.from_config(
+        {
+            "ip_version": "ipv4",
+            "tenant_name": "TENANT_A",
+            "name": "PL-SHARED",
+            "entries": [{"sequence_number": 10, "action": "permit", "prefix": "10.0.0.0/8"}],
+        }
+    )
+    tenant_b = PrefixListModel.from_config(
+        {
+            "ip_version": "ipv4",
+            "tenant_name": "TENANT_B",
+            "name": "PL-SHARED",
+            "entries": [{"sequence_number": 10, "action": "permit", "prefix": "10.0.0.0/8"}],
+        }
+    )
+
+    assert tenant_a.get_identifier_value() != tenant_b.get_identifier_value()
+    assert tenant_a.api_name == "TENANT_A~PL-SHARED"
+    assert tenant_b.api_name == "TENANT_B~PL-SHARED"

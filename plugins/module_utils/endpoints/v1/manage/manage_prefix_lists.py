@@ -130,11 +130,14 @@ class _EpManagePrefixListsBase(PrefixListNameMixin, FabricNameMixin, NDEndpointB
 
     def set_identifiers(self, identifier: IdentifierKey = None) -> None:
         """
-        Accept either a plain name or a composite tuple ``(ip_version, name)``
-        and assign the prefix list name.
+        Accept either a plain name, ``(ip_version, name)``, or
+        ``(ip_version, tenant_name, name)`` and assign the API prefix list name.
         """
         if isinstance(identifier, tuple):
-            self.prefix_list_name = identifier[1]
+            if len(identifier) >= 3 and identifier[1]:
+                self.prefix_list_name = f"{identifier[1]}~{identifier[2]}"
+            else:
+                self.prefix_list_name = identifier[-1]
         else:
             self.prefix_list_name = identifier
 

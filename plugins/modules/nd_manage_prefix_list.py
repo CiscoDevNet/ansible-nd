@@ -46,6 +46,7 @@ options:
         description:
         - The IP address family of the prefix list.
         - Use C(ipv4) for IPv4 prefix lists and C(ipv6) for IPv6 prefix lists.
+        - No default is applied because the address family is part of the resource identity.
         - A prefix list named C(PL-1) with C(ip_version=ipv4) and another with
           C(ip_version=ipv6) are treated as independent resources.
         type: str
@@ -68,6 +69,8 @@ options:
         description:
         - The tenant that owns this prefix list.
         - When omitted, the default tenant is used.
+        - Prefix lists with the same O(config.ip_version) and O(config.name) but different
+          O(config.tenant_name) values are treated as independent resources.
         - Allowed characters are C([A-Za-z0-9_-]).
         type: str
         aliases: [ tenantName ]
@@ -86,12 +89,14 @@ options:
             description:
             - The sequence number of this entry (1-4294967294).
             - Entries are evaluated in ascending sequence order.
+            - Values must be unique within each prefix list.
             type: int
             required: true
             aliases: [ sequenceNumber ]
           action:
             description:
             - The action to take when the prefix matches.
+            - No default is applied because the action changes routing-policy behavior.
             type: str
             required: true
             choices: [ permit, deny ]
@@ -108,25 +113,30 @@ options:
             description:
             - Exact prefix-length to match.
             - Range 1-32 for IPv4, 1-128 for IPv6.
+            - Cannot be combined with O(config.entries.min_prefix_length) or
+              O(config.entries.max_prefix_length) in the same entry.
             type: int
             aliases: [ exactLength ]
           min_prefix_length:
             description:
             - Minimum prefix-length to match (inclusive).
             - Range 1-32 for IPv4, 1-128 for IPv6.
+            - Must be less than or equal to O(config.entries.max_prefix_length) when both are set.
             type: int
             aliases: [ minLength ]
           max_prefix_length:
             description:
             - Maximum prefix-length to match (inclusive).
             - Range 1-32 for IPv4, 1-128 for IPv6.
+            - Must be greater than or equal to O(config.entries.min_prefix_length) when both are set.
             type: int
             aliases: [ maxLength ]
           mask:
             description:
-            - Network mask in dotted-decimal format for IPv4
-              (e.g. C(255.255.255.0)) or explicit match mask in IPv6
-              format (e.g. C(ffff:ffff::)).
+            - Optional explicit match mask.
+            - For IPv4, use dotted-decimal format (e.g. C(255.255.255.0)).
+            - For IPv6, use IPv6 address format (e.g. C(ffff:ffff::)).
+            - This value is sent to the API as a separate explicit match mask and is not deduced from O(config.entries.prefix).
             - Must be a valid IPv4 address when O(config.ip_version=ipv4).
             - Must be a valid IPv6 address when O(config.ip_version=ipv6).
             type: str
@@ -151,24 +161,8 @@ notes:
 - This module is only supported on Nexus Dashboard having version 4.2.1 or higher.
 - IPv4 and IPv6 prefix lists are created and deleted in bulk via separate API endpoints.
   A single task may contain a mix of IPv4 and IPv6 entries.
-- O(config.entries.prefix) is validated locally to match the declared O(config.ip_version).
-- O(config.entries.exact_length), O(config.entries.min_prefix_length), and
-  O(config.entries.max_prefix_length) are validated to be within the
-  address-family-appropriate range (1-32 for IPv4, 1-128 for IPv6).
-- O(config.entries.exact_length) cannot be combined with
-  O(config.entries.min_prefix_length) or O(config.entries.max_prefix_length)
-  in the same entry.
-- If both O(config.entries.min_prefix_length) and
-  O(config.entries.max_prefix_length) are set, the minimum must be less than
-  or equal to the maximum.
-- O(config.entries.sequence_number) values must be unique within each
-  prefix list.
-- O(config.description) is validated as ASCII-only.
-- O(config.tenant_name) (non-default tenant) prefix lists are not yet fully
-  supported for idempotency. Nexus Dashboard stores and returns these prefix
-  lists under the composite name C(<tenant_name>~<name>), which does not match
-  the configured O(config.name), so repeated runs may not be idempotent. Use
-  prefix lists in the default tenant until this is addressed.
+- Prefix and mask values are normalized locally for stable idempotency when Nexus Dashboard returns
+  equivalent IPv6 values in compressed notation.
 """
 
 EXAMPLES = r"""

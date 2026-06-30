@@ -25,11 +25,11 @@ distinguished solely by the ``ip_version`` field (values: ``"ipv4"`` /
   - Injected by the orchestrator during ``query_all`` (not present in API
     responses).
   - Excluded from API payloads via ``payload_exclude_fields``.
-  - Used as part of the composite identifier ``(ip_version, name)`` so that
-    an IPv4 "PL-1" and an IPv6 "PL-1" coexist in the same collection.
+  - Used as part of the composite identifier ``(ip_version, tenant_name, name)`` so that
+    IPv4, IPv6, and tenant-scoped prefix lists with the same bare name coexist in the same collection.
 
-Entry-level validation checks that ``prefix`` and ``mask`` (when supplied)
-match the declared ``ip_version`` of the containing prefix list.
+Entry-level validation normalizes ``prefix`` and ``mask`` spellings and checks that
+they match the declared ``ip_version`` of the containing prefix list.
 
 ## Usage
 
@@ -126,8 +126,28 @@ class PrefixListEntryModel(NDNestedModel):
     mask: Optional[str] = Field(
         default=None,
         alias="mask",
-        description="Network mask in dotted-decimal (IPv4) or full IPv6 format.",
+        description="Explicit match mask in dotted-decimal IPv4 or IPv6 address format.",
     )
+
+    @field_validator("prefix")
+    @classmethod
+    def normalize_prefix(cls, value: str) -> str:
+        """Normalize CIDR notation so equivalent IPv6 spellings do not cause false diffs."""
+        try:
+            return str(ipaddress.ip_network(value, strict=False))
+        except ValueError:
+            raise ValueError(f"prefix '{value}' is not a valid IP network in CIDR notation.")
+
+    @field_validator("mask")
+    @classmethod
+    def normalize_mask(cls, value: Optional[str]) -> Optional[str]:
+        """Normalize explicit match masks so equivalent IPv6 spellings do not cause false diffs."""
+        if value is None:
+            return None
+        try:
+            return str(ipaddress.ip_address(value))
+        except ValueError:
+            raise ValueError(f"mask '{value}' is not a valid IP address.")
 
 
 class PrefixListModel(NDBaseModel):
@@ -136,9 +156,9 @@ class PrefixListModel(NDBaseModel):
 
     ## Identifier
 
-    ``composite`` strategy using ``(ip_version, name)``, which allows an
-    IPv4 prefix list and an IPv6 prefix list with the same name to coexist
-    in the same ``NDConfigCollection``.
+    ``composite`` strategy using ``(ip_version, tenant_name, name)``, which allows
+    IPv4 and IPv6 prefix lists and tenant-scoped prefix lists with the same bare
+    name to coexist in the same ``NDConfigCollection``.
 
     ## Serialization Notes
 
@@ -151,7 +171,7 @@ class PrefixListModel(NDBaseModel):
 
     # --- Identifier Configuration ---
 
-    identifiers: ClassVar[Optional[List[str]]] = ["ip_version", "name"]
+    identifiers: ClassVar[Optional[List[str]]] = ["ip_version", "tenant_name", "name"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "composite"
 
     # --- Serialization Configuration ---
@@ -200,7 +220,32 @@ class PrefixListModel(NDBaseModel):
         description="List of prefix list entries.",
     )
 
+    @property
+    def api_name(self) -> str:
+        """Return the name format required by item and bulk-delete endpoints."""
+        if self.tenant_name:
+            return f"{self.tenant_name}~{self.name}"
+        return self.name
+
     # --- Field Validators ---
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_tenant_scoped_name(cls, data: Any) -> Any:
+        """
+        Normalize API-returned tenant-scoped names from ``tenant~name`` to the
+        Ansible-facing bare ``name`` plus ``tenant_name`` field.
+        """
+        if not isinstance(data, dict):
+            return data
+        tenant_name = data.get("tenantName", data.get("tenant_name"))
+        name = data.get("name")
+        if isinstance(tenant_name, str) and isinstance(name, str):
+            prefix = f"{tenant_name}~"
+            if name.startswith(prefix):
+                data = dict(data)
+                data["name"] = name[len(prefix) :]
+        return data
 
     @field_validator("name")
     @classmethod
@@ -285,6 +330,20 @@ class PrefixListModel(NDBaseModel):
         return self
 
     # --- Argument Spec ---
+
+    def get_identifier_value(self) -> tuple[str, str | None, str]:
+        """Return the tenant-aware composite identifier."""
+        return (str(self.ip_version), self.tenant_name, self.name)
+
+    @classmethod
+    def validate_config_for_state(cls, config: List[Dict[str, Any]], state: str) -> None:
+        """Validate state-dependent requirements that cannot be expressed in a static Ansible argspec."""
+        if state not in {"merged", "replaced", "overridden"}:
+            return
+        for index, item in enumerate(config or []):
+            entries = item.get("entries") if isinstance(item, dict) else None
+            if not entries:
+                raise ValueError(f"config[{index}].entries is required and must contain at least one entry when state is '{state}'.")
 
     @classmethod
     def get_argument_spec(cls) -> Dict[str, Any]:
