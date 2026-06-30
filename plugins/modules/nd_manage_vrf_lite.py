@@ -39,22 +39,25 @@ options:
 
   config_actions:
     description:
-    - Optional save/deploy actions after state reconciliation.
+    - Optional save/deploy actions applied after state reconciliation.
     type: dict
     suboptions:
       save:
         description:
-        - Trigger a config save after state reconciliation.
+        - Trigger a fabric config save after state reconciliation.
+        - Controls only whether the config-save API is called.
         type: bool
         default: true
       deploy:
         description:
-        - Trigger a VRF deploy after save. Requires C(save=true).
+        - Trigger a VRF deploy after the config save. Requires C(save=true).
         type: bool
         default: true
       type:
         description:
-        - Scope of the config save operation.
+        - Scope of the VRF deploy operation.
+        - C(switch) deploys only the switches affected by the changed VRFs.
+        - C(global) performs a fabric-wide deploy of the changed VRFs.
         type: str
         default: switch
         choices: [ switch, global ]
@@ -176,10 +179,15 @@ EXAMPLES = r"""
     fabric_name: my_fabric
     state: gathered
 
-- name: Merge VRF Lite attachment
+- name: Merge VRF Lite attachment and stage only (save without deploy)
   cisco.nd.nd_manage_vrf_lite:
     fabric_name: my_fabric
     state: merged
+    # Save the staged intent on the controller but do not push it to the
+    # switches yet. A later run (or another tool) can deploy it.
+    config_actions:
+      save: true
+      deploy: false
     config:
       - vrf_name: TENANT_A
         vlan_id: 500
@@ -187,6 +195,52 @@ EXAMPLES = r"""
           - ip_address: 10.10.10.11
             import_evpn_rt: ""
             export_evpn_rt: ""
+            vrf_lite:
+              - interface: Ethernet1/20
+                dot1q: 500
+                ipv4_addr: 10.33.0.2/24
+                neighbor_ipv4: 10.33.0.1
+                peer_vrf: TENANT_A
+
+- name: Replace VRF Lite attachments for the listed VRFs and deploy affected switches
+  cisco.nd.nd_manage_vrf_lite:
+    fabric_name: my_fabric
+    state: replaced
+    # 'replaced' rewrites the attachment set for the VRFs you list; VRFs that
+    # are not listed are left untouched. type=switch deploys only the switches
+    # affected by the changed VRFs.
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config:
+      - vrf_name: TENANT_A
+        vlan_id: 500
+        attach:
+          - ip_address: 10.10.10.11
+            vrf_lite:
+              - interface: Ethernet1/20
+                dot1q: 500
+                ipv4_addr: 10.33.0.2/24
+                neighbor_ipv4: 10.33.0.1
+                peer_vrf: TENANT_A
+
+- name: Override fabric VRF Lite to match config exactly and deploy fabric-wide
+  cisco.nd.nd_manage_vrf_lite:
+    fabric_name: my_fabric
+    state: overridden
+    # 'overridden' makes the fabric match this config exactly; any VRF Lite
+    # attachment not listed below is removed. type=global performs a
+    # fabric-wide deploy of the changed VRFs.
+    config_actions:
+      save: true
+      deploy: true
+      type: global
+    config:
+      - vrf_name: TENANT_A
+        vlan_id: 500
+        attach:
+          - ip_address: 10.10.10.11
             vrf_lite:
               - interface: Ethernet1/20
                 dot1q: 500

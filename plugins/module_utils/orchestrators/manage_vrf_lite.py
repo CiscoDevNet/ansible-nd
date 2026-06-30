@@ -405,7 +405,12 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         )
 
         if deploy_enabled and target_vrfs:
-            planned_actions.append("POST {0} vrfNames={1}".format(VrfLiteEndpoints.vrf_deployments(fabric_name), ",".join(target_vrfs)))
+            deploy_action = "POST {0} vrfNames={1}".format(VrfLiteEndpoints.vrf_deployments(fabric_name), ",".join(target_vrfs))
+            # type=switch scopes the deploy to only the affected switches; type=global omits
+            # switchIds so the controller performs a fabric-wide deploy of the changed VRFs.
+            if config_actions.get("type") == "switch" and target_switch_ids:
+                deploy_action += " switchIds={0}".format(",".join(target_switch_ids))
+            planned_actions.append(deploy_action)
 
         if module.check_mode:
             return {
@@ -422,7 +427,9 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         changed = bool(module.params.get("_changed_vrfs"))
 
         if save_enabled:
-            save_payload = {"type": config_actions.get("type", "switch")}
+            # config save is a fabric-wide trigger with no request body; the deploy scope
+            # (switch vs global) is applied to the VRF deploy call below, not to config save.
+            save_payload = {}
             try:
                 save_resp = request_with_rest_send(module, self.rest_send, VrfLiteEndpoints.config_save(fabric_name), HttpVerbEnum.POST, save_payload)
                 responses.append(
@@ -458,7 +465,9 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
         if deploy_enabled and target_vrfs:
             deploy_payload = {"vrfNames": target_vrfs}
-            if target_switch_ids:
+            # type=switch scopes the deploy to only the affected switches; type=global omits
+            # switchIds so the controller performs a fabric-wide deploy of the changed VRFs.
+            if config_actions.get("type") == "switch" and target_switch_ids:
                 deploy_payload["switchIds"] = target_switch_ids
             try:
                 deploy_resp = request_with_rest_send(module, self.rest_send, VrfLiteEndpoints.vrf_deployments(fabric_name), HttpVerbEnum.POST, deploy_payload)

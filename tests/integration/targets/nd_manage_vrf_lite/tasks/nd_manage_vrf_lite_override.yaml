@@ -384,6 +384,26 @@
           | list
           | length
         ) > 0
+      # type=global performs a fabric-wide deploy and must not pin switchIds.
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'vrf_deploy')
+          | map(attribute='payload')
+          | selectattr('switchIds', 'defined')
+          | list
+          | length
+        ) == 0
+      # config save is a body-less fabric trigger; it must not carry a deploy-scope 'type'.
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'config_save')
+          | map(attribute='payload')
+          | selectattr('type', 'defined')
+          | list
+          | length
+        ) == 0
   tags: override
 
 # TC7 - check_mode should not apply override configuration changes

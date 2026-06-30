@@ -553,6 +553,66 @@ def test_manage_vrf_lite_00492_deploy_filters_changed_vrfs_by_deploy_intent():
     ]
 
 
+def _capture_config_action_requests(monkeypatch):
+    """Patch the orchestrator transport and return a list capturing each request."""
+    captured: list[dict] = []
+
+    def _fake_request(module, rest_send, path, verb, data=None, timeout=None, force_check_mode=False):
+        del module, rest_send, verb, timeout, force_check_mode
+        captured.append({"path": path, "payload": data})
+        return {}
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.request_with_rest_send",
+        _fake_request,
+    )
+    return captured
+
+
+def test_manage_vrf_lite_00492a_config_save_omits_type_and_switch_scope_targets_switch_ids(monkeypatch):
+    captured = _capture_config_action_requests(monkeypatch)
+    module = _DummyModule(
+        {
+            "fabric_name": "FABRIC1",
+            "_changed_vrfs": ["GREEN"],
+            "_ip_to_sn_mapping": {"10.0.0.2": "SN2"},
+            "config_actions": {"save": True, "deploy": True, "type": "switch"},
+            "config": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.2"}],
+        }
+    )
+
+    _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
+
+    save_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.config_save("FABRIC1"))
+    deploy_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1"))
+
+    # Config save is a body-less fabric trigger and must not carry deploy-scope 'type'.
+    assert save_call["payload"] == {}
+    # Switch-scoped deploy targets only the affected switches.
+    assert deploy_call["payload"] == {"vrfNames": ["GREEN"], "switchIds": ["SN2"]}
+
+
+def test_manage_vrf_lite_00492b_global_scope_deploy_omits_switch_ids(monkeypatch):
+    captured = _capture_config_action_requests(monkeypatch)
+    module = _DummyModule(
+        {
+            "fabric_name": "FABRIC1",
+            "_changed_vrfs": ["GREEN"],
+            "_ip_to_sn_mapping": {"10.0.0.2": "SN2"},
+            "config_actions": {"save": True, "deploy": True, "type": "global"},
+            "config": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.2"}],
+        }
+    )
+
+    _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
+
+    deploy_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1"))
+
+    # Global-scoped deploy omits switchIds so the controller deploys fabric-wide.
+    assert deploy_call["payload"] == {"vrfNames": ["GREEN"]}
+    assert "switchIds" not in deploy_call["payload"]
+
+
 def test_manage_vrf_lite_00493_attachment_deploy_false_does_not_suppress_attachment_payload():
     class _FakeNDModule:
         def request(self, path, verb, payload):
