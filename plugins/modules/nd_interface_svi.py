@@ -43,6 +43,7 @@ options:
       interface_name:
         description:
         - The name of the SVI interface, in the form C(vlan<id>) (e.g. C(vlan333)).
+        - A bare VLAN ID (e.g. C(333)) or a mixed-case prefix (e.g. C(Vlan333), C(VLAN333)) is also accepted and normalized to the C(vlan<id>) form.
         - Each SVI is L3 and must have its own item with its own L3 settings (IP, VRF, HSRP, ...).
         type: str
         required: true
