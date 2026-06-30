@@ -40,7 +40,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 
-
 LOGGER = logging.getLogger(__name__)
 
 

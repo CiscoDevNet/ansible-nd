@@ -52,7 +52,6 @@ import logging
 
 from .enums import FabricTypeEnum
 
-
 LOGGER = logging.getLogger(__name__)
 
 __all__ = [

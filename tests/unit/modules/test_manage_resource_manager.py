@@ -1712,8 +1712,15 @@ def test_manage_resource_manager_external_connectivity_rejects_subnet_pool():
         NDResourceManagerModule(nd, Results(), log=LOG)
 
 
-def test_manage_resource_manager_external_connectivity_accepts_tunnel_id_pool():
+@patch(
+    "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.FabricSwitchInventory.from_fabric"
+)
+def test_manage_resource_manager_external_connectivity_accepts_tunnel_id_pool(mock_from_fabric):
     """EXTERNAL_CONNECTIVITY fabric accepts TUNNEL_ID_IOS_XE pool (supported for this type)."""
+    mock_from_fabric.return_value = _mock_fabric_inventory(
+        ip_to_id_map={"192.0.2.10": "SER1"}
+    )
+
     nd = _mock_nd_module(
         state="merged",
         fabric_type="externalConnectivity",
