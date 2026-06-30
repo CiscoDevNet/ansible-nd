@@ -152,19 +152,46 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
 
     def _validate_pool_support_precheck(self):
         """Fail fast when any provided pool_name is unsupported by the target fabric."""
+        self.log.debug(
+            "_validate_pool_support_precheck: starting validation for fabric_type=%s, config_count=%s",
+            self.fabric_type,
+            len(self.config),
+        )
+        validated_count = 0
+        skipped_count = 0
         for idx, item in enumerate(self.config):
             if not isinstance(item, dict):
+                skipped_count += 1
+                self.log.debug("_validate_pool_support_precheck: skipping non-dict config at index=%s", idx)
                 continue
             pool_name = item.get("pool_name")
             if pool_name is None:
+                skipped_count += 1
+                self.log.debug("_validate_pool_support_precheck: skipping config index=%s with no pool_name", idx)
                 continue
 
             pool_name_str = str(pool_name).strip()
             if not pool_name_str:
+                skipped_count += 1
+                self.log.debug("_validate_pool_support_precheck: skipping blank pool_name at config index=%s", idx)
                 continue
 
             if not is_pool_supported(self.fabric_type, pool_name_str):
+                self.log.error(
+                    "_validate_pool_support_precheck: unsupported pool_name=%s at config index=%s for fabric_type=%s",
+                    pool_name_str,
+                    idx,
+                    self.fabric_type,
+                )
                 raise ValueError("pool_name '{0}' in config index {1} is not supported for fabric type '{2}'".format(pool_name_str, idx, self.fabric_type))
+            validated_count += 1
+
+        self.log.debug(
+            "_validate_pool_support_precheck: completed validation for fabric_type=%s, validated=%s, skipped=%s",
+            self.fabric_type,
+            validated_count,
+            skipped_count,
+        )
 
     # ------------------------------------------------------------------
     # Results registration helper

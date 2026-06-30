@@ -48,8 +48,12 @@ from __future__ import annotations
 __metaclass__ = type
 
 import re
+import logging
 
 from .enums import FabricTypeEnum
+
+
+LOGGER = logging.getLogger(__name__)
 
 __all__ = [
     "FABRIC_SUPPORTED_POOLS",
@@ -194,12 +198,16 @@ def get_supported_pools(
     Returns:
         frozenset of pool names, or empty frozenset if fabric_type not recognized.
     """
+    LOGGER.debug("get_supported_pools: input fabric_type=%s", fabric_type)
     if isinstance(fabric_type, str):
         fabric_type = FABRIC_TYPE_STRING_MAP.get(fabric_type)
         if fabric_type is None:
+            LOGGER.debug("get_supported_pools: unknown fabric_type string, returning empty set")
             return frozenset()
 
-    return FABRIC_SUPPORTED_POOLS.get(fabric_type, frozenset())
+    pools = FABRIC_SUPPORTED_POOLS.get(fabric_type, frozenset())
+    LOGGER.debug("get_supported_pools: resolved fabric_type=%s, pool_count=%s", fabric_type, len(pools))
+    return pools
 
 
 def get_dynamic_patterns(
@@ -216,12 +224,16 @@ def get_dynamic_patterns(
         tuple of compiled regex patterns, or empty tuple if fabric_type not
         recognized or has no dynamic patterns.
     """
+    LOGGER.debug("get_dynamic_patterns: input fabric_type=%s", fabric_type)
     if isinstance(fabric_type, str):
         fabric_type = FABRIC_TYPE_STRING_MAP.get(fabric_type)
         if fabric_type is None:
+            LOGGER.debug("get_dynamic_patterns: unknown fabric_type string, returning empty tuple")
             return ()
 
-    return FABRIC_DYNAMIC_POOL_PATTERNS.get(fabric_type, ())
+    patterns = FABRIC_DYNAMIC_POOL_PATTERNS.get(fabric_type, ())
+    LOGGER.debug("get_dynamic_patterns: resolved fabric_type=%s, pattern_count=%s", fabric_type, len(patterns))
+    return patterns
 
 
 def is_pool_supported(
@@ -242,6 +254,18 @@ def is_pool_supported(
     Returns:
         True if pool_name is supported (exact or dynamic match), False otherwise.
     """
+    LOGGER.debug("is_pool_supported: checking pool_name=%s for fabric_type=%s", pool_name, fabric_type)
     exact = pool_name in get_supported_pools(fabric_type)
-    dynamic = any(p.match(pool_name) for p in get_dynamic_patterns(fabric_type))
-    return exact or dynamic
+    if exact:
+        LOGGER.debug("is_pool_supported: exact match found for pool_name=%s", pool_name)
+        return True
+
+    patterns = get_dynamic_patterns(fabric_type)
+    dynamic = any(p.match(pool_name) for p in patterns)
+    LOGGER.debug(
+        "is_pool_supported: dynamic_match=%s for pool_name=%s using pattern_count=%s",
+        dynamic,
+        pool_name,
+        len(patterns),
+    )
+    return dynamic

@@ -23,6 +23,7 @@ context={"state": "merged|deleted|query|gathered"}.
 from __future__ import annotations
 
 import re
+import logging
 from ipaddress import ip_address, ip_network
 from typing import Any, ClassVar
 
@@ -38,6 +39,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
     model_validator,
 )
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ResourceManagerConfigModel(NDBaseModel):
@@ -343,15 +347,34 @@ class ResourceManagerConfigModel(NDBaseModel):
         resource-manager module flow. If context is omitted, validation is
         skipped to preserve model reusability.
         """
+        state = (info.context or {}).get("state") if info else None
+        LOGGER.debug(
+            "validate_pool_support_for_fabric: start state=%s, fabric_type=%s, pool_name=%s",
+            state,
+            (info.context or {}).get("fabric_type") if info else None,
+            self.pool_name,
+        )
         if self.pool_name is None:
+            LOGGER.debug("validate_pool_support_for_fabric: skipping because pool_name is None")
             return self
 
         fabric_type = (info.context or {}).get("fabric_type") if info else None
         if not fabric_type:
+            LOGGER.debug("validate_pool_support_for_fabric: skipping because fabric_type is not set in context")
             return self
 
         if not is_pool_supported(fabric_type, self.pool_name):
+            LOGGER.error(
+                "validate_pool_support_for_fabric: unsupported pool_name=%s for fabric_type=%s",
+                self.pool_name,
+                fabric_type,
+            )
             raise ValueError("pool_name '{0}' is not supported for fabric type '{1}'".format(self.pool_name, fabric_type))
+        LOGGER.debug(
+            "validate_pool_support_for_fabric: pool_name=%s is supported for fabric_type=%s",
+            self.pool_name,
+            fabric_type,
+        )
         return self
 
     @model_validator(mode="after")
