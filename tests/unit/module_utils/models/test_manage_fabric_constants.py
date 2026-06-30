@@ -48,18 +48,11 @@ class TestFabricTypeStringMap(unittest.TestCase):
 
     def test_fabric_type_string_map_external(self):
         """Test FABRIC_TYPE_STRING_MAP maps 'externalConnectivity' to EXTERNAL_CONNECTIVITY enum."""
-        assert (
-            FABRIC_TYPE_STRING_MAP["externalConnectivity"]
-            == FabricTypeEnum.EXTERNAL_CONNECTIVITY
-        )
+        assert FABRIC_TYPE_STRING_MAP["externalConnectivity"] == FabricTypeEnum.EXTERNAL_CONNECTIVITY
 
     def test_fabric_type_string_map_both_ebgp_values_same_enum(self):
         """Test 'routed' and 'vxlanEbgp' both map to same FabricTypeEnum."""
-        assert (
-            FABRIC_TYPE_STRING_MAP["routed"]
-            == FABRIC_TYPE_STRING_MAP["vxlanEbgp"]
-            == FabricTypeEnum.VXLAN_EBGP
-        )
+        assert FABRIC_TYPE_STRING_MAP["routed"] == FABRIC_TYPE_STRING_MAP["vxlanEbgp"] == FabricTypeEnum.VXLAN_EBGP
 
 
 class TestFabricSupportedPools(unittest.TestCase):
@@ -75,9 +68,7 @@ class TestFabricSupportedPools(unittest.TestCase):
 
     def test_external_connectivity_pool_count(self):
         """Test EXTERNAL_CONNECTIVITY has 17 supported pools."""
-        assert (
-            len(FABRIC_SUPPORTED_POOLS[FabricTypeEnum.EXTERNAL_CONNECTIVITY]) == 17
-        )
+        assert len(FABRIC_SUPPORTED_POOLS[FabricTypeEnum.EXTERNAL_CONNECTIVITY]) == 17
 
     def test_vxlan_ibgp_contains_expected_pools(self):
         """Test VXLAN_IBGP contains expected pool names."""
@@ -324,12 +315,8 @@ class TestIsPoolSupportedFunction(unittest.TestCase):
 
     def test_is_pool_supported_exact_external_enum(self):
         """Test is_pool_supported with exact-match EXTERNAL_CONNECTIVITY pool (enum)."""
-        assert is_pool_supported(
-            FabricTypeEnum.EXTERNAL_CONNECTIVITY, "TUNNEL_ID_IOS_XE"
-        )
-        assert is_pool_supported(
-            FabricTypeEnum.EXTERNAL_CONNECTIVITY, "INSTANCE_ID"
-        )
+        assert is_pool_supported(FabricTypeEnum.EXTERNAL_CONNECTIVITY, "TUNNEL_ID_IOS_XE")
+        assert is_pool_supported(FabricTypeEnum.EXTERNAL_CONNECTIVITY, "INSTANCE_ID")
 
     def test_is_pool_supported_exact_external_string(self):
         """Test is_pool_supported with exact-match EXTERNAL_CONNECTIVITY pool (string)."""
@@ -432,10 +419,7 @@ class TestIntegration(unittest.TestCase):
         for pool in test_pools:
             result_routed = is_pool_supported("routed", pool)
             result_ebgp = is_pool_supported("vxlanEbgp", pool)
-            assert result_routed == result_ebgp, (
-                f"Mismatch for pool '{pool}': "
-                f"'routed'={result_routed}, 'vxlanEbgp'={result_ebgp}"
-            )
+            assert result_routed == result_ebgp, f"Mismatch for pool '{pool}': 'routed'={result_routed}, 'vxlanEbgp'={result_ebgp}"
 
     def test_all_fabrics_have_supported_pools(self):
         """Test all fabric types have supported pools defined."""
@@ -451,10 +435,6 @@ class TestIntegration(unittest.TestCase):
         for pool in ebgp_pools:
             # Should not match IPv4 CIDR pattern
             patterns = get_dynamic_patterns("routed")
-            assert not patterns[0].match(pool), (
-                f"IPv4 CIDR pool '{pool}' found in exact matches"
-            )
+            assert not patterns[0].match(pool), f"IPv4 CIDR pool '{pool}' found in exact matches"
             # Should not match IPv6 CIDR pattern
-            assert not patterns[1].match(pool), (
-                f"IPv6 CIDR pool '{pool}' found in exact matches"
-            )
+            assert not patterns[1].match(pool), f"IPv6 CIDR pool '{pool}' found in exact matches"

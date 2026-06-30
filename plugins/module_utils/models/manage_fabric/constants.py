@@ -152,13 +152,8 @@ FABRIC_SUPPORTED_POOLS: dict[FabricTypeEnum, frozenset[str]] = {
 #   _IPV4_CIDR_RE  - Matches IPv4 CIDR notation, e.g. "10.4.0.0/30"
 #   _IPV6_CIDR_RE  - Matches IPv6 / link-local CIDR notation, e.g. "fe:80:505::5/64"
 # =============================================================================
-_IPV4_CIDR_RE: re.Pattern[str] = re.compile(
-    r"^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$"
-)
-
-_IPV6_CIDR_RE: re.Pattern[str] = re.compile(
-    r"^([0-9a-fA-F]*:)+[0-9a-fA-F]*\/\d{1,3}$"
-)
+_IPV4_CIDR_RE: re.Pattern[str] = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$")
+_IPV6_CIDR_RE: re.Pattern[str] = re.compile(r"^([0-9a-fA-F]*:)+[0-9a-fA-F]*\/\d{1,3}$")
 
 FABRIC_DYNAMIC_POOL_PATTERNS: dict[FabricTypeEnum, tuple[re.Pattern[str], ...]] = {
     FabricTypeEnum.VXLAN_IBGP: (),
@@ -250,4 +245,3 @@ def is_pool_supported(
     exact = pool_name in get_supported_pools(fabric_type)
     dynamic = any(p.match(pool_name) for p in get_dynamic_patterns(fabric_type))
     return exact or dynamic
-

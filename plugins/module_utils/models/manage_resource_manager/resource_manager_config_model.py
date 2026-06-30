@@ -351,9 +351,7 @@ class ResourceManagerConfigModel(NDBaseModel):
             return self
 
         if not is_pool_supported(fabric_type, self.pool_name):
-            raise ValueError(
-                "pool_name '{0}' is not supported for fabric type '{1}'".format(self.pool_name, fabric_type)
-            )
+            raise ValueError("pool_name '{0}' is not supported for fabric type '{1}'".format(self.pool_name, fabric_type))
         return self
 
     @model_validator(mode="after")

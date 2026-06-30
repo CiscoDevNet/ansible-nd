@@ -141,15 +141,11 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         fabric_type = management.get("type") if isinstance(management, dict) else None
 
         if not isinstance(fabric_type, str) or not fabric_type.strip():
-            raise ValueError(
-                "Unable to determine fabric type for fabric '{0}': missing management.type".format(self.fabric)
-            )
+            raise ValueError("Unable to determine fabric type for fabric '{0}': missing management.type".format(self.fabric))
 
         fabric_type = fabric_type.strip()
         if fabric_type not in FABRIC_TYPE_STRING_MAP:
-            raise ValueError(
-                "Unsupported fabric type '{0}' for fabric '{1}'".format(fabric_type, self.fabric)
-            )
+            raise ValueError("Unsupported fabric type '{0}' for fabric '{1}'".format(fabric_type, self.fabric))
 
         self.log.debug("_get_fabric_type: resolved management.type='%s' for fabric=%s", fabric_type, self.fabric)
         return fabric_type
@@ -168,10 +164,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 continue
 
             if not is_pool_supported(self.fabric_type, pool_name_str):
-                raise ValueError(
-                    "pool_name '{0}' in config index {1} is not supported for fabric type '{2}'"
-                    .format(pool_name_str, idx, self.fabric_type)
-                )
+                raise ValueError("pool_name '{0}' in config index {1} is not supported for fabric type '{2}'".format(pool_name_str, idx, self.fabric_type))
 
     # ------------------------------------------------------------------
     # Results registration helper
