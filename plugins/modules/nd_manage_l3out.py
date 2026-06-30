@@ -134,6 +134,9 @@ options:
           links:
             description:
             - List of links for the L3Out connectivity.
+            - The lifecycle of the underlying links is managed by a separate module.
+              This module does not create, update, or delete links; the user must
+              manage links separately.
             type: list
             elements: dict
             suboptions:
