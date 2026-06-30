@@ -236,7 +236,7 @@ def test_svi_interface_00120():
         ("", False),  # max_length lower bound 0 acceptable here, validator only checks ASCII
         (None, False),
         ("em — dash", True),
-        ("smart “quotes”", True),
+        ("smart \u201cquotes\u201d", True),
         ("emoji \U0001f600", True),
         ("latin-1 \xe9", True),
     ],

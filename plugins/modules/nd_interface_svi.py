@@ -126,7 +126,8 @@ options:
                     description:
                     - Enable HSRP on the interface.
                     - When V(true), the other C(hsrp_*) and C(preempt)/C(mac) fields take effect.
-                    - No HSRP sub-options are strictly required; the controller applies defaults for any left unset (e.g. C(hsrp_group) and C(hsrp_version) default to C(1)).
+                    - No HSRP sub-options are strictly required; the controller applies defaults for any
+                      left unset (e.g. C(hsrp_group) and C(hsrp_version) default to C(1)).
                     type: bool
                   hsrp_vip:
                     description:
@@ -243,7 +244,8 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS SVI interfaces only (interface_type C(svi), mode C(managed), network_os_type C(nx-os), policy_type C(svi)). These values are hardcoded by the module and are not user-configurable.
+- This module manages NX-OS SVI interfaces only (interface_type C(svi), mode C(managed), network_os_type C(nx-os), policy_type C(svi)).
+  These values are hardcoded by the module and are not user-configurable.
 - Other SVI policy types (e.g. policyType C(vpcBackupSvi) for fabric/underlay SVIs with OSPF, ISIS, BFD, and
   replication-mode options) are not yet exposed and will be added as separate variants in a follow-up release.
 """
