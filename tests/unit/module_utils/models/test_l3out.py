@@ -17,6 +17,7 @@ from contextlib import contextmanager
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.models.l3out.l3out import (
+    ConnectivityDetailsModel,
     FabricBgpDetailsModel,
     Ipv4PeeringModel,
     Ipv6PeeringModel,
@@ -310,7 +311,6 @@ def test_l3out_00200():
         instance = LinkModel()
     assert instance.mtu is None
     assert instance.ipv4_mask_length is None
-    assert instance.dot1q_id is None
     assert instance.vlan_id is None
     assert instance.switch1_details is None
     assert instance.switch2_details is None
@@ -344,6 +344,108 @@ def test_l3out_00210():
     assert instance.mtu == 9216
     assert instance.ipv4_mask_length == 30
     assert instance.switch1_details.switch_id == "FDO12345678"
+
+
+# =============================================================================
+# Test: ConnectivityDetailsModel - unified vlan_id mapping
+# =============================================================================
+
+
+def test_l3out_00220():
+    """
+    # Summary
+
+    Verify unified vlan_id maps to dot1qId for subInterface links.
+
+    ## Test
+
+    - Build subInterface connectivity with vlan_id
+    - to_payload() emits dot1qId, not vlan_id/vlanId
+    - to_config() keeps unified vlan_id
+
+    ## Classes and Methods
+
+    - ConnectivityDetailsModel.from_config()
+    - ConnectivityDetailsModel.to_payload()
+    """
+    instance = ConnectivityDetailsModel.from_config({"routing_interface_type": "subInterface", "links": [{"vlan_id": 100, "mtu": 1500}]})
+    payload_link = instance.to_payload()["links"][0]
+    assert payload_link["dot1qId"] == 100
+    assert "vlan_id" not in payload_link
+    assert "vlanId" not in payload_link
+    config_link = instance.to_config()["links"][0]
+    assert config_link["vlan_id"] == 100
+
+
+def test_l3out_00230():
+    """
+    # Summary
+
+    Verify unified vlan_id maps to vlanId for svi links.
+
+    ## Test
+
+    - Build svi connectivity with vlan_id
+    - to_payload() emits vlanId, not vlan_id/dot1qId
+    - to_diff_dict() also uses the wire key
+
+    ## Classes and Methods
+
+    - ConnectivityDetailsModel.from_config()
+    - ConnectivityDetailsModel.to_payload()
+    - ConnectivityDetailsModel.to_diff_dict()
+    """
+    instance = ConnectivityDetailsModel.from_config({"routing_interface_type": "svi", "links": [{"vlan_id": 200}]})
+    payload_link = instance.to_payload()["links"][0]
+    assert payload_link["vlanId"] == 200
+    assert "vlan_id" not in payload_link
+    assert "dot1qId" not in payload_link
+    assert instance.to_diff_dict()["links"][0]["vlanId"] == 200
+
+
+def test_l3out_00240():
+    """
+    # Summary
+
+    Verify ND wire keys (dot1qId/vlanId) are normalized to vlan_id on read.
+
+    ## Test
+
+    - from_response with dot1qId -> link.vlan_id populated
+    - from_response with vlanId -> link.vlan_id populated
+
+    ## Classes and Methods
+
+    - ConnectivityDetailsModel.from_response()
+    """
+    sub = ConnectivityDetailsModel.from_response({"routingInterfaceType": "subInterface", "links": [{"dot1qId": 100, "mtu": 1500}]})
+    assert sub.links[0].vlan_id == 100
+    svi = ConnectivityDetailsModel.from_response({"routingInterfaceType": "svi", "links": [{"vlanId": 200}]})
+    assert svi.links[0].vlan_id == 200
+
+
+def test_l3out_00250():
+    """
+    # Summary
+
+    Verify vlan_id range validation differs per interface type.
+
+    ## Test
+
+    - subInterface accepts vlan_id=1 (range 1-4094)
+    - svi rejects vlan_id=1 (range 2-4094)
+    - svi/subInterface require vlan_id when links present
+
+    ## Classes and Methods
+
+    - ConnectivityDetailsModel.validate_connectivity_type_requirements()
+    """
+    with does_not_raise():
+        ConnectivityDetailsModel.from_config({"routing_interface_type": "subInterface", "links": [{"vlan_id": 1}]})
+    with pytest.raises(ValueError, match="between 2 and 4094"):
+        ConnectivityDetailsModel.from_config({"routing_interface_type": "svi", "links": [{"vlan_id": 1}]})
+    with pytest.raises(ValueError, match="'vlan_id' is required"):
+        ConnectivityDetailsModel.from_config({"routing_interface_type": "svi", "links": [{"mtu": 1500}]})
 
 
 # =============================================================================

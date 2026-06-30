@@ -107,7 +107,7 @@ l3out_static:
   connectivity_details:
     routing_interface_type: subInterface
     links:
-      - dot1q_id: 100
+      - vlan_id: 100
         mtu: 1500
         ipv4_mask_length: 24
         switch1_details:

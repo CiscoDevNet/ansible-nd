@@ -10,7 +10,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     Field,
     FieldSerializationInfo,
     SecretStr,
+    SerializationInfo,
     field_serializer,
+    model_serializer,
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -115,8 +117,11 @@ class LinkModel(NDNestedModel):
     mtu: Optional[int] = Field(default=None, alias="mtu")
     ipv4_mask_length: Optional[int] = Field(default=None, alias="ipv4MaskLength")
     ipv6_prefix_length: Optional[int] = Field(default=None, alias="ipv6PrefixLength")
-    dot1q_id: Optional[int] = Field(default=None, alias="dot1qId")
-    vlan_id: Optional[int] = Field(default=None, alias="vlanId")
+    # Unified encapsulation VLAN. Maps to the ND wire field dot1qId for
+    # subInterface links and vlanId for svi links. The mapping is applied by
+    # ConnectivityDetailsModel based on its routing_interface_type. Kept without
+    # a static alias so it serializes as ``vlan_id`` until the parent renames it.
+    vlan_id: Optional[int] = Field(default=None)
     ipv4_pim: Optional[bool] = Field(default=None, alias="ipv4Pim")
     ipv6_pim: Optional[bool] = Field(default=None, alias="ipv6Pim")
     switch1_details: Optional[SwitchDetailsModel] = Field(default=None, alias="switch1Details")
@@ -129,19 +134,72 @@ class ConnectivityDetailsModel(NDNestedModel):
     routing_interface_type: str = Field(alias="routingInterfaceType")
     links: Optional[List[LinkModel]] = Field(default=None, alias="links")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _map_wire_vlan_fields(cls, data: Any) -> Any:
+        """Normalize ND wire VLAN keys (dot1qId/vlanId) to the unified vlan_id.
+
+        ND returns the encapsulation as dot1qId for subInterface links and
+        vlanId for svi links. Both are mapped to the single vlan_id attribute
+        so the model exposes one field regardless of interface type.
+        """
+        if isinstance(data, dict):
+            links = data.get("links")
+            if isinstance(links, list):
+                for link in links:
+                    if isinstance(link, dict) and "vlan_id" not in link:
+                        if "dot1qId" in link:
+                            link["vlan_id"] = link.pop("dot1qId")
+                        elif "vlanId" in link:
+                            link["vlan_id"] = link.pop("vlanId")
+        return data
+
     @model_validator(mode="after")
     def validate_connectivity_type_requirements(self) -> "ConnectivityDetailsModel":
-        """Validate type-specific field requirements for connectivity details."""
+        """Validate type-specific vlan_id requirements and ranges."""
         if not self.links:
             return self
 
         interface_type = self.routing_interface_type
         for idx, link in enumerate(self.links):
-            if interface_type == "subInterface" and link.dot1q_id is None:
-                raise ValueError(f"links[{idx}]: 'dot1q_id' is required when " f"routing_interface_type is 'subInterface'.")
-            if interface_type == "svi" and link.vlan_id is None:
-                raise ValueError(f"links[{idx}]: 'vlan_id' is required when " f"routing_interface_type is 'svi'.")
+            if interface_type == "subInterface":
+                if link.vlan_id is None:
+                    raise ValueError(f"links[{idx}]: 'vlan_id' is required when " f"routing_interface_type is 'subInterface'.")
+                if not 1 <= link.vlan_id <= 4094:
+                    raise ValueError(f"links[{idx}]: 'vlan_id' must be between 1 and 4094 when " f"routing_interface_type is 'subInterface'.")
+            elif interface_type == "svi":
+                if link.vlan_id is None:
+                    raise ValueError(f"links[{idx}]: 'vlan_id' is required when " f"routing_interface_type is 'svi'.")
+                if not 2 <= link.vlan_id <= 4094:
+                    raise ValueError(f"links[{idx}]: 'vlan_id' must be between 2 and 4094 when " f"routing_interface_type is 'svi'.")
         return self
+
+    @model_serializer(mode="wrap")
+    def _serialize_vlan_mapping(self, handler, info: SerializationInfo) -> Dict[str, Any]:
+        """Map the unified vlan_id back to the ND wire key per interface type.
+
+        For payload and diff serialization, vlan_id becomes dot1qId
+        (subInterface) or vlanId (svi). For config output (mode='config') the
+        unified vlan_id is preserved so the user-facing schema stays single.
+        """
+        data = handler(self)
+        mode = info.context.get("mode") if info.context else None
+        if mode == "config":
+            return data
+
+        links = data.get("links")
+        if isinstance(links, list):
+            wire_key = None
+            if self.routing_interface_type == "subInterface":
+                wire_key = "dot1qId"
+            elif self.routing_interface_type == "svi":
+                wire_key = "vlanId"
+            for link in links:
+                if isinstance(link, dict) and "vlan_id" in link:
+                    value = link.pop("vlan_id")
+                    if wire_key is not None:
+                        link[wire_key] = value
+        return data
 
 
 # =============================================================================
@@ -235,9 +293,9 @@ class L3OutModel(NDBaseModel):
             ipv6_pim=dict(type="bool"),
             ipv4_mask_length=dict(type="int"),
             ipv6_prefix_length=dict(type="int"),
-            # Type-specific fields
-            dot1q_id=dict(type="int"),  # subInterface only
-            vlan_id=dict(type="int"),  # svi only
+            # Type-specific encapsulation VLAN (dot1q tag for subInterface,
+            # VLAN ID for svi). Range validated per routing_interface_type.
+            vlan_id=dict(type="int"),
             # Switch details
             switch1_details=dict(type="dict", options=switch_details_spec),
             switch2_details=dict(type="dict", options=switch_details_spec),

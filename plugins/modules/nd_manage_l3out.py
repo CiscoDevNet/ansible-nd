@@ -165,17 +165,13 @@ options:
                 - Required when O(config.ip_version) is C(ipv6) or C(both).
                 - Must be between 1 and 127.
                 type: int
-              dot1q_id:
-                description:
-                - Dot1q VLAN tag for subInterface type.
-                - Required when O(config.connectivity_details.routing_interface_type) is C(subInterface).
-                - Must be between 1 and 4094.
-                type: int
               vlan_id:
                 description:
-                - VLAN ID for SVI type.
-                - Required when O(config.connectivity_details.routing_interface_type) is C(svi).
-                - Must be between 2 and 4094.
+                - Encapsulation VLAN for the link.
+                - For C(subInterface) this is the dot1q VLAN tag and must be between 1 and 4094.
+                - For C(svi) this is the SVI VLAN ID and must be between 2 and 4094.
+                - Required when O(config.connectivity_details.routing_interface_type) is C(subInterface) or C(svi).
+                - Not applicable when O(config.connectivity_details.routing_interface_type) is C(routed).
                 type: int
               switch1_details:
                 description:
@@ -655,7 +651,7 @@ EXAMPLES = r"""
         connectivity_details:
           routing_interface_type: subInterface
           links:
-            - dot1q_id: 100
+            - vlan_id: 100
               mtu: 1500
               ipv4_mask_length: 30
               switch1_details:
@@ -689,7 +685,7 @@ EXAMPLES = r"""
         connectivity_details:
           routing_interface_type: subInterface
           links:
-            - dot1q_id: 100
+            - vlan_id: 100
               mtu: 1500
               ipv4_mask_length: 30
               switch1_details:
@@ -722,7 +718,7 @@ EXAMPLES = r"""
         connectivity_details:
           routing_interface_type: subInterface
           links:
-            - dot1q_id: 100
+            - vlan_id: 100
               mtu: 1500
               ipv4_mask_length: 24
               switch1_details:
