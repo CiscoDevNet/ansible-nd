@@ -635,6 +635,52 @@ def test_svi_interface_00700(value, expected):
     assert instance.interface_name == expected
 
 
+@pytest.mark.parametrize(
+    "value",
+    [0, 4095, "0", "9999", "vlan0", "vlan4095", "VLAN9999"],
+    ids=["int_zero", "int_above_max", "str_zero", "str_above_max", "prefixed_zero", "prefixed_above_max", "caps_above_max"],
+)
+def test_svi_interface_00710(value):
+    """
+    # Summary
+
+    Verify `normalize_interface_name` rejects a VLAN ID outside the controller-supported range 1-4094.
+
+    ## Test
+
+    - An extractable VLAN ID below 1 or above 4094 raises ValidationError
+
+    ## Classes and Methods
+
+    - SviInterfaceModel.normalize_interface_name()
+    """
+    with pytest.raises(ValidationError, match=r"SVI VLAN ID must be in the range 1-4094"):
+        SviInterfaceModel(switch_ip="1.2.3.4", interface_name=value)
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [(1, "vlan1"), (4094, "vlan4094"), ("vlan4094", "vlan4094")],
+    ids=["min_boundary", "max_boundary", "prefixed_max_boundary"],
+)
+def test_svi_interface_00711(value, expected):
+    """
+    # Summary
+
+    Verify `normalize_interface_name` accepts the VLAN ID range boundaries 1 and 4094.
+
+    ## Test
+
+    - VLAN IDs 1 and 4094 are accepted and normalized to `vlan<id>`
+
+    ## Classes and Methods
+
+    - SviInterfaceModel.normalize_interface_name()
+    """
+    instance = SviInterfaceModel(switch_ip="1.2.3.4", interface_name=value)
+    assert instance.interface_name == expected
+
+
 # =============================================================================
 # Test: SviInterfaceModel — composite identifier
 # =============================================================================

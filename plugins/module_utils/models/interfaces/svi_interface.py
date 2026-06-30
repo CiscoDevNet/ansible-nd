@@ -269,19 +269,35 @@ class SviInterfaceModel(NDBaseModel):
         Normalize SVI interface names to the ND API convention (lowercase `vlan` prefix, e.g. `Vlan333` -> `vlan333`,
         `VLAN333` -> `vlan333`). Bare integers are accepted and prefixed with `vlan` (e.g. `333` -> `vlan333`).
 
+        When a numeric VLAN ID can be extracted from the input, it is range-checked against the controller-supported
+        SVI VLAN range (1-4094) so an out-of-range ID fails early with a clear error instead of being rejected by ND.
+
         ## Raises
 
-        None
+        ### ValueError
+
+        - If the extracted VLAN ID is outside the range 1-4094.
         """
+        normalized = value
+        vlan_id: int | None = None
+        if isinstance(value, bool):
+            return value
         if isinstance(value, int):
-            return f"vlan{value}"
-        if isinstance(value, str) and value:
+            vlan_id = value
+            normalized = f"vlan{value}"
+        elif isinstance(value, str) and value:
             stripped = value.strip()
             if stripped.isdigit():
-                return f"vlan{stripped}"
-            if stripped.lower().startswith("vlan"):
-                return "vlan" + stripped[4:]
-        return value
+                vlan_id = int(stripped)
+                normalized = f"vlan{stripped}"
+            elif stripped.lower().startswith("vlan"):
+                remainder = stripped[4:]
+                normalized = "vlan" + remainder
+                if remainder.isdigit():
+                    vlan_id = int(remainder)
+        if vlan_id is not None and not 1 <= vlan_id <= 4094:
+            raise ValueError(f"SVI VLAN ID must be in the range 1-4094, got {vlan_id}.")
+        return normalized
 
     # --- Argument Spec ---
 
