@@ -323,6 +323,25 @@ class TestIsPoolSupportedFunction(unittest.TestCase):
         assert is_pool_supported("externalConnectivity", "TUNNEL_ID_IOS_XE")
         assert is_pool_supported("externalConnectivity", "INSTANCE_ID")
 
+    def test_is_pool_supported_subnet_not_for_external_connectivity_enum(self):
+        """Test EXTERNAL_CONNECTIVITY does NOT support SUBNET pool (enum)."""
+        assert not is_pool_supported(FabricTypeEnum.EXTERNAL_CONNECTIVITY, "SUBNET")
+
+    def test_is_pool_supported_subnet_not_for_external_connectivity_string(self):
+        """Test EXTERNAL_CONNECTIVITY does NOT support SUBNET pool (string)."""
+        assert not is_pool_supported("externalConnectivity", "SUBNET")
+
+    def test_is_pool_supported_subnet_supported_for_ibgp(self):
+        """Test VXLAN_IBGP DOES support SUBNET pool."""
+        assert is_pool_supported(FabricTypeEnum.VXLAN_IBGP, "SUBNET")
+        assert is_pool_supported("vxlanIbgp", "SUBNET")
+
+    def test_is_pool_supported_subnet_supported_for_ebgp(self):
+        """Test VXLAN_EBGP DOES support SUBNET pool."""
+        assert is_pool_supported(FabricTypeEnum.VXLAN_EBGP, "SUBNET")
+        assert is_pool_supported("vxlanEbgp", "SUBNET")
+        assert is_pool_supported("routed", "SUBNET")
+
     def test_is_pool_supported_exact_not_supported(self):
         """Test is_pool_supported returns False for unsupported exact-match pool."""
         assert not is_pool_supported(FabricTypeEnum.VXLAN_IBGP, "INVALID_POOL")

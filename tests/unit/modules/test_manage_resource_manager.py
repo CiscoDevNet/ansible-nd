@@ -1692,6 +1692,90 @@ def test_manage_resource_manager_gathered_rejects_unsupported_pool_filter_for_fa
         NDResourceManagerModule(nd, Results(), log=LOG)
 
 
+def test_manage_resource_manager_external_connectivity_rejects_subnet_pool():
+    """EXTERNAL_CONNECTIVITY fabric rejects SUBNET pool (not supported for this type)."""
+    nd = _mock_nd_module(
+        state="merged",
+        fabric_type="externalConnectivity",
+        config=[
+            {
+                "entity_name": "subnet_pool",
+                "pool_type": "SUBNET",
+                "pool_name": "SUBNET",
+                "scope_type": "link",
+                "resource": "10.0.0.0/24",
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="not supported for fabric type"):
+        NDResourceManagerModule(nd, Results(), log=LOG)
+
+
+def test_manage_resource_manager_external_connectivity_accepts_tunnel_id_pool():
+    """EXTERNAL_CONNECTIVITY fabric accepts TUNNEL_ID_IOS_XE pool (supported for this type)."""
+    nd = _mock_nd_module(
+        state="merged",
+        fabric_type="externalConnectivity",
+        config=[
+            {
+                "entity_name": "tunnel_id",
+                "pool_type": "ID",
+                "pool_name": "TUNNEL_ID_IOS_XE",
+                "scope_type": "device",
+                "switches": ["SER1"],
+                "resource": "100",
+            }
+        ],
+    )
+
+    # Should not raise - TUNNEL_ID_IOS_XE is supported for externalConnectivity
+    module = NDResourceManagerModule(nd, Results(), log=LOG)
+    assert module.fabric_type == "externalConnectivity"
+
+
+def test_manage_resource_manager_vxlan_ibgp_accepts_subnet_pool():
+    """VXLAN_IBGP fabric accepts SUBNET pool (supported for this type)."""
+    nd = _mock_nd_module(
+        state="merged",
+        fabric_type="vxlanIbgp",
+        config=[
+            {
+                "entity_name": "subnet_pool",
+                "pool_type": "SUBNET",
+                "pool_name": "SUBNET",
+                "scope_type": "link",
+                "resource": "10.0.0.0/24",
+            }
+        ],
+    )
+
+    # Should not raise - SUBNET is supported for vxlanIbgp
+    module = NDResourceManagerModule(nd, Results(), log=LOG)
+    assert module.fabric_type == "vxlanIbgp"
+
+
+def test_manage_resource_manager_vxlan_ebgp_accepts_subnet_pool():
+    """VXLAN_EBGP (routed) fabric accepts SUBNET pool (supported for this type)."""
+    nd = _mock_nd_module(
+        state="merged",
+        fabric_type="routed",
+        config=[
+            {
+                "entity_name": "subnet_pool",
+                "pool_type": "SUBNET",
+                "pool_name": "SUBNET",
+                "scope_type": "link",
+                "resource": "10.0.0.0/24",
+            }
+        ],
+    )
+
+    # Should not raise - SUBNET is supported for routed (VXLAN_EBGP)
+    module = NDResourceManagerModule(nd, Results(), log=LOG)
+    assert module.fabric_type == "routed"
+
+
 def test_validate_input_gathered_with_partial_filter():
     """_validate_input allows gathered with partial filter criteria."""
     module = _resource_manager()
