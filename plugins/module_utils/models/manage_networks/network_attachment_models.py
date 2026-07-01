@@ -76,7 +76,7 @@ class NetworkAttachmentInterfaceModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
     mode: NetworkAttachmentMode | str = Field(default=..., description="Interface mode discriminator")
-    interface_range: str | None = Field(default=None, alias="interfaceRange")
+    interface_range: str = Field(default=..., alias="interfaceRange")
     interface_group_name: str | None = Field(default=None, alias="interfaceGroupName")
     native_vlan: bool | None = Field(default=False, alias="nativeVlan")
     mapping: NoneMappingModel | SingleMappingModel | dict[str, Any] | None = Field(default=None)
@@ -167,6 +167,31 @@ class NetworkAttachDetachPayloadModel(NDBaseModel):
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     attachments: list[NetworkAttachmentModel] | None = Field(default=None)
+
+
+class NetworkAttachmentValidateInterfaceModel(NDNestedModel):
+    """A single network attachment interface-validation entry."""
+
+    identifiers: ClassVar[list[str]] = []
+    network_name: str = Field(default=..., alias="networkName", max_length=128)
+    switch_id: str | None = Field(default=None, alias="switchId")
+    vlan_id: int | None = Field(default=None, alias="vlanId")
+    interfaces: list[NetworkAttachmentInterfaceModel] | None = Field(default=None)
+    attach: bool = Field(default=..., description="True to validate attach, false to validate detach")
+
+    @field_validator("network_name", mode="before")
+    @classmethod
+    def validate_network_name(cls, v: str | None) -> str | None:
+        return NetworkValidators.validate_network_name(v)
+
+
+class NetworkAttachmentValidateInterfacesPayloadModel(NDBaseModel):
+    """Request body for POST /fabrics/{fabricName}/networkAttachments/validateInterfaces."""
+
+    identifiers: ClassVar[list[str]] = []
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
+
+    attachments: list[NetworkAttachmentValidateInterfaceModel] | None = Field(default=None)
 
 
 class NetworkAttachmentResultModel(NDNestedModel):

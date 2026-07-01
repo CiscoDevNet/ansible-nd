@@ -20,8 +20,6 @@ coordinator helpers instead of changing the shared state-machine contract.
 
 from __future__ import annotations
 
-import copy
-
 from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_network import (
@@ -71,7 +69,7 @@ class NetworkStateMachine:
         """
         active_strategy = strategy or self.coordinator.strategy
         state = module_args.get("state", "merged")
-        config = copy.deepcopy(module_args.get("config") or [])
+        config = [dict(network) for network in module_args.get("config") or []]
 
         if active_strategy.is_child or state == "gathered":
             return self.run_basic(module_args, strategy=active_strategy)
@@ -135,7 +133,7 @@ class NetworkStateMachine:
         """
         Run overridden using the state machine's initial current-state query.
         """
-        config = copy.deepcopy(module_args.get("config") or [])
+        config = [dict(network) for network in module_args.get("config") or []]
         desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
         desired_network_names = self.coordinator._configured_network_names(config)
 
@@ -246,11 +244,7 @@ class NetworkStateMachine:
                 module_args,
                 strategy,
             )
-        if not deploy_payloads:
-            deploy_enabled = self.coordinator._deploy_enabled_by_network(config)
-            network_names = self.coordinator._configured_network_names(config)
-            if not any(deploy_enabled.get(network_name, True) for network_name in network_names):
-                return result
+        if not deploy_payloads and self._should_query_pending_networks(result, config):
             current_networks, query_trace = self.coordinator._query_current_networks_with_trace(module_args, strategy)
             self.coordinator._merge_api_trace(result, query_trace)
             deploy_payloads = self.coordinator._build_pending_network_deploy_payloads(
@@ -285,6 +279,24 @@ class NetworkStateMachine:
             )
             self.coordinator._merge_api_trace(result, deploy_trace)
         return result
+
+    def _should_query_pending_networks(self, result: dict[str, Any], config: list[dict]) -> bool:
+        """
+        Return True when the current result is not enough to prove there is no
+        pending deploy work for deploy-enabled Networks.
+        """
+        deploy_enabled = self.coordinator._deploy_enabled_by_network(config)
+        network_names = self.coordinator._configured_network_names(config)
+        deploy_enabled_names = {network_name for network_name in network_names if deploy_enabled.get(network_name, True)}
+        if not deploy_enabled_names:
+            return False
+
+        after = result.get("after") or []
+        if not after:
+            return True
+
+        after_names = {network.get("network_name") or network.get("networkName") for network in after if isinstance(network, dict)}
+        return not deploy_enabled_names.issubset(after_names)
 
     def _prepare_overridden_deletions(
         self,

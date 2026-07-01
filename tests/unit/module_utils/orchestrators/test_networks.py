@@ -8,6 +8,7 @@ import json
 
 import pytest
 
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
     NetworkConfigModel,
     NetworkParentConfigModel,
@@ -70,22 +71,20 @@ def _mcfg_parent_orchestrator():
     )
 
 
-def test_network_config_model_normalizes_attachment_ports():
-    model = NetworkConfigModel.from_config(
-        {
-            "network_name": "BLUE_NET",
-            "is_l2only": True,
-            "vlan_id": 2301,
-            "attach": [
-                {
-                    "ip_address": "10.1.1.11",
-                    "ports": "Ethernet1/1",
-                }
-            ],
-        }
-    )
-
-    assert model.to_config()["attach"][0]["ports"] == ["Ethernet1/1"]
+def test_network_config_model_requires_attachment_interfaces():
+    with pytest.raises(ValueError, match="interfaces"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "BLUE_NET",
+                "is_l2only": True,
+                "vlan_id": 2301,
+                "attach": [
+                    {
+                        "ip_address": "10.1.1.11",
+                    }
+                ],
+            }
+        )
 
 
 def test_network_parent_argument_spec_includes_child_config():
@@ -93,8 +92,12 @@ def test_network_parent_argument_spec_includes_child_config():
 
     assert "child_fabric_config" in spec
     assert spec["attach"]["options"]["interfaces"]["options"]["mode"]["choices"]
+    assert spec["attach"]["options"]["interfaces"]["options"]["mode"]["required"] is True
+    assert spec["attach"]["options"]["interfaces"]["options"]["interface_range"]["required"] is True
+    assert spec["attach"]["options"]["interfaces"]["required"] is True
     assert spec["attach"]["options"]["deploy"]["default"] is True
-    assert "tor_ports" in spec["attach"]["options"]
+    assert "ports" not in spec["attach"]["options"]
+    assert "tor_ports" not in spec["attach"]["options"]
     assert "attachment_options" in spec["attach"]["options"]
     assert "instance_values" not in spec["attach"]["options"]
     assert "net_name" in spec
@@ -419,7 +422,7 @@ def test_legacy_network_names_are_normalized():
     assert config["rt_auto"] is True
 
 
-def test_legacy_attachment_shape_accepts_ports_and_deploy():
+def test_attachment_shape_rejects_ports_without_interfaces():
     model = NetworkConfigModel.from_config(
         {
             "net_name": "LEGACY_ATTACH",
@@ -427,7 +430,12 @@ def test_legacy_attachment_shape_accepts_ports_and_deploy():
             "attach": [
                 {
                     "ip_address": "10.1.1.11",
-                    "ports": ["Ethernet1/1"],
+                    "interfaces": [
+                        {
+                            "mode": "access",
+                            "interface_range": "Ethernet1/1",
+                        }
+                    ],
                     "deploy": False,
                 }
             ],
@@ -436,7 +444,49 @@ def test_legacy_attachment_shape_accepts_ports_and_deploy():
     attach = model.to_config()["attach"][0]
 
     assert attach["deploy"] is False
-    assert attach["ports"] == ["Ethernet1/1"]
+    assert attach["interfaces"][0]["interface_range"] == "Ethernet1/1"
+
+    with pytest.raises(ValueError, match="interfaces"):
+        NetworkConfigModel.from_config(
+            {
+                "net_name": "LEGACY_ATTACH",
+                "is_l2only": True,
+                "attach": [
+                    {
+                        "ip_address": "10.1.1.11",
+                        "ports": ["Ethernet1/1"],
+                    }
+                ],
+            }
+        )
+
+    with pytest.raises(ValueError, match="mode"):
+        NetworkConfigModel.from_config(
+            {
+                "net_name": "MISSING_MODE",
+                "is_l2only": True,
+                "attach": [
+                    {
+                        "ip_address": "10.1.1.11",
+                        "interfaces": [{"interface_range": "Ethernet1/1"}],
+                    }
+                ],
+            }
+        )
+
+    with pytest.raises(ValueError, match="interface_range|interfaceRange"):
+        NetworkConfigModel.from_config(
+            {
+                "net_name": "MISSING_RANGE",
+                "is_l2only": True,
+                "attach": [
+                    {
+                        "ip_address": "10.1.1.11",
+                        "interfaces": [{"mode": "access"}],
+                    }
+                ],
+            }
+        )
 
 
 def test_attachment_options_replace_instance_values():
@@ -447,7 +497,12 @@ def test_attachment_options_replace_instance_values():
             "attach": [
                 {
                     "ip_address": "10.1.1.11",
-                    "ports": ["Ethernet1/1"],
+                    "interfaces": [
+                        {
+                            "mode": "access",
+                            "interface_range": "Ethernet1/1",
+                        }
+                    ],
                     "attachment_options": {
                         "sviEnabled": True,
                         "dpuSecure": False,
@@ -512,26 +567,53 @@ def test_resolve_switch_ids_accepts_fabric_management_ip():
     }
 
 
-def test_tor_ports_are_rejected_because_network_attachment_api_has_no_tor_field():
-    with pytest.raises(ValueError, match="tor_ports is not supported"):
-        NetworkConfigModel.from_config(
-            {
-                "net_name": "LEGACY_ATTACH",
-                "is_l2only": True,
-                "attach": [
-                    {
-                        "ip_address": "10.1.1.11",
-                        "ports": ["Ethernet1/1"],
-                        "tor_ports": [
-                            {
-                                "ip_address": "10.1.1.12",
-                                "ports": ["Ethernet1/2"],
-                            }
-                        ],
-                    }
-                ],
-            }
-        )
+def test_tor_is_modeled_as_normal_attachment_payload():
+    model = NetworkConfigModel.from_config(
+        {
+            "net_name": "TOR_ATTACH",
+            "is_l2only": True,
+            "attach": [
+                {
+                    "ip_address": "10.1.1.11",
+                    "interfaces": [
+                        {
+                            "mode": "trunk",
+                            "interface_range": "Ethernet1/1",
+                        }
+                    ],
+                },
+                {
+                    "ip_address": "10.1.1.12",
+                    "interfaces": [
+                        {
+                            "mode": "trunk",
+                            "interface_range": "Ethernet1/2",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    config = model.to_config()
+
+    manager = NetworkAttachmentManager(coordinator=None)
+    manager.resolve_switch_ids = lambda *_args: {"10.1.1.11": "LEAF123", "10.1.1.12": "TOR123"}
+    desired = manager.desired_attachment_map({"config": [config]}, _orchestrator().strategy)
+
+    assert desired[("TOR_ATTACH", "LEAF123")]["interfaces"] == [
+        {
+            "mode": "trunk",
+            "interfaceRange": "Ethernet1/1",
+            "nativeVlan": False,
+        }
+    ]
+    assert desired[("TOR_ATTACH", "TOR123")]["interfaces"] == [
+        {
+            "mode": "trunk",
+            "interfaceRange": "Ethernet1/2",
+            "nativeVlan": False,
+        }
+    ]
 
 
 def test_module_level_query_is_normalized_to_gathered():
@@ -844,6 +926,79 @@ def test_network_check_mode_attachment_phase_returns_planned_payload():
     ]
 
 
+def test_network_attachment_post_validates_interfaces_before_attach():
+    calls = []
+
+    class Module:
+        check_mode = False
+
+    class Coordinator:
+        module = Module()
+
+        def _new_network_orchestrator(self, _module_args, _strategy):
+            class Orchestrator:
+                def _make_endpoint(self, endpoint_cls):
+                    endpoint = endpoint_cls(fabric_name="fab1")
+                    return endpoint
+
+                def _request(self, **kwargs):
+                    calls.append(kwargs)
+                    return {"results": [{"status": "success"}]}
+
+            return Orchestrator(), {}
+
+        def _finalize_api_trace(self, _results, deploy_targets=None):
+            return {"changed": True, "failed": False, "deploy_targets": deploy_targets or {}}
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    payloads = [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "SERIAL1",
+            "interfaces": [{"mode": "trunk", "interfaceRange": "Ethernet1/3"}],
+            "attach": True,
+        }
+    ]
+
+    manager.post_network_attachments({}, _orchestrator().strategy, payloads, {"BLUE_NET": {"SERIAL1"}}, operation_type=OperationType.CREATE)
+
+    assert calls[0]["path"] == "/api/v1/manage/fabrics/fab1/networkAttachments/validateInterfaces?strictModeValidation=false"
+    assert calls[0]["data"] == {
+        "attachments": [
+            {
+                "networkName": "BLUE_NET",
+                "switchId": "SERIAL1",
+                "vlanId": -1,
+                "interfaces": [
+                    {
+                        "mode": "trunk",
+                        "interfaceRange": "Ethernet1/3",
+                        "nativeVlan": False,
+                    }
+                ],
+                "attach": True,
+            }
+        ]
+    }
+    assert calls[1]["path"] == "/api/v1/manage/fabrics/fab1/networkAttachments"
+    assert calls[1]["data"] == {
+        "attachments": [
+            {
+                "networkName": "BLUE_NET",
+                "switchId": "SERIAL1",
+                "interfaces": [
+                    {
+                        "mode": "trunk",
+                        "interfaceRange": "Ethernet1/3",
+                        "nativeVlan": False,
+                    }
+                ],
+                "attach": True,
+            }
+        ]
+    }
+
+
 def test_network_merged_runs_post_attach_and_deploy_for_desired_attachment():
     class Module:
         check_mode = False
@@ -1056,7 +1211,17 @@ def test_network_state_machine_idempotent_run_deploys_pending_attach():
                     "network_name": "BLUE_NET",
                     "deploy": True,
                     "deploy_type": "switch",
-                    "attach": [{"ip_address": "10.1.1.11", "ports": ["Ethernet1/1"]}],
+                    "attach": [
+                        {
+                            "ip_address": "10.1.1.11",
+                            "interfaces": [
+                                {
+                                    "mode": "access",
+                                    "interface_range": "Ethernet1/1",
+                                }
+                            ],
+                        }
+                    ],
                 }
             ],
         }
@@ -1100,6 +1265,56 @@ def test_network_state_machine_deploy_false_skips_pending_fallback_query():
     )
 
     assert result["changed"] is True
+
+
+def test_network_state_machine_skips_pending_fallback_query_when_after_is_complete():
+    class Module:
+        check_mode = False
+
+    class Coordinator:
+        module = Module()
+
+        def __init__(self):
+            self.pending_calls = 0
+
+        def _build_deploy_payloads(self, *_args):
+            return []
+
+        def _build_pending_network_deploy_payloads(self, *_args):
+            self.pending_calls += 1
+            return []
+
+        def _deploy_enabled_by_network(self, _config):
+            return {"BLUE_NET": True, "GREEN_NET": False}
+
+        def _configured_network_names(self, _config):
+            return ["BLUE_NET", "GREEN_NET"]
+
+        def _query_current_networks_with_trace(self, *_args):
+            raise AssertionError("complete after data should skip the fallback current-state query")
+
+    coordinator = Coordinator()
+    result = NetworkStateMachine(coordinator)._deploy_after_attachment_changes(
+        {
+            "changed": False,
+            "after": [
+                {"network_name": "BLUE_NET", "network_status": "deployed"},
+                {"network_name": "GREEN_NET", "network_status": "pending"},
+            ],
+        },
+        [
+            {"network_name": "BLUE_NET", "deploy": True},
+            {"network_name": "GREEN_NET", "deploy": False},
+        ],
+        {"config": []},
+        object(),
+        {},
+        {},
+        False,
+    )
+
+    assert coordinator.pending_calls == 1
+    assert result["changed"] is False
 
 
 def test_network_bulk_delete_retries_only_sync_failed_networks():
@@ -1424,6 +1639,28 @@ def test_pending_attachment_status_is_not_delete_ready():
             {"config": [{"network_name": "BLUE_NET"}]},
             _orchestrator().strategy,
         )
+
+
+def test_deleted_attachment_phase_with_empty_targets_does_not_query_all_attachments():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise AssertionError(kwargs)
+
+    class Coordinator:
+        module = Module()
+
+        def _new_network_orchestrator(self, *_args):
+            raise AssertionError("empty deleted target set must not query all attachments")
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+
+    assert manager.apply_deleted_phase(
+        {"config": [{"network_name": "MISSING_NET"}]},
+        _orchestrator().strategy,
+        network_names=[],
+    ) == {"deploy_targets": {}}
 
 
 def test_attachment_delete_wait_chunks_large_network_name_sets():

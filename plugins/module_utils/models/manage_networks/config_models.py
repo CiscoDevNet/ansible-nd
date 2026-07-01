@@ -38,8 +38,8 @@ class NetworkInterfaceConfigModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
 
-    mode: str = Field(default=NetworkAttachmentMode.ACCESS.value)
-    interface_range: str | None = Field(default=None, alias="interfaceRange")
+    mode: str = Field(default=...)
+    interface_range: str = Field(default=..., alias="interfaceRange")
     interface_group_name: str | None = Field(default=None, alias="interfaceGroupName")
     native_vlan: bool | None = Field(default=False, alias="nativeVlan")
     mapping_type: str | None = Field(default=None, alias="mappingType")
@@ -57,34 +57,9 @@ class NetworkInterfaceConfigModel(NDNestedModel):
 
     @model_validator(mode="after")
     def _check_interface_target(self):
-        if not self.interface_range and not self.interface_group_name:
-            raise ValueError("Either interface_range or interface_group_name is required")
         if self.mapping_type == MappingType.SINGLE.value and self.customer_vlan is None:
             raise ValueError("customer_vlan is required when mapping_type=single")
         return self
-
-
-class NetworkTorPortConfigModel(NDNestedModel):
-    """Compatibility model for legacy tor_ports entries."""
-
-    identifiers: ClassVar[list[str]] = []
-
-    ip_address: str = Field(alias="ipAddress")
-    ports: list[str] | None = None
-
-    @field_validator("ip_address", mode="before")
-    @classmethod
-    def _validate_ip(cls, v: str | None) -> str | None:
-        return NetworkValidators.validate_ipv4_address(v)
-
-    @field_validator("ports", mode="before")
-    @classmethod
-    def _normalize_ports(cls, v: str | list[str] | None) -> list[str] | None:
-        if v is None:
-            return []
-        if isinstance(v, str):
-            return [v]
-        return v
 
 
 class NetworkAttachmentConfigModel(NDNestedModel):
@@ -94,10 +69,8 @@ class NetworkAttachmentConfigModel(NDNestedModel):
 
     ip_address: str = Field(alias="ipAddress")
     vlan_id: int | None = Field(default=None, alias="vlanId")
-    interfaces: list[NetworkInterfaceConfigModel] | None = None
-    ports: list[str] | None = None
+    interfaces: list[NetworkInterfaceConfigModel] = Field(default=...)
     deploy: bool | None = True
-    tor_ports: list[NetworkTorPortConfigModel] | None = Field(default=None, alias="torPorts")
     attachment_options: dict[str, Any] | None = None
     extra_config: str | None = Field(default=None, alias="extraConfig")
 
@@ -111,21 +84,10 @@ class NetworkAttachmentConfigModel(NDNestedModel):
     def _validate_vlan(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_vlan_id(v)
 
-    @field_validator("ports", mode="before")
-    @classmethod
-    def _normalize_ports(cls, v: str | list[str] | None) -> list[str] | None:
-        if v is None:
-            return None
-        if isinstance(v, str):
-            return [v]
-        return v
-
     @model_validator(mode="after")
-    def _check_interfaces_or_ports(self):
-        if self.tor_ports:
-            raise ValueError("tor_ports is not supported by the Network attachment API. Use interfaces[] for attachment interfaces.")
-        if not self.interfaces and not self.ports:
-            raise ValueError("Either interfaces or ports is required for network attachments")
+    def _check_interfaces(self):
+        if not self.interfaces:
+            raise ValueError("interfaces is required for network attachments")
         return self
 
 

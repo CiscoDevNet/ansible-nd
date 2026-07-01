@@ -22,8 +22,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
     AccessInterfaceModel,
     NetworkAttachDetachPayloadModel,
     NetworkAttachmentDetailModel,
+    NetworkAttachmentInterfaceModel,
     NetworkAttachmentModel,
     NetworkAttachmentQueryResponseModel,
+    NetworkAttachmentValidateInterfaceModel,
+    NetworkAttachmentValidateInterfacesPayloadModel,
     SingleMappingModel,
     TrunkInterfaceModel,
 )
@@ -195,4 +198,36 @@ def test_manage_network_attachment_models_00310() -> None:
     with pytest.raises(ValidationError):
         SingleMappingModel(customerVlan=1)
     with pytest.raises(ValidationError):
+        NetworkAttachmentInterfaceModel(mode="trunk")
+    with pytest.raises(ValidationError):
         NetworkAttachmentModel(networkName="net1", vlanId=1, attach=True)
+
+
+def test_manage_network_attachment_models_00320() -> None:
+    """Verify interface validation payload accepts controller probe VLAN."""
+    attachment = NetworkAttachmentValidateInterfaceModel(
+        networkName="net1",
+        switchId="FDO123",
+        vlanId=-1,
+        attach=True,
+        interfaces=[TrunkInterfaceModel(interfaceRange="Ethernet1/3")],
+    )
+    payload = NetworkAttachmentValidateInterfacesPayloadModel(attachments=[attachment]).to_payload()
+
+    assert payload == {
+        "attachments": [
+            {
+                "networkName": "net1",
+                "switchId": "FDO123",
+                "vlanId": -1,
+                "interfaces": [
+                    {
+                        "mode": "trunk",
+                        "interfaceRange": "Ethernet1/3",
+                        "nativeVlan": False,
+                    }
+                ],
+                "attach": True,
+            }
+        ]
+    }

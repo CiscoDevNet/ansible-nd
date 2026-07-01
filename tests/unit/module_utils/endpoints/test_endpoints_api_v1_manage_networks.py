@@ -18,6 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsNetworkAttachmentsExportPost,
     EpManageFabricsNetworkAttachmentsPost,
     EpManageFabricsNetworkAttachmentsQueryPost,
+    EpManageFabricsNetworkAttachmentsValidateInterfacesPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_networks import (
     EpManageFabricsNetworkPreInformationGet,
@@ -105,6 +106,8 @@ def test_manage_network_attachments_00200() -> None:
     query.endpoint_params.max = 100
     query.endpoint_params.include_all = True
     query.endpoint_params.is_consolidated = False
+    validate = EpManageFabricsNetworkAttachmentsValidateInterfacesPost(fabric_name="fab1")
+    validate.endpoint_params.strict_mode_validation = False
 
     assert attach.path == "/api/v1/manage/fabrics/fab1/networkAttachments?ticketId=CHG123"
     assert attach.verb == HttpVerbEnum.POST
@@ -112,3 +115,5 @@ def test_manage_network_attachments_00200() -> None:
     assert export.verb == HttpVerbEnum.POST
     assert query.path == "/api/v1/manage/fabrics/fab1/networkAttachments/query?max=100&isConsolidated=false&includeAll=true"
     assert query.verb == HttpVerbEnum.POST
+    assert validate.path == "/api/v1/manage/fabrics/fab1/networkAttachments/validateInterfaces?strictModeValidation=false"
+    assert validate.verb == HttpVerbEnum.POST

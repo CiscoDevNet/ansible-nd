@@ -13,6 +13,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationTyp
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_network_attachments import (
     EpManageFabricsNetworkAttachmentsPost,
     EpManageFabricsNetworkAttachmentsQueryPost,
+    EpManageFabricsNetworkAttachmentsValidateInterfacesPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import (
     EpManageSwitchesListGet,
@@ -28,6 +29,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
     NetworkAttachmentModel,
     NetworkAttachDetachPayloadModel,
     NetworkAttachmentQueryRequestModel,
+    NetworkAttachmentValidateInterfaceModel,
+    NetworkAttachmentValidateInterfacesPayloadModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_config_utils import (
     configured_network_names,
@@ -106,6 +109,8 @@ class NetworkAttachmentManager:
         attachment_details: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
         network_names = network_names if network_names is not None else configured_network_names(module_args.get("config") or [])
+        if network_names == [] and attachment_details is None:
+            return {"deploy_targets": {}}
         attachments = attachment_details
         if attachments is None:
             attachments = self.current_attachment_details_ignore_missing(module_args, strategy, network_names or None)
@@ -180,26 +185,25 @@ class NetworkAttachmentManager:
     @staticmethod
     def _attachment_interfaces(attachment: dict[str, Any]) -> list[dict[str, Any]] | None:
         interfaces = attachment.get("interfaces")
-        if interfaces:
-            payloads = []
-            for interface in interfaces:
-                mapping_type = interface.get("mapping_type") or interface.get("mappingType")
-                payload = {
-                    "mode": interface.get("mode") or NetworkAttachmentMode.ACCESS.value,
-                    "interfaceRange": interface.get("interface_range") or interface.get("interfaceRange"),
-                    "interfaceGroupName": interface.get("interface_group_name") or interface.get("interfaceGroupName"),
-                    "nativeVlan": interface.get("native_vlan") if "native_vlan" in interface else interface.get("nativeVlan"),
-                }
-                if mapping_type:
-                    mapping = {"mappingType": mapping_type}
-                    customer_vlan = interface.get("customer_vlan") or interface.get("customerVlan")
-                    if mapping_type == MappingType.SINGLE.value and customer_vlan is not None:
-                        mapping["customerVlan"] = customer_vlan
-                    payload["mapping"] = mapping
-                payloads.append({k: v for k, v in payload.items() if v is not None})
-            return payloads
-        ports = attachment.get("ports") or []
-        return [{"mode": NetworkAttachmentMode.ACCESS.value, "interfaceRange": port} for port in ports] or None
+        if not interfaces:
+            return None
+        payloads = []
+        for interface in interfaces:
+            mapping_type = interface.get("mapping_type") or interface.get("mappingType")
+            payload = {
+                "mode": interface.get("mode") or NetworkAttachmentMode.ACCESS.value,
+                "interfaceRange": interface.get("interface_range") or interface.get("interfaceRange"),
+                "interfaceGroupName": interface.get("interface_group_name") or interface.get("interfaceGroupName"),
+                "nativeVlan": interface.get("native_vlan") if "native_vlan" in interface else interface.get("nativeVlan"),
+            }
+            if mapping_type:
+                mapping = {"mappingType": mapping_type}
+                customer_vlan = interface.get("customer_vlan") or interface.get("customerVlan")
+                if mapping_type == MappingType.SINGLE.value and customer_vlan is not None:
+                    mapping["customerVlan"] = customer_vlan
+                payload["mapping"] = mapping
+            payloads.append({k: v for k, v in payload.items() if v is not None})
+        return payloads
 
     def current_attachment_details(
         self,
@@ -394,6 +398,7 @@ class NetworkAttachmentManager:
             }
         request = NetworkAttachDetachPayloadModel(attachments=[NetworkAttachmentModel(**payload) for payload in payloads])
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
+        self.validate_attachment_interfaces(orchestrator, payloads)
         endpoint = orchestrator._make_endpoint(EpManageFabricsNetworkAttachmentsPost)
         response = orchestrator._request(
             path=endpoint.path,
@@ -403,6 +408,33 @@ class NetworkAttachmentManager:
         )
         self._raise_on_failed_results(response, "Network attachment failed")
         return self.coordinator._finalize_api_trace(results, deploy_targets)
+
+    def validate_attachment_interfaces(self, orchestrator: Any, payloads: list[dict[str, Any]]) -> None:
+        """Ask ND to validate attachment interfaces before mutation."""
+        validation_payloads = [self._validation_payload(payload) for payload in payloads if payload.get("interfaces")]
+        if not validation_payloads:
+            return
+        request = NetworkAttachmentValidateInterfacesPayloadModel(
+            attachments=[NetworkAttachmentValidateInterfaceModel(**payload) for payload in validation_payloads]
+        )
+        endpoint = orchestrator._make_endpoint(EpManageFabricsNetworkAttachmentsValidateInterfacesPost)
+        response = orchestrator._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            data=request.to_payload(),
+            operation_type=OperationType.QUERY,
+        )
+        self._raise_on_failed_results(response, "Network attachment interface validation failed")
+
+    @staticmethod
+    def _validation_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "networkName": payload.get("networkName"),
+            "switchId": payload.get("switchId"),
+            "vlanId": payload.get("vlanId", -1),
+            "interfaces": payload.get("interfaces"),
+            "attach": payload.get("attach", True),
+        }
 
     @staticmethod
     def _raise_on_failed_results(response: Any, prefix: str) -> None:

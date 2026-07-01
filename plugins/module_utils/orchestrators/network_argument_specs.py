@@ -20,8 +20,8 @@ def _dhcp_server_spec():
 
 def _network_interface_spec():
     return dict(
-        mode=dict(type="str", default=NetworkAttachmentMode.ACCESS.value, choices=NetworkAttachmentMode.choices()),
-        interface_range=dict(type="str"),
+        mode=dict(type="str", required=True, choices=NetworkAttachmentMode.choices()),
+        interface_range=dict(type="str", required=True),
         interface_group_name=dict(type="str"),
         native_vlan=dict(type="bool", default=False),
         mapping_type=dict(type="str", choices=MappingType.choices()),
@@ -29,21 +29,12 @@ def _network_interface_spec():
     )
 
 
-def _tor_attachment_spec():
-    return dict(
-        ip_address=dict(type="str", required=True),
-        ports=dict(type="list", elements="str", default=[]),
-    )
-
-
 def _attachment_spec():
     return dict(
         ip_address=dict(type="str", required=True),
         vlan_id=dict(type="int"),
-        interfaces=dict(type="list", elements="dict", options=_network_interface_spec()),
-        ports=dict(type="list", elements="str"),
+        interfaces=dict(type="list", elements="dict", required=True, options=_network_interface_spec()),
         deploy=dict(type="bool", default=True),
-        tor_ports=dict(type="list", elements="dict", options=_tor_attachment_spec()),
         attachment_options=dict(type="dict"),
         extra_config=dict(type="str"),
     )

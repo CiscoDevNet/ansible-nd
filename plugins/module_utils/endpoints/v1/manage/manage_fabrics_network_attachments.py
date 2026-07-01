@@ -48,6 +48,12 @@ class NetworkAttachmentsNoParamsEndpointParams(ClusterNameMixin, EndpointQueryPa
     """Query parameters for attachment endpoints with only optional clusterName."""
 
 
+class NetworkAttachmentsValidateInterfacesEndpointParams(ClusterNameMixin, EndpointQueryParams):
+    """Query parameters for network attachment interface validation."""
+
+    strict_mode_validation: bool | None = Field(default=False, description="Enable strict interface validation")
+
+
 class NetworkAttachmentsQueryEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
     """Query parameters for network attachment query."""
 
@@ -90,6 +96,29 @@ class EpManageFabricsNetworkAttachmentsPost(_EpManageFabricsNetworkAttachmentsBa
         if query_string:
             return f"{self._base_path}?{query_string}"
         return self._base_path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpManageFabricsNetworkAttachmentsValidateInterfacesPost(_EpManageFabricsNetworkAttachmentsBase):
+    """POST /fabrics/{fabricName}/networkAttachments/validateInterfaces."""
+
+    class_name: Literal["EpManageFabricsNetworkAttachmentsValidateInterfacesPost"] = Field(
+        default="EpManageFabricsNetworkAttachmentsValidateInterfacesPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: NetworkAttachmentsValidateInterfacesEndpointParams = Field(default_factory=NetworkAttachmentsValidateInterfacesEndpointParams)
+
+    @property
+    def path(self) -> str:
+        query_string = self.endpoint_params.to_query_string()
+        path = f"{self._base_path}/validateInterfaces"
+        if query_string:
+            return f"{path}?{query_string}"
+        return path
 
     @property
     def verb(self) -> HttpVerbEnum:

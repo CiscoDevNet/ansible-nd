@@ -124,11 +124,12 @@ options:
               mode:
                 description: Interface mode.
                 type: str
+                required: true
                 choices: [ access, dot1qTunnel, trunk, promiscuous, trunkPromiscuous, host, trunkSecondary ]
-                default: access
               interface_range:
                 description: Interface or interface range.
                 type: str
+                required: true
               interface_group_name:
                 description: Interface group name.
                 type: str
@@ -143,28 +144,10 @@ options:
               customer_vlan:
                 description: Customer VLAN.
                 type: int
-          ports:
-            description: Compatibility attachment interface list.
-            type: list
-            elements: str
           deploy:
             description: Per-attachment deploy flag.
             type: bool
             default: true
-          tor_ports:
-            description: TOR attachment entries.
-            type: list
-            elements: dict
-            suboptions:
-              ip_address:
-                description: TOR switch management IP address.
-                type: str
-                required: true
-              ports:
-                description: TOR switch interfaces.
-                type: list
-                elements: str
-                default: []
           attachment_options:
             description: Switch-specific attachment options.
             type: dict
