@@ -8,11 +8,11 @@ VrfWorkflowCoordinator — Parent / child VRF workflow orchestration.
 The coordinator is constructed inside nd_manage_vrfs.py after the strategy is
 resolved. For standalone and child fabrics it runs the state machine
 directly. For parent fabrics it:
-  1. Pre-validates the config (vlan_id placement, vrf_lite structure).
-  2. Strips child_fabric_config from each VRF → clean parent config.
-  3. Runs the parent task via NDStateMachine (once wired).
-  4. Builds child module_args per child fabric and re-invokes nd_manage_vrfs.
-  5. Aggregates and structures the combined results.
+  1. Parses and validates the requested VRF config.
+  2. Splits child_fabric_config into per-child in-process tasks.
+  3. Runs the parent task via the VRF state machine.
+  4. Runs each child task with the child's resolved strategy.
+  5. Deploys deferred parent attachment changes, then aggregates results.
 """
 
 from __future__ import annotations
@@ -220,12 +220,13 @@ class VrfWorkflowCoordinator:
         Full parent orchestration: parent fabric first, then all child fabrics.
 
         Workflow steps:
-          1. Pre-validate configs (vlan_id placement, vrf_lite structure).
+          1. Parse and validate configs with the resolved VRF model.
           2. Split each VRF's child_fabric_config entries into per-fabric tasks.
           3. Build a clean parent config (child_fabric_config stripped).
           4. Run the parent state machine.
-          5. If parent succeeded, execute each child task sequentially.
-          6. Aggregate all results into a structured response.
+          5. If parent succeeded, execute each child task sequentially in-process.
+          6. Deploy deferred parent attachment changes.
+          7. Aggregate all results into a structured response.
         """
         log_type = "multicluster" if "multicluster" in fabric_type else "multisite"
         parent_fabric = module_args.get("fabric_name")
@@ -314,7 +315,7 @@ class VrfWorkflowCoordinator:
         Remove Ansible-injected fabric option defaults from MCFG parent rows
         that are scoped to child fabrics.
 
-        The parent top-down API does not consistently read back these default
+        The parent template-config readback does not consistently include these default
         flags when child fabrics disagree, so sending implicit defaults causes
         repeated parent updates.  Non-default values are left intact.
         """
@@ -342,7 +343,7 @@ class VrfWorkflowCoordinator:
 
         In MCFG, child-specific VRF fabric options are applied through the
         child manage endpoints.  Keeping those same fields on the parent
-        top-down row causes repeated parent PUTs because parent readback and
+        template-config record causes repeated parent PUTs because parent readback and
         child readback do not expose the exact same fabricData shape.
         """
         child_owned_fields = {

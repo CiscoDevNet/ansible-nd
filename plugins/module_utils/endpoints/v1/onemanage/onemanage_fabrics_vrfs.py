@@ -10,12 +10,10 @@ ND onemanage fabric VRF endpoint models.
 from __future__ import absolute_import, annotations, division, print_function
 
 from typing import Literal
-from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin, VrfNameMixin
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_actions import (
     VrfActionsNoParamsEndpointParams,
     VrfActionsTicketEndpointParams,
@@ -38,7 +36,7 @@ class _EpOneManageFabricsVrfsBase(FabricNameMixin, NDEndpointBaseModel):
     def _base_path(self) -> str:
         if self.fabric_name is None:
             raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.top_down_fabrics(self.fabric_name, "vrfs", proxy_path=self.proxy_path)
+        return BasePath.manage_fabrics(self.fabric_name, "vrfs", proxy_path=self.proxy_path)
 
 
 class EpOneManageFabricsVrfsGet(_EpOneManageFabricsVrfsBase):
@@ -96,7 +94,7 @@ class _EpOneManageFabricsVrfsVrfNameBase(FabricNameMixin, VrfNameMixin, NDEndpoi
             raise ValueError("fabric_name must be set before accessing path")
         if self.vrf_name is None:
             raise ValueError("vrf_name must be set before accessing path")
-        return BasePath.top_down_fabrics(self.fabric_name, "vrfs", self.vrf_name, proxy_path=self.proxy_path)
+        return BasePath.manage_fabrics(self.fabric_name, "vrfs", self.vrf_name, proxy_path=self.proxy_path)
 
 
 class EpOneManageFabricsVrfsVrfNameGet(_EpOneManageFabricsVrfsVrfNameBase):
@@ -165,42 +163,6 @@ class EpOneManageFabricsVrfsVrfNameDelete(_EpOneManageFabricsVrfsVrfNameBase):
         return HttpVerbEnum.DELETE
 
 
-class OneManageVrfBulkDeleteQueryParams(EndpointQueryParams):
-    """Query parameters for onemanage VRF bulk delete."""
-
-    vrf_names: str | None = Field(default=None, min_length=1, description="Comma-separated VRF names")
-
-    def to_query_string(self) -> str:
-        if not self.vrf_names:
-            return ""
-        return f"vrf-names={quote(self.vrf_names, safe=',')}"
-
-
-class EpOneManageFabricsVrfsBulkDelete(_EpOneManageFabricsVrfsBase):
-    """DELETE /onemanage/top-down/fabrics/{fabricName}/bulk-delete/vrfs."""
-
-    class_name: Literal["EpOneManageFabricsVrfsBulkDelete"] = Field(
-        default="EpOneManageFabricsVrfsBulkDelete",
-        frozen=True,
-        description="Class name for backward compatibility",
-    )
-    query_params: OneManageVrfBulkDeleteQueryParams = Field(default_factory=OneManageVrfBulkDeleteQueryParams)
-
-    @property
-    def path(self) -> str:
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        path = BasePath.top_down_fabrics(self.fabric_name, "bulk-delete", "vrfs", proxy_path=self.proxy_path)
-        query_string = self.query_params.to_query_string()
-        if query_string:
-            return f"{path}?{query_string}"
-        return path
-
-    @property
-    def verb(self) -> HttpVerbEnum:
-        return HttpVerbEnum.DELETE
-
-
 class _OneManageVrfActionsPostBase(FabricNameMixin, NDEndpointBaseModel):
     """Shared POST action path handling for onemanage VRF actions."""
 
@@ -215,8 +177,10 @@ class _OneManageVrfActionsPostBase(FabricNameMixin, NDEndpointBaseModel):
 
     @property
     def path(self) -> str:
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
         query_string = self.endpoint_params.to_query_string()
-        path = BasePath.top_down("vrfs", self.action_name, proxy_path=self.proxy_path)
+        path = BasePath.manage_fabrics(self.fabric_name, "vrfActions", self.action_name, proxy_path=self.proxy_path)
         if query_string:
             return f"{path}?{query_string}"
         return path
@@ -227,7 +191,7 @@ class _OneManageVrfActionsPostBase(FabricNameMixin, NDEndpointBaseModel):
 
 
 class EpOneManageFabricsVrfActionsDeployPost(_OneManageVrfActionsPostBase):
-    """POST /onemanage/top-down/vrfs/deploy."""
+    """POST /onemanage/manage/fabrics/{fabricName}/vrfActions/deploy."""
 
     class_name: Literal["EpOneManageFabricsVrfActionsDeployPost"] = Field(
         default="EpOneManageFabricsVrfActionsDeployPost",
@@ -235,4 +199,16 @@ class EpOneManageFabricsVrfActionsDeployPost(_OneManageVrfActionsPostBase):
         description="Class name for backward compatibility",
     )
     action_name: Literal["deploy"] = Field(default="deploy", frozen=True)
+    endpoint_params: VrfActionsTicketEndpointParams = Field(default_factory=VrfActionsTicketEndpointParams)
+
+
+class EpOneManageFabricsVrfActionsRemovePost(_OneManageVrfActionsPostBase):
+    """POST /onemanage/manage/fabrics/{fabricName}/vrfActions/remove."""
+
+    class_name: Literal["EpOneManageFabricsVrfActionsRemovePost"] = Field(
+        default="EpOneManageFabricsVrfActionsRemovePost",
+        frozen=True,
+        description="Class name",
+    )
+    action_name: Literal["remove"] = Field(default="remove", frozen=True)
     endpoint_params: VrfActionsTicketEndpointParams = Field(default_factory=VrfActionsTicketEndpointParams)

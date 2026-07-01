@@ -30,7 +30,7 @@ Architecture overview
       ├── standalone / child ──► NDVrfOrchestrator ──► NDStateMachine
       │
       └── parent ─────────────► NDVrfOrchestrator (parent task)
-                                  └── per child ──► nd_manage_vrfs (recursive)
+                                  └── per child ──► NDVrfOrchestrator with child strategy
 """
 
 from __future__ import annotations
@@ -815,7 +815,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         return value
 
     def _top_down_vrf_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
-        """Build the legacy template-config payload required by the MCFG parent top-down API."""
+        """Build the template-config payload required by MCFG parent VRF operations."""
         core_data = self._nested_payload(model_instance.core_data)
         fabric_data = self._nested_payload(model_instance.fabric_data)
         trm_data = self._nested_payload(fabric_data.get("trmData"))
@@ -1054,15 +1054,6 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     def _delete_bulk_with_retry(self, vrf_names: list[str]) -> ResponseType:
         """Delete VRFs, retrying controller sync failures for only failed VRFs."""
-        if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
-            endpoint = self._make_endpoint(self.strategy.vrf_actions_remove_post_cls())
-            endpoint.query_params.vrf_names = ",".join(vrf_names)
-            return self._request(
-                path=endpoint.path,
-                verb=endpoint.verb,
-                operation_type=OperationType.DELETE,
-            )
-
         pending_vrf_names = list(vrf_names)
         successful_results: list[dict[str, Any]] = []
         last_error: Exception | None = None

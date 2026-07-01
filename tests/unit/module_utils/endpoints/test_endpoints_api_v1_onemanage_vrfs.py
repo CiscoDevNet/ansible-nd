@@ -16,7 +16,7 @@ __metaclass__ = type
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_vrfs import (
     EpOneManageFabricsVrfActionsDeployPost,
-    EpOneManageFabricsVrfsBulkDelete,
+    EpOneManageFabricsVrfActionsRemovePost,
     EpOneManageFabricsVrfsGet,
     EpOneManageFabricsVrfsPost,
     EpOneManageFabricsVrfsVrfNameDelete,
@@ -37,7 +37,7 @@ def test_endpoints_api_v1_onemanage_vrfs_00010():
     with does_not_raise():
         endpoint = EpOneManageFabricsVrfsGet(fabric_name="MCFG_FAB", proxy_path="/onemanage")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/vrfs"
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/vrfs"
     assert endpoint.verb == HttpVerbEnum.GET
 
 
@@ -50,7 +50,7 @@ def test_endpoints_api_v1_onemanage_vrfs_00020():
     with does_not_raise():
         endpoint = EpOneManageFabricsVrfsPost(fabric_name="MCFG_FAB", proxy_path="/onemanage")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/vrfs"
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/vrfs"
     assert endpoint.verb == HttpVerbEnum.POST
 
 
@@ -63,7 +63,7 @@ def test_endpoints_api_v1_onemanage_vrfs_00030():
     with does_not_raise():
         endpoint = EpOneManageFabricsVrfsVrfNamePut(fabric_name="MCFG_FAB", vrf_name="MyVRF_40001", proxy_path="/onemanage")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/vrfs/MyVRF_40001"
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/vrfs/MyVRF_40001"
     assert endpoint.verb == HttpVerbEnum.PUT
 
 
@@ -76,7 +76,7 @@ def test_endpoints_api_v1_onemanage_vrfs_00040():
     with does_not_raise():
         endpoint = EpOneManageFabricsVrfsVrfNameDelete(fabric_name="MCFG_FAB", vrf_name="MyVRF_40001", proxy_path="/onemanage")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/vrfs/MyVRF_40001"
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/vrfs/MyVRF_40001"
     assert endpoint.verb == HttpVerbEnum.DELETE
 
 
@@ -89,7 +89,7 @@ def test_endpoints_api_v1_onemanage_vrfs_00050():
     with does_not_raise():
         endpoint = EpOneManageFabricsVrfActionsDeployPost(fabric_name="MCFG_FAB", proxy_path="/onemanage")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/vrfs/deploy"
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/vrfActions/deploy"
     assert endpoint.verb == HttpVerbEnum.POST
 
 
@@ -97,11 +97,10 @@ def test_endpoints_api_v1_onemanage_vrfs_00060():
     """
     # Summary
 
-    Verify bulk-delete VRF endpoint path and verb.
+    Verify remove VRF action endpoint path and verb.
     """
     with does_not_raise():
-        endpoint = EpOneManageFabricsVrfsBulkDelete(fabric_name="MCFG_FAB", proxy_path="/onemanage")
-        endpoint.query_params.vrf_names = "VRF1,VRF2"
+        endpoint = EpOneManageFabricsVrfActionsRemovePost(fabric_name="MCFG_FAB", proxy_path="/onemanage")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/bulk-delete/vrfs?vrf-names=VRF1,VRF2"
-    assert endpoint.verb == HttpVerbEnum.DELETE
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/vrfActions/remove"
+    assert endpoint.verb == HttpVerbEnum.POST

@@ -11,8 +11,6 @@ fields to endpoint models without duplication.
 
 from __future__ import absolute_import, annotations, division, print_function
 
-from typing import Optional
-
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
     Field,
@@ -114,30 +112,6 @@ class UpdateGroupNameMixin(BaseModel):
     """Mixin for endpoints that require update_group_name parameter."""
 
     update_group_name: str | None = Field(default=None, min_length=1, description="Update group name")
-
-
-class FilterMixin(BaseModel):
-    """Mixin for endpoints that require a Lucene filter expression."""
-
-    filter: Optional[str] = Field(default=None, min_length=1, description="Lucene filter expression")
-
-
-class MaxMixin(BaseModel):
-    """Mixin for endpoints that require a max results parameter."""
-
-    max: Optional[int] = Field(default=None, ge=1, description="Maximum number of results")
-
-
-class OffsetMixin(BaseModel):
-    """Mixin for endpoints that require a pagination offset parameter."""
-
-    offset: Optional[int] = Field(default=None, ge=0, description="Pagination offset")
-
-
-class TicketIdMixin(BaseModel):
-    """Mixin for endpoints that require ticket_id parameter."""
-
-    ticket_id: Optional[str] = Field(default=None, min_length=1, description="Change control ticket ID")
 
 
 class VrfNameMixin(BaseModel):

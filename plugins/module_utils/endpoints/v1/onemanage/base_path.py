@@ -53,21 +53,3 @@ class BasePath:
         Build an onemanage manage fabrics API path with an optional ND proxy prefix.
         """
         return cls.manage("fabrics", *segments, proxy_path=proxy_path)
-
-    @classmethod
-    def top_down(cls, *segments: str, proxy_path: str = "") -> str:
-        """
-        # Summary
-
-        Build an onemanage top-down API path with an optional ND proxy prefix.
-        """
-        return cls.path("top-down", *segments, proxy_path=proxy_path)
-
-    @classmethod
-    def top_down_fabrics(cls, *segments: str, proxy_path: str = "") -> str:
-        """
-        # Summary
-
-        Build an onemanage top-down fabrics API path with an optional ND proxy prefix.
-        """
-        return cls.top_down("fabrics", *segments, proxy_path=proxy_path)

@@ -38,6 +38,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argumen
     vrf_base_argument_spec,
     vrf_parent_argument_spec,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multicluster_parent_vrf import (
+    MulticlusterParentVrfStrategy,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import (
     Results,
 )
@@ -230,11 +233,11 @@ def test_vrfs_00020_transform_applies_schema_defaults_for_minimal_config():
     assert payload["fabricData"]["trmData"]["v4RpAbsent"] is False
 
 
-def test_vrfs_00021_transform_mcfg_parent_preserves_fabric_data_for_top_down_payload():
+def test_vrfs_00021_transform_mcfg_parent_preserves_fabric_data_for_template_payload():
     """
     # Summary
 
-    Verify MCFG parent configs keep parent fabricData so the top-down payload
+    Verify MCFG parent configs keep parent fabricData so the template payload
     can serialize advertise/static route flags into vrfTemplateConfig.
     """
     transformed = _transform(
@@ -791,11 +794,11 @@ def test_vrfs_00085_query_all_does_not_scope_overridden_reads():
     assert "filter=" not in requested_paths[0]
 
 
-def test_vrfs_00087_mcfg_parent_normalizes_top_down_vrf_template_config():
+def test_vrfs_00087_mcfg_parent_normalizes_vrf_template_config():
     """
     # Summary
 
-    Verify MCFG parent top-down GET data is converted back into the normal VRF
+    Verify MCFG parent template-config data is converted back into the normal VRF
     schema shape used by validation and module output.
     """
     orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
@@ -845,7 +848,7 @@ def test_vrfs_00087_mcfg_parent_normalizes_top_down_vrf_template_config():
 
 
 def test_vrfs_00088_mcfg_parent_infers_l3vni_without_vlan_from_top_down_empty_vlan():
-    """Top-down omits the explicit L3VNI flag on some releases but returns an empty VLAN."""
+    """Template-config readback omits the explicit L3VNI flag on some releases but returns an empty VLAN."""
     orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
     object.__setattr__(orchestrator, "strategy", _McfgTopDownStrategy())
 
@@ -874,7 +877,7 @@ def test_vrfs_00088_mcfg_parent_infers_l3vni_without_vlan_from_top_down_empty_vl
 
 def test_vrfs_00089_mcfg_parent_enriches_missing_fabric_fields_from_child_vrfs():
     """
-    MCFG top-down parent records may omit fabric-instance booleans; child
+    MCFG parent template-config records may omit fabric-instance booleans; child
     fabric records remain the source of truth for those fields.
     """
     orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
@@ -981,6 +984,48 @@ def test_vrfs_00090_bulk_delete_retries_only_sync_failed_vrfs():
     assert result["results"] == [
         {"vrfName": "ansible-vrf-b", "status": "success"},
         {"vrfName": "ansible-vrf-a", "status": "success"},
+    ]
+
+
+def test_vrfs_00091_mcfg_parent_delete_uses_remove_action_body():
+    """
+    # Summary
+
+    Verify multicluster parent VRF delete uses the OneManage remove action
+    with a body payload, not the deprecated top-down bulk-delete query path.
+    """
+    strategy = MulticlusterParentVrfStrategy(
+        fabric_name="MCFG_FAB",
+        fabric_data={
+            "managementType": "vxlan",
+            "onemanageProxyPath": "/onemanage",
+        },
+    )
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(orchestrator, "strategy", strategy)
+    object.__setattr__(orchestrator, "rest_send", _RestSend({"state": "deleted", "config": []}))
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        return {"results": [{"vrfName": name, "status": "success"} for name in kwargs["data"]["vrfNames"]]}
+
+    object.__setattr__(orchestrator, "delete_retry_delay", 0)
+    object.__setattr__(orchestrator, "_request", request)
+
+    result = orchestrator._delete_bulk_with_retry(["ansible-vrf-a", "ansible-vrf-b"])
+
+    assert requests == [
+        {
+            "path": "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/vrfActions/remove",
+            "verb": HttpVerbEnum.POST,
+            "data": {"vrfNames": ["ansible-vrf-a", "ansible-vrf-b"]},
+            "operation_type": OperationType.DELETE,
+        }
+    ]
+    assert result["results"] == [
+        {"vrfName": "ansible-vrf-a", "status": "success"},
+        {"vrfName": "ansible-vrf-b", "status": "success"},
     ]
 
 

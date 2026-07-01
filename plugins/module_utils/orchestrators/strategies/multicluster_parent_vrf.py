@@ -5,12 +5,10 @@
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multisite_parent_vrf import (
     MultisiteParentVrfStrategy,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_actions import (
-    EpManageFabricsVrfActionsDeployPost,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_vrfs import (
+    EpOneManageFabricsVrfActionsDeployPost,
+    EpOneManageFabricsVrfActionsRemovePost,
     EpOneManageFabricsVrfsGet,
-    EpOneManageFabricsVrfsBulkDelete,
     EpOneManageFabricsVrfsPost,
     EpOneManageFabricsVrfsVrfNameDelete,
     EpOneManageFabricsVrfsVrfNamePut,
@@ -21,8 +19,9 @@ class MulticlusterParentVrfStrategy(MultisiteParentVrfStrategy):
     """
     Strategy for Multicluster Parent (MFD) fabrics.
 
-    Identical to MultisiteParentVrfStrategy except fabric_type and
-    is_multicluster / is_multisite identity flags.
+    Reuses the Multisite parent workflow contract, including child task
+    construction and parent/child result aggregation, while routing parent
+    VRF operations through the OneManage proxy endpoint surface.
     """
 
     @property
@@ -50,10 +49,10 @@ class MulticlusterParentVrfStrategy(MultisiteParentVrfStrategy):
         return EpOneManageFabricsVrfsVrfNameDelete
 
     def vrf_actions_deploy_post_cls(self) -> type:
-        return EpManageFabricsVrfActionsDeployPost
+        return EpOneManageFabricsVrfActionsDeployPost
 
     def vrf_actions_remove_post_cls(self) -> type:
-        return EpOneManageFabricsVrfsBulkDelete
+        return EpOneManageFabricsVrfActionsRemovePost
 
     def configure_endpoint(self, ep) -> None:
         super().configure_endpoint(ep)
