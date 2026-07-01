@@ -42,8 +42,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         arbitrary_types_allowed=True,
         # pydantic <2.10 defaults protected_namespaces to the whole `model_` prefix and applies the
         # check even to ClassVar annotations, so `model_class` would raise NameError at class
-        # construction on user hosts running older pydantic 2.x.
-        protected_namespaces=(),
+        # construction on user hosts running older pydantic 2.x. Pin pydantic >=2.10's narrower
+        # default rather than () so the collision guard still covers genuinely dangerous names.
+        protected_namespaces=("model_validate", "model_dump"),
     )
 
     model_class: ClassVar[type[NDBaseModel]] = NDBaseModel

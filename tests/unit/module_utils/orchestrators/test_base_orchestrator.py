@@ -637,11 +637,12 @@ class TestModelClassIsClassVar:
         assert ManageIbgpFabricOrchestrator.model_class is FabricIbgpModel
         assert ManageExternalFabricOrchestrator.model_class is FabricExternalConnectivityModel
 
-    def test_base_orchestrator_opts_out_of_protected_namespaces(self):
-        """NDBaseOrchestrator disables pydantic protected namespaces so `model_class` stays legal on pydantic <2.10 runtimes.
+    def test_base_orchestrator_narrows_protected_namespaces(self):
+        """NDBaseOrchestrator pins `protected_namespaces` to pydantic >=2.10's default so `model_class` stays legal on pydantic <2.10 runtimes.
 
         pydantic <2.10 defaults `protected_namespaces` to the whole `model_` prefix and applies the check even to ClassVar
         annotations, raising `NameError` at class construction. The collection pins pydantic 2.12.5, but module_utils execute
-        on user-controlled hosts where older pydantic 2.x may be installed.
+        on user-controlled hosts where older pydantic 2.x may be installed. Pinning the modern default (rather than `()`)
+        keeps the collision guard for genuinely dangerous names like `model_dump_mode`.
         """
-        assert NDBaseOrchestrator.model_config.get("protected_namespaces") == ()
+        assert NDBaseOrchestrator.model_config.get("protected_namespaces") == ("model_validate", "model_dump")
