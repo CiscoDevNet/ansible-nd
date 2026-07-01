@@ -746,7 +746,13 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         return deduped
 
     def _build_gathered_resource_criteria(self):
-        """Build safe filtered GET criteria from gathered config filters."""
+        """Build safe filtered GET criteria from gathered config filters.
+
+        The resources GET endpoint can narrow by poolName, switchId, and a Lucene
+        entityName filter. Other documented gathered filters are applied by the
+        final local predicate, so criteria with only local-only fields must still
+        fetch a candidate inventory instead of producing no API request.
+        """
         self.log.debug(
             "_build_gathered_resource_criteria: building criteria from %s gathered filter item(s)",
             len(self.config or []),
@@ -1420,14 +1426,15 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         """Return resources from the ND fabric, optionally filtered by config criteria.
 
         ``_refresh_existing_resources()`` (called by ``manage_state()``) already fetched
-        and stored the correctly scoped resources in ``self._all_resources`` before this
+        and stored resource candidates in ``self._all_resources`` before this
         method is invoked:
           - No ``config``  → full paginated fabric inventory.
           - With ``config`` → API-filtered fetch via ``_build_gathered_resource_criteria()``
-            (pool_name, switchId, and Lucene entityName params applied server-side).
+            (pool_name, switchId, and Lucene entityName params applied server-side),
+            followed by local filtering for all documented gathered criteria.
 
-        This method therefore only translates ``self._all_resources`` to the playbook
-        config format and stores the results.
+        Unfiltered gathered translates the full candidate set directly. Filtered
+        gathered applies the final in-memory predicate before storing results.
 
         Results are stored in ``self.changed_dict[0]['gathered']`` and
         ``self.api_responses``.
@@ -1439,11 +1446,10 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             config_count,
         )
 
-        # _refresh_existing_resources() already populated self._all_resources with
-        # API-filtered resources (via _build_gathered_resource_criteria() for gathered+config,
-        # or a full paginated fetch for gathered without config). Translate and return directly
-        # without a second in-memory filter pass.
-        results = self.translate_gathered_results(self._all_resources)
+        if self.config:
+            results = self._apply_gathered_filters()
+        else:
+            results = self.translate_gathered_results(self._all_resources)
 
         self.log.info(
             "manage_gathered: Gather complete, %s resource(s) returned for fabric=%s (filter_count=%s)",
@@ -1506,7 +1512,6 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 verbosity,
                 self.results,
                 changed=False,
-                after=self.translate_gathered_results(self.existing),
                 gathered=self.changed_dict[0]["gathered"],
             )
             self.nd.module.exit_json(**final)

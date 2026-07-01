@@ -465,17 +465,33 @@ class ResourceManagerResourceHelpersMixin:
     @staticmethod
     def _filter_has_active_criteria(filter_item):
         """Return True when a gathered filter item has at least one criterion."""
-        return bool(filter_item.get("entity_name") or filter_item.get("pool_name") or filter_item.get("switches"))
+        return any(
+            filter_item.get(key)
+            for key in (
+                "entity_name",
+                "pool_name",
+                "switches",
+                "resource",
+                "scope_type",
+                "pool_type",
+            )
+        )
 
     def _resource_matches_filter(self, resource, filter_item):
         """Return True when a resource matches one gathered filter item."""
         resource_id = self._get_resource_id(resource)
         resource_entity = self._get_entity_name(resource)
         resource_pool = self._get_pool_name(resource)
+        resource_value = self._get_resource_value(resource)
+        resource_scope_type = self._get_scope_type(resource)
+        resource_pool_type = self._determine_pool_type(resource_value)
         resource_switch_id = self._get_switch_id(resource)
 
         filter_entity = filter_item.get("entity_name")
         filter_pool = filter_item.get("pool_name")
+        filter_resource = filter_item.get("resource")
+        filter_scope_type = filter_item.get("scope_type")
+        filter_pool_type = filter_item.get("pool_type")
         filter_switches = filter_item.get("switches") or []
 
         if filter_entity and not self._entity_names_match(resource_entity, filter_entity):
@@ -496,6 +512,37 @@ class ResourceManagerResourceHelpersMixin:
             )
             return False
 
+        if filter_resource and not ResourceManagerDiffEngine._compare_resource_values(
+            resource_value,
+            filter_resource,
+            log=self.log,
+        ):
+            self.log.debug(
+                "manage_gathered: skipping resource id='%s', resource mismatch: resource='%s' vs filter='%s'",
+                resource_id,
+                resource_value,
+                filter_resource,
+            )
+            return False
+
+        if filter_scope_type and resource_scope_type != filter_scope_type:
+            self.log.debug(
+                "manage_gathered: skipping resource id='%s', scope_type mismatch: resource='%s' vs filter='%s'",
+                resource_id,
+                resource_scope_type,
+                filter_scope_type,
+            )
+            return False
+
+        if filter_pool_type and resource_pool_type != filter_pool_type:
+            self.log.debug(
+                "manage_gathered: skipping resource id='%s', pool_type mismatch: resource='%s' vs filter='%s'",
+                resource_id,
+                resource_pool_type,
+                filter_pool_type,
+            )
+            return False
+
         if filter_switches and resource_switch_id not in filter_switches:
             self.log.debug(
                 "manage_gathered: skipping resource id='%s', switchId not in filter: resource_switch='%s', filter_switches=%s",
@@ -506,10 +553,14 @@ class ResourceManagerResourceHelpersMixin:
             return False
 
         self.log.debug(
-            "manage_gathered: resource id='%s' matched filter (entity_name='%s', pool_name='%s', switch_id='%s')",
+            "manage_gathered: resource id='%s' matched filter "
+            "(entity_name='%s', pool_name='%s', resource='%s', scope_type='%s', pool_type='%s', switch_id='%s')",
             resource_id,
             resource_entity,
             resource_pool,
+            resource_value,
+            resource_scope_type,
+            resource_pool_type,
             resource_switch_id,
         )
         return True
@@ -517,22 +568,28 @@ class ResourceManagerResourceHelpersMixin:
     def _apply_gathered_filters(self):
         """Apply gathered config filters to cached resources and return translated results."""
         seen_ids = set()
-        results = []
+        matched_resources = []
 
         for filter_item in self.config:
             if not self._filter_has_active_criteria(filter_item):
                 self.log.debug(
-                    "manage_gathered: skipping empty filter item (entity_name=%s, pool_name=%s, switches=%s)",
+                    "manage_gathered: skipping empty filter item (entity_name=%s, pool_name=%s, resource=%s, scope_type=%s, pool_type=%s, switches=%s)",
                     filter_item.get("entity_name"),
                     filter_item.get("pool_name"),
+                    filter_item.get("resource"),
+                    filter_item.get("scope_type"),
+                    filter_item.get("pool_type"),
                     filter_item.get("switches") or [],
                 )
                 continue
 
             self.log.debug(
-                "manage_gathered: applying filter: entity_name=%s, pool_name=%s, switches=%s",
+                "manage_gathered: applying filter: entity_name=%s, pool_name=%s, resource=%s, scope_type=%s, pool_type=%s, switches=%s",
                 filter_item.get("entity_name"),
                 filter_item.get("pool_name"),
+                filter_item.get("resource"),
+                filter_item.get("scope_type"),
+                filter_item.get("pool_type"),
                 filter_item.get("switches") or [],
             )
 
@@ -548,10 +605,8 @@ class ResourceManagerResourceHelpersMixin:
                 if not self._resource_matches_filter(resource, filter_item):
                     continue
 
-                translated = self.translate_gathered_results([resource])
-                if translated:
-                    results.append(translated[0])
+                matched_resources.append(resource)
                 if resource_id is not None:
                     seen_ids.add(resource_id)
 
-        return results
+        return self.translate_gathered_results(matched_resources)

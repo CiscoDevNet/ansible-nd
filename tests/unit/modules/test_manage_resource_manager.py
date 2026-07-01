@@ -586,6 +586,18 @@ def test_resource_manager_gathered_filter_matches_switch_id_and_translates_switc
     ]
 
 
+@pytest.mark.parametrize("field", ["entity_name", "pool_name", "switches", "resource", "scope_type", "pool_type"])
+def test_filter_has_active_criteria_accepts_documented_gathered_filter_fields(field):
+    """Every documented gathered filter field marks a filter item active."""
+    value = ["SER1"] if field == "switches" else "value"
+    assert NDResourceManagerModule._filter_has_active_criteria({field: value}) is True  # pylint: disable=protected-access
+
+
+def test_filter_has_active_criteria_rejects_empty_filter_item():
+    """Empty gathered config entries do not trigger candidate fetching."""
+    assert NDResourceManagerModule._filter_has_active_criteria({}) is False  # pylint: disable=protected-access
+
+
 def test_manage_fabric_resources_get_endpoint_path_and_class_name():
     """Resources GET endpoint has the correct class name, verb, and query path."""
     endpoint = EpManageFabricResourcesGet(fabric_name="fabric-1")
@@ -1249,6 +1261,33 @@ def test_resource_matches_filter_by_switches():
     assert module._resource_matches_filter(resource, {"switches": ["SER2"]}) is False  # pylint: disable=protected-access
 
 
+def test_resource_matches_filter_by_resource_value():
+    """_resource_matches_filter checks documented resource filters."""
+    module = _resource_manager()
+    resource = _response(resourceValue="48950")
+
+    assert module._resource_matches_filter(resource, {"resource": "48950"}) is True  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, {"resource": "48990"}) is False  # pylint: disable=protected-access
+
+
+def test_resource_matches_filter_by_scope_type():
+    """_resource_matches_filter checks documented scope_type filters."""
+    module = _resource_manager()
+    resource = _response(scopeDetails={"scopeType": "fabric"})
+
+    assert module._resource_matches_filter(resource, {"scope_type": "fabric"}) is True  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, {"scope_type": "device"}) is False  # pylint: disable=protected-access
+
+
+def test_resource_matches_filter_by_pool_type():
+    """_resource_matches_filter checks documented pool_type filters."""
+    module = _resource_manager()
+    resource = _response(resourceValue="192.0.2.1")
+
+    assert module._resource_matches_filter(resource, {"pool_type": "IP"}) is True  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, {"pool_type": "ID"}) is False  # pylint: disable=protected-access
+
+
 def test_resource_matches_filter_combined_criteria():
     """_resource_matches_filter combines multiple filter criteria."""
     module = _resource_manager()
@@ -1316,6 +1355,49 @@ def test_apply_gathered_filters_multiple_filters_with_dedup():
     gathered = module._apply_gathered_filters()  # pylint: disable=protected-access
     # Both filters match same resource; dedup should return only one
     assert len(gathered) == 1
+
+
+def test_apply_gathered_filters_merges_switches_after_pool_type_filter():
+    """Filtered gathered output keeps the same switch aggregation as gathered-all."""
+    module = _resource_manager()
+    module.config = [{"pool_type": "ID"}]
+    module._all_resources = [  # pylint: disable=protected-access
+        _response(
+            resourceId=101,
+            entityName="loopback_dev",
+            poolName="LOOPBACK_ID",
+            resourceValue="200",
+            scopeDetails={
+                "scopeType": "device",
+                "switchId": "SER1",
+                "switchIp": "192.168.10.201",
+            },
+        ),
+        _response(
+            resourceId=102,
+            entityName="loopback_dev",
+            poolName="LOOPBACK_ID",
+            resourceValue="200",
+            scopeDetails={
+                "scopeType": "device",
+                "switchId": "SER2",
+                "switchIp": "192.168.10.202",
+            },
+        ),
+    ]
+
+    gathered = module._apply_gathered_filters()  # pylint: disable=protected-access
+
+    assert gathered == [
+        {
+            "entity_name": "loopback_dev",
+            "pool_type": "ID",
+            "pool_name": "LOOPBACK_ID",
+            "scope_type": "device",
+            "resource": "200",
+            "switches": ["192.168.10.201", "192.168.10.202"],
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1635,6 +1717,105 @@ def test_manage_state_gathered_uses_filtered_candidate_get():
     assert "switchId=SER1" in path
     assert "filter=entityName:loopback0" in path
     assert module.changed_dict[0]["gathered"]  # pylint: disable=protected-access
+
+
+def test_manage_state_gathered_applies_resource_filter_after_pool_candidate_get():
+    """Gathered state locally narrows pool candidates by documented resource filter."""
+    config = [
+        {
+            "pool_name": "L2_VNI",
+            "resource": "48950",
+        }
+    ]
+    nd = _mock_nd_module(state="gathered", config=config)
+    nd.request.return_value = {
+        "resources": [
+            {
+                "resourceId": 201,
+                "entityName": "l2_vni_a",
+                "poolName": "L2_VNI",
+                "resourceValue": "48990",
+                "scopeDetails": {"scopeType": "fabric"},
+            },
+            {
+                "resourceId": 202,
+                "entityName": "l2_vni_b",
+                "poolName": "L2_VNI",
+                "resourceValue": "48950",
+                "scopeDetails": {"scopeType": "fabric"},
+            },
+        ],
+        "meta": {"counts": {"remaining": 0, "total": 2}},
+    }
+    results = Results()
+
+    module = NDResourceManagerModule(nd, results, log=LOG)
+    module.manage_state()
+
+    paths = [call.args[0] for call in nd.request.call_args_list]
+    resource_paths = [path for path in paths if "/resources" in path]
+    assert resource_paths
+    assert "poolName=L2_VNI" in resource_paths[0]
+    assert len(module.changed_dict[0]["gathered"]) == 1  # pylint: disable=protected-access
+    assert module.changed_dict[0]["gathered"][0]["resource"] == "48950"  # pylint: disable=protected-access
+
+
+@pytest.mark.parametrize(
+    ("config", "expected_resources"),
+    [
+        ([{"resource": "48950"}], ["48950"]),
+        ([{"scope_type": "fabric"}], ["48950", "48990"]),
+        ([{"pool_type": "IP"}], ["192.0.2.1"]),
+    ],
+)
+def test_manage_state_gathered_local_only_filters_fetch_candidates_and_narrow_results(config, expected_resources):
+    """Local-only gathered filters fetch candidates and apply the final predicate."""
+    nd = _mock_nd_module(state="gathered", config=config)
+    nd.request.return_value = {
+        "resources": [
+            {
+                "resourceId": 201,
+                "entityName": "l2_vni_a",
+                "poolName": "L2_VNI",
+                "resourceValue": "48950",
+                "scopeDetails": {"scopeType": "fabric"},
+            },
+            {
+                "resourceId": 202,
+                "entityName": "l2_vni_b",
+                "poolName": "L2_VNI",
+                "resourceValue": "48990",
+                "scopeDetails": {"scopeType": "fabric"},
+            },
+            {
+                "resourceId": 203,
+                "entityName": "loopback0",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": "10",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+            },
+            {
+                "resourceId": 204,
+                "entityName": "loopback0_ip",
+                "poolName": "LOOPBACK0_IP_POOL",
+                "resourceValue": "192.0.2.1",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+            },
+        ],
+        "meta": {"counts": {"remaining": 0, "total": 4}},
+    }
+    results = Results()
+
+    module = NDResourceManagerModule(nd, results, log=LOG)
+    module.manage_state()
+
+    paths = [call.args[0] for call in nd.request.call_args_list]
+    resource_paths = [path for path in paths if "/resources" in path]
+    assert resource_paths
+    assert "poolName=" not in resource_paths[0]
+    assert "switchId=" not in resource_paths[0]
+    gathered_resources = [item["resource"] for item in module.changed_dict[0]["gathered"]]  # pylint: disable=protected-access
+    assert gathered_resources == expected_resources
 
 
 def test_manage_resource_manager_merged_rejects_unsupported_pool_for_fabric_type():
