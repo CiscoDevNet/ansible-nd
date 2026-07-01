@@ -42,7 +42,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 
-
 # =============================================================================
 # Test doubles
 # =============================================================================
