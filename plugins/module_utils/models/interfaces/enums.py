@@ -163,3 +163,19 @@ class SubinterfaceManagedPolicyTypeEnum(str, Enum):
     """
 
     SUBINTERFACE = "subinterface"
+
+
+class SubinterfaceUnmanagedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Policy type for unmanaged L3 subinterfaces (NX-OS).
+
+    The `userDefined` discriminator branch is intentionally excluded — out of scope for this module.
+
+    ## Raises
+
+    None
+    """
+
+    MONITOR_SUBINTERFACE = "monitorSubinterface"
