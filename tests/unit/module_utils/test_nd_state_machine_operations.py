@@ -335,7 +335,13 @@ def test_delete_non_ignored_error_raises():
 def test_bulk_delete_ignored_error_keeps_all_items():
     """An ignored bulk-delete failure keeps every targeted item."""
     orch = _FakeOrchestrator(supports_bulk_delete=True, fail_ops={"delete_bulk"})
-    sm = _make_state_machine(state="deleted", ignore_errors=True, orchestrator=orch, existing=[_model("a", "x"), _model("b", "y")], proposed=[_model("a"), _model("b")])
+    sm = _make_state_machine(
+        state="deleted",
+        ignore_errors=True,
+        orchestrator=orch,
+        existing=[_model("a", "x"), _model("b", "y")],
+        proposed=[_model("a"), _model("b")],
+    )
 
     sm.manage_state()
 
