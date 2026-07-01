@@ -18,7 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
     NetworkType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_actions_models import (
-    NetworkBulkDeleteRequestModel,
+    NetworkRemoveRequestModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_data_models import (
     ClassicOrRoutedL2DataModel,
@@ -709,15 +709,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             raise Exception(f"Bulk delete networks failed: {exc}") from exc
 
     def _delete_bulk_with_retry(self, network_names: list[str]) -> ResponseType:
-        if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
-            endpoint = self._make_endpoint(self.strategy.network_actions_remove_post_cls())
-            endpoint.query_params.network_names = ",".join(network_names)
-            return self._request(
-                path=endpoint.path,
-                verb=endpoint.verb,
-                operation_type=OperationType.DELETE,
-            )
-
         pending = list(network_names)
         successes: list[dict[str, Any]] = []
         last_error: Exception | None = None
@@ -727,7 +718,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 response = self._request(
                     path=endpoint.path,
                     verb=endpoint.verb,
-                    data=NetworkBulkDeleteRequestModel(network_names=pending).to_payload(),
+                    data=NetworkRemoveRequestModel(network_names=pending).to_payload(),
                     operation_type=OperationType.DELETE,
                 )
             except Exception as exc:

@@ -59,8 +59,8 @@ def test_base_paths_onemanage_00120():
     """
     # Summary
 
-    Verify top_down_fabrics() builds onemanage fabric resource paths.
+    Verify manage_fabrics() builds onemanage fabric resource paths.
     """
     with does_not_raise():
-        result = BasePath.top_down_fabrics("MCFG_FAB", "networks", proxy_path="/onemanage")
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/networks"
+        result = BasePath.manage_fabrics("MCFG_FAB", "networks", proxy_path="/onemanage")
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networks"

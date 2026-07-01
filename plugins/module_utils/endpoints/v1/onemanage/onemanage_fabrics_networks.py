@@ -10,12 +10,10 @@ ND onemanage fabric network endpoint models.
 from __future__ import absolute_import, annotations, division, print_function
 
 from typing import Literal
-from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin, NetworkNameMixin
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_network_actions import (
     NetworkActionsNoParamsEndpointParams,
     NetworkActionsTicketEndpointParams,
@@ -38,7 +36,7 @@ class _EpOneManageFabricsNetworksBase(FabricNameMixin, NDEndpointBaseModel):
     def _base_path(self) -> str:
         if self.fabric_name is None:
             raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.top_down_fabrics(self.fabric_name, "networks", proxy_path=self.proxy_path)
+        return BasePath.manage_fabrics(self.fabric_name, "networks", proxy_path=self.proxy_path)
 
 
 class EpOneManageFabricsNetworksGet(_EpOneManageFabricsNetworksBase):
@@ -96,7 +94,7 @@ class _EpOneManageFabricsNetworksNetworkNameBase(FabricNameMixin, NetworkNameMix
             raise ValueError("fabric_name must be set before accessing path")
         if self.network_name is None:
             raise ValueError("network_name must be set before accessing path")
-        return BasePath.top_down_fabrics(self.fabric_name, "networks", self.network_name, proxy_path=self.proxy_path)
+        return BasePath.manage_fabrics(self.fabric_name, "networks", self.network_name, proxy_path=self.proxy_path)
 
 
 class EpOneManageFabricsNetworksNetworkNameGet(_EpOneManageFabricsNetworksNetworkNameBase):
@@ -165,42 +163,6 @@ class EpOneManageFabricsNetworksNetworkNameDelete(_EpOneManageFabricsNetworksNet
         return HttpVerbEnum.DELETE
 
 
-class OneManageNetworkBulkDeleteQueryParams(EndpointQueryParams):
-    """Query parameters for onemanage network bulk delete."""
-
-    network_names: str | None = Field(default=None, min_length=1, description="Comma-separated network names")
-
-    def to_query_string(self) -> str:
-        if not self.network_names:
-            return ""
-        return f"network-names={quote(self.network_names, safe=',')}"
-
-
-class EpOneManageFabricsNetworksBulkDelete(_EpOneManageFabricsNetworksBase):
-    """DELETE /onemanage/top-down/fabrics/{fabricName}/bulk-delete/networks."""
-
-    class_name: Literal["EpOneManageFabricsNetworksBulkDelete"] = Field(
-        default="EpOneManageFabricsNetworksBulkDelete",
-        frozen=True,
-        description="Class name for backward compatibility",
-    )
-    query_params: OneManageNetworkBulkDeleteQueryParams = Field(default_factory=OneManageNetworkBulkDeleteQueryParams)
-
-    @property
-    def path(self) -> str:
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        path = BasePath.top_down_fabrics(self.fabric_name, "bulk-delete", "networks", proxy_path=self.proxy_path)
-        query_string = self.query_params.to_query_string()
-        if query_string:
-            return f"{path}?{query_string}"
-        return path
-
-    @property
-    def verb(self) -> HttpVerbEnum:
-        return HttpVerbEnum.DELETE
-
-
 class _OneManageNetworkActionsPostBase(FabricNameMixin, NDEndpointBaseModel):
     """Shared POST action path handling for onemanage network actions."""
 
@@ -215,8 +177,10 @@ class _OneManageNetworkActionsPostBase(FabricNameMixin, NDEndpointBaseModel):
 
     @property
     def path(self) -> str:
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
         query_string = self.endpoint_params.to_query_string()
-        path = BasePath.top_down("networks", self.action_name, proxy_path=self.proxy_path)
+        path = BasePath.manage_fabrics(self.fabric_name, "networkActions", self.action_name, proxy_path=self.proxy_path)
         if query_string:
             return f"{path}?{query_string}"
         return path
@@ -226,8 +190,20 @@ class _OneManageNetworkActionsPostBase(FabricNameMixin, NDEndpointBaseModel):
         return HttpVerbEnum.POST
 
 
+class EpOneManageFabricsNetworkActionsRemovePost(_OneManageNetworkActionsPostBase):
+    """POST /onemanage/manage/fabrics/{fabricName}/networkActions/remove."""
+
+    class_name: Literal["EpOneManageFabricsNetworkActionsRemovePost"] = Field(
+        default="EpOneManageFabricsNetworkActionsRemovePost",
+        frozen=True,
+        description="Class name",
+    )
+    action_name: Literal["remove"] = Field(default="remove", frozen=True)
+    endpoint_params: NetworkActionsTicketEndpointParams = Field(default_factory=NetworkActionsTicketEndpointParams)
+
+
 class EpOneManageFabricsNetworkActionsDeployPost(_OneManageNetworkActionsPostBase):
-    """POST /onemanage/top-down/networks/deploy."""
+    """POST /onemanage/manage/fabrics/{fabricName}/networkActions/deploy."""
 
     class_name: Literal["EpOneManageFabricsNetworkActionsDeployPost"] = Field(
         default="EpOneManageFabricsNetworkActionsDeployPost",

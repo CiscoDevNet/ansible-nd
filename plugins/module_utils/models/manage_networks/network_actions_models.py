@@ -72,7 +72,7 @@ class NetworkExportRequestModel(NDBaseModel):
         return [NetworkValidators.validate_network_name(item) for item in v]
 
 
-class NetworkBulkDeleteRequestModel(NDBaseModel):
+class NetworkRemoveRequestModel(NDBaseModel):
     """Request body for POST /fabrics/{fabricName}/networkActions/remove."""
 
     identifiers: ClassVar[list[str]] = []
@@ -97,8 +97,8 @@ class DeploymentStatusModel(NDBaseModel):
     status: str | None = Field(default=None, description="Deployment status message")
 
 
-class NetworkBulkDeleteResponseModel(NDBaseModel):
-    """Response body for network bulk delete operations."""
+class NetworkRemoveResponseModel(NDBaseModel):
+    """Response body for network remove operations."""
 
     identifiers: ClassVar[list[str]] = []
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"

@@ -7,8 +7,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
     EpOneManageFabricsNetworkActionsDeployPost,
+    EpOneManageFabricsNetworkActionsRemovePost,
     EpOneManageFabricsNetworksGet,
-    EpOneManageFabricsNetworksBulkDelete,
     EpOneManageFabricsNetworksNetworkNameDelete,
     EpOneManageFabricsNetworksNetworkNamePut,
     EpOneManageFabricsNetworksPost,
@@ -19,8 +19,9 @@ class MulticlusterParentNetworkStrategy(MultisiteParentNetworkStrategy):
     """
     Strategy for Multicluster Parent (MFD) fabrics.
 
-    Identical to MultisiteParentNetworkStrategy except fabric_type and
-    is_multicluster / is_multisite identity flags.
+    Reuses the Multisite parent workflow contract, including child task
+    construction and parent/child result aggregation, while routing parent
+    Network operations through the OneManage proxy endpoint surface.
     """
 
     @property
@@ -51,7 +52,7 @@ class MulticlusterParentNetworkStrategy(MultisiteParentNetworkStrategy):
         return EpOneManageFabricsNetworkActionsDeployPost
 
     def network_actions_remove_post_cls(self) -> type:
-        return EpOneManageFabricsNetworksBulkDelete
+        return EpOneManageFabricsNetworkActionsRemovePost
 
     def configure_endpoint(self, ep) -> None:
         super().configure_endpoint(ep)

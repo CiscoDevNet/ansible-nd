@@ -8,11 +8,11 @@ NetworkWorkflowCoordinator — Parent / child Network workflow orchestration.
 The coordinator is constructed inside nd_manage_networks.py after the strategy is
 resolved. For standalone and child fabrics it runs the state machine
 directly. For parent fabrics it:
-  1. Pre-validates the config (vlan_id placement, network_lite structure).
-  2. Strips child_fabric_config from each Network → clean parent config.
-  3. Runs the parent task via NDStateMachine (once wired).
-  4. Builds child module_args per child fabric and re-invokes nd_manage_networks.
-  5. Aggregates and structures the combined results.
+  1. Parses and validates the requested Network config.
+  2. Splits child_fabric_config into per-child in-process tasks.
+  3. Runs the parent task via the Network state machine.
+  4. Runs each child task with the child's resolved strategy.
+  5. Deploys deferred parent attachment changes, then aggregates results.
 """
 
 from __future__ import annotations
@@ -227,12 +227,13 @@ class NetworkWorkflowCoordinator:
         Full parent orchestration: parent fabric first, then all child fabrics.
 
         Workflow steps:
-          1. Pre-validate configs (vlan_id placement, network_lite structure).
+          1. Parse and validate configs with the resolved Network model.
           2. Split each Network's child_fabric_config entries into per-fabric tasks.
           3. Build a clean parent config (child_fabric_config stripped).
           4. Run the parent state machine.
-          5. If parent succeeded, execute each child task sequentially.
-          6. Aggregate all results into a structured response.
+          5. If parent succeeded, execute each child task sequentially in-process.
+          6. Deploy deferred parent attachment changes.
+          7. Aggregate all results into a structured response.
         """
         log_type = "multicluster" if "multicluster" in fabric_type else "multisite"
         parent_fabric = module_args.get("fabric_name")

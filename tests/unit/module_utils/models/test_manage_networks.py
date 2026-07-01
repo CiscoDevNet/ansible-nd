@@ -14,7 +14,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_actions_models import (
     MulticastIpResponseModel,
-    NetworkBulkDeleteRequestModel,
+    NetworkRemoveRequestModel,
     NetworkStretchPayloadModel,
     NetworkSwitchesListModel,
 )
@@ -142,7 +142,7 @@ def test_manage_network_data_models_00120() -> None:
 def test_manage_network_action_models_00200() -> None:
     """Verify network action request and response models."""
     switches = NetworkSwitchesListModel(networkNames=["net1"], switchIds=["FDO123"])
-    remove = NetworkBulkDeleteRequestModel(networkNames=["net1"])
+    remove = NetworkRemoveRequestModel(networkNames=["net1"])
     stretch = NetworkStretchPayloadModel.model_validate(
         {"attachments": [{"networkName": "net1", "stretch": "allBgwList"}]},
         by_alias=True,

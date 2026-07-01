@@ -16,7 +16,7 @@ __metaclass__ = type
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
     EpOneManageFabricsNetworkActionsDeployPost,
-    EpOneManageFabricsNetworksBulkDelete,
+    EpOneManageFabricsNetworkActionsRemovePost,
     EpOneManageFabricsNetworksGet,
     EpOneManageFabricsNetworksNetworkNameDelete,
     EpOneManageFabricsNetworksNetworkNamePut,
@@ -37,7 +37,7 @@ def test_endpoints_api_v1_onemanage_networks_00010():
     with does_not_raise():
         endpoint = EpOneManageFabricsNetworksGet(fabric_name="MCFG_FAB", proxy_path="/onemanage")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/networks"
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networks"
     assert endpoint.verb == HttpVerbEnum.GET
 
 
@@ -50,7 +50,7 @@ def test_endpoints_api_v1_onemanage_networks_00020():
     with does_not_raise():
         endpoint = EpOneManageFabricsNetworksPost(fabric_name="MCFG_FAB", proxy_path="/onemanage")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/networks"
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networks"
     assert endpoint.verb == HttpVerbEnum.POST
 
 
@@ -63,7 +63,7 @@ def test_endpoints_api_v1_onemanage_networks_00030():
     with does_not_raise():
         endpoint = EpOneManageFabricsNetworksNetworkNamePut(fabric_name="MCFG_FAB", network_name="MyNetwork_40001", proxy_path="/onemanage")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/networks/MyNetwork_40001"
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networks/MyNetwork_40001"
     assert endpoint.verb == HttpVerbEnum.PUT
 
 
@@ -80,7 +80,7 @@ def test_endpoints_api_v1_onemanage_networks_00040():
             proxy_path="/onemanage",
         )
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/networks/MyNetwork_40001"
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networks/MyNetwork_40001"
     assert endpoint.verb == HttpVerbEnum.DELETE
 
 
@@ -93,7 +93,7 @@ def test_endpoints_api_v1_onemanage_networks_00050():
     with does_not_raise():
         endpoint = EpOneManageFabricsNetworkActionsDeployPost(fabric_name="MCFG_FAB", proxy_path="/onemanage")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/networks/deploy"
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networkActions/deploy"
     assert endpoint.verb == HttpVerbEnum.POST
 
 
@@ -101,11 +101,10 @@ def test_endpoints_api_v1_onemanage_networks_00060():
     """
     # Summary
 
-    Verify bulk-delete network endpoint path and verb.
+    Verify remove network action endpoint path and verb.
     """
     with does_not_raise():
-        endpoint = EpOneManageFabricsNetworksBulkDelete(fabric_name="MCFG_FAB", proxy_path="/onemanage")
-        endpoint.query_params.network_names = "NET1,NET2"
+        endpoint = EpOneManageFabricsNetworkActionsRemovePost(fabric_name="MCFG_FAB", proxy_path="/onemanage")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/bulk-delete/networks?network-names=NET1,NET2"
-    assert endpoint.verb == HttpVerbEnum.DELETE
+    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networkActions/remove"
+    assert endpoint.verb == HttpVerbEnum.POST

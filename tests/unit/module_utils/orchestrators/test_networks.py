@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
     NetworkConfigModel,
     NetworkParentConfigModel,
@@ -724,7 +724,7 @@ def test_network_bulk_create_uses_single_networks_payload():
     ]
 
 
-def test_mcfg_parent_network_create_uses_top_down_template_payload():
+def test_mcfg_parent_network_create_uses_onemanage_manage_template_payload():
     orchestrator = _mcfg_parent_orchestrator()
     requests = []
 
@@ -753,7 +753,7 @@ def test_mcfg_parent_network_create_uses_top_down_template_payload():
 
     assert result == [{"networkName": "BLUE_NET", "status": "success"}]
     assert len(requests) == 1
-    assert requests[0]["path"] == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/networks"
+    assert requests[0]["path"] == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networks"
     assert "networks" not in requests[0]["data"]
     assert requests[0]["data"]["networkName"] == "BLUE_NET"
     assert requests[0]["data"]["fabric"] == "MCFG_FAB"
@@ -1351,6 +1351,33 @@ def test_network_bulk_delete_retries_only_sync_failed_networks():
     assert result["results"] == [
         {"networkName": "GREEN_NET", "status": "success"},
         {"networkName": "BLUE_NET", "status": "success"},
+    ]
+
+
+def test_mcfg_parent_network_delete_uses_remove_action_body():
+    orchestrator = _mcfg_parent_orchestrator()
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        return {"results": [{"networkName": name, "status": "success"} for name in kwargs["data"]["networkNames"]]}
+
+    object.__setattr__(orchestrator, "delete_retry_delay", 0)
+    object.__setattr__(orchestrator, "_request", request)
+
+    result = orchestrator._delete_bulk_with_retry(["BLUE_NET", "GREEN_NET"])
+
+    assert requests == [
+        {
+            "path": "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networkActions/remove",
+            "verb": HttpVerbEnum.POST,
+            "data": {"networkNames": ["BLUE_NET", "GREEN_NET"]},
+            "operation_type": OperationType.DELETE,
+        }
+    ]
+    assert result["results"] == [
+        {"networkName": "BLUE_NET", "status": "success"},
+        {"networkName": "GREEN_NET", "status": "success"},
     ]
 
 
