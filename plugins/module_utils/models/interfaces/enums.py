@@ -143,3 +143,39 @@ class TrunkHostPolicyTypeEnum(str, Enum):
     """
 
     TRUNK_HOST = "trunkHost"
+
+
+class SviPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Policy type for SVI (switched virtual interface) interfaces.
+    """
+
+    SVI = "svi"
+
+
+class SubinterfaceManagedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Policy type for managed L3 subinterfaces.
+    """
+
+    SUBINTERFACE = "subinterface"
+
+
+class SubinterfaceUnmanagedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Policy type for unmanaged L3 subinterfaces (NX-OS).
+
+    The `userDefined` discriminator branch is intentionally excluded — out of scope for this module.
+
+    ## Raises
+
+    None
+    """
+
+    MONITOR_SUBINTERFACE = "monitorSubinterface"
