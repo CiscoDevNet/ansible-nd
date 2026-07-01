@@ -237,11 +237,15 @@ class NDConfigCollection:
         return [item.to_payload(**kwargs) for item in self._items]
 
     @staticmethod
-    def from_ansible_config(data: List[Dict], model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
+    def from_ansible_config(data: Optional[List[Dict]], model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
         """
         Create collection from Ansible config.
+
+        ``data`` may be ``None`` when the module's ``config`` parameter is
+        omitted or explicitly set to null. It is normalized to an empty
+        collection so callers never have to special-case the absent config.
         """
-        items = [model_class.from_config(item_data, **kwargs) for item_data in data]
+        items = [model_class.from_config(item_data, **kwargs) for item_data in (data or [])]
         return NDConfigCollection(model_class=model_class, items=items)
 
     @staticmethod

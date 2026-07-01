@@ -132,7 +132,9 @@ def test_issubset_lists_bidirectional(subset, superset, expected):
 #
 # New behavior introduced in this PR: an element in ``subset`` matches a
 # candidate in ``superset`` when it is a subset of that candidate, even if the
-# candidate has additional keys.
+# candidate has additional keys. The ``subset`` list may also be shorter than
+# ``superset`` (extra existing elements are tolerated) as long as every
+# proposed element matches a distinct candidate.
 # =============================================================================
 
 
@@ -149,8 +151,11 @@ def test_issubset_lists_bidirectional(subset, superset, expected):
         ),
         # Subset element with extra key not in candidate -> still False
         ([{"a": 1, "z": 9}], [{"a": 1, "b": 2}], False),
-        # Length must still match
-        ([{"a": 1}], [{"a": 1, "b": 2}, {"c": 3}], False),
+        # Proposed list shorter than existing: the proposed item matches a
+        # candidate and the extra existing element is tolerated -> True
+        ([{"a": 1}], [{"a": 1, "b": 2}, {"c": 3}], True),
+        # More proposed items than candidates -> no one-to-one match -> False
+        ([{"a": 1}, {"c": 3}], [{"a": 1, "b": 2}], False),
         # Value mismatch -> False
         ([{"a": 2}], [{"a": 1, "b": 2}], False),
     ],
@@ -170,6 +175,46 @@ def test_issubset_one_directional_does_not_reuse_candidate():
     # Only one candidate matches -> the second subset element fails.
     subset = [{"a": 1}, {"a": 1}]
     superset = [{"a": 1, "b": 2}, {"x": 9}]
+    assert issubset(subset, superset, allow_superset=True) is False
+
+
+def test_issubset_one_directional_allows_shorter_subset():
+    """Under allow_superset the proposed list may be shorter than the existing.
+
+    This is the merged-state contract: a user who names only some children must
+    not flag the parent as changed when the controller already holds additional
+    children. Every proposed child must still match a distinct existing child.
+    """
+    # One proposed child, two existing children -> matches the first; the extra
+    # existing child is tolerated.
+    subset = [{"vrf_name": "TENANT_A"}]
+    superset = [
+        {"vrf_name": "TENANT_A", "vlan_id": 500},
+        {"vrf_name": "TENANT_B", "vlan_id": 600},
+    ]
+    assert issubset(subset, superset, allow_superset=True) is True
+
+    # Two proposed children, each matching a distinct existing child that
+    # carries extra keys, with a third existing child left untouched -> True.
+    subset = [{"vrf_name": "TENANT_A"}, {"vrf_name": "TENANT_B"}]
+    superset = [
+        {"vrf_name": "TENANT_A", "vlan_id": 500},
+        {"vrf_name": "TENANT_B", "vlan_id": 600},
+        {"vrf_name": "TENANT_C", "vlan_id": 700},
+    ]
+    assert issubset(subset, superset, allow_superset=True) is True
+
+    # A proposed child that matches none of the existing children -> False.
+    subset = [{"vrf_name": "TENANT_Z"}]
+    superset = [
+        {"vrf_name": "TENANT_A", "vlan_id": 500},
+        {"vrf_name": "TENANT_B", "vlan_id": 600},
+    ]
+    assert issubset(subset, superset, allow_superset=True) is False
+
+    # More proposed children than existing -> one-to-one match impossible.
+    subset = [{"vrf_name": "TENANT_A"}, {"vrf_name": "TENANT_B"}]
+    superset = [{"vrf_name": "TENANT_A", "vlan_id": 500}]
     assert issubset(subset, superset, allow_superset=True) is False
 
 

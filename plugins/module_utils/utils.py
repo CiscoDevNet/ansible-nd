@@ -71,17 +71,22 @@ def issubset(subset: Any, superset: Any, allow_superset: bool = False) -> bool:
 
     For dicts, only the non-``None`` keys of ``subset`` are compared; keys whose
     value is ``None`` are ignored, and keys present only in ``superset`` are
-    allowed. For lists, both must be the same length and a one-to-one pairing of
-    elements must exist (matching is order-independent).
+    allowed. For lists, every ``subset`` element must pair with a distinct
+    ``superset`` element (matching is order-independent). By default the two
+    lists must be the same length; when ``allow_superset`` is True the
+    ``subset`` list may be shorter so that extra existing elements are
+    tolerated (``len(subset) <= len(superset)``).
 
     Args:
         subset: The value to check.
         superset: The value to check against.
-        allow_superset: When True, list element matching is one-directional:
-            an element in ``subset`` is considered matched when it is a subset
-            of a candidate in ``superset``, even if the candidate has
-            additional keys.  When False (default) matching is bidirectional.
-            For lists of dicts this is equivalent to equality *after* ``None``
+        allow_superset: When True, list matching is one-directional: an element
+            in ``subset`` is considered matched when it is a subset of a
+            candidate in ``superset``, even if the candidate has additional
+            keys, and ``superset`` may contain extra elements that ``subset``
+            does not (``len(subset) <= len(superset)``). When False (default)
+            matching is bidirectional and the lengths must be equal. For lists
+            of dicts the default is equivalent to equality *after* ``None``
             -valued keys are dropped from both sides (it is not strict ``==``
             equality, because such keys are ignored).
     """
@@ -90,7 +95,14 @@ def issubset(subset: Any, superset: Any, allow_superset: bool = False) -> bool:
 
     if not isinstance(subset, dict):
         if isinstance(subset, list):
-            if len(subset) != len(superset):
+            # Under allow_superset the proposed list only needs to map into the
+            # existing one, so extra existing elements are tolerated
+            # (len(subset) <= len(superset)). Otherwise matching is
+            # bidirectional and the lengths must be identical.
+            if allow_superset:
+                if len(subset) > len(superset):
+                    return False
+            elif len(subset) != len(superset):
                 return False
 
             # Build the bipartite adjacency: for each subset item, which
