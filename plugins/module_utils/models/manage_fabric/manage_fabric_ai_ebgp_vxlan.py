@@ -8,10 +8,9 @@ from __future__ import absolute_import, division, print_function, annotations
 
 __metaclass__ = type
 
-import re
-from typing import Any, Dict, Optional, ClassVar, Literal
+from typing import Any, Dict, ClassVar, Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, field_validator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import FabricTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import (
     FabricEbgpModel,
@@ -50,6 +49,8 @@ class AimlVxlanEbgpManagementModel(VxlanEbgpManagementModel):
     - `TypeError` - If required string fields are not provided
     """
 
+    _argspec_exclude_fields: ClassVar[set[str]] = {"name", "aiml_qos"}
+
     type: Literal["aimlVxlanEbgp"] = Field(description="Type of the fabric", default="aimlVxlanEbgp")
     aiml_qos: bool = Field(
         alias="aimlQos",
@@ -77,43 +78,7 @@ class FabricAiEbgpVxlanModel(FabricEbgpModel):
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.AIML_VXLAN_EBGP
 
     # Core Management Configuration
-    management: Optional[AimlVxlanEbgpManagementModel] = Field(description="AI eBGP VXLAN management configuration", default=None)
-
-    @classmethod
-    def get_argument_spec(cls) -> Dict:
-        spec = super().get_argument_spec()
-
-        def remove_option(node: Dict, key: str) -> None:
-            if not isinstance(node, dict):
-                return
-            options = node.get("options")
-            if isinstance(options, dict):
-                options.pop(key, None)
-                for child in options.values():
-                    if isinstance(child, dict):
-                        remove_option(child, key)
-            elements = node.get("elements")
-            if isinstance(elements, dict):
-                remove_option(elements, key)
-
-        remove_option(spec, "aiml_qos")
-        return spec
-
-    @field_validator("fabric_name")
-    @classmethod
-    def validate_fabric_name(cls, value: str) -> str:
-        """
-        # Summary
-
-        Validate fabric name format and characters.
-
-        ## Raises
-
-        - `ValueError` - If name contains invalid characters or format
-        """
-        if not re.match(r"^[a-zA-Z0-9_-]+$", value):
-            raise ValueError(f"Fabric name can only contain letters, numbers, underscores, and hyphens, got: {value}")
-        return value
+    management: AimlVxlanEbgpManagementModel | None = Field(description="AI eBGP VXLAN management configuration", default=None)
 
     def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
         """Export for diff comparison, excluding fields that ND overrides for eBGP fabrics."""
@@ -123,9 +88,3 @@ class FabricAiEbgpVxlanModel(FabricEbgpModel):
         if "management" in d:
             d["management"].pop("nxapiHttp", None)
         return d
-
-
-__all__ = [
-    "AimlVxlanEbgpManagementModel",
-    "FabricAiEbgpVxlanModel",
-]

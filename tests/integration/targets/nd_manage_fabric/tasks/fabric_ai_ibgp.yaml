@@ -71,7 +71,6 @@
     state: merged
     config:
       - fabric_name: "{{ ai_ibgp_test_fabric_merged }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -80,7 +79,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanIbgp
           bgp_asn: "65002"  # Changed from 65001
           site_id: "65002"  # Changed from 65001
           target_subnet_mask: 30
@@ -261,7 +259,6 @@
     state: replaced
     config:
       - fabric_name: "{{ ai_ibgp_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -270,7 +267,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanIbgp
           bgp_asn: "65004"
           site_id: "65004"
           target_subnet_mask: 30
@@ -356,7 +352,6 @@
     state: replaced
     config:
       - fabric_name: "{{ ai_ibgp_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -365,7 +360,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanIbgp
           bgp_asn: "65004"
           site_id: "65004"
           target_subnet_mask: 30
@@ -451,7 +445,6 @@
     state: replaced
     config:
       - fabric_name: "{{ ai_ibgp_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -460,7 +453,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanIbgp
           bgp_asn: "65004"
           site_id: "65004"
           banner: "^ AI iBGP Updated via replaced state ^"

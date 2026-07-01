@@ -92,6 +92,8 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
+    _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
+
     # Fabric Type (required for discriminated union)
     type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
 
@@ -248,7 +250,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
             "MVPN VRI ID (minimum: 1, maximum: 65535) for vPC, applicable when TRM enabled "
             "with IPv6 underlay, or mvpnVrfRouteImportId enabled with IPv4 underlay"
         ),
-        default=None,
+        default="",
     )
     vrf_route_import_id_reallocation: bool = Field(
         alias="vrfRouteImportIdReallocation", description="One time VRI ID re-allocation based on 'MVPN VRI ID Range'", default=False
@@ -401,9 +403,9 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     # Backup / Restore
     real_time_backup: bool | None = Field(
-        alias="realTimeBackup", description="Backup hourly only if there is any config deployment since last backup", default=None
+        alias="realTimeBackup", description="Backup hourly only if there is any config deployment since last backup", default=False
     )
-    scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=None)
+    scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=False)
     scheduled_backup_time: str = Field(
         alias="scheduledBackupTime", description=("Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)"), default=""
     )
@@ -651,7 +653,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
             "Flowlet aging timer in microseconds. Valid range depends on platform: "
             "Cloud Scale (CS)=1-2000000 (default 500), Silicon One (S1)=1-1024 (default 256)"
         ),
-        default=None,
+        default=1,
     )
     flowlet_dscp: str = Field(
         alias="flowletDscp",
@@ -677,7 +679,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     priority_flow_control_watch_interval: int | None = Field(
         alias="priorityFlowControlWatchInterval",
         description=("Acceptable values from 101 to 1000 (milliseconds). Leave blank for system default (100ms)."),
-        default=None,
+        default=101,
     )
 
     # PTP

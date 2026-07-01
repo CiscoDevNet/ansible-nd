@@ -103,12 +103,6 @@ options:
         - The eBGP VXLAN management configuration for the fabric.
         type: dict
         suboptions:
-          type:
-            description:
-            - The fabric management type. Must be C(vxlanEbgp) for eBGP VXLAN fabrics.
-            type: str
-            default: vxlanEbgp
-            choices: [ vxlanEbgp ]
           bgp_asn:
             description:
             - The BGP Autonomous System Number for the fabric.
@@ -1386,7 +1380,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_ebgp_fabric
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1395,7 +1388,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65535"
           bgp_as_mode: multiAS
@@ -1469,7 +1461,6 @@ EXAMPLES = r"""
       - fabric_name: my_ebgp_fabric_static
         category: fabric
         management:
-          type: vxlanEbgp
           bgp_asn: "65001"
           bgp_asn_auto_allocation: false
           site_id: "65001"
@@ -1514,7 +1505,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
           site_id: "65004"
@@ -1560,7 +1550,6 @@ EXAMPLES = r"""
       - fabric_name: my_ebgp_fabric
         category: fabric
         management:
-          type: vxlanEbgp
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
           site_id: "65004"
@@ -1581,7 +1570,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65010"
           bgp_asn_auto_allocation: false
           site_id: "65010"
@@ -1608,7 +1596,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65020"
           bgp_asn_auto_allocation: false
           site_id: "65020"
@@ -1645,6 +1632,77 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+    description: Whether the module made any changes.
+    type: bool
+    returned: always
+    sample: true
+before:
+    description:
+    - eBGP VXLAN fabric configuration before changes.
+    - Queried from the controller and may contain read-only properties.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65001"}}]
+after:
+    description:
+    - eBGP VXLAN fabric configuration after changes.
+    - Refreshed from the controller after write operations.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+diff:
+    description: Configuration differences between before and after states.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+proposed:
+    description: Proposed configuration sent to the module.
+    type: list
+    returned: info or debug output_level
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+output_level:
+    description: The output level set for the module.
+    type: str
+    returned: always
+    sample: normal
+logs:
+    description: Debug log messages from module execution.
+    type: list
+    returned: debug output_level
+    sample: ["Starting state machine for merged state"]
+api_paths:
+    description: API endpoint paths used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["/api/v1/manage/fabrics/fabric_east"]
+api_verbs:
+    description: HTTP methods used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["PUT"]
+api_response:
+    description: Full API responses from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"RETURN_CODE": 200, "MESSAGE": "Success"}]
+api_result:
+    description: Operation results from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"success": true, "changed": true}]
+api_diff:
+    description: API-level differences for each operation.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_metadata:
+    description: Operation metadata with sequence and identifiers.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_payload:
+    description: Request payloads sent to the API.
+    type: list
+    returned: verbosity >= 3 (-vvv)
 """
 
 from ansible.module_utils.basic import AnsibleModule
@@ -1653,6 +1711,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import N
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 
 
 def main():
@@ -1664,6 +1723,7 @@ def main():
         supports_check_mode=True,
     )
 
+    require_pydantic(module)
     nd_state_machine = None
     try:
         # Initialize StateMachine

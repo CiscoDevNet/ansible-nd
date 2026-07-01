@@ -105,12 +105,6 @@ options:
         type: dict
         suboptions:
           # General
-          type:
-            description:
-            - The fabric management type. Must be C(vxlanIbgp) for iBGP VXLAN fabrics.
-            type: str
-            default: vxlanIbgp
-            choices: [ vxlanIbgp ]
           bgp_asn:
             description:
             - The BGP Autonomous System Number for the fabric.
@@ -1589,7 +1583,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_fabric
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1598,7 +1591,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65001"
           site_id: "65001"
           target_subnet_mask: 30
@@ -1691,7 +1683,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65004"
           site_id: "65004"
           target_subnet_mask: 30
@@ -1768,7 +1759,6 @@ EXAMPLES = r"""
       - fabric_name: my_fabric
         category: fabric
         management:
-          type: vxlanIbgp
           bgp_asn: "65004"
           site_id: "65004"
           banner: "^ Managed by Ansible ^"
@@ -1788,7 +1778,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65010"
           site_id: "65010"
           target_subnet_mask: 30
@@ -1813,7 +1802,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65020"
           site_id: "65020"
           target_subnet_mask: 30
@@ -1848,6 +1836,77 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+    description: Whether the module made any changes.
+    type: bool
+    returned: always
+    sample: true
+before:
+    description:
+    - iBGP VXLAN fabric configuration before changes.
+    - Queried from the controller and may contain read-only properties.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65001"}}]
+after:
+    description:
+    - iBGP VXLAN fabric configuration after changes.
+    - Refreshed from the controller after write operations.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+diff:
+    description: Configuration differences between before and after states.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+proposed:
+    description: Proposed configuration sent to the module.
+    type: list
+    returned: info or debug output_level
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+output_level:
+    description: The output level set for the module.
+    type: str
+    returned: always
+    sample: normal
+logs:
+    description: Debug log messages from module execution.
+    type: list
+    returned: debug output_level
+    sample: ["Starting state machine for merged state"]
+api_paths:
+    description: API endpoint paths used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["/api/v1/manage/fabrics/fabric_east"]
+api_verbs:
+    description: HTTP methods used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["PUT"]
+api_response:
+    description: Full API responses from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"RETURN_CODE": 200, "MESSAGE": "Success"}]
+api_result:
+    description: Operation results from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"success": true, "changed": true}]
+api_diff:
+    description: API-level differences for each operation.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_metadata:
+    description: Operation metadata with sequence and identifiers.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_payload:
+    description: Request payloads sent to the API.
+    type: list
+    returned: verbosity >= 3 (-vvv)
 """
 
 from ansible.module_utils.basic import AnsibleModule
@@ -1856,6 +1915,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import N
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import ManageIbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 
 
 def main():
@@ -1867,6 +1927,7 @@ def main():
         supports_check_mode=True,
     )
 
+    require_pydantic(module)
     nd_state_machine = None
     try:
         # Initialize StateMachine

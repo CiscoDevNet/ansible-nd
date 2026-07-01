@@ -71,7 +71,6 @@
     state: merged
     config:
       - fabric_name: "{{ test_fabric_merged }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -80,7 +79,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65002"  # Changed from 65001
           site_id: "65002"  # Changed from 65001
           target_subnet_mask: 30
@@ -495,7 +493,6 @@
     state: replaced
     config:
       - fabric_name: "{{ test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -504,7 +501,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65004"  # DIfferent from default  ASN
           site_id: "65004"  # DIfferent from default  site_id
           target_subnet_mask: 30
@@ -590,7 +586,6 @@
     state: replaced
     config:
       - fabric_name: "{{ test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -599,7 +594,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65004"  # DIfferent from default  ASN
           site_id: "65004"  # DIfferent from default  site_id
           target_subnet_mask: 30
@@ -685,7 +679,6 @@
     state: replaced
     config:
       - fabric_name: "{{ test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -694,7 +687,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65004"  # Changed ASN
           site_id: "65004"  # Changed site_id
           banner: "^ Updated via replaced state ^"  # Added banner
@@ -1115,7 +1107,6 @@
     state: merged
     config:
       - fabric_name: "multi_fabric_1"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1124,7 +1115,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65101"
           site_id: "65101"
           target_subnet_mask: 30
@@ -1193,7 +1183,6 @@
           management_ipv4_prefix: 24
           # management_ipv6_prefix: 64
       - fabric_name: "multi_fabric_2"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1202,7 +1191,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65102"
           site_id: "65102"
           target_subnet_mask: 30

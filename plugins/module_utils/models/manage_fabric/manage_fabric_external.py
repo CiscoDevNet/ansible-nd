@@ -72,6 +72,8 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
+    _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
+
     # Fabric Type (required for discriminated union)
     type: Literal[FabricTypeEnum.EXTERNAL_CONNECTIVITY] = Field(description="Fabric management type", default=FabricTypeEnum.EXTERNAL_CONNECTIVITY)
 

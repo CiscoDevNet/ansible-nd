@@ -72,7 +72,6 @@
     state: merged
     config:
       - fabric_name: "{{ ext_test_fabric_merged }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -81,7 +80,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: externalConnectivity
           bgp_asn: "65002"  # Changed from 65001
           copp_policy: strict  # Changed from manual
           create_bgp_config: true
@@ -214,7 +212,6 @@
     state: replaced
     config:
       - fabric_name: "{{ ext_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -223,7 +220,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: externalConnectivity
           bgp_asn: "65004"
           copp_policy: strict  # Different from default
           create_bgp_config: true
@@ -271,7 +267,6 @@
     state: replaced
     config:
       - fabric_name: "{{ ext_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -280,7 +275,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: externalConnectivity
           bgp_asn: "65004"
           copp_policy: strict
           create_bgp_config: true
@@ -328,7 +322,6 @@
     state: replaced
     config:
       - fabric_name: "{{ ext_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -337,7 +330,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: externalConnectivity
           bgp_asn: "65004"
   register: ext_replaced_result_3
   tags: [test_replaced, test_replaced_update]
@@ -504,7 +496,6 @@
     state: merged
     config:
       - fabric_name: "{{ ext_test_fabric_deleted }}"
-        category: fabric
         management:
           bgp_asn: "65099"  # Only updating ASN
           copp_policy: strict  # Only updating CoPP policy
@@ -526,9 +517,7 @@
     state: replaced
     config:
       - fabric_name: "{{ ext_test_fabric_deleted }}"
-        category: fabric
         management:
-          type: externalConnectivity
           bgp_asn: "65100"  # Only specifying minimal config for replaced
   register: ext_replaced_partial_result
   tags: [test_comparison, test_replaced_partial]
@@ -590,7 +579,6 @@
     state: merged
     config:
       - fabric_name: "ext_multi_fabric_1"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -599,7 +587,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: externalConnectivity
           bgp_asn: "65101"
           copp_policy: manual
           create_bgp_config: true
@@ -621,7 +608,6 @@
           management_gateway: ""
           management_ipv4_prefix: 24
       - fabric_name: "ext_multi_fabric_2"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -630,7 +616,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: externalConnectivity
           bgp_asn: "65102"
           copp_policy: manual
           create_bgp_config: true

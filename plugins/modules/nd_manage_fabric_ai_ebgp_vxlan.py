@@ -110,12 +110,6 @@ options:
         type: dict
         suboptions:
           # General
-          type:
-            description:
-            - The fabric management type. Must be C(aimlVxlanEbgp) for AI/ML eBGP VXLAN fabrics.
-            type: str
-            default: aimlVxlanEbgp
-            choices: [ aimlVxlanEbgp ]
           bgp_asn:
             description:
             - The BGP Autonomous System Number for the fabric.
@@ -837,10 +831,12 @@ options:
             description:
             - Backup hourly only if there is any config deployment since last backup.
             type: bool
+            default: false
           scheduled_backup:
             description:
             - Enable backup at the specified time daily.
             type: bool
+            default: false
           scheduled_backup_time:
             description:
             - Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59).
@@ -1137,6 +1133,7 @@ options:
             - Flowlet aging timer in microseconds. Valid range depends on platform.
               Cloud Scale (CS) 1-2000000 (default 500), Silicon One (S1) 1-1024 (default 256).
             type: int
+            default: 1
           flowlet_dscp:
             description:
             - DSCP values for flowlet load balancing. Numeric (0-63) with ranges/comma, or named values
@@ -1161,6 +1158,7 @@ options:
             - Acceptable values from 101 to 1000 (milliseconds).
               Leave blank for system default (100ms).
             type: int
+            default: 101
           ptp:
             description:
             - Enable Precision Time Protocol (PTP).
@@ -1401,7 +1399,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanEbgp
           bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65535"
           bgp_as_mode: multiAS
@@ -1475,7 +1472,6 @@ EXAMPLES = r"""
       - fabric_name: my_ai_ebgp_fabric_static
         category: fabric
         management:
-          type: aimlVxlanEbgp
           bgp_asn: "65001"
           bgp_asn_auto_allocation: false
           site_id: "65001"
@@ -1520,7 +1516,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanEbgp
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
           site_id: "65004"
@@ -1530,7 +1525,7 @@ EXAMPLES = r"""
           performance_monitoring: true
           replication_mode: multicast
           multicast_group_subnet: "239.1.3.0/25"
-          rendezvous_point_count: 3
+          rendezvous_point_count: 4
           rendezvous_point_loopback_id: 253
           vpc_peer_link_vlan: "3700"
           vpc_peer_keep_alive_option: management
@@ -1566,7 +1561,6 @@ EXAMPLES = r"""
       - fabric_name: my_ai_ebgp_fabric
         category: fabric
         management:
-          type: aimlVxlanEbgp
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
           site_id: "65004"
@@ -1587,7 +1581,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanEbgp
           bgp_asn: "65010"
           bgp_asn_auto_allocation: false
           site_id: "65010"
@@ -1614,7 +1607,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanEbgp
           bgp_asn: "65020"
           bgp_asn_auto_allocation: false
           site_id: "65020"
@@ -1651,6 +1643,77 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+    description: Whether the module made any changes.
+    type: bool
+    returned: always
+    sample: true
+before:
+    description:
+    - AI/ML eBGP VXLAN fabric configuration before changes.
+    - Queried from the controller and may contain read-only properties.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65001"}}]
+after:
+    description:
+    - AI/ML eBGP VXLAN fabric configuration after changes.
+    - Refreshed from the controller after write operations.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
+diff:
+    description: Configuration differences between before and after states.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
+proposed:
+    description: Proposed configuration sent to the module.
+    type: list
+    returned: info or debug output_level
+    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
+output_level:
+    description: The output level set for the module.
+    type: str
+    returned: always
+    sample: normal
+logs:
+    description: Debug log messages from module execution.
+    type: list
+    returned: debug output_level
+    sample: ["Starting state machine for merged state"]
+api_paths:
+    description: API endpoint paths used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["/api/v1/manage/fabrics/ai_ebgp_fabric"]
+api_verbs:
+    description: HTTP methods used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["PUT"]
+api_response:
+    description: Full API responses from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"RETURN_CODE": 200, "MESSAGE": "Success"}]
+api_result:
+    description: Operation results from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"success": true, "changed": true}]
+api_diff:
+    description: API-level differences for each operation.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_metadata:
+    description: Operation metadata with sequence and identifiers.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_payload:
+    description: Request payloads sent to the API.
+    type: list
+    returned: verbosity >= 3 (-vvv)
 """
 
 from ansible.module_utils.basic import AnsibleModule
@@ -1659,6 +1722,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import N
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ebgp_vxlan import FabricAiEbgpVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import ManageAiEbgpVxlanFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 
 
 def main():
@@ -1670,6 +1734,8 @@ def main():
         supports_check_mode=True,
     )
 
+    require_pydantic(module)
+    nd_state_machine = None
     try:
         # Initialize StateMachine
         nd_state_machine = NDStateMachine(

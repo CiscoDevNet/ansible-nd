@@ -23,7 +23,6 @@ ai_ebgp_test_fabric_deleted: "ai_ebgp_test_fabric_deleted"
 # Common fabric configuration for all tests
 # common_fabric_config:
 fabric_config_ibgp:
-  category: fabric
   location:
     latitude: 37.7749
     longitude: -122.4194
@@ -32,7 +31,6 @@ fabric_config_ibgp:
   security_domain: all
   telemetry_collection: false
   management:
-    type: vxlanIbgp
     bgp_asn: "65001.55"
     site_id: "65001"
     overlay_mode: cli
@@ -151,7 +149,6 @@ fabric_config_ibgp:
 
     # QoS / Queuing
     default_queuing_policy: false
-    aiml_qos: false
 
     # DLB / AI
     dlb: false
@@ -216,7 +213,6 @@ fabric_config_ibgp:
 # Common External Connectivity fabric configuration for all External tests
 # common_external_fabric_config:
 fabric_config_external:
-  category: fabric
   location:
     latitude: 37.7749
     longitude: -122.4194
@@ -225,7 +221,6 @@ fabric_config_external:
   security_domain: all
   telemetry_collection: false
   management:
-    type: externalConnectivity
     bgp_asn: "65001"
     copp_policy: manual
     create_bgp_config: true
@@ -256,7 +251,6 @@ fabric_config_external:
 # Common eBGP fabric configuration for all eBGP tests
 # common_ebgp_fabric_config:
 fabric_config_ebgp:
-  category: fabric
   location:
     latitude: 37.7749
     longitude: -122.4194
@@ -265,7 +259,6 @@ fabric_config_ebgp:
   security_domain: all
   telemetry_collection: false
   management:
-    type: vxlanEbgp
     bgp_asn: "65001"
     bgp_asn_auto_allocation: false
     site_id: "65001"
@@ -338,7 +331,6 @@ fabric_config_ebgp:
 # Common AI iBGP VXLAN fabric configuration for all AI iBGP tests
 # Uses aimlVxlanIbgp type which shares management properties with vxlanIbgp
 fabric_config_ai_ibgp:
-  category: fabric
   location:
     latitude: 37.7749
     longitude: -122.4194
@@ -347,7 +339,6 @@ fabric_config_ai_ibgp:
   security_domain: all
   telemetry_collection: false
   management:
-    type: aimlVxlanIbgp
     bgp_asn: "65001.55"
     site_id: "65001"
     overlay_mode: cli
@@ -466,7 +457,6 @@ fabric_config_ai_ibgp:
 
     # QoS / Queuing
     default_queuing_policy: false
-    aiml_qos: false
 
     # DLB / AI
     dlb: false
@@ -531,7 +521,6 @@ fabric_config_ai_ibgp:
 # Common AI eBGP VXLAN fabric configuration for all AI eBGP tests
 # Uses aimlVxlanEbgp type which shares management properties with vxlanEbgp
 fabric_config_ai_ebgp:
-  category: fabric
   location:
     latitude: 37.7749
     longitude: -122.4194
@@ -540,7 +529,6 @@ fabric_config_ai_ebgp:
   security_domain: all
   telemetry_collection: false
   management:
-    type: aimlVxlanEbgp
     bgp_asn: "65001"
     bgp_asn_auto_allocation: false
     site_id: "65001"

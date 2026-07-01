@@ -71,7 +71,6 @@
     state: merged
     config:
       - fabric_name: "{{ ai_ebgp_test_fabric_merged }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -80,7 +79,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanEbgp
           bgp_asn: "65002"
           bgp_asn_auto_allocation: false
           site_id: "65002"
@@ -238,7 +236,6 @@
     state: replaced
     config:
       - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -247,7 +244,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanEbgp
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
           site_id: "65004"
@@ -331,7 +327,6 @@
     state: replaced
     config:
       - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -340,7 +335,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanEbgp
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
           site_id: "65004"
@@ -424,7 +418,6 @@
     state: replaced
     config:
       - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -433,7 +426,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: aimlVxlanEbgp
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
           site_id: "65004"
