@@ -220,7 +220,7 @@ def test_subinterface_managed_interface_00120():
         ("", False),
         (None, False),
         ("em — dash", True),
-        ("smart “quotes”", True),
+        ("smart \u201cquotes\u201d", True),
         ("emoji \U0001f600", True),
         ("latin-1 \xe9", True),
     ],
