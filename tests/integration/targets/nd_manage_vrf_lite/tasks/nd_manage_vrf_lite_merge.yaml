@@ -797,7 +797,7 @@
                 ipv4_addr: "{{ test_ipv4_addr }}"
                 neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
                 peer_vrf: "{{ test_peer_vrf }}"
-              - interface: "{{ test_interface2 }}"
+              - interface: "{{ test_interface }}"
                 dot1q: "{{ test_dot1q2 | int }}"
                 ipv4_addr: "{{ test_ipv4_addr2 }}"
                 neighbor_ipv4: "{{ test_neighbor_ipv4_2 }}"
@@ -851,7 +851,7 @@
     vrf_lite_assert_attach_count: 1
     vrf_lite_assert_connection_count: 2
     vrf_lite_assert_switch: "{{ test_switch1 }}"
-    vrf_lite_assert_interface: "{{ test_interface2 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
     vrf_lite_assert_dot1q: "{{ test_dot1q2 }}"
     vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr2 }}"
     vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4_2 }}"

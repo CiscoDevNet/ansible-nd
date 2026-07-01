@@ -30,6 +30,7 @@
       {{
         (vrf_lite_assert_attach_entries[0].vrf_lite | default([]))
         | selectattr('interface', 'equalto', vrf_lite_assert_interface)
+        | selectattr('dot1q', 'equalto', vrf_lite_assert_dot1q | int)
         | list
       }}
   when:
