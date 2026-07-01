@@ -17,9 +17,8 @@ FABRIC_DYNAMIC_POOL_PATTERNS
     Only FabricTypeEnum.VXLAN_EBGP currently has dynamic pool patterns.
 
 FABRIC_TYPE_STRING_MAP
-    Maps string fabric type values ("routed", "vxlanEbgp", etc.) to their
-    corresponding FabricTypeEnum. Supports both old ("vxlanEbgp") and new
-    ("routed") string representations for VXLAN_EBGP.
+    Maps string fabric type values ("vxlanIbgp", "vxlanEbgp", etc.) to their
+    corresponding FabricTypeEnum.
 
 Usage
 -----
@@ -32,7 +31,7 @@ To check whether *pool_name* is supported for *fabric_type* (enum or string)::
     is_supported = exact or dynamic
 
     # Option 2: Using string value (auto-converts to enum)
-    fabric_type_str = "routed"  # or "vxlanEbgp" - both supported
+    fabric_type_str = "vxlanEbgp"
     ft_enum = FABRIC_TYPE_STRING_MAP.get(fabric_type_str)
     if ft_enum:
         exact   = pool_name in FABRIC_SUPPORTED_POOLS.get(ft_enum, frozenset())
@@ -40,7 +39,7 @@ To check whether *pool_name* is supported for *fabric_type* (enum or string)::
         is_supported = exact or dynamic
 
     # Option 3: Using helper functions (most convenient)
-    is_supported = is_pool_supported("routed", pool_name)
+    is_supported = is_pool_supported("vxlanEbgp", pool_name)
 """
 
 from __future__ import annotations
@@ -102,23 +101,27 @@ FABRIC_SUPPORTED_POOLS: dict[FabricTypeEnum, frozenset[str]] = {
     ),
     FabricTypeEnum.VXLAN_EBGP: frozenset(
         {
-            "DCI subnet pool",
-            "DEVICE_BGP_ASN",
-            "FEX_ID",
-            "IPv6 DCI subnet pool",
+            "VPC_PEER_LINK_VLAN",
+            "L3_VNI",
+            "VPC_ID",
             "L2_VNI",
-            "LOOPBACK0_IP_POOL",
-            "LOOPBACK_ID",
-            "PORT_CHANNEL_ID",
+            "TOP_DOWN_VRF_VLAN",
             "ROUTE_MAP_SEQUENCE_NUMBER_POOL",
+            "VPC_DOMAIN_ID",
+            "FEX_ID",
+            "TOP_DOWN_NETWORK_VLAN",
+            "PORT_CHANNEL_ID",
+            "LOOPBACK_ID",
+            "TOP_DOWN_L3_DOT1Q",
+            "LOOPBACK0_IP_POOL",
+            "LOOPBACK1_IP_POOL",
+            "ANYCAST_RP_IP_POOL",
+            "DCI subnet pool",
+            "IPv6 DCI subnet pool",
+            "DEVICE_BGP_ASN",
+            "MCAST_IP_POOL",
             "ROUTER_ID_POOL",
             "SUBNET",
-            "TOP_DOWN_L3_DOT1Q",
-            "TOP_DOWN_NETWORK_VLAN",
-            "VPC_DOMAIN_ID",
-            "VPC_ID",
-            "VPC_PEER_LINK_VLAN",
-            "default_SUBNET_POOL_IPV4",
         }
     ),
     FabricTypeEnum.EXTERNAL_CONNECTIVITY: frozenset(
@@ -170,13 +173,11 @@ FABRIC_DYNAMIC_POOL_PATTERNS: dict[FabricTypeEnum, tuple[re.Pattern[str], ...]] 
 # =============================================================================
 # FABRIC_TYPE_STRING_MAP
 # Maps string fabric type values to their corresponding FabricTypeEnum.
-# Supports both old ("vxlanEbgp") and new ("routed") representations for
-# VXLAN_EBGP fabrics, enabling backward compatibility and flexible lookups.
+# Supports string representations used by NDFC fabric management responses.
 # =============================================================================
 FABRIC_TYPE_STRING_MAP: dict[str, FabricTypeEnum] = {
     "vxlanIbgp": FabricTypeEnum.VXLAN_IBGP,
     "vxlanEbgp": FabricTypeEnum.VXLAN_EBGP,
-    "routed": FabricTypeEnum.VXLAN_EBGP,  # Alternative name for VXLAN_EBGP
     "externalConnectivity": FabricTypeEnum.EXTERNAL_CONNECTIVITY,
 }
 
@@ -192,7 +193,7 @@ def get_supported_pools(
 
     Args:
         fabric_type: FabricTypeEnum or string value ("vxlanIbgp", "vxlanEbgp",
-            "routed", "externalConnectivity").
+            "externalConnectivity").
 
     Returns:
         frozenset of pool names, or empty frozenset if fabric_type not recognized.
@@ -217,7 +218,7 @@ def get_dynamic_patterns(
 
     Args:
         fabric_type: FabricTypeEnum or string value ("vxlanIbgp", "vxlanEbgp",
-            "routed", "externalConnectivity").
+            "externalConnectivity").
 
     Returns:
         tuple of compiled regex patterns, or empty tuple if fabric_type not
@@ -247,7 +248,7 @@ def is_pool_supported(
 
     Args:
         fabric_type: FabricTypeEnum or string value ("vxlanIbgp", "vxlanEbgp",
-            "routed", "externalConnectivity").
+            "externalConnectivity").
         pool_name: The pool name to check.
 
     Returns:

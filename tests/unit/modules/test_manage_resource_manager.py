@@ -1638,7 +1638,7 @@ def test_manage_state_gathered_uses_filtered_candidate_get():
 
 
 def test_manage_resource_manager_merged_rejects_unsupported_pool_for_fabric_type():
-    """Merged config fails fast when pool_name is unsupported for the fabric type."""
+    """Merged config rejects pool_name values unsupported for the fabric type."""
     nd = _mock_nd_module(
         state="merged",
         fabric_type="vxlanIbgp",
@@ -1653,12 +1653,12 @@ def test_manage_resource_manager_merged_rejects_unsupported_pool_for_fabric_type
         ],
     )
 
-    with pytest.raises(ValueError, match="not supported for fabric type"):
+    with pytest.raises(ValueError, match="Unsupported pool_name values for fabric type"):
         NDResourceManagerModule(nd, Results(), log=LOG)
 
 
 def test_manage_resource_manager_deleted_rejects_unsupported_pool_for_fabric_type():
-    """Deleted config fails fast when pool_name is unsupported for the fabric type."""
+    """Deleted config rejects pool_name values unsupported for the fabric type."""
     nd = _mock_nd_module(
         state="deleted",
         fabric_type="vxlanIbgp",
@@ -1672,12 +1672,12 @@ def test_manage_resource_manager_deleted_rejects_unsupported_pool_for_fabric_typ
         ],
     )
 
-    with pytest.raises(ValueError, match="not supported for fabric type"):
+    with pytest.raises(ValueError, match="Unsupported pool_name values for fabric type"):
         NDResourceManagerModule(nd, Results(), log=LOG)
 
 
 def test_manage_resource_manager_gathered_rejects_unsupported_pool_filter_for_fabric_type():
-    """Gathered filters fail fast when pool_name is unsupported for the fabric type."""
+    """Gathered filters reject pool_name values unsupported for the fabric type."""
     nd = _mock_nd_module(
         state="gathered",
         fabric_type="vxlanIbgp",
@@ -1688,8 +1688,48 @@ def test_manage_resource_manager_gathered_rejects_unsupported_pool_filter_for_fa
         ],
     )
 
-    with pytest.raises(ValueError, match="not supported for fabric type"):
+    with pytest.raises(ValueError, match="Unsupported pool_name values for fabric type"):
         NDResourceManagerModule(nd, Results(), log=LOG)
+
+
+def test_manage_resource_manager_reports_all_unsupported_pools_for_fabric_type():
+    """Unsupported pool validation reports every offending config entry."""
+    nd = _mock_nd_module(
+        state="merged",
+        fabric_type="vxlanIbgp",
+        config=[
+            {
+                "entity_name": "router_id_a",
+                "pool_type": "ID",
+                "pool_name": "ROUTER_ID_POOL",
+                "scope_type": "fabric",
+                "resource": "100",
+            },
+            {
+                "entity_name": "loopback_id",
+                "pool_type": "ID",
+                "pool_name": "LOOPBACK_ID",
+                "scope_type": "fabric",
+                "resource": "101",
+            },
+            {
+                "entity_name": "instance_id",
+                "pool_type": "ID",
+                "pool_name": "INSTANCE_ID",
+                "scope_type": "fabric",
+                "resource": "102",
+            },
+        ],
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        NDResourceManagerModule(nd, Results(), log=LOG)
+
+    error_msg = str(exc_info.value)
+    assert "Unsupported pool_name values for fabric type 'vxlanIbgp'" in error_msg
+    assert "config index 0: 'ROUTER_ID_POOL'" in error_msg
+    assert "config index 2: 'INSTANCE_ID'" in error_msg
+    assert "LOOPBACK_ID" not in error_msg
 
 
 def test_manage_resource_manager_external_connectivity_rejects_subnet_pool():
@@ -1708,7 +1748,7 @@ def test_manage_resource_manager_external_connectivity_rejects_subnet_pool():
         ],
     )
 
-    with pytest.raises(ValueError, match="not supported for fabric type"):
+    with pytest.raises(ValueError, match="Unsupported pool_name values for fabric type"):
         NDResourceManagerModule(nd, Results(), log=LOG)
 
 
@@ -1759,10 +1799,10 @@ def test_manage_resource_manager_vxlan_ibgp_accepts_subnet_pool():
 
 
 def test_manage_resource_manager_vxlan_ebgp_accepts_subnet_pool():
-    """VXLAN_EBGP (routed) fabric accepts SUBNET pool (supported for this type)."""
+    """VXLAN_EBGP fabric accepts SUBNET pool (supported for this type)."""
     nd = _mock_nd_module(
         state="merged",
-        fabric_type="routed",
+        fabric_type="vxlanEbgp",
         config=[
             {
                 "entity_name": "subnet_pool",
@@ -1774,9 +1814,9 @@ def test_manage_resource_manager_vxlan_ebgp_accepts_subnet_pool():
         ],
     )
 
-    # Should not raise - SUBNET is supported for routed (VXLAN_EBGP)
+    # Should not raise - SUBNET is supported for VXLAN_EBGP
     module = NDResourceManagerModule(nd, Results(), log=LOG)
-    assert module.fabric_type == "routed"
+    assert module.fabric_type == "vxlanEbgp"
 
 
 def test_validate_input_gathered_with_partial_filter():

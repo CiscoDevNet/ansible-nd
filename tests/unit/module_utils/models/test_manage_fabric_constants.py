@@ -42,17 +42,9 @@ class TestFabricTypeStringMap(unittest.TestCase):
         """Test FABRIC_TYPE_STRING_MAP maps 'vxlanEbgp' (old) to VXLAN_EBGP enum."""
         assert FABRIC_TYPE_STRING_MAP["vxlanEbgp"] == FabricTypeEnum.VXLAN_EBGP
 
-    def test_fabric_type_string_map_vxlan_ebgp_new(self):
-        """Test FABRIC_TYPE_STRING_MAP maps 'routed' (new) to VXLAN_EBGP enum."""
-        assert FABRIC_TYPE_STRING_MAP["routed"] == FabricTypeEnum.VXLAN_EBGP
-
     def test_fabric_type_string_map_external(self):
         """Test FABRIC_TYPE_STRING_MAP maps 'externalConnectivity' to EXTERNAL_CONNECTIVITY enum."""
         assert FABRIC_TYPE_STRING_MAP["externalConnectivity"] == FabricTypeEnum.EXTERNAL_CONNECTIVITY
-
-    def test_fabric_type_string_map_both_ebgp_values_same_enum(self):
-        """Test 'routed' and 'vxlanEbgp' both map to same FabricTypeEnum."""
-        assert FABRIC_TYPE_STRING_MAP["routed"] == FABRIC_TYPE_STRING_MAP["vxlanEbgp"] == FabricTypeEnum.VXLAN_EBGP
 
 
 class TestFabricSupportedPools(unittest.TestCase):
@@ -63,8 +55,8 @@ class TestFabricSupportedPools(unittest.TestCase):
         assert len(FABRIC_SUPPORTED_POOLS[FabricTypeEnum.VXLAN_IBGP]) == 24
 
     def test_vxlan_ebgp_pool_count(self):
-        """Test VXLAN_EBGP has 17 supported pools."""
-        assert len(FABRIC_SUPPORTED_POOLS[FabricTypeEnum.VXLAN_EBGP]) == 17
+        """Test VXLAN_EBGP has 21 supported pools."""
+        assert len(FABRIC_SUPPORTED_POOLS[FabricTypeEnum.VXLAN_EBGP]) == 21
 
     def test_external_connectivity_pool_count(self):
         """Test EXTERNAL_CONNECTIVITY has 17 supported pools."""
@@ -197,7 +189,7 @@ class TestGetSupportedPoolsFunction(unittest.TestCase):
     def test_get_supported_pools_with_enum_vxlan_ebgp(self):
         """Test get_supported_pools with FabricTypeEnum.VXLAN_EBGP."""
         pools = get_supported_pools(FabricTypeEnum.VXLAN_EBGP)
-        assert len(pools) == 17
+        assert len(pools) == 21
         assert "ROUTER_ID_POOL" in pools
 
     def test_get_supported_pools_with_enum_external(self):
@@ -215,13 +207,7 @@ class TestGetSupportedPoolsFunction(unittest.TestCase):
     def test_get_supported_pools_with_string_vxlan_ebgp_old(self):
         """Test get_supported_pools with 'vxlanEbgp' (old) string."""
         pools = get_supported_pools("vxlanEbgp")
-        assert len(pools) == 17
-        assert "ROUTER_ID_POOL" in pools
-
-    def test_get_supported_pools_with_string_vxlan_ebgp_new(self):
-        """Test get_supported_pools with 'routed' (new) string."""
-        pools = get_supported_pools("routed")
-        assert len(pools) == 17
+        assert len(pools) == 21
         assert "ROUTER_ID_POOL" in pools
 
     def test_get_supported_pools_with_string_external(self):
@@ -264,11 +250,6 @@ class TestGetDynamicPatternsFunction(unittest.TestCase):
         patterns = get_dynamic_patterns("vxlanEbgp")
         assert len(patterns) == 2
 
-    def test_get_dynamic_patterns_with_string_vxlan_ebgp_new(self):
-        """Test get_dynamic_patterns with 'routed' string."""
-        patterns = get_dynamic_patterns("routed")
-        assert len(patterns) == 2
-
     def test_get_dynamic_patterns_with_invalid_string(self):
         """Test get_dynamic_patterns with invalid string returns empty tuple."""
         patterns = get_dynamic_patterns("invalid_fabric_type")
@@ -308,11 +289,6 @@ class TestIsPoolSupportedFunction(unittest.TestCase):
         assert is_pool_supported("vxlanEbgp", "LOOPBACK_ID")
         assert is_pool_supported("vxlanEbgp", "ROUTER_ID_POOL")
 
-    def test_is_pool_supported_exact_vxlan_ebgp_new_string(self):
-        """Test is_pool_supported with exact-match VXLAN_EBGP pool ('routed')."""
-        assert is_pool_supported("routed", "LOOPBACK_ID")
-        assert is_pool_supported("routed", "ROUTER_ID_POOL")
-
     def test_is_pool_supported_exact_external_enum(self):
         """Test is_pool_supported with exact-match EXTERNAL_CONNECTIVITY pool (enum)."""
         assert is_pool_supported(FabricTypeEnum.EXTERNAL_CONNECTIVITY, "TUNNEL_ID_IOS_XE")
@@ -340,13 +316,11 @@ class TestIsPoolSupportedFunction(unittest.TestCase):
         """Test VXLAN_EBGP DOES support SUBNET pool."""
         assert is_pool_supported(FabricTypeEnum.VXLAN_EBGP, "SUBNET")
         assert is_pool_supported("vxlanEbgp", "SUBNET")
-        assert is_pool_supported("routed", "SUBNET")
 
     def test_is_pool_supported_exact_not_supported(self):
         """Test is_pool_supported returns False for unsupported exact-match pool."""
         assert not is_pool_supported(FabricTypeEnum.VXLAN_IBGP, "INVALID_POOL")
         assert not is_pool_supported("vxlanEbgp", "INVALID_POOL")
-        assert not is_pool_supported("routed", "INVALID_POOL")
 
     # ========================================================================
     # Dynamic pattern tests (IP/IPv6 CIDR pools)
@@ -362,11 +336,6 @@ class TestIsPoolSupportedFunction(unittest.TestCase):
         assert is_pool_supported("vxlanEbgp", "10.4.0.0/30")
         assert is_pool_supported("vxlanEbgp", "192.168.1.0/24")
 
-    def test_is_pool_supported_dynamic_ipv4_vxlan_ebgp_new_string(self):
-        """Test is_pool_supported with dynamic IPv4 CIDR for 'routed'."""
-        assert is_pool_supported("routed", "10.4.0.0/30")
-        assert is_pool_supported("routed", "192.168.1.0/24")
-
     def test_is_pool_supported_dynamic_ipv6_vxlan_ebgp_enum(self):
         """Test is_pool_supported with dynamic IPv6 CIDR for VXLAN_EBGP (enum)."""
         assert is_pool_supported(FabricTypeEnum.VXLAN_EBGP, "fe:80:505::5/64")
@@ -376,11 +345,6 @@ class TestIsPoolSupportedFunction(unittest.TestCase):
         """Test is_pool_supported with dynamic IPv6 CIDR for 'vxlanEbgp'."""
         assert is_pool_supported("vxlanEbgp", "fe:80:505::5/64")
         assert is_pool_supported("vxlanEbgp", "2001:db8::/32")
-
-    def test_is_pool_supported_dynamic_ipv6_vxlan_ebgp_new_string(self):
-        """Test is_pool_supported with dynamic IPv6 CIDR for 'routed'."""
-        assert is_pool_supported("routed", "fe:80:505::5/64")
-        assert is_pool_supported("routed", "2001:db8::/32")
 
     def test_is_pool_supported_dynamic_not_for_other_types(self):
         """Test is_pool_supported rejects dynamic pools for non-EBGP fabric types."""
@@ -396,20 +360,20 @@ class TestIsPoolSupportedFunction(unittest.TestCase):
     def test_is_pool_supported_combination_vxlan_ebgp(self):
         """Test is_pool_supported with mix of exact and dynamic pools for VXLAN_EBGP."""
         # Exact matches
-        assert is_pool_supported("routed", "LOOPBACK_ID")
-        assert is_pool_supported("routed", "DCI subnet pool")
+        assert is_pool_supported("vxlanEbgp", "LOOPBACK_ID")
+        assert is_pool_supported("vxlanEbgp", "DCI subnet pool")
         # Dynamic matches
-        assert is_pool_supported("routed", "10.4.0.0/30")
-        assert is_pool_supported("routed", "fe:80:505::5/64")
+        assert is_pool_supported("vxlanEbgp", "10.4.0.0/30")
+        assert is_pool_supported("vxlanEbgp", "fe:80:505::5/64")
         # Unsupported
-        assert not is_pool_supported("routed", "INVALID_POOL")
-        assert not is_pool_supported("routed", "invalid_ip_range")
+        assert not is_pool_supported("vxlanEbgp", "INVALID_POOL")
+        assert not is_pool_supported("vxlanEbgp", "invalid_ip_range")
 
     def test_is_pool_supported_case_sensitive(self):
         """Test is_pool_supported is case-sensitive for pool names."""
-        assert is_pool_supported("routed", "LOOPBACK_ID")
-        assert not is_pool_supported("routed", "loopback_id")
-        assert not is_pool_supported("routed", "Loopback_Id")
+        assert is_pool_supported("vxlanEbgp", "LOOPBACK_ID")
+        assert not is_pool_supported("vxlanEbgp", "loopback_id")
+        assert not is_pool_supported("vxlanEbgp", "Loopback_Id")
 
     def test_is_pool_supported_invalid_fabric_type(self):
         """Test is_pool_supported returns False for invalid fabric type."""
@@ -418,27 +382,12 @@ class TestIsPoolSupportedFunction(unittest.TestCase):
 
     def test_is_pool_supported_empty_pool_name(self):
         """Test is_pool_supported with empty pool name."""
-        assert not is_pool_supported("routed", "")
+        assert not is_pool_supported("vxlanEbgp", "")
         assert not is_pool_supported(FabricTypeEnum.VXLAN_EBGP, "")
 
 
 class TestIntegration(unittest.TestCase):
     """Integration tests combining multiple functions."""
-
-    def test_routed_and_vxlanebgp_equivalence(self):
-        """Test 'routed' and 'vxlanEbgp' produce equivalent results."""
-        test_pools = [
-            "LOOPBACK_ID",
-            "ROUTER_ID_POOL",
-            "10.4.0.0/30",
-            "fe:80:505::5/64",
-            "INVALID_POOL",
-        ]
-
-        for pool in test_pools:
-            result_routed = is_pool_supported("routed", pool)
-            result_ebgp = is_pool_supported("vxlanEbgp", pool)
-            assert result_routed == result_ebgp, f"Mismatch for pool '{pool}': 'routed'={result_routed}, 'vxlanEbgp'={result_ebgp}"
 
     def test_all_fabrics_have_supported_pools(self):
         """Test all fabric types have supported pools defined."""
@@ -450,10 +399,10 @@ class TestIntegration(unittest.TestCase):
         """Test exact-match pools don't contain raw IP/CIDR addresses."""
         # For VXLAN_EBGP, verify IP-address-style names are not in exact pools
         # (they're only matched via regex)
-        ebgp_pools = get_supported_pools("routed")
+        ebgp_pools = get_supported_pools("vxlanEbgp")
         for pool in ebgp_pools:
             # Should not match IPv4 CIDR pattern
-            patterns = get_dynamic_patterns("routed")
+            patterns = get_dynamic_patterns("vxlanEbgp")
             assert not patterns[0].match(pool), f"IPv4 CIDR pool '{pool}' found in exact matches"
             # Should not match IPv6 CIDR pattern
             assert not patterns[1].match(pool), f"IPv6 CIDR pool '{pool}' found in exact matches"

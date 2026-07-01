@@ -151,7 +151,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         return fabric_type
 
     def _validate_pool_support_precheck(self):
-        """Fail fast when any provided pool_name is unsupported by the target fabric."""
+        """Collect unsupported pool names before failing for the target fabric."""
         self.log.debug(
             "_validate_pool_support_precheck: starting validation for fabric_type=%s, config_count=%s",
             self.fabric_type,
@@ -159,6 +159,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         )
         validated_count = 0
         skipped_count = 0
+        unsupported_pools = []
         for idx, item in enumerate(self.config):
             if not isinstance(item, dict):
                 skipped_count += 1
@@ -183,8 +184,27 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                     idx,
                     self.fabric_type,
                 )
-                raise ValueError("pool_name '{0}' in config index {1} is not supported for fabric type '{2}'".format(pool_name_str, idx, self.fabric_type))
+                unsupported_pools.append(
+                    {
+                        "index": idx,
+                        "pool_name": pool_name_str,
+                        "fabric_type": self.fabric_type,
+                    }
+                )
+                continue
             validated_count += 1
+
+        if unsupported_pools:
+            unsupported_details = ", ".join(
+                "config index {0}: '{1}'".format(item["index"], item["pool_name"])
+                for item in unsupported_pools
+            )
+            error_msg = "Unsupported pool_name values for fabric type '{0}': {1}".format(
+                self.fabric_type,
+                unsupported_details,
+            )
+            self.log.error("_validate_pool_support_precheck: %s", error_msg)
+            raise ValueError(error_msg)
 
         self.log.debug(
             "_validate_pool_support_precheck: completed validation for fabric_type=%s, validated=%s, skipped=%s",
