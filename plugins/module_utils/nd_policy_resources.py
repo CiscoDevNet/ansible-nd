@@ -406,44 +406,44 @@ class NDPolicyModule:
         # embedded switch list. Flatten directly — no global/switch separation needed.
         #
         # Three shapes are recognised:
-        #   Shape 1 (legacy two-level): policy entries (no `switch`) plus a
+        #   Shape 1 (two-level): policy entries (no `switch`) plus a
         #     single switch entry (no `name`, has `switch: [...]`).
-        #   Shape 2 (self-contained / gathered round-trip): every named entry
+        #   Shape 2 (gathered output): every named entry
         #     carries its own embedded `switch: [...]` list.
         #   Shape 3 (mixed): a forbidden combination of Shape 1 and Shape 2
-        #     in the same config list. In the legacy path, the self-contained
+        #     in the same config list. In the two-level path, gathered output
         #     entries would be silently misinterpreted as the global switch
         #     entry, dropping their policy fields on the floor — so we reject
         #     this combination explicitly.
-        has_self_contained = False
-        legacy_named_entries: list = []  # named entries WITHOUT embedded switch
+        has_gathered_output_shape = False
+        two_level_named_entries: list = []  # named entries WITHOUT embedded switch
         for entry in config:
             name = entry.get("name")
             sw = entry.get("switch")
             if name and isinstance(sw, list):
-                has_self_contained = True
+                has_gathered_output_shape = True
             elif name:
-                legacy_named_entries.append(name)
+                two_level_named_entries.append(name)
 
-        all_self_contained = not legacy_named_entries
+        all_gathered_output_shape = not two_level_named_entries
 
-        if has_self_contained and not all_self_contained:
+        if has_gathered_output_shape and not all_gathered_output_shape:
             raise NDModuleError(
                 msg=(
-                    "Invalid config shape: cannot mix self-contained policy "
-                    "entries (with embedded `switch:` list, e.g., gathered "
-                    "output) with legacy global policy entries (no `switch:` "
+                    "Invalid config shape: cannot mix gathered output shape "
+                    "entries (named entries with an embedded `switch:` list) "
+                    "with two-level shape policy entries (named entries with no `switch:` "
                     "key) in the same `config` list. "
-                    f"Offending legacy entries: {legacy_named_entries}. "
+                    f"Offending two-level entries: {two_level_named_entries}. "
                     "Either (a) feed the gathered output back unchanged for "
                     "round-trip use, or (b) remove the embedded `switch:` "
-                    "lists from the self-contained entries and add a single "
+                    "lists from the gathered output entries and add a single "
                     "top-level `- switch: [...]` entry listing all target "
-                    "switches (legacy two-level shape)."
+                    "switches (two-level shape)."
                 )
             )
 
-        if has_self_contained and all_self_contained:
+        if has_gathered_output_shape and all_gathered_output_shape:
             result = []
             for entry in config:
                 flat = copy.deepcopy(entry)
@@ -541,8 +541,8 @@ class NDPolicyModule:
                 entry = copy.deepcopy(g)
                 entry["switch"] = sn
                 # ``policy_id`` auto-promotion is intentionally scoped to the
-                # self-contained gathered round-trip shape (handled above).
-                # In the legacy two-level shape, a single ``policy_id`` fanning
+                # gathered output shape (handled above). In the two-level shape,
+                # a single ``policy_id`` fanning
                 # across N switches has no coherent meaning, so we silently
                 # drop it here.  This also strips the ``policy_id: None``
                 # placeholder that ``PlaybookPolicyConfig.model_dump`` emits
@@ -561,7 +561,7 @@ class NDPolicyModule:
                 entry = copy.deepcopy(ovr)
                 entry["switch"] = sn
                 # Same reasoning as 4a — per-switch overrides also drop
-                # any stray ``policy_id`` because the legacy shape never
+                # any stray ``policy_id`` because the two-level shape never
                 # honors it.
                 entry.pop("policy_id", None)
                 result.append(entry)
@@ -717,6 +717,33 @@ class NDPolicyModule:
             if not entry.get("switch"):
                 raise NDModuleError(msg=f"config[{idx}]: every policy entry must have a switch serial number after translation.")
 
+    @staticmethod
+    def _mark_description_provided(normalized_entry: dict, raw_entry: dict) -> dict:
+        """Carry whether ``description`` was explicitly present in user input."""
+        normalized_entry["_description_provided"] = "description" in raw_entry
+
+        raw_switches = raw_entry.get("switch") or []
+        normalized_switches = normalized_entry.get("switch") or []
+        if isinstance(raw_switches, list) and isinstance(normalized_switches, list):
+            for raw_switch, normalized_switch in zip(raw_switches, normalized_switches):
+                raw_policies = raw_switch.get("policies") or [] if isinstance(raw_switch, dict) else []
+                normalized_policies = normalized_switch.get("policies") or [] if isinstance(normalized_switch, dict) else []
+                if isinstance(raw_policies, list) and isinstance(normalized_policies, list):
+                    for raw_policy, normalized_policy in zip(raw_policies, normalized_policies):
+                        if isinstance(raw_policy, dict) and isinstance(normalized_policy, dict):
+                            normalized_policy["_description_provided"] = "description" in raw_policy
+
+        return normalized_entry
+
+    @staticmethod
+    def _strip_internal_config_fields(config: object) -> object:
+        """Return config without module-internal marker keys."""
+        if isinstance(config, dict):
+            return {key: NDPolicyModule._strip_internal_config_fields(value) for key, value in config.items() if not key.startswith("_")}
+        if isinstance(config, list):
+            return [NDPolicyModule._strip_internal_config_fields(item) for item in config]
+        return config
+
     # =========================================================================
     # Public API - State Management
     # =========================================================================
@@ -727,7 +754,8 @@ class NDPolicyModule:
         Full pipeline executed before state dispatch:
             1. **Pydantic validation** — each ``config[]`` entry is validated
                against ``PlaybookPolicyConfig``.  It applies playbook-boundary
-               defaults such as ``description=""`` while preserving an omitted
+               defaults such as ``description=""``, carries whether
+               ``description`` was explicitly provided, and preserves an omitted
                ``priority`` as ``None`` so create/update logic can decide whether
                to materialize the create default or preserve the existing value.
             2. **Resolve switch identifiers** — management IPv4 addresses →
@@ -736,8 +764,10 @@ class NDPolicyModule:
                entry) structure into one dict per (policy, switch).
             4. **Validate translated config** — ensure every entry has a switch.
 
-        After this method, ``self.config`` and ``module.params["config"]``
-        contain the flat, validated, ready-to-process list.
+        After this method, ``self.config`` contains the flat, validated,
+        ready-to-process list with internal markers preserved.
+        ``module.params["config"]`` mirrors the flat list without internal
+        marker keys so invocation output stays within the public schema.
 
         Returns:
             None.
@@ -753,13 +783,14 @@ class NDPolicyModule:
         for idx, entry in enumerate(self.config):
             try:
                 validated = PlaybookPolicyConfig.model_validate(entry, context=validation_context)
-                normalized_config.append(validated.model_dump(by_alias=False, exclude_none=False))
+                normalized_entry = validated.model_dump(by_alias=False, exclude_none=False)
+                normalized_config.append(self._mark_description_provided(normalized_entry, entry))
             except ValidationError as ve:
                 raise NDModuleError(msg=f"Input validation failed for config[{idx}]: {ve}") from ve
             except ValueError as ve:
                 raise NDModuleError(msg=f"Input validation failed for config[{idx}]: {ve}") from ve
         self.config = normalized_config
-        self.module.params["config"] = normalized_config
+        self.module.params["config"] = self._strip_internal_config_fields(normalized_config)
 
         # Step 2: Resolve switch management IPs → serial numbers
         resolved_config = self.resolve_switch_identifiers(
@@ -777,7 +808,7 @@ class NDPolicyModule:
 
         # Update config references
         self.config = translated_config
-        self.module.params["config"] = translated_config
+        self.module.params["config"] = self._strip_internal_config_fields(translated_config)
 
     def manage_state(self) -> None:
         """Main entry point for state management.
@@ -1351,7 +1382,7 @@ class NDPolicyModule:
         """Compare want vs have policy to determine if an update is needed.
 
         Fields compared:
-            - description
+            - description, only when the desired state carries it
             - priority, only when the user provided it
             - templateInputs (only keys the user specified, with str() normalization.
               The controller injects extra keys like FABRIC_NAME that we must ignore.)
@@ -1370,11 +1401,13 @@ class NDPolicyModule:
         """
         diff = {}
 
-        # Compare description
-        want_desc = want.get("description", "") or ""
-        have_desc = have.get("description", "") or ""
-        if want_desc != have_desc:
-            diff["description"] = {"want": want_desc, "have": have_desc}
+        # Compare description only when the desired state explicitly carries it.
+        # Policy-ID updates can omit description to preserve the existing value.
+        if "description" in want:
+            want_desc = want.get("description", "") or ""
+            have_desc = have.get("description", "") or ""
+            if want_desc != have_desc:
+                diff["description"] = {"want": want_desc, "have": have_desc}
 
         # Compare priority only when the user provided it.  An omitted priority
         # means "preserve existing priority" for updates; create payloads still
@@ -1507,7 +1540,7 @@ class NDPolicyModule:
         Returns one of:
 
         - ``switchId:VALUE`` when exactly one unique switch is referenced
-          (the form the legacy per-switch ``_query_policies`` loop used,
+          (the form the previous per-switch ``_query_policies`` loop used,
           empirically reliable on the supported controller build).
         - ``switchId:(S1 OR S2 OR ...)`` when 2+ unique switches are referenced.
         - ``None`` when **any** entry lacks ``switch`` or references a policy id
@@ -1596,7 +1629,10 @@ class NDPolicyModule:
     def _build_want(self, config_entry: dict, state: str = "merged") -> dict:
         """Translate a single user config entry to the API-compatible want dict.
 
-        For merged state, ``name`` is required and all fields are included.
+        For merged state, ``name`` is required and payload fields are included
+        when they should be sent to the controller. Policy-ID updates omit
+        ``description`` when the user omitted it so the existing description is
+        preserved.
         For gathered/deleted state, ``name`` is optional — when omitted, only
         ``switchId`` is set, which means "return all policies on this switch".
 
@@ -1627,7 +1663,8 @@ class NDPolicyModule:
         if state == "merged":
             want["entityType"] = "switch"
             want["entityName"] = "SWITCH"
-            want["description"] = config_entry.get("description", "")
+            if "policyId" not in want or config_entry.get("_description_provided", False):
+                want["description"] = config_entry.get("description", "")
             if config_entry.get("priority") is not None:
                 want["priority"] = config_entry["priority"]
             want["templateInputs"] = config_entry.get("template_inputs") or {}
@@ -1744,7 +1781,7 @@ class NDPolicyModule:
         falling back to N per-entry HTTP GETs (which is the perf
         regression the cache was introduced to prevent).
 
-        Note on intentional behavioural differences vs. the legacy
+        Note on intentional behavioural differences vs. the previous
         per-id ``GET /policies/{policyId}`` endpoint:
             - Internal ND sub-policies (``source != ""``) are excluded
               in Python code after the bulk GET.  Positive
@@ -1839,7 +1876,10 @@ class NDPolicyModule:
         # we can introduce a (switch, description) index in _prefetch_all_policies.
         want_desc = want.get("description", "") or ""
         if not want_desc:
-            return [], "description is required when use_desc_as_key=true and name is a template name"
+            return (
+                [],
+                "description is required when use_desc_as_key=true and name is a template name",
+            )
 
         switch_policies_all = self._policies_by_switch_cache.get(switch_id, [])
         matches = [p for p in switch_policies_all if (p.get("description", "") or "") == want_desc]
@@ -1955,17 +1995,12 @@ class NDPolicyModule:
                 want["templateName"] = have["templateName"]
 
             if not diff:
-                if create_additional:
-                    # Case 8a: Exact match, create_additional=true → CREATE duplicate
-                    # Strip policyId so create doesn't fail with "not unique"
-                    want.pop("policyId", None)
-                    result["action"] = "create"
-                    return result
-                # Case 8b: Match, no diff → SKIP
+                # Case 8: Match, no diff → SKIP. A policy ID is an exact
+                # existing-resource target and never turns into a create.
                 result["action"] = "skip"
                 return result
 
-            # Case 10/11: Match, has diff → UPDATE (policy ID uniquely
+            # Case 9/10: Match, has diff → UPDATE (policy ID uniquely
             # identifies the policy, so in-place update is safe)
             result["action"] = "update"
             result["diff"] = diff
@@ -3119,13 +3154,14 @@ class NDPolicyModule:
             merged_inputs[k] = v
         self.log.debug(f"Merged templateInputs: {len(merged_inputs)} keys")
         self.log.info(f"Update payload templateInputs for {policy_id}: {merged_inputs}")
+        description = want["description"] if "description" in want else have.get("description", "")
 
         update_model = PolicyUpdate(
             switch_id=want["switchId"],
             template_name=want.get("templateName", have.get("templateName")),
             entity_type="switch",
             entity_name="SWITCH",
-            description=want.get("description", ""),
+            description=description,
             priority=self._priority_for_update(want, have),
             source=want.get("source", have.get("source", "")),
             template_inputs=merged_inputs,

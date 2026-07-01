@@ -699,13 +699,13 @@ def test_nd_policy_resources_helpers_00560() -> None:
     """
     # Summary
 
-    Verify ``_policies_differ`` treats missing ``description`` as ``""`` and
-    missing ``priority`` as "preserve existing", so omitted priority does not
+    Verify ``_policies_differ`` ignores missing ``description`` and treats
+    missing ``priority`` as "preserve existing", so omitted fields do not
     trigger an update.
 
     ## Test
 
-    - Missing description compared against empty string -> no diff.
+    - Missing description compared against a non-empty existing value -> no diff.
     - Missing priority compared against a non-default existing value -> no diff.
 
     ## Classes and Methods
@@ -713,9 +713,31 @@ def test_nd_policy_resources_helpers_00560() -> None:
     - ``NDPolicyModule._policies_differ``
     """
     want: dict = {}
-    have = {"description": "", "priority": 470}
+    have = {"description": "existing description", "priority": 470}
 
     assert NDPolicyModule._policies_differ(want, have) == {}
+
+
+def test_nd_policy_resources_helpers_00565() -> None:
+    """
+    # Summary
+
+    Verify ``_policies_differ`` treats an explicit empty description as
+    intentional, so users can clear an existing description.
+
+    ## Test
+
+    - Explicit ``description=""`` against a non-empty existing value
+      reports a description diff.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._policies_differ``
+    """
+    want = {"description": ""}
+    have = {"description": "existing description"}
+
+    assert NDPolicyModule._policies_differ(want, have) == {"description": {"want": "", "have": "existing description"}}
 
 
 def test_nd_policy_resources_helpers_00570() -> None:
@@ -934,7 +956,7 @@ def test_nd_policy_resources_helpers_00710() -> None:
     """
     # Summary
 
-    Verify the legacy two-level shape: globals + a ``switch`` entry are
+    Verify the two-level shape: globals + a ``switch`` entry are
     crossed into per-(global, switch) entries. Each emitted dict has
     ``switch`` set to the serial-number string.
 
@@ -966,7 +988,7 @@ def test_nd_policy_resources_helpers_00720() -> None:
     """
     # Summary
 
-    Verify legacy shape with NO globals and NO per-switch overrides:
+    Verify the two-level shape with NO globals and NO per-switch overrides:
     bare ``{"switch": sn}`` entries are emitted (one per switch). This
     is the deleted-state pattern "remove all on these switches".
 
@@ -1134,13 +1156,13 @@ def test_nd_policy_resources_helpers_00770() -> None:
     """
     # Summary
 
-    Verify the self-contained / gathered-roundtrip shape: every named
+    Verify the gathered output shape: every named
     entry already carries its own ``switch: [...]`` list. The helper
     flattens this into per-entry dicts with ``switch`` as a string.
 
     ## Test
 
-    - Self-contained entries are flattened without needing a separate
+    - Gathered output entries are flattened without needing a separate
       global switch entry.
     - The first switch's ``serial_number`` becomes the ``switch`` value.
 
@@ -1173,7 +1195,7 @@ def test_nd_policy_resources_helpers_00780() -> None:
     """
     # Summary
 
-    Verify gathered-roundtrip with ``policy_id``: the gathered helper's
+    Verify gathered output with ``policy_id``: the gathered helper's
     output carries ``policy_id`` (e.g. ``"POLICY-28440"``). When
     re-submitted, ``translate_config`` promotes that to ``name`` so
     merged state updates the existing policy by ID (instead of creating
@@ -1210,26 +1232,26 @@ def test_nd_policy_resources_helpers_00790() -> None:
     """
     # Summary
 
-    Verify the "mixed shape" guard: combining legacy two-level entries
-    (named entries WITHOUT embedded ``switch:``) with self-contained
+    Verify the "mixed shape" guard: combining two-level shape entries
+    (named entries WITHOUT embedded ``switch:``) with gathered output shape
     entries (named entries WITH embedded ``switch:``) in the same
     config raises ``NDModuleError`` -- silently misinterpreting the
-    self-contained entry as the global switch entry would drop its
+    gathered output entry as the global switch entry would drop its
     policy fields on the floor.
 
     ## Test
 
     - Mixed shape raises ``NDModuleError`` mentioning the offending
-      legacy entry name.
+      two-level entry name.
 
     ## Classes and Methods
 
     - ``NDPolicyModule.translate_config``
     """
     config = [
-        # Legacy named entry (no embedded switch)
-        {"name": "legacy_global", "priority": 100},
-        # Self-contained named entry (has embedded switch)
+        # Two-level named entry (no embedded switch)
+        {"name": "two_level_global", "priority": 100},
+        # Gathered output shape named entry (has embedded switch)
         {
             "name": "feature_enable",
             "priority": 200,
@@ -1275,7 +1297,7 @@ def test_nd_policy_resources_helpers_00810() -> None:
     # Summary
 
     Verify smoke test: ``translate_config`` does not raise on a typical
-    gathered-output dict shape (no globals, one self-contained entry
+    gathered-output dict shape (no globals, one gathered output entry
     with both ``serial_number`` and ``policy_id``).
 
     ## Test
@@ -1367,18 +1389,18 @@ def test_nd_policy_resources_helpers_00840() -> None:
     """
     # Summary
 
-    Verify the legacy two-level shape ignores ``policy_id`` entirely:
+    Verify the two-level shape ignores ``policy_id`` entirely:
     it is neither promoted to ``name`` nor leaked into the flattened
     output. The auto-promotion documented in the gathered round-trip
-    path is intentionally scoped to the self-contained shape, where
-    each entry has a 1:1 mapping to a single switch. In the legacy
+    path is intentionally scoped to the gathered output shape, where
+    each entry has a 1:1 mapping to a single switch. In the two-level
     two-level shape one policy entry fans across N switches, so
     promoting a single ``policy_id`` across multiple switches has no
     coherent meaning.
 
     ## Test
 
-    - Legacy two-level config with a stray ``policy_id`` on a global
+    - Two-level config with a stray ``policy_id`` on a global
       flattens to per-switch entries.
     - ``policy_id`` is stripped from every emitted entry (not promoted
       to ``name``).
@@ -1437,7 +1459,7 @@ def test_nd_policy_resources_helpers_00850() -> None:
     assert "policy_id" not in out1[0]
 
     # The second pass receives a flat list (``switch`` is a string, not
-    # a list) so it falls through to the legacy path. We re-wrap the
+    # a list) so it falls through to the two-level path. We re-wrap the
     # ``switch`` value into the embedded list shape that the gathered
     # round-trip uses, to mirror the actual ``gathered -> merged`` flow.
     re_round_tripped = [

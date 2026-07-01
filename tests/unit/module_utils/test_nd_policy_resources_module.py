@@ -706,6 +706,192 @@ def test_nd_policy_resources_module_00270() -> None:
     assert err is None
 
 
+def test_nd_policy_resources_module_00280() -> None:
+    """
+    # Summary
+
+    Verify policy-ID config entries that omit ``description`` do not carry
+    the default empty description into the merged-state ``want`` dict.
+
+    ## Test
+
+    - ``description`` omitted by user -> omitted from ``want``.
+    - ``policyId`` and switch target are still populated.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule.validate_and_prepare_config``
+    - ``NDPolicyModule._build_want``
+    """
+    module, _nd, _log = _make_module(
+        params=_default_params(
+            config=[
+                {"name": "POLICY-1", "priority": 700},
+                {"switch": [{"serial_number": "FDO111"}]},
+            ]
+        )
+    )
+
+    module.validate_and_prepare_config()
+    want = module._build_want(module.config[0], state="merged")
+
+    assert want["policyId"] == "POLICY-1"
+    assert want["switchId"] == "FDO111"
+    assert want["priority"] == 700
+    assert "description" not in want
+
+
+def test_nd_policy_resources_module_00290() -> None:
+    """
+    # Summary
+
+    Verify policy-ID config entries that explicitly set
+    ``description=""`` carry that empty value into ``want`` so the user
+    can intentionally clear an existing description.
+
+    ## Test
+
+    - Explicit ``description=""`` -> present in ``want``.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule.validate_and_prepare_config``
+    - ``NDPolicyModule._build_want``
+    """
+    module, _nd, _log = _make_module(
+        params=_default_params(
+            config=[
+                {"name": "POLICY-1", "description": "", "priority": 700},
+                {"switch": [{"serial_number": "FDO111"}]},
+            ]
+        )
+    )
+
+    module.validate_and_prepare_config()
+    want = module._build_want(module.config[0], state="merged")
+
+    assert want["policyId"] == "POLICY-1"
+    assert want["description"] == ""
+
+
+def test_nd_policy_resources_module_00295() -> None:
+    """
+    # Summary
+
+    Verify per-switch policy-ID entries that omit ``description`` do not
+    carry the default empty description into the merged-state ``want`` dict.
+
+    ## Test
+
+    - Nested ``switch[].policies[]`` policy ID without ``description`` ->
+      ``description`` omitted from ``want``.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule.validate_and_prepare_config``
+    - ``NDPolicyModule._build_want``
+    """
+    module, _nd, _log = _make_module(
+        params=_default_params(
+            config=[
+                {
+                    "switch": [
+                        {
+                            "serial_number": "FDO111",
+                            "policies": [{"name": "POLICY-1", "priority": 700}],
+                        }
+                    ]
+                }
+            ]
+        )
+    )
+
+    module.validate_and_prepare_config()
+    want = module._build_want(module.config[0], state="merged")
+
+    assert want["policyId"] == "POLICY-1"
+    assert want["switchId"] == "FDO111"
+    assert want["priority"] == 700
+    assert "description" not in want
+
+
+def test_nd_policy_resources_module_00296() -> None:
+    """
+    # Summary
+
+    Verify gathered output shape entries with ``policy_id`` and omitted
+    ``description`` preserve the existing controller description.
+
+    ## Test
+
+    - ``policy_id`` is promoted to ``policyId``.
+    - Omitted ``description`` is omitted from ``want``.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule.validate_and_prepare_config``
+    - ``NDPolicyModule._build_want``
+    """
+    module, _nd, _log = _make_module(
+        params=_default_params(
+            config=[
+                {
+                    "name": "feature_enable",
+                    "policy_id": "POLICY-1",
+                    "priority": 700,
+                    "switch": [{"serial_number": "FDO111"}],
+                }
+            ]
+        )
+    )
+
+    module.validate_and_prepare_config()
+    want = module._build_want(module.config[0], state="merged")
+
+    assert want["policyId"] == "POLICY-1"
+    assert want["switchId"] == "FDO111"
+    assert want["priority"] == 700
+    assert "description" not in want
+
+
+def test_nd_policy_resources_module_00297() -> None:
+    """
+    # Summary
+
+    Verify the internal description-present marker is retained only in
+    ``self.config`` and stripped from ``module.params["config"]`` so
+    invocation output remains within the public argument schema.
+
+    ## Test
+
+    - Internal config keeps ``_description_provided`` for update logic.
+    - Sanitized module params omit ``_description_provided``.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule.validate_and_prepare_config``
+    """
+    module, _nd, _log = _make_module(
+        params=_default_params(
+            config=[
+                {
+                    "switch": [
+                        {
+                            "serial_number": "FDO111",
+                            "policies": [{"name": "POLICY-1", "priority": 700}],
+                        }
+                    ]
+                }
+            ]
+        )
+    )
+
+    module.validate_and_prepare_config()
+
+    assert module.config[0]["_description_provided"] is False
+    assert "_description_provided" not in module.module.params["config"][0]
+
+
 # =============================================================================
 # Test: _validate_template_inputs (via pre-seeded _template_params_cache)
 # =============================================================================
@@ -1421,3 +1607,113 @@ def test_nd_policy_resources_module_00480() -> None:
     assert nd.calls[1][1] == HttpVerbEnum.DELETE
     assert "switchActions/deploy" in nd.calls[2][0]
     assert nd.calls[2][2] == {"switchIds": ["SN1", "SN2", "SN3"]}
+
+
+def test_nd_policy_resources_module_00490() -> None:
+    """
+    # Summary
+
+    Verify a policy-ID entry with no diff skips even when
+    ``create_additional_policy`` is true. A policy ID is an exact target,
+    so it should not be converted into a duplicate create.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._get_diff_merged_single``
+    """
+    module, _nd, _log = _make_module()
+    want = {
+        "policyId": "POLICY-1",
+        "switchId": "FDO111",
+        "description": "same",
+        "priority": 500,
+        "templateInputs": {"featureName": "lacp"},
+        "create_additional_policy": True,
+    }
+    have = {
+        "policyId": "POLICY-1",
+        "switchId": "FDO111",
+        "templateName": "feature_enable",
+        "description": "same",
+        "priority": 500,
+        "templateInputs": {"featureName": "lacp"},
+    }
+
+    result = module._get_diff_merged_single(want, [have])
+
+    assert result["action"] == "skip"
+    assert result["policy_id"] == "POLICY-1"
+    assert want["policyId"] == "POLICY-1"
+
+
+def test_nd_policy_resources_module_00500() -> None:
+    """
+    # Summary
+
+    Verify policy-ID updates preserve the existing description in the PUT
+    payload when ``description`` is omitted from ``want``.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._api_update_policy``
+    """
+    module, nd, _log = _make_module()
+    nd.queue({"policyId": "POLICY-1", "status": "success"})
+    want = {
+        "policyId": "POLICY-1",
+        "switchId": "FDO111",
+        "templateName": "feature_enable",
+        "priority": 700,
+        "templateInputs": {"featureName": "lacp"},
+    }
+    have = {
+        "policyId": "POLICY-1",
+        "switchId": "FDO111",
+        "templateName": "feature_enable",
+        "description": "keep me",
+        "priority": 500,
+        "templateInputs": {"featureName": "lacp"},
+    }
+
+    module._api_update_policy(want, have, "POLICY-1")
+
+    payload = nd.calls[0][2]
+    assert payload["description"] == "keep me"
+    assert payload["priority"] == 700
+
+
+def test_nd_policy_resources_module_00510() -> None:
+    """
+    # Summary
+
+    Verify explicit ``description=""`` still clears an existing
+    description in the PUT payload.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._api_update_policy``
+    """
+    module, nd, _log = _make_module()
+    nd.queue({"policyId": "POLICY-1", "status": "success"})
+    want = {
+        "policyId": "POLICY-1",
+        "switchId": "FDO111",
+        "templateName": "feature_enable",
+        "description": "",
+        "priority": 700,
+        "templateInputs": {"featureName": "lacp"},
+    }
+    have = {
+        "policyId": "POLICY-1",
+        "switchId": "FDO111",
+        "templateName": "feature_enable",
+        "description": "clear me",
+        "priority": 500,
+        "templateInputs": {"featureName": "lacp"},
+    }
+
+    module._api_update_policy(want, have, "POLICY-1")
+
+    payload = nd.calls[0][2]
+    assert payload["description"] == ""
+    assert payload["priority"] == 700

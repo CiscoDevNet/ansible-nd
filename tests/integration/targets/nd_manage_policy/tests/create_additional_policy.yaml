@@ -5,11 +5,11 @@
 #
 # Validates create_additional_policy: true semantics.
 #
-# When create_additional_policy=true, the orchestrator MUST bypass all
-# idempotency checks and unconditionally call POST /policies.  Re-running
-# the SAME task therefore creates an additional policy each time, each
-# with a distinct policyId — no description match, no template+switch
-# match, no diff computation.
+# When create_additional_policy=true on a template-name entry, the
+# orchestrator MUST bypass the template-name duplicate checks and call
+# POST /policies.  Re-running the SAME template-name task therefore creates
+# an additional policy each time, each with a distinct policyId. Policy-ID
+# entries are an exact existing-resource target and must not force-create.
 
 - name: "CREATE_ADDITIONAL_POLICY - Import cleanup tasks"
   ansible.builtin.import_tasks: ../tasks/cleanup.yaml
@@ -68,6 +68,47 @@
       ansible.builtin.assert:
         that:
           - matches_after_first | length == 1
+      tags: additional
+
+    # TC-1B: create_additional_policy=true with a policy ID should NOT
+    #        create a duplicate. Policy IDs are exact update targets.
+    - name: "ADDITIONAL TC1B - Reapply by policy ID with create_additional_policy=true"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: "{{ matches_after_first[0].policy_id }}"
+            create_additional_policy: true
+            description: "ADD-duplicate-allowed"
+            priority: 400
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result_policy_id_additional
+      tags: additional
+
+    - name: "ADDITIONAL TC1B - Gather after policy-ID reapply"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: gathered_after_policy_id_additional
+      tags: additional
+
+    - name: "ADDITIONAL TC1B - Verify policy-ID reapply did not create duplicate"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (gathered_after_policy_id_additional.gathered
+             | selectattr('description', 'equalto', 'ADD-duplicate-allowed')
+             | list
+             | length) == 1
+          - result_policy_id_additional.changed == false
       tags: additional
 
     # TC-2: Re-run the SAME task — must NOT be idempotent.  Should produce

@@ -74,10 +74,15 @@ options:
         description:
         - Description of the policy.
         - When O(use_desc_as_key=true), this is used as the unique identifier for the policy
-          and must be non-empty and unique per switch for template-name entries.
-        - When omitted in C(state=merged), the module sends an empty description.
-          Include the existing description when updating by policy ID if it should
-          be preserved.
+          and must be non-empty and unique per switch when O(config[].name) is a
+          policy template name. Policy IDs are exempt.
+        - When O(use_desc_as_key=false) and O(config[].name) is a policy template
+          name, for example C(clock_timezone) or C(switch_freeform), the name
+          selects the policy template and does not uniquely identify an existing
+          policy. If O(config[].description) is omitted in C(state=merged), the
+          module creates the policy with an empty description.
+        - When omitted while updating by policy ID in C(state=merged), the existing
+          description is preserved. Set C(description="") explicitly to clear it.
         type: str
         default: ""
       priority:
@@ -93,8 +98,8 @@ options:
         - When set to V(true), a new duplicate policy is created regardless of whether a matching one exists.
         - When set to V(false), duplicate creation is skipped if an identical policy already exists.
         - Most relevant when O(use_desc_as_key=false) and O(config[].name) is a template name.
-          Also applies when O(config[].name) is a policy ID — if V(true) and no diff exists,
-          the module creates a new copy of the policy (with a new ID) instead of skipping.
+        - Ignored when O(config[].name) is a policy ID; policy-ID entries update the
+          exact existing policy, or skip/deploy when there is no diff.
         type: bool
         default: true
       template_inputs:
@@ -138,6 +143,14 @@ options:
               description:
                 description:
                 - Description of the policy.
+                - When O(use_desc_as_key=false) and O(config[].switch[].policies[].name)
+                  is a policy template name, for example C(clock_timezone) or
+                  C(switch_freeform), the name selects the policy template and does
+                  not uniquely identify an existing policy. If
+                  O(config[].switch[].policies[].description) is omitted in
+                  C(state=merged), the module creates the policy with an empty description.
+                - When omitted while updating by policy ID in C(state=merged), the existing
+                  description is preserved. Set C(description="") explicitly to clear it.
                 type: str
                 default: ""
               priority:
@@ -149,6 +162,8 @@ options:
               create_additional_policy:
                 description:
                 - A flag indicating if a policy is to be created even if an identical policy already exists.
+                - Ignored when O(config[].switch[].policies[].name) is a policy ID; policy-ID
+                  entries update the exact existing policy, or skip/deploy when there is no diff.
                 type: bool
                 default: true
               template_inputs:
@@ -159,15 +174,16 @@ options:
   use_desc_as_key:
     description:
     - When set to V(true), policy descriptions are used as unique keys per switch.
-    - Template-name entries must have non-empty descriptions that are unique per switch
-      in the playbook and on the ND controller. Policy-ID entries, gathered output
-      shape entries with O(config[].policy_id), and switch-only entries are exempt.
+    - When O(config[].name) is a policy template name, the description must be
+      non-empty and unique per switch in the playbook and on the ND controller.
+      Policy-ID entries, gathered output shape entries with O(config[].policy_id),
+      and switch-only entries are exempt.
     - If a matching description exists and the template name changes, the module deletes
       the old policy and creates a new policy.
     - When set to V(false), matching uses the policy ID when O(config[].name) starts
-      with C(POLICY-). Otherwise, template-name entries create policies and do not
-      update existing policies in place because multiple policies can share a template
-      name.
+      with C(POLICY-). Otherwise, when O(config[].name) is a policy template name,
+      the module creates policies and does not update existing policies in place
+      because multiple policies can share a template name.
     - Duplicate or ambiguous descriptions are rejected before create, update, or delete
       operations are sent.
     type: bool
@@ -249,9 +265,11 @@ notes:
   schema validation, switch IP resolution, empty-description checks for
   O(use_desc_as_key=true), and duplicate description+switch checks run before
   write operations.
-- O(config[].description) has C(default=""). When updating by policy ID, omitting
-  O(config[].description) uses that default, so include the existing description
-  if it should be preserved.
+- O(config[].description) has C(default=""). When O(config[].name) is a policy
+  template name and O(use_desc_as_key=false), omitting the description creates the
+  policy with an empty description. When O(use_desc_as_key=true), policy template
+  names require a non-empty description. Policy-ID updates preserve the existing
+  description when O(config[].description) is omitted.
 - Template-input validation is per-entry, so invalid policy entries are reported as
   failures while valid entries can still be created, updated, deleted, or deployed.
   The final task result is failed when any entry fails. Failures returned after

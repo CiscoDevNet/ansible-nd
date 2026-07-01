@@ -64,7 +64,12 @@ class PlaybookSwitchPolicyConfig(NDNestedModel):
     description: str = Field(
         default="",
         max_length=255,
-        description="Policy description (max 255 characters)",
+        description=(
+            "Policy description (max 255 characters). When the policy name is "
+            "a policy template name and use_desc_as_key is false, omitted "
+            "descriptions create policies with an empty description. Policy-ID "
+            "updates preserve the existing description when omitted."
+        ),
     )
     priority: int | None = Field(
         default=None,
@@ -74,7 +79,7 @@ class PlaybookSwitchPolicyConfig(NDNestedModel):
     )
     create_additional_policy: bool = Field(
         default=True,
-        description="Create a new policy even if an identical one already exists",
+        description=("Create a duplicate when the policy name is a policy template name " "and a matching policy exists; ignored for policy-ID entries."),
     )
     template_inputs: dict[str, Any] | None = Field(
         default_factory=dict,
@@ -164,17 +169,22 @@ class PlaybookPolicyConfig(NDNestedModel):
         max_length=255,
         description=(
             "Controller-assigned policy ID (e.g., POLICY-28440). When set, the "
-            "gathered round-trip path (each entry carries its own embedded `switch:` "
+            "gathered output shape (each entry carries its own embedded `switch:` "
             "list) promotes this value to `name` so the update targets the existing "
-            "policy by ID. Honored only in the self-contained gathered shape; "
-            "silently ignored in the legacy two-level shape (globals + single `switch:` "
+            "policy by ID. Honored only in the gathered output shape; "
+            "silently ignored in the two-level shape (globals + single `switch:` "
             "entry) where one ID has no coherent meaning across multiple switches."
         ),
     )
     description: str = Field(
         default="",
         max_length=255,
-        description="Policy description (max 255 characters)",
+        description=(
+            "Policy description (max 255 characters). When the policy name is "
+            "a policy template name and use_desc_as_key is false, omitted "
+            "descriptions create policies with an empty description. Policy-ID "
+            "updates preserve the existing description when omitted."
+        ),
     )
     priority: int | None = Field(
         default=None,
@@ -184,7 +194,7 @@ class PlaybookPolicyConfig(NDNestedModel):
     )
     create_additional_policy: bool = Field(
         default=True,
-        description="Create a new policy even if an identical one already exists",
+        description=("Create a duplicate when the policy name is a policy template name " "and a matching policy exists; ignored for policy-ID entries."),
     )
     template_inputs: dict[str, Any] | None = Field(
         default_factory=dict,
@@ -234,10 +244,10 @@ class PlaybookPolicyConfig(NDNestedModel):
                 "or a policy ID like 'POLICY-12345'."
             )
 
-        # When use_desc_as_key=true, description must not be empty for
-        # template-name entries (not policy IDs) in merged/deleted states.
+        # When use_desc_as_key=true, description must not be empty when the
+        # policy name is a policy template name in merged/deleted states.
         # Entries that carry an explicit `policy_id` are exempt because the
-        # self-contained promotion path (translate_config) rewrites `name`
+        # gathered output promotion path (translate_config) rewrites `name`
         # to the policy_id before any description-keyed matching runs.
         if (
             use_desc_as_key

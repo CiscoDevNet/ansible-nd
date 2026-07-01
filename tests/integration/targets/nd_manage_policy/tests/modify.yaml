@@ -188,18 +188,17 @@
 
     - name: "MODIFY TC4 - Extract policy ID from gathered result"
       ansible.builtin.set_fact:
-        policy_id: "{{ gathered_result.gathered[0].name }}"
+        policy_id: "{{ gathered_result.gathered[0].policy_id }}"
       when: gathered_result.gathered | length > 0
       tags: modify
 
-    - name: "MODIFY TC4 - Modify policy by ID"
+    - name: "MODIFY TC4 - Modify policy by ID while omitting description"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
           - name: "{{ policy_id }}"
-            description: "Timezone CET - modified by ID"
             priority: 800
             template_inputs:
               TIME_ZONE: CET
@@ -215,6 +214,39 @@
       ansible.builtin.assert:
         that:
           - result.changed == true
+      when: policy_id is defined
+      tags: modify
+
+    - name: "MODIFY TC4 - Re-gather policy after ID update"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc4_gathered_result
+      when: policy_id is defined
+      tags: modify
+
+    - name: "MODIFY TC4 - Filter updated policy by ID"
+      ansible.builtin.set_fact:
+        tc4_policy_id_matches: >-
+          {{
+            tc4_gathered_result.gathered
+            | selectattr('policy_id', 'defined')
+            | selectattr('policy_id', 'equalto', policy_id)
+            | list
+          }}
+      when: policy_id is defined
+      tags: modify
+
+    - name: "MODIFY TC4 - Verify omitted description was preserved"
+      ansible.builtin.assert:
+        that:
+          - tc4_policy_id_matches | length == 1
+          - tc4_policy_id_matches[0].description == "Timezone CET"
+          - tc4_policy_id_matches[0].priority == 800
       when: policy_id is defined
       tags: modify
 

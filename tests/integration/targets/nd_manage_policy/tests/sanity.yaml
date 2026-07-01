@@ -247,30 +247,30 @@
     ##  must FAIL (regression for B11)          ##
     ##############################################
     #
-    # `translate_config` rejects mixing legacy globals (entries WITHOUT
-    # a `switch:` key, paired with a separate top-level switch entry)
-    # and self-contained gathered-style entries (entries WITH an embedded
+    # `translate_config` rejects mixing two-level shape policy entries
+    # (entries WITHOUT a `switch:` key, paired with a separate top-level
+    # switch entry) and gathered output shape entries (entries WITH an embedded
     # `switch:` list).  Mixing the two shapes at the top level produces
     # ambiguous semantics and is rejected up-front before any API call.
-    - name: "SANITY TC9 - Mixed legacy + self-contained shapes must fail"
+    - name: "SANITY TC9 - Mixed two-level + gathered output shapes must fail"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
-          # Legacy global entry (no switch key inside the policy entry)
+          # Two-level policy entry (no switch key inside the policy entry)
           - name: switch_freeform
-            description: "legacy global entry"
+            description: "two-level policy entry"
             template_inputs:
               CONF: "system vlan long-name"
-          # Self-contained gathered-style entry (switch list embedded)
+          # Gathered output shape entry (switch list embedded)
           - name: switch_freeform
-            description: "self-contained entry"
+            description: "gathered output entry"
             template_inputs:
               CONF: "no ip domain-lookup"
             switch:
               - serial_number: "{{ switch_serial_1 }}"
-          # Legacy top-level switch entry (pairs with the first item)
+          # Two-level top-level switch entry (pairs with the first item)
           - switch:
               - serial_number: "{{ switch_serial_1 }}"
       register: result
