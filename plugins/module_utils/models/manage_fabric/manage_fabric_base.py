@@ -28,9 +28,9 @@ import typing
 from typing import Any, ClassVar, Dict, Literal, Set, get_args, get_origin
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import NdFabricName
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    HAS_PYDANTIC,
     BaseModel,
     ConfigDict,
     Field,
@@ -117,6 +117,9 @@ def _build_options_from_model(model_cls, exclude_fields: Set[str] | None = None)
     Auto-excludes single-value Literal fields.
     Respects _argspec_exclude_fields ClassVar on model classes.
     """
+    if not HAS_PYDANTIC:
+        return {}
+
     options = {}
     excludes = exclude_fields or set()
 

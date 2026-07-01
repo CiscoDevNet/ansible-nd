@@ -8,7 +8,7 @@ from __future__ import absolute_import, division, print_function, annotations
 
 __metaclass__ = type
 
-from typing import Dict, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import FabricTypeEnum
