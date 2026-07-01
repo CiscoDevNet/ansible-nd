@@ -9,9 +9,11 @@ __metaclass__ = type
 
 import json
 import time
+from jsonpath_ng import parse
 
 from ansible.errors import AnsibleActionFail
 from ansible.plugins.action import ActionBase
+
 
 
 class ActionModule(ActionBase):
@@ -39,6 +41,7 @@ class ActionModule(ActionBase):
         run_idempotency = args.get("idempotency", True)
         idempotency_retries = int(args.get("idempotency_retries", 1))
         idempotency_delay = int(args.get("idempotency_delay", 0))
+        nd_queries = args.get("nd_queries", [])
 
         if not module_name:
             raise AnsibleActionFail("Missing required argument: module")
@@ -54,6 +57,9 @@ class ActionModule(ActionBase):
 
         if not isinstance(expected, dict):
             raise AnsibleActionFail("Argument expected must be a dictionary")
+        
+        if not isinstance(nd_queries, list):
+            raise AnsibleActionFail("Argument nd_queries must be a list")
 
         if idempotency_retries < 1:
             raise AnsibleActionFail("Argument idempotency_retries must be 1 or greater")
@@ -74,6 +80,7 @@ class ActionModule(ActionBase):
         second_run_result = None
         idempotency_attempts = 0
         original_check_mode = self._task.check_mode
+        nd_query_results = []
 
         try:
             if run_check_mode:
@@ -100,6 +107,10 @@ class ActionModule(ActionBase):
                     retries=idempotency_retries,
                     delay=idempotency_delay,
                 )
+                nd_query_results = self._run_nd_queries(
+                    nd_queries=nd_queries,
+                    task_vars=task_vars,
+         )
         finally:
             self._task.check_mode = original_check_mode
 
@@ -118,6 +129,7 @@ class ActionModule(ActionBase):
                 "first_run_result": first_run_result,
                 "second_run_result": second_run_result,
                 "idempotency_attempts": idempotency_attempts,
+                "nd_query_results": nd_query_results,
             }
         )
 
@@ -129,6 +141,93 @@ class ActionModule(ActionBase):
             module_args=module_args,
             task_vars=task_vars,
         )
+    
+    def _run_nd_queries(self, nd_queries, task_vars):
+        results = []
+
+        for query in nd_queries:
+            if not isinstance(query, dict):
+                raise AnsibleActionFail("Each nd_queries entry must be a dictionary")
+
+            name = query.get("name")
+            path = query.get("path")
+            method = query.get("method", "get")
+
+            if not path:
+                raise AnsibleActionFail("Each nd_queries entry must include path")
+
+            rendered_path = self._templar.template(path)
+
+            query_result = self._execute_module(
+                module_name="cisco.nd.nd_rest",
+                module_args={
+                    "path": rendered_path,
+                    "method": method,
+                },
+                task_vars=task_vars,
+            )
+
+            self._assert_nd_query_expectations(query, query_result)
+
+            results.append(
+                {
+                    "name": name,
+                    "path": rendered_path,
+                    "method": method,
+                    "result": query_result,
+                }
+            )
+
+        return results
+    
+    def _assert_nd_query_expectations(self, query, query_result):
+        expectations = query.get("expect", [])
+
+        if not isinstance(expectations, list):
+            raise AnsibleActionFail("nd_queries expect must be a list")
+
+        for expectation in expectations:
+            if not isinstance(expectation, dict):
+                raise AnsibleActionFail("Each nd_queries expectation must be a dictionary")
+
+            expression = expectation.get("jsonpath")
+            if not expression:
+                raise AnsibleActionFail("Each nd_queries expectation must include jsonpath")
+
+            values = self._jsonpath_values(query_result, expression)
+
+            if "exists" in expectation:
+                expected_exists = bool(expectation["exists"])
+                actual_exists = len(values) > 0
+
+                if actual_exists != expected_exists:
+                    raise AnsibleActionFail(
+                        "ND query expectation failed for %s: expected exists=%s but got exists=%s"
+                        % (expression, expected_exists, actual_exists)
+                    )
+
+            if "equals" in expectation:
+                expected_value = expectation["equals"]
+
+                if not values:
+                    raise AnsibleActionFail(
+                        "ND query expectation failed for %s: no value found, expected %s"
+                        % (expression, expected_value)
+                    )
+
+                if values[0] != expected_value:
+                    raise AnsibleActionFail(
+                        "ND query expectation failed for %s: expected %s but got %s"
+                        % (expression, expected_value, values[0])
+                    )
+
+    def _jsonpath_values(self, data, expression):
+        try:
+            jsonpath_expression = parse(expression)
+        except Exception as exc:
+            raise AnsibleActionFail("Invalid JSONPath expression %s: %s" % (expression, exc))
+
+        return [match.value for match in jsonpath_expression.find(data)]
 
     def _has_unexpected_failure(self, module_result, expected):
         if module_result is None:

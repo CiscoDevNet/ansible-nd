@@ -21,6 +21,16 @@
           apply_changed: true
           idempotency: true
           failed: false
+        nd_queries:
+          - name: Validate loopback100 from ND API
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/loopback100"
+            method: get
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: "loopback100"
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.100.1"
+       
         idempotency_retries: 6
         idempotency_delay: 10
       register: merged_create_100

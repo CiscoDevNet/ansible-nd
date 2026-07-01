@@ -55,21 +55,59 @@
       ansible.builtin.include_tasks: nd4x_demo_merged.yaml
       tags:
          - nd4x_demo
-         - nd4x_demo_create
-         - nd4x_demo_verify
-         - nd4x_demo_cleanup
+         - nd4x_demo_merged
+        # - nd4x_demo_create
+        # - nd4x_demo_verify
+        # - nd4x_demo_cleanup
+
     
-    - name: Run nd_interface_loopback replaced state tests
-      ansible.builtin.include_tasks: replaced.yaml
-      when: nd4x_demo_run_remaining_states | default(false) | bool
+    - name: Run nd_interface_loopback replaced state tests using ND4.x demo harness
+      ansible.builtin.include_tasks: nd4x_demo_replaced.yaml
+      tags:
+         - nd4x_demo
+         - nd4x_demo_replaced
+        # - nd4x_demo_setup
+        # - nd4x_demo_verify
+        # - nd4x_demo_cleanup
+      
 
-    - name: Run nd_interface_loopback overridden state tests
-      ansible.builtin.include_tasks: overridden.yaml
-      when: nd4x_demo_run_remaining_states | default(false) | bool
+    - name: Run nd_interface_loopback deleted state tests using ND4.x demo harness
+      ansible.builtin.include_tasks: 
+        file: nd4x_demo_deleted.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_deleted
+      tags:
+         - nd4x_demo
+         - nd4x_demo_deleted
+        # - nd4x_demo_setup
+        # - nd4x_demo_verify
+        # - nd4x_demo_cleanup
+    
+    - name: Run nd_interface_loopback overridden state tests using ND4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_overridden.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_overridden
+      tags:
+        - nd4x_demo
+        - nd4x_demo_overridden
+      
+    
+    #- name: Run nd_interface_loopback replaced state tests
+    #  ansible.builtin.include_tasks: replaced.yaml
+    #  when: nd4x_demo_run_remaining_states | default(false) | bool
 
-    - name: Run nd_interface_loopback deleted state tests
-      ansible.builtin.include_tasks: deleted.yaml
-      when: nd4x_demo_run_remaining_states | default(false) | bool
+    #- name: Run nd_interface_loopback overridden state tests
+    #  ansible.builtin.include_tasks: overridden.yaml
+    #  when: nd4x_demo_run_remaining_states | default(false) | bool
+
+    #- name: Run nd_interface_loopback deleted state tests
+    #  ansible.builtin.include_tasks: deleted.yaml
+    #  when: nd4x_demo_run_remaining_states | default(false) | bool
 
     #- name: Run nd_interface_loopback replaced state tests
     #  ansible.builtin.include_tasks: replaced.yaml

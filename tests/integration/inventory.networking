@@ -15,5 +15,6 @@ ansible_user=admin
 ansible_password=idgeR09!
 nd_test_fabric_name=VXLAN_Fabric
 nd_test_switch_ip=10.122.84.59
+nd_test_switch_id=982YGMKUY2B
 
 
