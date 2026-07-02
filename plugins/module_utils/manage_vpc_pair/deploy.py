@@ -109,7 +109,6 @@ def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
     non_fatal_signatures = (
         "vpc fabric peering is not supported",
         "vpcsanitycheck",
-        "unexpected error generating vpc configuration",
     )
     return any(signature in message for signature in non_fatal_signatures)
 
