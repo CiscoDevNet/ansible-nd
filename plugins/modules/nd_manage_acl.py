@@ -121,20 +121,23 @@ options:
           src_port:
             description:
             - The source port value.
+            - Accepts a port number (for example C(80)) or a service name (for example C(www)).
             - Required when O(config.entries.src_port_action) is set to a value other than C(port_range) or C(none).
-            type: int
+            type: str
             aliases: [ srcPort ]
           src_port_range_start:
             description:
             - The source port range start.
+            - Accepts a port number or a service name.
             - Required when O(config.entries.src_port_action) is C(port_range).
-            type: int
+            type: str
             aliases: [ srcPortRangeStart ]
           src_port_range_end:
             description:
             - The source port range end.
+            - Accepts a port number or a service name.
             - Required when O(config.entries.src_port_action) is C(port_range).
-            type: int
+            type: str
             aliases: [ srcPortRangeEnd ]
           dst_port_action:
             description:
@@ -146,20 +149,23 @@ options:
           dst_port:
             description:
             - The destination port value.
+            - Accepts a port number (for example C(443)) or a service name (for example C(ftp)).
             - Required when O(config.entries.dst_port_action) is set to a value other than C(port_range) or C(none).
-            type: int
+            type: str
             aliases: [ dstPort ]
           dst_port_range_start:
             description:
             - The destination port range start.
+            - Accepts a port number or a service name.
             - Required when O(config.entries.dst_port_action) is C(port_range).
-            type: int
+            type: str
             aliases: [ dstPortRangeStart ]
           dst_port_range_end:
             description:
             - The destination port range end.
+            - Accepts a port number or a service name.
             - Required when O(config.entries.dst_port_action) is C(port_range).
-            type: int
+            type: str
             aliases: [ dstPortRangeEnd ]
           icmp_option:
             description:
@@ -221,6 +227,13 @@ EXAMPLES = r"""
             dst: any
             dst_port_action: equal_to
             dst_port: 443
+          - sequence_number: 25
+            action: permit
+            protocol: tcp
+            src: 10.0.0.0/8
+            dst: any
+            dst_port_action: equal_to
+            dst_port: www  # service name is also accepted
           - sequence_number: 30
             action: deny
             protocol: ip

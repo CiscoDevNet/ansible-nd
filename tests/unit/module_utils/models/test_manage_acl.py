@@ -42,7 +42,7 @@ SAMPLE_IPV4_API_RESPONSE = {
     "name": "ACL-IPV4-WEB",
     "description": "IPv4 web ACL",
     "entries": [
-        {"sequenceNumber": 10, "action": "permit", "protocol": "tcp", "src": "any", "dst": "10.0.0.0/24", "dstPortAction": "equalTo", "dstPort": 80},
+        {"sequenceNumber": 10, "action": "permit", "protocol": "tcp", "src": "any", "dst": "10.0.0.0/24", "dstPortAction": "equalTo", "dstPort": "80"},
         {"sequenceNumber": 20, "action": "deny", "protocol": "ip", "src": "any", "dst": "any"},
     ],
     "lastUpdateTimestamp": "2026-06-12T10:00:00Z",
@@ -312,6 +312,61 @@ def test_manage_acl_00110() -> None:
     bad_config["entries"] = [{"sequence_number": 10, "action": "permit", "protocol": "tcp", "src": "any", "dst": "any", "dst_port_action": "equal_to"}]
     with pytest.raises(ValidationError, match="dst_port.*required"):
         AclModel(**bad_config)
+
+
+def test_manage_acl_00115() -> None:
+    """
+    # Summary
+
+    Verify port fields accept both integers and service-name strings, and that
+    integer input is normalised to the API wire (string) form.
+
+    ## Test
+
+    - A service-name port ('www') is accepted and preserved
+    - An integer port (80) is coerced to the string '80' and emitted as a string
+      in the payload
+    - A service-name port range skips numeric ordering validation
+
+    ## Classes and Methods
+
+    - AclEntryModel.normalize_port
+    - AclModel._validate_port_options
+    - AclModel.to_payload
+    """
+    # Service-name port is accepted and preserved.
+    service_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    service_config["entries"] = [
+        {"sequence_number": 10, "action": "permit", "protocol": "tcp", "src": "any", "dst": "any", "dst_port_action": "equal_to", "dst_port": "www"}
+    ]
+    model = AclModel(**service_config)
+    assert model.entries[0].dst_port == "www"
+    assert model.to_payload()["entries"][0]["dstPort"] == "www"
+
+    # Integer port is coerced to a string, both on the model and in the payload.
+    int_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    int_config["entries"] = [
+        {"sequence_number": 10, "action": "permit", "protocol": "tcp", "src": "any", "dst": "any", "dst_port_action": "equal_to", "dst_port": 80}
+    ]
+    int_model = AclModel(**int_config)
+    assert int_model.entries[0].dst_port == "80"
+    assert int_model.to_payload()["entries"][0]["dstPort"] == "80"
+
+    # A service-name range does not trigger the numeric start <= end check.
+    range_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    range_config["entries"] = [
+        {
+            "sequence_number": 10,
+            "action": "permit",
+            "protocol": "tcp",
+            "src": "any",
+            "dst": "any",
+            "dst_port_action": "port_range",
+            "dst_port_range_start": "ftp-data",
+            "dst_port_range_end": "ftp",
+        }
+    ]
+    assert AclModel(**range_config).entries[0].dst_port_range_start == "ftp-data"
 
 
 def test_manage_acl_00120() -> None:

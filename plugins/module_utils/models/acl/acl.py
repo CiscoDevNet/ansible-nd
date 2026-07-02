@@ -123,9 +123,9 @@ class AclEntryModel(NDNestedModel):
         description="Source port operator (tcp/udp).",
     )
 
-    src_port: Optional[int] = Field(default=None, alias="srcPort", description="Source port value.")
-    src_port_range_start: Optional[int] = Field(default=None, alias="srcPortRangeStart", description="Source port range start.")
-    src_port_range_end: Optional[int] = Field(default=None, alias="srcPortRangeEnd", description="Source port range end.")
+    src_port: Optional[str] = Field(default=None, alias="srcPort", description="Source port value (number or service name, e.g. 'www').")
+    src_port_range_start: Optional[str] = Field(default=None, alias="srcPortRangeStart", description="Source port range start (number or service name).")
+    src_port_range_end: Optional[str] = Field(default=None, alias="srcPortRangeEnd", description="Source port range end (number or service name).")
 
     dst_port_action: Optional[PortActionEnum] = Field(
         default=None,
@@ -133,9 +133,9 @@ class AclEntryModel(NDNestedModel):
         description="Destination port operator (tcp/udp).",
     )
 
-    dst_port: Optional[int] = Field(default=None, alias="dstPort", description="Destination port value.")
-    dst_port_range_start: Optional[int] = Field(default=None, alias="dstPortRangeStart", description="Destination port range start.")
-    dst_port_range_end: Optional[int] = Field(default=None, alias="dstPortRangeEnd", description="Destination port range end.")
+    dst_port: Optional[str] = Field(default=None, alias="dstPort", description="Destination port value (number or service name, e.g. 'ftp').")
+    dst_port_range_start: Optional[str] = Field(default=None, alias="dstPortRangeStart", description="Destination port range start (number or service name).")
+    dst_port_range_end: Optional[str] = Field(default=None, alias="dstPortRangeEnd", description="Destination port range end (number or service name).")
 
     icmp_option: Optional[str] = Field(default=None, alias="icmpOption", description="ICMP option (icmp protocol only).")
     tcp_option: Optional[str] = Field(default=None, alias="tcpOption", description="TCP option (tcp protocol only).")
@@ -158,6 +158,32 @@ class AclEntryModel(NDNestedModel):
         if wire == "none":
             return None
         return wire
+
+    @field_validator(
+        "src_port",
+        "src_port_range_start",
+        "src_port_range_end",
+        "dst_port",
+        "dst_port_range_start",
+        "dst_port_range_end",
+        mode="before",
+    )
+    @classmethod
+    def normalize_port(cls, value: Any) -> Any:
+        """
+        Accept both integer and string port input and normalise to the API wire
+        (string) form. The ACL API models port fields as strings and permits
+        service names such as ``www`` and ``ftp`` in addition to numeric values,
+        so an integer like ``443`` is coerced to ``"443"``.
+        """
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            # Guard against YAML coercing bare true/false into a port value.
+            raise ValueError(f"invalid port value: {value!r}")
+        if isinstance(value, int):
+            return str(value)
+        return value
 
 
 class AclModel(NDBaseModel):
@@ -296,7 +322,9 @@ class AclModel(NDBaseModel):
                 raise ValueError(
                     f"entries[{idx}]: '{prefix}_port_range_start' and '{prefix}_port_range_end' are required when {prefix}_port_action is 'port_range'."
                 )
-            if start > end:
+            # Ports may be numeric or service names (e.g. 'www'); only enforce
+            # start <= end ordering when both endpoints are numeric.
+            if str(start).isdigit() and str(end).isdigit() and int(start) > int(end):
                 raise ValueError(f"entries[{idx}]: '{prefix}_port_range_start' must be less than or equal to '{prefix}_port_range_end'.")
         else:
             if getattr(entry, f"{prefix}_port") is None:
@@ -315,13 +343,13 @@ class AclModel(NDBaseModel):
             src=dict(type="str"),
             dst=dict(type="str"),
             src_port_action=dict(type="str", choices=_PORT_ACTION_CHOICES, aliases=["srcPortAction"]),
-            src_port=dict(type="int", aliases=["srcPort"]),
-            src_port_range_start=dict(type="int", aliases=["srcPortRangeStart"]),
-            src_port_range_end=dict(type="int", aliases=["srcPortRangeEnd"]),
+            src_port=dict(type="str", aliases=["srcPort"]),
+            src_port_range_start=dict(type="str", aliases=["srcPortRangeStart"]),
+            src_port_range_end=dict(type="str", aliases=["srcPortRangeEnd"]),
             dst_port_action=dict(type="str", choices=_PORT_ACTION_CHOICES, aliases=["dstPortAction"]),
-            dst_port=dict(type="int", aliases=["dstPort"]),
-            dst_port_range_start=dict(type="int", aliases=["dstPortRangeStart"]),
-            dst_port_range_end=dict(type="int", aliases=["dstPortRangeEnd"]),
+            dst_port=dict(type="str", aliases=["dstPort"]),
+            dst_port_range_start=dict(type="str", aliases=["dstPortRangeStart"]),
+            dst_port_range_end=dict(type="str", aliases=["dstPortRangeEnd"]),
             icmp_option=dict(type="str", aliases=["icmpOption"]),
             tcp_option=dict(type="str", aliases=["tcpOption"]),
         )
