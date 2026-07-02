@@ -49,7 +49,10 @@ class StormControlMutexMixin(NDNestedModel):  # pylint: disable=too-few-public-m
 
     ## Raises
 
-    None
+    ### ValueError
+
+    - If both the percentage and pps level are set for the same storm-control class (raised by
+      `_reject_storm_control_level_and_pps` during model validation; surfaces as a Pydantic `ValidationError` when constructing an inheriting model).
     """
 
     @model_validator(mode="after")
