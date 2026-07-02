@@ -419,7 +419,7 @@ class ResourceManagerConfigModel(NDBaseModel):
                 missing.append("pool_name")
             if self.scope_type is None:
                 missing.append("scope_type")
-            if state == "merged" and self.resource is None:
+            if state == "merged" and self.resource is None and self.is_pre_allocated is not False:
                 missing.append("resource")
             if missing:
                 raise ValueError(

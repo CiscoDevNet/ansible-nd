@@ -419,6 +419,39 @@ def test_resource_manager_config_allows_partial_gathered_filter():
     assert model.switches is None
 
 
+def test_resource_manager_config_allows_auto_allocation_without_resource():
+    """Merged auto-allocation does not require an explicit resource value."""
+    model = ResourceManagerConfigModel.model_validate(
+        {
+            "entity_name": "loopback0",
+            "pool_type": "ID",
+            "pool_name": "LOOPBACK_ID",
+            "scope_type": "device",
+            "switches": ["SER1"],
+            "is_pre_allocated": False,
+        },
+        context={"state": "merged"},
+    )
+
+    assert model.resource is None
+    assert model.is_pre_allocated is False
+
+
+def test_resource_manager_config_requires_resource_when_preallocation_omitted():
+    """Merged config keeps the legacy explicit-allocation default."""
+    with pytest.raises(Exception, match="Mandatory parameter\\(s\\) missing for state='merged': 'resource'"):
+        ResourceManagerConfigModel.model_validate(
+            {
+                "entity_name": "loopback0",
+                "pool_type": "ID",
+                "pool_name": "LOOPBACK_ID",
+                "scope_type": "device",
+                "switches": ["SER1"],
+            },
+            context={"state": "merged"},
+        )
+
+
 def test_resource_manager_argspec_includes_nested_config_options():
     """Argument spec exposes typed nested config options for Ansible-side validation."""
     spec = ResourceManagerConfigModel.get_argument_spec()
@@ -1049,6 +1082,28 @@ def test_compute_changes_detects_to_update_bucket():
     assert len(changes["idempotent"]) == 0
 
 
+def test_compute_changes_treats_vrf_name_as_identity():
+    """Resources that differ only by VRF are not treated as the same allocation."""
+    proposed = [_config(vrf_name="blue")]
+    existing = [_response(vrfName="red")]
+
+    changes = ResourceManagerDiffEngine.compute_changes(proposed, existing, log=LOG)
+
+    assert len(changes["to_add"]) == 1
+    assert len(changes["idempotent"]) == 0
+
+
+def test_compute_changes_auto_allocated_value_is_idempotent():
+    """Auto-allocation config stays idempotent after ND assigns a resource value."""
+    proposed = [_config(resource=None, is_pre_allocated=False)]
+    existing = [_response(resourceValue="10", isPreAllocated=False)]
+
+    changes = ResourceManagerDiffEngine.compute_changes(proposed, existing, log=LOG)
+
+    assert len(changes["idempotent"]) == 1
+    assert changes["to_update"] == []
+
+
 def test_compute_changes_detects_to_delete_bucket():
     """compute_changes creates to_delete bucket for existing without proposed match."""
     proposed = []
@@ -1113,6 +1168,33 @@ def test_build_device_scope_payload():
 
     assert payload["scopeDetails"]["switchId"] == "SER1"
     assert payload["scopeDetails"]["scopeType"] == "device"
+    assert payload["isPreAllocated"] is True
+
+
+def test_build_create_payload_passes_auto_allocation_and_vrf():
+    """_build_create_payload honors is_pre_allocated=false and vrf_name."""
+    module = _resource_manager()
+    cfg = _config(
+        resource=None,
+        is_pre_allocated=False,
+        vrf_name="pr333_vrf_marker",
+    )
+
+    payload = module._build_create_payload(cfg, switch_ip="SER1")  # pylint: disable=protected-access
+
+    assert payload["isPreAllocated"] is False
+    assert payload["vrfName"] == "pr333_vrf_marker"
+    assert "resourceValue" not in payload
+
+
+def test_build_create_payload_keeps_legacy_preallocation_default():
+    """Omitted is_pre_allocated keeps sending explicit pre-allocation."""
+    module = _resource_manager()
+    cfg = _config(is_pre_allocated=None)
+
+    payload = module._build_create_payload(cfg, switch_ip="SER1")  # pylint: disable=protected-access
+
+    assert payload["isPreAllocated"] is True
 
 
 def test_build_device_interface_scope_payload():
@@ -1518,7 +1600,7 @@ def test_make_resource_key_builds_dedup_key():
         log=LOG,
     )
     assert isinstance(key, tuple)
-    assert len(key) == 4  # (entity, pool, scope, switch)
+    assert len(key) == 5  # (entity, pool, scope, switch, vrf_name)
 
 
 # =========================================================================

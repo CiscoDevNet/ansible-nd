@@ -249,6 +249,75 @@
                                     "SUBNET"]'
       loop: '{{ result.gathered }}'
 
+    - name: Gathered Resources - filter by resource
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered                                 # choose form [merged, deleted, gathered]
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - resource: "102"                            # The value of the created L2_VNI resource
+      register: result
+
+    - name: ASSERT - Check condition
+      ansible.builtin.assert:
+        that:
+          - '(result["gathered"] | length) != 0'
+          - '(result["gathered"] | map(attribute="resource") | unique | list) == ["102"]'
+
+    - name: Gathered Resources - filter by scope type
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered                                 # choose form [merged, deleted, gathered]
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - scope_type: "fabric"                       # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
+      register: result
+
+    - name: ASSERT - Check condition
+      ansible.builtin.assert:
+        that:
+          - '(result["gathered"] | length) != 0'
+          - '(result["gathered"] | map(attribute="scope_type") | unique | list) == ["fabric"]'
+
+    - name: Gathered Resources - filter by pool type
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered                                 # choose form [merged, deleted, gathered]
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
+      register: result
+
+    - name: Set loopback device gathered resource from pool type filter
+      ansible.builtin.set_fact:
+        loopback_dev_gathered: >-
+          {{ result.gathered
+             | selectattr("entity_name", "equalto", "loopback_dev")
+             | selectattr("pool_name", "equalto", "LOOPBACK_ID")
+             | selectattr("resource", "equalto", "200")
+             | list }}
+
+    - name: ASSERT - Check switch aggregation after pool type filter
+      ansible.builtin.assert:
+        that:
+          - '(result["gathered"] | length) != 0'
+          - '(result["gathered"] | map(attribute="pool_type") | unique | list) == ["ID"]'
+          - '(loopback_dev_gathered | length) == 1'
+          - '(loopback_dev_gathered[0]["switches"] | sort) == ([ansible_switch1, ansible_switch2] | sort)'
+
+    - name: Gathered Resources - filter by pool name and resource
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered                                 # choose form [merged, deleted, gathered]
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - pool_name: "L2_VNI"                       # Based on the 'poolType', select appropriate name
+            resource: "102"                           # The value of the created L2_VNI resource
+      register: result
+
+    - name: ASSERT - Check condition
+      ansible.builtin.assert:
+        that:
+          - '(result["gathered"] | length) == 1'
+          - 'result["gathered"][0]["pool_name"] == "L2_VNI"'
+          - 'result["gathered"][0]["resource"] == "102"'
+
     - name: Gathered Resources - filter by switch and pool name
       cisco.nd.nd_manage_resource_manager:
         state: gathered                                 # choose form [merged, deleted, gathered]

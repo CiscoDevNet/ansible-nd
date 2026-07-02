@@ -37,8 +37,9 @@ options:
   config:
     description:
       - A list of dictionaries containing resource configurations.
-      - "For C(state=merged): Required fields per item are C(entity_name), C(pool_type), C(pool_name), C(scope_type), and C(resource).
-        Additional required field C(switches) when C(scope_type) is not C(fabric). Optional fields C(is_pre_allocated), C(vrf_name)."
+      - "For C(state=merged): Required fields per item are C(entity_name), C(pool_type), C(pool_name), and C(scope_type).
+        C(resource) is required when C(is_pre_allocated) is omitted or C(true). Additional required field C(switches)
+        when C(scope_type) is not C(fabric). Optional fields C(is_pre_allocated), C(vrf_name)."
       - "For C(state=deleted): Required fields per item are C(entity_name), C(pool_type), C(pool_name), C(scope_type).
         Additional required field C(switches) when C(scope_type) is not C(fabric). Optional fields C(is_pre_allocated), C(vrf_name)."
       - "For C(state=gathered): C(config) may be omitted entirely to retrieve all resources, or provided with optional filter fields.
@@ -96,7 +97,8 @@ options:
           - The value will be an integer if C(pool_type=ID).
           - The value will be an IPv4 or IPv6 address if C(pool_type=IP).
           - The value will be an IPv4 or IPv6 address with a net mask if C(pool_type=SUBNET).
-          - Required only for C(state=merged).
+          - Required for C(state=merged) when C(is_pre_allocated) is omitted or C(true).
+          - Omit when C(is_pre_allocated=false) to let ND auto-allocate the resource value.
           - Optional filter for C(state=gathered).
         type: str
         required: false
@@ -111,8 +113,9 @@ options:
         required: false
       is_pre_allocated:
         description:
-          - Whether the resource is pre-allocated by the system.
-          - When set to C(true), the resource is managed externally and the module will not attempt updates.
+          - Whether the resource value is explicitly pre-allocated.
+          - When omitted, the module preserves legacy behavior and sends C(true).
+          - When set to C(false), ND auto-allocates the resource value and C(resource) may be omitted.
           - Optional for C(state=merged) and C(state=deleted).
         type: bool
         required: false

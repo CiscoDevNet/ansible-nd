@@ -267,6 +267,7 @@ class ResourceManagerDiffEngine:
         scope_type: str | None,
         switch_ip: str | None,
         log: logging.Logger,
+        vrf_name: str | None = None,
     ) -> tuple:
         """Build a normalized deduplication key for a resource entry.
 
@@ -276,6 +277,7 @@ class ResourceManagerDiffEngine:
             scope_type: Playbook-style scope type.
             switch_ip: Switch IP, or None for fabric-scoped resources.
             log: Logger instance.
+            vrf_name: VRF name for VRF-scoped resources.
 
         Returns:
             Tuple used as a dict key for matching proposed vs existing.
@@ -295,14 +297,17 @@ class ResourceManagerDiffEngine:
             norm_switch = switch_ip
             log.debug("_make_resource_key: scope_type='%s' is single-endpoint, keeping norm_switch='%s'", scope_type, norm_switch)
 
-        key = (norm_entity, norm_pool, scope_type, norm_switch)
+        norm_vrf = vrf_name or "default"
+
+        key = (norm_entity, norm_pool, scope_type, norm_switch, norm_vrf)
         log.debug(
-            "_make_resource_key: built key=%s from entity_name='%s', pool_name='%s', scope_type='%s', switch_ip='%s'",
+            "_make_resource_key: built key=%s from entity_name='%s', pool_name='%s', scope_type='%s', switch_ip='%s', vrf_name='%s'",
             key,
             entity_name,
             pool_name,
             scope_type,
             switch_ip,
+            vrf_name,
         )
 
         return key
@@ -351,7 +356,7 @@ class ResourceManagerDiffEngine:
             log.warning("No valid configurations found in input")
             return validated_configs
 
-        # Duplicate check: (entity_name, pool_name, scope_type, frozenset(switch))
+        # Duplicate check: (entity_name, pool_name, scope_type, frozenset(switch), vrf_name)
         seen_keys: set = set()
         duplicate_keys: set = set()
         log.debug(
@@ -364,14 +369,16 @@ class ResourceManagerDiffEngine:
                 cfg.pool_name,
                 cfg.scope_type,
                 frozenset(cfg.switches or []),
+                cfg.vrf_name or "default",
             )
             log.debug(
-                "validate_configs: duplicate-check [%s] — entity_name='%s', pool_name='%s', scope_type='%s', switches=%s, key_seen_before=%s",
+                "validate_configs: duplicate-check [%s] — entity_name='%s', pool_name='%s', scope_type='%s', switches=%s, vrf_name='%s', key_seen_before=%s",
                 cfg_dup_idx,
                 cfg.entity_name,
                 cfg.pool_name,
                 cfg.scope_type,
                 list(cfg.switches or []),
+                cfg.vrf_name,
                 key in seen_keys,
             )
             if key in seen_keys:
@@ -437,22 +444,24 @@ class ResourceManagerDiffEngine:
         )
 
         # Build index of existing resources keyed by
-        # (normalized_entity, pool_name, playbook_scope_type, switch_id)
+        # (normalized_entity, pool_name, playbook_scope_type, switch_id, vrf_name)
         existing_index: dict[tuple, ResourceManagerResponse] = {}
         for res in existing:
             entity = ResourceManagerDiffEngine._resource_attr(res, "entity_name", "entityName")
             pool = ResourceManagerDiffEngine._resource_attr(res, "pool_name", "poolName")
+            vrf_name = ResourceManagerDiffEngine._resource_attr(res, "vrf_name", "vrfName") or "default"
             scope_details = ResourceManagerDiffEngine._scope_details(res)
             scope_type = ResourceManagerDiffEngine._extract_scope_type(scope_details, log=log)
             switch_id = ResourceManagerDiffEngine._extract_scope_switch_key_val(scope_details, switch_key="switch_id", src_switch_key="src_switch_id", log=log)
-            key = ResourceManagerDiffEngine._make_resource_key(entity, pool, scope_type, switch_id, log=log)
+            key = ResourceManagerDiffEngine._make_resource_key(entity, pool, scope_type, switch_id, log=log, vrf_name=vrf_name)
             existing_index[key] = res
             log.debug(
-                "Existing index entry: entity=%s, pool=%s, scope_type=%s, switch_id=%s",
+                "Existing index entry: entity=%s, pool=%s, scope_type=%s, switch_id=%s, vrf_name=%s",
                 entity,
                 pool,
                 scope_type,
                 switch_id,
+                vrf_name,
             )
 
         log.debug("Built existing index with %s entries", len(existing_index))
@@ -493,14 +502,16 @@ class ResourceManagerDiffEngine:
             pool_name = cfg.pool_name
             entity_name = cfg.entity_name
             resource_value = cfg.resource
+            vrf_name = cfg.vrf_name or "default"
 
             log.debug(
-                "Processing proposed cfg: entity=%s, pool=%s, scope=%s, resource=%s, switches=%s",
+                "Processing proposed cfg: entity=%s, pool=%s, scope=%s, resource=%s, switches=%s, vrf_name=%s",
                 entity_name,
                 pool_name,
                 scope_type,
                 resource_value,
                 cfg.switches,
+                vrf_name,
             )
 
             # device_pair and link encode both endpoints in entity_name; one lookup covers the pair.
@@ -521,14 +532,15 @@ class ResourceManagerDiffEngine:
                 )
 
             for sw in switches:
-                key = ResourceManagerDiffEngine._make_resource_key(entity_name, pool_name, scope_type, sw, log=log)
+                key = ResourceManagerDiffEngine._make_resource_key(entity_name, pool_name, scope_type, sw, log=log, vrf_name=vrf_name)
                 log.debug(
-                    "Lookup key=%s for entity='%s', pool='%s', scope='%s', switch=%s",
+                    "Lookup key=%s for entity='%s', pool='%s', scope='%s', switch=%s, vrf_name=%s",
                     key,
                     entity_name,
                     pool_name,
                     scope_type,
                     sw,
+                    vrf_name,
                 )
                 existing_res = existing_index.get(key)
 
@@ -579,12 +591,14 @@ class ResourceManagerDiffEngine:
                             partial_scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip", log=log
                         )
                         partial_resource_value = ResourceManagerDiffEngine._resource_attr(partial, "resource_value", "resourceValue")
+                        partial_vrf_name = ResourceManagerDiffEngine._resource_attr(partial, "vrf_name", "vrfName") or "default"
                         existing_values = {
                             "resource_id": partial_resource_id,
                             "pool_name": partial_pool,
                             "scope_type": partial_scope,
                             "switch_ip": partial_sw,
                             "resource_value": partial_resource_value,
+                            "vrf_name": partial_vrf_name,
                         }
                         mismatch = {
                             "resource_id": partial_resource_id,
@@ -595,6 +609,8 @@ class ResourceManagerDiffEngine:
                             "have_switch_ip": partial_sw,
                             "have_resource_value": partial_resource_value,
                             "want_resource_value": resource_value,
+                            "have_vrf_name": partial_vrf_name,
+                            "want_vrf_name": vrf_name,
                         }
                         log.debug(
                             "compute_changes: partial match for entity='%s': existing=%s mismatch=%s",
@@ -621,8 +637,31 @@ class ResourceManagerDiffEngine:
                     )
                     matched_existing_keys.add(key)
                     existing_value = ResourceManagerDiffEngine._resource_attr(existing_res, "resource_value", "resourceValue")
+                    existing_is_pre_allocated = ResourceManagerDiffEngine._resource_attr(existing_res, "is_pre_allocated", "isPreAllocated")
+                    desired_is_pre_allocated = cfg.is_pre_allocated
 
-                    if ResourceManagerDiffEngine._compare_resource_values(existing_value, resource_value, log=log):
+                    if desired_is_pre_allocated is not None and existing_is_pre_allocated != desired_is_pre_allocated:
+                        log.info(
+                            "Resource (entity=%s, pool=%s, scope=%s, switch=%s) isPreAllocated differs (existing=%s, desired=%s) — marking to_update",
+                            entity_name,
+                            pool_name,
+                            scope_type,
+                            sw,
+                            existing_is_pre_allocated,
+                            desired_is_pre_allocated,
+                        )
+                        changes["to_update"].append((cfg, sw, existing_res))
+                    elif resource_value is None and desired_is_pre_allocated is False:
+                        log.debug(
+                            "Resource (entity=%s, pool=%s, scope=%s, switch=%s) is idempotent (auto-allocated value=%s)",
+                            entity_name,
+                            pool_name,
+                            scope_type,
+                            sw,
+                            existing_value,
+                        )
+                        changes["idempotent"].append((cfg, sw, existing_res))
+                    elif ResourceManagerDiffEngine._compare_resource_values(existing_value, resource_value, log=log):
                         log.debug(
                             "Resource (entity=%s, pool=%s, scope=%s, switch=%s) is idempotent (value=%s)",
                             entity_name,
@@ -711,6 +750,8 @@ class ResourceManagerDiffEngine:
         api_entity_name = ResourceManagerDiffEngine._resource_attr(api_resource, "entity_name", "entityName")
         api_pool_name = ResourceManagerDiffEngine._resource_attr(api_resource, "pool_name", "poolName")
         api_resource_value = ResourceManagerDiffEngine._resource_attr(api_resource, "resource_value", "resourceValue")
+        api_vrf_name = ResourceManagerDiffEngine._resource_attr(api_resource, "vrf_name", "vrfName")
+        api_is_pre_allocated = ResourceManagerDiffEngine._resource_attr(api_resource, "is_pre_allocated", "isPreAllocated")
 
         # entity_name: tilde-order-insensitive comparison
         if resource_cfg.entity_name is not None:
@@ -794,6 +835,28 @@ class ResourceManagerDiffEngine:
                 "validate_resource_api_fields: resource not provided in cfg — skipping check (api_resource_value='%s')",
                 api_resource_value,
             )
+
+        if resource_cfg.vrf_name is not None:
+            cfg_vrf = resource_cfg.vrf_name or "default"
+            api_vrf = api_vrf_name or "default"
+            log.debug(
+                "validate_resource_api_fields: checking vrf_name — cfg='%s', api='%s'",
+                cfg_vrf,
+                api_vrf,
+            )
+            if cfg_vrf != api_vrf:
+                mismatches.append(f"vrf_name: provided '{cfg_vrf}', API reports '{api_vrf}'")
+
+        if resource_cfg.is_pre_allocated is not None:
+            log.debug(
+                "validate_resource_api_fields: checking is_pre_allocated — cfg='%s', api='%s'",
+                resource_cfg.is_pre_allocated,
+                api_is_pre_allocated,
+            )
+            if api_is_pre_allocated != resource_cfg.is_pre_allocated:
+                mismatches.append(
+                    f"is_pre_allocated: provided '{resource_cfg.is_pre_allocated}', API reports '{api_is_pre_allocated}'"
+                )
 
         if mismatches:
             raise ValueError(

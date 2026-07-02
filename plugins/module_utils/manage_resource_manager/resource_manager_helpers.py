@@ -60,6 +60,14 @@ class ResourceManagerResourceHelpersMixin:
         """Return the resource_value field from a resource model or raw dict."""
         return self._attr(resource, "resource_value", "resourceValue")
 
+    def _get_vrf_name(self, resource):
+        """Return the vrf_name field from a resource model or raw dict."""
+        return self._attr(resource, "vrf_name", "vrfName")
+
+    def _get_is_pre_allocated(self, resource):
+        """Return the is_pre_allocated field from a resource model or raw dict."""
+        return self._attr(resource, "is_pre_allocated", "isPreAllocated")
+
     def _get_scope_type(self, resource):
         """Return the playbook-style scope_type string for a resource.
 
@@ -244,6 +252,8 @@ class ResourceManagerResourceHelpersMixin:
             pool_name = cfg.pool_name
             pool_type = cfg.pool_type
             resource_value = cfg.resource
+            is_pre_allocated = cfg.is_pre_allocated if cfg.is_pre_allocated is not None else True
+            vrf_name = cfg.vrf_name
         else:
             # Legacy dict path (kept for backward-compat with any callers not yet refactored)
             scope_type = cfg["scope_type"]
@@ -251,15 +261,19 @@ class ResourceManagerResourceHelpersMixin:
             pool_name = cfg["pool_name"]
             pool_type = cfg.get("pool_type")
             resource_value = cfg.get("resource")
+            is_pre_allocated = cfg.get("is_pre_allocated", True)
+            vrf_name = cfg.get("vrf_name")
 
         self.log.debug(
-            "_build_create_payload: pool_name=%s, pool_type=%s, entity_name=%s, scope_type=%s, switch_ip=%s, resource=%s",
+            "_build_create_payload: pool_name=%s, pool_type=%s, entity_name=%s, scope_type=%s, switch_ip=%s, resource=%s, is_pre_allocated=%s, vrf_name=%s",
             pool_name,
             pool_type,
             entity_name,
             scope_type,
             switch_ip,
             resource_value,
+            is_pre_allocated,
+            vrf_name,
         )
 
         scope = self._build_scope_details(scope_type, switch_ip, entity_name=entity_name)
@@ -269,8 +283,9 @@ class ResourceManagerResourceHelpersMixin:
             pool_type=pool_type,
             entity_name=entity_name,
             scope_details=scope,
-            is_pre_allocated=True,
+            is_pre_allocated=is_pre_allocated,
             resource_value=str(resource_value) if resource_value is not None else None,
+            vrf_name=vrf_name,
         )
 
         if resource_value is not None:
