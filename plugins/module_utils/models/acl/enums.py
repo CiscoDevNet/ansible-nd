@@ -55,10 +55,6 @@ class AclProtocolEnum(str, Enum):
     EIGRP = "eigrp"
     OSPF = "ospf"
     PIM = "pim"
-    AHP = "ahp"
-    GRE = "gre"
-    NOS = "nos"
-    ESP = "esp"
     CUSTOM = "custom"
 
 

@@ -37,6 +37,7 @@ from typing import Any, ClassVar, Dict, List, Literal, Optional, Set
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -63,7 +64,7 @@ _NAME_MAX_LENGTH = 115
 _PORT_ACTION_CHOICES = ["none", "equal_to", "greater_than", "less_than", "not_equal_to", "port_range"]
 
 # Protocol choices for the argument spec.
-_PROTOCOL_CHOICES = ["ip", "ipv6", "tcp", "udp", "icmp", "igmp", "eigrp", "ospf", "pim", "ahp", "gre", "nos", "esp", "custom"]
+_PROTOCOL_CHOICES = ["ip", "ipv6", "tcp", "udp", "icmp", "igmp", "eigrp", "ospf", "pim", "custom"]
 
 
 class AclEntryModel(NDNestedModel):
@@ -262,6 +263,27 @@ class AclModel(NDBaseModel):
         return value
 
     # --- Model Validators (cross-field) ---
+
+    @model_validator(mode="after")
+    def validate_required_for_write_states(self, info: ValidationInfo) -> "AclModel":
+        """
+        Enforce state-aware required fields.
+
+        ``type`` and ``entries`` are required for the write states (``merged``,
+        ``replaced``, ``overridden``); identifier-only items (``name`` only) are
+        accepted for ``deleted``. The active state is read from the pydantic
+        validation context threaded by ``NDStateMachine``
+        (``context={"state": ...}``). When no context is present -- e.g. models
+        built from controller responses via ``from_response`` -- the check is
+        skipped so existing state parses unconditionally.
+        """
+        state = (info.context or {}).get("state") if info else None
+        if state in ("merged", "replaced", "overridden"):
+            missing = [name for name in ("type", "entries") if getattr(self, name) is None]
+            if missing:
+                verb = "is" if len(missing) == 1 else "are"
+                raise ValueError(f"ACL '{self.name}': '{', '.join(missing)}' {verb} required for state '{state}'.")
+        return self
 
     @model_validator(mode="after")
     def validate_entries(self) -> "AclModel":

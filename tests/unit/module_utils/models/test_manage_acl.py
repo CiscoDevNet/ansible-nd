@@ -455,6 +455,82 @@ def test_manage_acl_00131() -> None:
         AclModel(**too_long_config)
 
 
+def test_manage_acl_00135() -> None:
+    """
+    # Summary
+
+    Verify state-aware required-field validation via the pydantic ``state`` context.
+
+    ## Test
+
+    - For write states (merged/replaced/overridden), an identifier-only config
+      (name only) raises for the missing 'type' and 'entries'
+    - For 'deleted', an identifier-only config is accepted
+    - Without a state context (e.g. models built from controller responses), an
+      identifier-only config is accepted (check skipped)
+    - A full config is accepted for a write state
+
+    ## Classes and Methods
+
+    - AclModel.validate_required_for_write_states
+    """
+    identifier_only = {"name": "ACL1"}
+
+    for write_state in ("merged", "replaced", "overridden"):
+        with pytest.raises(ValidationError, match="required for state"):
+            AclModel.from_config(copy.deepcopy(identifier_only), context={"state": write_state})
+
+    # deleted accepts identifier-only items
+    with does_not_raise():
+        model = AclModel.from_config(copy.deepcopy(identifier_only), context={"state": "deleted"})
+    assert model.name == "ACL1"
+    assert model.type is None
+    assert model.entries is None
+
+    # no context -> check skipped (controller responses parse unconditionally)
+    with does_not_raise():
+        AclModel.from_config(copy.deepcopy(identifier_only))
+
+    # full config passes for a write state
+    with does_not_raise():
+        AclModel.from_config(copy.deepcopy(SAMPLE_IPV4_CONFIG), context={"state": "merged"})
+
+
+def test_manage_acl_00137() -> None:
+    """
+    # Summary
+
+    Verify protocol values not advertised by the ACL API are rejected.
+
+    ## Test
+
+    - Protocols dropped from the schema (ahp, gre, nos, esp) are no longer
+      valid enum values and raise
+    - Supported protocols are accepted
+
+    ## Classes and Methods
+
+    - AclProtocolEnum
+    """
+
+    def _acl(protocol: str) -> dict:
+        return {
+            "type": "ipv4",
+            "name": "ACL1",
+            "entries": [{"sequence_number": 10, "action": "permit", "protocol": protocol, "src": "any", "dst": "any"}],
+        }
+
+    # Protocols removed from the schema are no longer valid enum values.
+    for protocol in ("ahp", "gre", "nos", "esp"):
+        with pytest.raises(ValidationError):
+            AclModel.from_config(_acl(protocol))
+
+    # Supported protocols are accepted.
+    for protocol in ("ip", "tcp", "udp", "icmp", "igmp", "eigrp", "ospf", "pim"):
+        with does_not_raise():
+            AclModel.from_config(_acl(protocol))
+
+
 # =============================================================================
 # Test: AclModel identifier strategy
 # =============================================================================

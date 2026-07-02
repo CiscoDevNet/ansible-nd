@@ -94,7 +94,7 @@ options:
             - The protocol matched by the entry.
             - Required for C(permit) and C(deny) entries.
             type: str
-            choices: [ ip, ipv6, tcp, udp, icmp, igmp, eigrp, ospf, pim, ahp, gre, nos, esp, custom ]
+            choices: [ ip, ipv6, tcp, udp, icmp, igmp, eigrp, ospf, pim, custom ]
           custom_protocol:
             description:
             - The custom IP protocol number.
