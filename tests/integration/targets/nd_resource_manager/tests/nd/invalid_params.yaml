@@ -14,11 +14,20 @@
         fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "l3_vni_fabric"             # A unique name to identify the resource
-            pool_type: "IDLE"                          # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "L3_VNI"                  # Based on the 'poolType', select appropriate name
+            pool_type: "IDLE"                        # choose from ['ID', 'IP', 'SUBNET']
+            pool_name: "L3_VNI"                      # Based on the 'poolType', select appropriate name
             scope_type: "fabric"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
             resource: "101"                          # The value of the resource being created
+      register: invalid_pool_type
       ignore_errors: true
+
+    - name: Assert invalid pool type failed
+      ansible.builtin.assert:
+        that:
+          - invalid_pool_type is failed
+          - invalid_pool_type.msg is defined
+          - invalid_pool_type.msg is search("pool_type")
+          - invalid_pool_type.msg is search("IDLE")
 
     - name: Create Resources - Invalid Pool Name
       cisco.nd.nd_manage_resource_manager:
@@ -30,7 +39,16 @@
             pool_name: "WRONG_POOL"                  # Based on the 'poolType', select appropriate name
             scope_type: "fabric"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
             resource: "101"                          # The value of the resource being created
+      register: invalid_pool_name
       ignore_errors: true
+
+    - name: Assert invalid pool name failed
+      ansible.builtin.assert:
+        that:
+          - invalid_pool_name is failed
+          - invalid_pool_name.msg is defined
+          - invalid_pool_name.msg is search("pool_name")
+          - invalid_pool_name.msg is search("WRONG_POOL")
 
     - name: Create Resources - L3 VNI wrong scope type
       cisco.nd.nd_manage_resource_manager:
@@ -42,7 +60,16 @@
             pool_name: "L3_VNI"                      # Based on the 'poolType', select appropriate name
             scope_type: "device"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
             resource: "102"                          # The value of the resource being created
+      register: invalid_l3_vni_scope
       ignore_errors: true
+
+    - name: Assert L3 VNI wrong scope type failed
+      ansible.builtin.assert:
+        that:
+          - invalid_l3_vni_scope is failed
+          - invalid_l3_vni_scope.msg is defined
+          - invalid_l3_vni_scope.msg is search("switches")
+          - invalid_l3_vni_scope.msg is search("Required parameter not found")
 
     - name: Create Resources - L2VNI - wrong scope type
       cisco.nd.nd_manage_resource_manager:
@@ -54,7 +81,16 @@
             pool_name: "L2_VNI"                      # Based on the 'poolType', select appropriate name
             scope_type: "device_interface"           # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
             resource: "102"                          # The value of the resource being created
+      register: invalid_l2_vni_scope
       ignore_errors: true
+
+    - name: Assert L2 VNI wrong scope type failed
+      ansible.builtin.assert:
+        that:
+          - invalid_l2_vni_scope is failed
+          - invalid_l2_vni_scope.msg is defined
+          - invalid_l2_vni_scope.msg is search("switches")
+          - invalid_l2_vni_scope.msg is search("Required parameter not found")
 
     - name: Create Resources - LOOPBACK_ID wrong scope type
       cisco.nd.nd_manage_resource_manager:
@@ -69,7 +105,17 @@
               - "{{ ansible_switch1 }}"
               - "{{ ansible_switch2 }}"
             resource: "200"                          # The value of the resource being created
+      register: invalid_loopback_id_scope
       ignore_errors: true
+
+    - name: Assert LOOPBACK_ID wrong scope type failed
+      ansible.builtin.assert:
+        that:
+          - invalid_loopback_id_scope is failed
+          - invalid_loopback_id_scope.msg is defined
+          - invalid_loopback_id_scope.msg is search("entity_name")
+          - invalid_loopback_id_scope.msg is search("scope_type")
+          - (invalid_loopback_id_scope.msg | lower) is search("link")
 
     - name: Create Resources - VPC_ID wrong scope type
       cisco.nd.nd_manage_resource_manager:
@@ -79,12 +125,22 @@
           - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}"  # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
             pool_name: "VPC_ID"                      # Based on the 'poolType', select appropriate name
-            scope_type: "fabric"                # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
+            scope_type: "fabric"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
             switches: # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
               - "{{ ansible_switch2 }}"
             resource: "500"                          # The value of the resource being created
+      register: invalid_vpc_id_scope
       ignore_errors: true
+
+    - name: Assert VPC_ID wrong scope type failed
+      ansible.builtin.assert:
+        that:
+          - invalid_vpc_id_scope is failed
+          - invalid_vpc_id_scope.msg is defined
+          - invalid_vpc_id_scope.msg is search("scope_type")
+          - (invalid_vpc_id_scope.msg | lower) is search("fabric")
+          - invalid_vpc_id_scope.msg is search("VPC_ID")
 
     - name: Create Resources - LOOPBACK0_IP_POOL wrong scope type
       cisco.nd.nd_manage_resource_manager:
@@ -96,7 +152,16 @@
             pool_name: "LOOPBACK0_IP_POOL"           # Based on the 'poolType', select appropriate name
             scope_type: "link"                       # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
             resource: "110.1.1.1"                    # The value of the resource being created
+      register: invalid_loopback0_ip_pool_scope
       ignore_errors: true
+
+    - name: Assert LOOPBACK0_IP_POOL wrong scope type failed
+      ansible.builtin.assert:
+        that:
+          - invalid_loopback0_ip_pool_scope is failed
+          - invalid_loopback0_ip_pool_scope.msg is defined
+          - invalid_loopback0_ip_pool_scope.msg is search("switches")
+          - invalid_loopback0_ip_pool_scope.msg is search("Required parameter not found")
 
     - name: Create Resources - LOOPBACK1_IP_POOL wrong scope type
       cisco.nd.nd_manage_resource_manager:
@@ -110,7 +175,17 @@
             switches: # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
             resource: "fe:80::04"                    # The value of the resource being created
+      register: invalid_loopback1_ip_pool_scope
       ignore_errors: true
+
+    - name: Assert LOOPBACK1_IP_POOL wrong scope type failed
+      ansible.builtin.assert:
+        that:
+          - invalid_loopback1_ip_pool_scope is failed
+          - invalid_loopback1_ip_pool_scope.msg is defined
+          - invalid_loopback1_ip_pool_scope.msg is search("scope_type")
+          - (invalid_loopback1_ip_pool_scope.msg | lower) is search("device")
+          - invalid_loopback1_ip_pool_scope.msg is search("LOOPBACK1_IP_POOL")
 
     - name: Create Resources - SUBNET wrong scope type
       cisco.nd.nd_manage_resource_manager:
@@ -124,4 +199,14 @@
             switches: # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
             resource: "fe:80:0505::05/64"            # The value of the resource being created
+      register: invalid_subnet_scope
       ignore_errors: true
+
+    - name: Assert SUBNET wrong scope type failed
+      ansible.builtin.assert:
+        that:
+          - invalid_subnet_scope is failed
+          - invalid_subnet_scope.msg is defined
+          - invalid_subnet_scope.msg is search("entity_name")
+          - invalid_subnet_scope.msg is search("scope_type")
+          - (invalid_subnet_scope.msg | lower) is search("device_interface")
