@@ -1,0 +1,82 @@
+---
+# Auto-assign (propose) tests for nd_fabric_update_group
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+#
+# These tests run last: the propose action regroups every switch in the fabric, which would
+# disturb the disjoint switch sets the merged/replaced/overridden/deleted tests depend on.
+
+# --- AUTO-ASSIGN NEGATIVE ---
+
+- name: "AUTO-ASSIGN ERROR: config and auto_assign are mutually exclusive"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    auto_assign: roleBased
+    config:
+      - update_group_name: ansible_leaf_group
+    state: merged
+  register: err_auto_assign_with_config
+  ignore_errors: true
+
+- name: "AUTO-ASSIGN ERROR: auto_assign with state deleted is rejected"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    auto_assign: roleBased
+    state: deleted
+  register: err_auto_assign_bad_state
+  ignore_errors: true
+
+- name: "AUTO-ASSIGN ERROR: Verify both invalid invocations failed"
+  ansible.builtin.assert:
+    that:
+      - err_auto_assign_with_config is failed
+      - "'mutually exclusive' in err_auto_assign_with_config.msg"
+      - err_auto_assign_bad_state is failed
+      - "'auto_assign is only valid with state' in err_auto_assign_bad_state.msg"
+
+# --- AUTO-ASSIGN APPLY ---
+
+- name: "AUTO-ASSIGN APPLY: Auto-assign update groups by role (check mode)"
+  cisco.nd.nd_fabric_update_group: &auto_assign_role
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    auto_assign: roleBased
+    state: merged
+  check_mode: true
+  register: cm_auto_assign_apply
+
+- name: "AUTO-ASSIGN APPLY: Auto-assign update groups by role (normal mode)"
+  cisco.nd.nd_fabric_update_group: *auto_assign_role
+  register: nm_auto_assign_apply
+
+- name: "AUTO-ASSIGN APPLY: Verify groups were generated"
+  ansible.builtin.assert:
+    that:
+      # Check mode cannot preview the propose action, so it reports no change.
+      - cm_auto_assign_apply is not changed
+      - nm_auto_assign_apply is changed
+      - nm_auto_assign_apply.after | length > 0
+
+# --- AUTO-ASSIGN IDEMPOTENCY ---
+
+- name: "AUTO-ASSIGN IDEMPOTENT: Re-run auto-assign by role (normal mode)"
+  cisco.nd.nd_fabric_update_group: *auto_assign_role
+  register: nm_auto_assign_idem
+
+- name: "AUTO-ASSIGN IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_auto_assign_idem is not changed
+
+# --- AUTO-ASSIGN CLEANUP ---
+
+- name: "AUTO-ASSIGN CLEANUP: Remove the auto-generated update groups"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - update_group_name: "{{ item }}"
+    state: deleted
+  loop: "{{ nm_auto_assign_apply.after | map(attribute='update_group_name') | list }}"
+  failed_when: false

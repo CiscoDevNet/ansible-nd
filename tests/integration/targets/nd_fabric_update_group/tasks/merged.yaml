@@ -1,0 +1,70 @@
+---
+# Merged state tests for nd_fabric_update_group
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# --- MERGED CREATE ---
+
+- name: "MERGED CREATE: Create ansible_leaf_group (check mode)"
+  cisco.nd.nd_fabric_update_group: &merge_leaf
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ update_group_leaf }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_leaf
+
+- name: "MERGED CREATE: Create ansible_leaf_group (normal mode)"
+  cisco.nd.nd_fabric_update_group: *merge_leaf
+  register: nm_merged_create_leaf
+
+- name: "MERGED CREATE: Verify leaf group creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_leaf is changed
+      - nm_merged_create_leaf is changed
+      - nm_merged_create_leaf.after | selectattr('update_group_name', 'equalto', 'ansible_leaf_group') | list | length == 1
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Re-apply create (check mode)"
+  cisco.nd.nd_fabric_update_group: *merge_leaf
+  check_mode: true
+  register: cm_merged_idem_leaf
+
+- name: "MERGED IDEMPOTENT: Re-apply create (normal mode)"
+  cisco.nd.nd_fabric_update_group: *merge_leaf
+  register: nm_merged_idem_leaf
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_leaf is not changed
+      - nm_merged_idem_leaf is not changed
+
+# --- MERGED UPDATE ---
+
+- name: "MERGED UPDATE: Change execution and contingency (check mode)"
+  cisco.nd.nd_fabric_update_group: &merge_leaf_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ update_group_leaf_updated }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_update_leaf
+
+- name: "MERGED UPDATE: Change execution and contingency (normal mode)"
+  cisco.nd.nd_fabric_update_group: *merge_leaf_updated
+  register: nm_merged_update_leaf
+
+- name: "MERGED UPDATE: Verify leaf group updated"
+  vars:
+    leaf_after: "{{ nm_merged_update_leaf.after | selectattr('update_group_name', 'equalto', 'ansible_leaf_group') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update_leaf is changed
+      - nm_merged_update_leaf is changed
+      - leaf_after.execution == "parallel"
+      - leaf_after.contingency == "pause"
+      - leaf_after.report_selection == "advanced"

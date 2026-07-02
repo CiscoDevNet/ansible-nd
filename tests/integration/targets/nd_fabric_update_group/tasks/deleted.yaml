@@ -1,0 +1,33 @@
+---
+# Deleted state tests for nd_fabric_update_group
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+- name: "DELETED: Delete ansible_leaf_group (check mode)"
+  cisco.nd.nd_fabric_update_group: &delete_leaf
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - update_group_name: ansible_leaf_group
+    state: deleted
+  check_mode: true
+  register: cm_deleted_leaf
+
+- name: "DELETED: Delete ansible_leaf_group (normal mode)"
+  cisco.nd.nd_fabric_update_group: *delete_leaf
+  register: nm_deleted_leaf
+
+- name: "DELETED: Verify ansible_leaf_group removed"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_leaf is changed
+      - nm_deleted_leaf is changed
+      - nm_deleted_leaf.after | selectattr('update_group_name', 'equalto', 'ansible_leaf_group') | list | length == 0
+
+- name: "DELETED IDEMPOTENT: Delete again should be no-op"
+  cisco.nd.nd_fabric_update_group: *delete_leaf
+  register: nm_deleted_leaf_idem
+
+- name: "DELETED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_leaf_idem is not changed

@@ -1,0 +1,217 @@
+---
+# Variables for nd_interface_svi integration tests.
+#
+# Override fabric_name and switch_ip in your inventory or extra-vars
+# to match a real ND 4.2 testbed.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
+test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
+
+# Each SVI is L3 and gets its own config item with its own IP. The interface_name
+# is `vlan<id>`. These VLANs must NOT have SVIs already configured at the start
+# of the test run (cleanup_config below is run first to ensure this).
+
+# --- Base configs ---
+
+svi_333:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan333
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Ansible integration test vlan333"
+        ip: 10.99.99.1
+        prefix: 24
+        ip_redirects: true
+        pim_sparse: false
+        pim_dr_priority: 1
+        advertise_subnet_in_underlay: false
+        netflow: false
+
+svi_334:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan334
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Ansible integration test vlan334"
+        ip: 10.99.100.1
+        prefix: 24
+        ip_redirects: true
+        pim_sparse: false
+        pim_dr_priority: 1
+        advertise_subnet_in_underlay: false
+        netflow: false
+
+svi_335:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan335
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Ansible integration test vlan335"
+        ip: 10.99.101.1
+        prefix: 24
+        ip_redirects: true
+        pim_sparse: false
+        pim_dr_priority: 1
+        advertise_subnet_in_underlay: false
+        netflow: false
+
+svi_336:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan336
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Ansible integration test vlan336"
+        ip: 10.99.102.1
+        prefix: 24
+
+# --- Updated configs for merge/replace tests ---
+
+svi_333_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan333
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Updated vlan333 description"
+        ip: 10.99.99.2
+        prefix: 24
+        ip_redirects: false
+        pim_sparse: true
+        pim_dr_priority: 50
+        advertise_subnet_in_underlay: true
+        netflow: false
+
+svi_334_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan334
+  config_data:
+    network_os:
+      policy:
+        admin_state: false
+        description: "Updated vlan334 description"
+        ip: 10.99.100.2
+        prefix: 24
+        ip_redirects: true
+
+svi_335_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan335
+  config_data:
+    network_os:
+      policy:
+        admin_state: false
+        description: "Updated vlan335 description"
+        ip: 10.99.101.2
+        prefix: 24
+        ip_redirects: true
+
+# --- Multi-SVI configs for large/multi tests ---
+
+svi_337:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan337
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Multi-SVI test vlan337"
+        ip: 10.99.103.1
+        prefix: 24
+
+svi_338:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan338
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Multi-SVI test vlan338"
+        ip: 10.99.104.1
+        prefix: 24
+
+# --- HSRP / DHCP-relay / VRF / route-tag scenarios (phase 2) ---
+
+svi_500_hsrp:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan500
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "HSRP test vlan500"
+        vrf_interface: default
+        ip: 10.99.150.1
+        prefix: 24
+        routing_tag: "12345"
+        hsrp: true
+        hsrp_group: 5
+        hsrp_version: 2
+        hsrp_vip: 10.99.150.254
+        hsrp_priority: 110
+        preempt: true
+        mac: "0000.0c07.ac05"
+
+svi_500_hsrp_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan500
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "HSRP test vlan500 (updated priority)"
+        vrf_interface: default
+        ip: 10.99.150.1
+        prefix: 24
+        routing_tag: "12345"
+        hsrp: true
+        hsrp_group: 5
+        hsrp_version: 2
+        hsrp_vip: 10.99.150.254
+        hsrp_priority: 200
+        preempt: true
+        mac: "0000.0c07.ac05"
+
+svi_501_dhcp:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: vlan501
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "DHCP relay test vlan501"
+        vrf_interface: default
+        ip: 10.99.151.1
+        prefix: 24
+        dhcp_server_address1: 10.10.10.10
+        vrf_dhcp1: default
+        dhcp_server_address2: 10.10.10.11
+        vrf_dhcp2: default
+
+# --- Cleanup helper: all test SVIs to remove before tests run ---
+
+cleanup_config:
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: vlan333
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: vlan334
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: vlan335
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: vlan336
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: vlan337
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: vlan338
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: vlan500
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: vlan501

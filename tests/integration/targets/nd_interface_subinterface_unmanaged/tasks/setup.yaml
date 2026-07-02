@@ -1,0 +1,23 @@
+---
+# Pre-test cleanup for nd_interface_subinterface_unmanaged
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Called from main.yaml before the merged/replaced/overridden/deleted state
+# blocks. Ensures no test subinterfaces exist on the target switch before the
+# state tests run.
+
+- name: "SETUP: Remove test subinterfaces before state tests"
+  cisco.nd.nd_interface_subinterface_unmanaged:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ cleanup_config }}"
+    state: deleted
+  register: setup_cleanup
+  tags: always
+
+- name: "DEBUG: Show cleanup result"
+  ansible.builtin.debug:
+    var: setup_cleanup
+  tags: always

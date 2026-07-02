@@ -1,0 +1,106 @@
+---
+# Variables for nd_interface_port_channel_access integration tests.
+#
+# Override these in your inventory or extra-vars to match a real ND 4.2 testbed.
+# Member ethernet interfaces (test_pc_member_*) MUST exist on the target switch and
+# MUST NOT be members of any other port-channel before tests run, or the cleanup
+# at the start of each state file will revert them to fabric defaults.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
+test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
+
+# Member ethernet interface names. Override per-testbed.
+test_pc_member_a: "{{ nd_test_pc_member_a | default('Ethernet1/10') }}"
+test_pc_member_b: "{{ nd_test_pc_member_b | default('Ethernet1/11') }}"
+test_pc_member_c: "{{ nd_test_pc_member_c | default('Ethernet1/12') }}"
+test_pc_member_d: "{{ nd_test_pc_member_d | default('Ethernet1/13') }}"
+
+# Port-channel IDs 501-509 are reserved for these integration tests.
+
+test_pc_501:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel501
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 100
+        ports:
+          - "{{ test_pc_member_a }}"
+          - "{{ test_pc_member_b }}"
+        port_channel_mode: active
+        lacp_rate: fast
+        description: "Ansible integration test PC 501"
+
+test_pc_502:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel502
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 200
+        ports:
+          - "{{ test_pc_member_c }}"
+        port_channel_mode: active
+        description: "Ansible integration test PC 502"
+
+test_pc_503:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel503
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 300
+        ports:
+          - "{{ test_pc_member_d }}"
+        port_channel_mode: passive
+        description: "Ansible integration test PC 503"
+
+# Updated variants for merge/replace tests
+
+test_pc_501_updated_vlan:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel501
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 150
+        ports:
+          - "{{ test_pc_member_a }}"
+          - "{{ test_pc_member_b }}"
+        port_channel_mode: active
+        lacp_rate: fast
+        description: "Ansible integration test PC 501 updated"
+
+test_pc_501_added_member:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel501
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 100
+        ports:
+          - "{{ test_pc_member_a }}"
+          - "{{ test_pc_member_b }}"
+          - "{{ test_pc_member_c }}"
+        port_channel_mode: active
+        lacp_rate: fast
+        description: "Ansible integration test PC 501"
+
+test_pc_501_removed_member:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel501
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 100
+        ports:
+          - "{{ test_pc_member_a }}"
+        port_channel_mode: active
+        lacp_rate: fast
+        description: "Ansible integration test PC 501"

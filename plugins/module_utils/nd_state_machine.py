@@ -3,9 +3,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
-from typing import Any, Callable, List, Optional, Type, Union
+from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
@@ -16,6 +16,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
 
@@ -24,7 +25,7 @@ class NDStateMachine:
     Generic State Machine for Nexus Dashboard (Bulk Support).
     """
 
-    def __init__(self, module: AnsibleModule, model_orchestrator: Union[Type[NDBaseOrchestrator], NDBaseOrchestrator]):
+    def __init__(self, module: AnsibleModule, model_orchestrator: type[NDBaseOrchestrator] | NDBaseOrchestrator):
         """
         Initialize the ND State Machine.
         """
@@ -33,10 +34,6 @@ class NDStateMachine:
         # REST infrastructure
         sender = Sender()
         sender.ansible_module = self.module
-
-        # Build RestSend params from the full validated module params so orchestrators can read
-        # request-scoped values (e.g. ``fabric_name``) from ``rest_send.params``. ``check_mode`` is
-        # added explicitly because it lives on the module, not in ``module.params``.
         rest_send_params = dict(self.module.params)
         rest_send_params["check_mode"] = self.module.check_mode
         self.rest_send = RestSend(rest_send_params)
@@ -45,13 +42,17 @@ class NDStateMachine:
 
         # Operation tracking
         self.output = NDOutput(output_level=module.params.get("output_level", "normal"))
+        self.results = Results()
+        self.results.state = self.module.params.get("state", "")
+        self.results.check_mode = self.module.check_mode
 
         # Configuration
         # Accept either an orchestrator instance or a class.
         if isinstance(model_orchestrator, type) and issubclass(model_orchestrator, NDBaseOrchestrator):
-            self.model_orchestrator = model_orchestrator(rest_send=self.rest_send)
+            self.model_orchestrator = model_orchestrator(rest_send=self.rest_send, results=self.results)
         elif isinstance(model_orchestrator, NDBaseOrchestrator):
             self.model_orchestrator = model_orchestrator
+            self.model_orchestrator.results = self.results
         else:
             raise NDStateMachineError(f"model_orchestrator must be an NDBaseOrchestrator class or instance. Got: {type(model_orchestrator)}")
 
@@ -87,12 +88,17 @@ class NDStateMachine:
         Manage state according to desired configuration.
         """
         if self.state in ["merged", "replaced", "overridden"]:
+            # Capability preflight runs here -- before _manage_create_update_state, whose mutations are
+            # skipped in check mode -- so dry-runs surface incapable switches (PR #275 / issue #273).
+            self.model_orchestrator.preflight(list(self.proposed))
             self._manage_create_update_state()
 
             if self.state == "overridden":
                 self._manage_override_deletions()
 
         elif self.state == "deleted":
+            # Capability preflight intentionally NOT run for deletes: removing configuration does not
+            # depend on a switch's capability to host the interface type (PR #275 scope decision).
             self._manage_delete_state()
 
         else:
@@ -104,7 +110,7 @@ class NDStateMachine:
         *args: Any,
         error_msg_prefix: str = "Operation failed",
         **kwargs: Any,
-    ) -> Optional[ResponseType]:
+    ) -> ResponseType | None:
         """Execute an API operation with standardized error handling."""
         try:
             if not self.check_mode:
@@ -120,8 +126,8 @@ class NDStateMachine:
         """
         Handle merged/replaced/overridden states.
         """
-        items_to_create: List[NDBaseModel] = []
-        items_to_update: List[NDBaseModel] = []
+        items_to_create: list[NDBaseModel] = []
+        items_to_update: list[NDBaseModel] = []
 
         for proposed_item in self.proposed:
             identifier = None
@@ -200,7 +206,7 @@ class NDStateMachine:
         ]
         self._delete_items(items_to_delete)
 
-    def _delete_items(self, items: List[NDBaseModel]) -> None:
+    def _delete_items(self, items: list[NDBaseModel]) -> None:
         """Delete a list of items individually or in bulk."""
         if not items:
             return

@@ -1,0 +1,564 @@
+##############################################
+##                 SETUP                    ##
+##############################################
+
+- name: Import nd_vpc_pair Base Tasks
+  ansible.builtin.import_tasks: base_tasks.yaml
+  tags: override
+
+- name: OVERRIDE - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
+  tags: override
+
+##############################################
+##      Setup Override TestCase Variables  ##
+##############################################
+
+- name: OVERRIDE - Setup initial config
+  ansible.builtin.set_fact:
+    vpc_pair_conf:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+  delegate_to: localhost
+  tags: override
+
+- name: Import Configuration Prepare Tasks - override_initial
+  vars:
+    file: override_initial
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: override
+
+- name: OVERRIDE - Setup overridden config
+  ansible.builtin.set_fact:
+    vpc_pair_conf:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: false
+  delegate_to: localhost
+  tags: override
+
+- name: Import Configuration Prepare Tasks - override_overridden
+  vars:
+    file: override_overridden
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: override
+
+##############################################
+##               OVERRIDE                 ##
+##############################################
+
+# TC1 - Override with a new vPC switch pair
+- name: OVERRIDE - TC1 - OVERRIDE - Create vPC pair using override state
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_vpc_pair_override_initial_conf }}"
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC1 - ASSERT - Check if changed flag is true
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: override
+
+- name: OVERRIDE - TC1 - GATHER - Get vPC pair state in ND
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: verify_result
+  tags: override
+
+- name: OVERRIDE - TC1 - VALIDATE - Verify vPC pair state in ND
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ verify_result }}"
+    expected_data: "{{ nd_vpc_pair_override_initial_conf }}"
+  register: validation
+  tags: override
+
+- name: OVERRIDE - TC1 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - validation.failed == false
+  tags: override
+
+# TC2 - Override with same vPC switch pair with changes
+- name: OVERRIDE - TC2 - OVERRIDE - Override vPC pair with changes
+  cisco.nd.nd_manage_vpc_pair: &conf_overridden
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_vpc_pair_override_overridden_conf }}"
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC2 - ASSERT - Check if changed flag is true for LANClassic
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  when: test_fabric_type == "LANClassic"
+  tags: override
+
+- name: OVERRIDE - TC2 - ASSERT - Check if changed flag is false for VXLANFabric
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+  when: test_fabric_type == "VXLANFabric"
+  tags: override
+
+- name: OVERRIDE - TC2 - GATHER - Get vPC pair state in ND
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: verify_result
+  tags: override
+
+- name: OVERRIDE - TC2 - VALIDATE - Verify overridden vPC pair state
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ verify_result }}"
+    expected_data: "{{ nd_vpc_pair_override_overridden_conf }}"
+    mode: "full"
+  register: validation
+  when: test_fabric_type == "LANClassic"
+  tags: override
+
+- name: OVERRIDE - TC2 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - validation.failed == false
+  when: test_fabric_type == "LANClassic"
+  tags: override
+
+# TC3 - Idempotence test
+- name: OVERRIDE - TC3 - conf - Idempotence
+  cisco.nd.nd_manage_vpc_pair: *conf_overridden
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC3 - ASSERT - Check if changed flag is false
+  ansible.builtin.assert:
+    that:
+      - result.changed == false
+      - result.failed == false
+  tags: override
+
+# TC4 - Override with empty config should delete all pairs (DCNM-compatible purge-all)
+- name: OVERRIDE - TC4 - SETUP - Ensure at least one vPC pair exists
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false
+  tags: override
+
+- name: OVERRIDE - TC4 - OVERRIDE - Purge all pairs with empty config
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: []
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC4 - ASSERT - Verify all pairs deleted
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: override
+
+- name: OVERRIDE - TC4 - GATHER - Verify no pairs remain
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+  register: verify_result
+  tags: override
+
+- name: OVERRIDE - TC4 - ASSERT - Confirm zero pairs
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered.vpc_pairs | length == 0
+  tags: override
+
+# TC5 - Override with deploy enabled
+- name: OVERRIDE - TC5 - DELETE - Ensure vPC pair absent before deploy test
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false
+  tags: override
+
+- name: OVERRIDE - TC5 - OVERRIDE - Create vPC pair with deploy true
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config: "{{ nd_vpc_pair_override_initial_conf }}"
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC5 - ASSERT - Verify deploy path execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
+  tags: override
+
+- name: OVERRIDE - TC5 - ASSERT - Verify config-save and deploy API traces
+  ansible.builtin.assert:
+    that:
+      - result.deployment.response is defined
+      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | list
+          | length
+        ) > 0
+  tags: override
+
+- name: OVERRIDE - TC5 - GATHER - Verify pair exists after deploy flow
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: verify_result
+  tags: override
+
+- name: OVERRIDE - TC5 - VALIDATE - Verify deployed override config
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ verify_result }}"
+    expected_data: "{{ nd_vpc_pair_override_initial_conf }}"
+    mode: "exists"
+  register: validation
+  tags: override
+
+- name: OVERRIDE - TC5 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - validation.failed == false
+  tags: override
+
+# TC6 - vpc_pair_details extended coverage (single override testcase)
+- name: OVERRIDE - TC6 - OVERRIDE - Apply extended vpc_pair_details payload
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+        vpc_pair_details: "{{ vpc_pair_details_extended }}"
+  register: result
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
+  tags: override
+
+- name: OVERRIDE - TC6 - API - Query direct vpcPair state for extended details verification
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPair"
+    method: get
+  register: tc6_vpc_pair_direct
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
+  tags: override
+
+- name: OVERRIDE - TC6 - ASSERT - Verify base pair state from direct API
+  ansible.builtin.assert:
+    that:
+      - tc6_vpc_pair_direct.failed == false
+      - tc6_vpc_pair_direct.current is mapping
+      - (tc6_vpc_pair_direct.current.switchId | default('')) == test_switch1
+      - (tc6_vpc_pair_direct.current.peerSwitchId | default('')) == test_switch2
+      - (tc6_vpc_pair_direct.current.useVirtualPeerLink | default(false)) | bool == true
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
+  tags: override
+
+- name: OVERRIDE - TC6 - Set flag when direct API returns detailed payload
+  ansible.builtin.set_fact:
+    tc6_has_vpc_pair_details: >-
+      {{
+        (
+          (tc6_vpc_pair_direct.current.vpcPairDetails is defined)
+          and (tc6_vpc_pair_direct.current.vpcPairDetails is not none)
+        )
+        or
+        (
+          (tc6_vpc_pair_direct.current.vpc_pair_details is defined)
+          and (tc6_vpc_pair_direct.current.vpc_pair_details is not none)
+        )
+      }}
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
+  tags: override
+
+- name: OVERRIDE - TC6 - VALIDATE - Verify extended vpc_pair_details state
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ {'vpc_pairs': [tc6_vpc_pair_direct.current]} }}"
+    expected_data:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+        vpc_pair_details: "{{ vpc_pair_details_extended }}"
+    mode: "full"
+    validate_vpc_pair_details: true
+  register: tc6_validation
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
+    - tc6_has_vpc_pair_details | default(false) | bool
+  tags: override
+
+- name: OVERRIDE - TC6 - WARN - Skip strict details validation when API omits details
+  ansible.builtin.debug:
+    msg: >-
+      Direct vpcPair API omitted vpcPairDetails for {{ test_switch1 }}-{{ test_switch2 }};
+      strict vpc_pair_details validation skipped for this run.
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
+    - not (tc6_has_vpc_pair_details | default(false) | bool)
+  tags: override
+
+- name: OVERRIDE - TC6 - ASSERT - Extended details validation passed
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - (tc6_has_vpc_pair_details | default(false) | bool == false) or (tc6_validation.failed == false)
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
+  tags: override
+
+# TC7 - Override with config_actions save+deploy
+- name: OVERRIDE - TC7 - DELETE - Ensure vPC pair absent before config_actions test
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false
+  tags: override
+
+- name: OVERRIDE - TC7 - OVERRIDE - Create vPC pair with config_actions save+deploy
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: true
+      deploy: true
+      type: global
+    config: "{{ nd_vpc_pair_override_initial_conf }}"
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC7 - ASSERT - Verify config_actions save+deploy execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+      - result.deployment.config_actions is defined
+      - result.deployment.config_actions.save == true
+      - result.deployment.config_actions.deploy == true
+      - result.deployment.config_actions.type == "global"
+      - result.deployment.response is defined
+      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | list
+          | length
+        ) > 0
+  tags: override
+
+# TC8 - check_mode should not apply override configuration changes
+- name: OVERRIDE - TC8 - DELETE - Ensure vPC pair is absent before check_mode test
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false
+  tags: override
+
+- name: OVERRIDE - TC8 - OVERRIDE - Run check_mode create for vPC pair
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_vpc_pair_override_initial_conf }}"
+  check_mode: true
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC8 - ASSERT - Verify check_mode invocation succeeded
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is not defined
+  tags: override
+
+- name: OVERRIDE - TC8 - GATHER - Verify check_mode flow did not create vPC pair
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: verify_result
+  tags: override
+
+- name: OVERRIDE - TC8 - VALIDATE - Confirm no persistent changes from check_mode flow
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ verify_result }}"
+    expected_data: []
+    mode: "count_only"
+  register: validation
+  tags: override
+
+- name: OVERRIDE - TC8 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - validation.failed == false
+  tags: override
+
+##############################################
+##                 CLEAN-UP                 ##
+##############################################
+
+- name: OVERRIDE - END - remove vPC pairs
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false
+  when: cleanup_at_end | default(true)
+  tags: override
