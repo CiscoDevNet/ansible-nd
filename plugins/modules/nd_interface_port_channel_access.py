@@ -12,10 +12,10 @@ DOCUMENTATION = r"""
 ---
 module: nd_interface_port_channel_access
 version_added: "2.0.0"
-short_description: Manage port-channel accessPoHost interfaces on Cisco Nexus Dashboard
+short_description: Manage port-channel (accessPoHost) interfaces on Cisco Nexus Dashboard
 description:
-- Manage port-channel accessPoHost interfaces on Cisco Nexus Dashboard.
-- It supports creating, updating, querying, and deleting accessPoHost port-channel configurations on switches within a fabric.
+- Manage port-channel (accessPoHost) interfaces on Cisco Nexus Dashboard.
+- It supports creating, updating, and deleting (accessPoHost) port-channel configurations on switches within a fabric.
 - Each config item represents one port-channel interface. Member ethernet interfaces are listed in
   O(config[].config_data.network_os.policy.ports) and inherit access-mode configuration from the port-channel policy.
 - Member interface field mutability is restricted while members of a port-channel; only description, admin_state, and
@@ -30,7 +30,7 @@ options:
     required: true
   config:
     description:
-    - The list of port-channel accessPoHost interfaces to configure.
+    - The list of port-channel (accessPoHost) interfaces to configure.
     - Each item specifies the target switch, the port-channel interface name, and its configuration.
     - Multiple switches can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
@@ -61,7 +61,7 @@ options:
             suboptions:
               policy:
                 description:
-                - The policy configuration for the accessPoHost port-channel.
+                - The policy configuration for the (accessPoHost) port-channel.
                 type: dict
                 suboptions:
                   admin_state:
@@ -136,6 +136,7 @@ options:
                   netflow_monitor:
                     description:
                     - The netflow Layer-2 monitor name for the port-channel.
+                    - Required when O(config[].config_data.network_os.policy.netflow=true).
                     type: str
                   netflow_sampler:
                     description:

@@ -40,6 +40,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     SerializationInfo,
     field_validator,
     model_serializer,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -256,7 +257,7 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
     native_vlan: int | None = Field(default=None, alias="nativeVlan", ge=1, le=4094, description="Trunk native VLAN id")
     negotiate_auto: bool | None = Field(default=None, alias="negotiateAuto", description="Enable link auto-negotiation")
     netflow: bool | None = Field(default=None, alias="netflow", description="Enable Netflow on the interface")
-    netflow_monitor: str | None = Field(default=None, alias="netflowMonitor", description="Layer 2 Netflow monitor name")
+    netflow_monitor: str | None = Field(default=None, alias="netflowMonitor", description="Layer 2 Netflow monitor name (required when `netflow=true`)")
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
     orphan_port: bool | None = Field(
         default=None, alias="orphanPort", description="Configure as a vPC orphan port (suspended by secondary peer on vPC failure)"
@@ -325,6 +326,26 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
     )
 
     # --- Validators ---
+
+    @model_validator(mode="after")
+    def _validate_netflow_monitor_present(self) -> PortChannelTrunkHostPolicyModel:
+        """
+        # Summary
+
+        Reject enabling `netflow` without supplying a `netflow_monitor`.
+
+        The DOCUMENTATION and field description state that `netflow_monitor` is required when `netflow` is true. Enforcing it at the model layer
+        fails an incomplete policy early with a clear error instead of pushing a netflow config with no monitor and deferring the outcome to ND.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `netflow` is true and `netflow_monitor` is missing or empty.
+        """
+        if self.netflow is True and not self.netflow_monitor:
+            raise ValueError("netflow_monitor must be provided when netflow is true.")
+        return self
 
     @field_validator("ports", mode="before")
     @classmethod

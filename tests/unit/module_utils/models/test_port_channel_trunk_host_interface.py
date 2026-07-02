@@ -1987,3 +1987,27 @@ def test_port_channel_trunk_host_interface_01130():
     assert "customer_vlan_id" in entries_spec["options"]
     assert "dot1q_tunnel" in entries_spec["options"]
     assert "provider_vlan_id" in entries_spec["options"]
+
+
+def test_port_channel_trunk_host_interface_01140():
+    """
+    # Summary
+
+    Verify `_validate_netflow_monitor_present`: `netflow_monitor` is required when `netflow` is true.
+
+    ## Test
+
+    - `netflow=True` without `netflow_monitor` is rejected
+    - `netflow=True` with `netflow_monitor` is accepted
+    - `netflow=False` (or unset) without `netflow_monitor` is accepted
+
+    ## Classes and Methods
+
+    - PortChannelTrunkHostPolicyModel._validate_netflow_monitor_present()
+    """
+    with pytest.raises(ValidationError, match="netflow_monitor must be provided when netflow is true"):
+        PortChannelTrunkHostPolicyModel(netflow=True)
+    with does_not_raise():
+        PortChannelTrunkHostPolicyModel(netflow=True, netflow_monitor="MONITOR-1")
+        PortChannelTrunkHostPolicyModel(netflow=False)
+        PortChannelTrunkHostPolicyModel()
