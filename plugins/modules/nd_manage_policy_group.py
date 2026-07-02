@@ -387,69 +387,6 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
-changed:
-  description:
-  - Whether the module changed controller state or issued a requested deploy/cleanup action.
-  type: bool
-  returned: always
-before:
-  description:
-  - Policy groups matched before normal state-machine operations.
-  type: list
-  elements: dict
-  returned: when C(state=merged) or C(state=deleted) uses the normal state-machine path
-after:
-  description:
-  - Policy groups after normal state-machine operations.
-  type: list
-  elements: dict
-  returned: when C(state=merged) or C(state=deleted) uses the normal state-machine path
-gathered:
-  description:
-  - Active, user-manageable policy groups exported as playbook-compatible config.
-  - Rows with C(markDeleted=true) and generated/internal rows with non-empty C(source)
-    are excluded.
-  type: list
-  elements: dict
-  returned: when C(state=gathered)
-force_created:
-  description:
-  - Policy groups created through O(config[].create_additional_policy=true).
-  - These are returned separately because duplicate composite identifiers cannot be
-    represented in the normal C(before)/C(after) state-machine collections.
-  type: list
-  elements: dict
-  returned: when force-created entries are processed
-direct_actions:
-  description:
-  - ID-based policy-group updates or deletes that bypassed the composite-key state machine.
-  - Used for no-description groups and description changes addressed by C(policy_id).
-  type: dict
-  returned: when direct-action entries are processed
-  contains:
-    updated:
-      description: Policy groups updated directly by controller ID.
-      type: list
-      elements: dict
-    deleted:
-      description: Policy groups deleted directly by controller ID.
-      type: list
-      elements: dict
-pending_deleted_cleanup:
-  description:
-  - Details for C(state=deleted) + O(deploy=true) cleanup of rows already hidden from
-    the active view by C(markDeleted=true) or non-empty C(source).
-  - Policy groups are validated through C(policySummary) before their switches are
-    added to the consolidated C(switchActions/deploy) request.
-  type: dict
-  returned: when pending-delete cleanup is scheduled
-template_input_validation_failed:
-  description:
-  - Per-entry template-input validation failures. Valid entries may already have been
-    processed before the module returns the final failed result.
-  type: list
-  elements: dict
-  returned: when one or more C(template_inputs) entries fail schema validation
 """
 
 import logging

@@ -554,66 +554,6 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
-changed:
-  description:
-  - Whether the module created, updated, deleted, or switch-deployed any policy.
-  - No-diff C(merged) deploys of already matching policies do not by themselves
-    mark the task changed.
-  returned: always
-  type: bool
-before:
-  description:
-  - Active policy snapshots observed before mutation for entries that were changed
-    or checked.
-  returned: always
-  type: list
-  elements: dict
-after:
-  description:
-  - Policy snapshots after successful creates or updates.
-  - C(state=deleted) returns no deleted policies in C(after).
-  returned: always
-  type: list
-  elements: dict
-gathered:
-  description:
-  - Playbook-compatible active policy configuration returned by C(state=gathered).
-  - Contains C(policy_id) so gathered output can be replayed to target the same
-    controller policy directly.
-  returned: when state is gathered and active policies match
-  type: list
-  elements: dict
-proposed:
-  description:
-  - Desired policy payloads considered by the module.
-  returned: when output_level is info or debug
-  type: list
-  elements: dict
-warnings_nd:
-  description:
-  - Non-fatal ND warning messages captured from policy action responses.
-  returned: when ND returns warnings
-  type: list
-  elements: str
-api_path:
-  description:
-  - API paths called by the module, exposed at higher verbosity.
-  returned: with -vv or higher
-  type: list
-  elements: str
-api_payload:
-  description:
-  - API request payloads called by the module, exposed at higher verbosity.
-  returned: with -vv or higher
-  type: list
-  elements: dict
-api_diff:
-  description:
-  - Per-step action details, including create/update/delete/deploy decisions and
-    per-entry failures.
-  returned: with -vvv or higher
-  type: list
-  elements: dict
 """
 
 # pylint: disable=logging-fstring-interpolation
