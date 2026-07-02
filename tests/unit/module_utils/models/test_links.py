@@ -75,6 +75,22 @@ def test_user_defined_allows_extra_fields():
     assert type(link.config_data.template_inputs).__name__ == "UserDefinedTemplateInputs"
 
 
+def test_policy_marker_injection_does_not_mutate_input():
+    """The internal policy_type_marker is not written back into the caller's dict
+    (which is module.params), so it never leaks into the invocation echo."""
+    config_item = {
+        "src_fabric_name": "f1",
+        "dst_fabric_name": "f2",
+        "src_switch_name": "a",
+        "dst_switch_name": "b",
+        "src_interface_name": "Ethernet1/30",
+        "dst_interface_name": "Ethernet1/30",
+        "config_data": {"policy_type": "numbered", "template_inputs": {"src_ip": "10.0.0.1"}},
+    }
+    NDLinkModel.from_config(config_item)
+    assert "policy_type_marker" not in config_item["config_data"]["template_inputs"]
+
+
 # ---------------------------------------------------------------------------
 # Secret handling
 # ---------------------------------------------------------------------------
@@ -89,23 +105,41 @@ def test_user_defined_allows_extra_fields():
         ("multisiteUnderlay", {"ebgpPassword": "S4"}, "ebgpPassword", "ebgp_password"),
     ],
 )
-def test_secret_in_payload_absent_from_config_and_diff(policy_type, template_inputs, secret_alias, secret_pyname):
-    """Secrets reach the controller payload but are scrubbed from output/diff."""
+def test_secret_in_payload_masked_in_config_absent_from_diff(policy_type, template_inputs, secret_alias, secret_pyname):
+    """Secrets reach the controller payload, are masked in output, and excluded from diff."""
     link = _link(policy_type, template_inputs)
     payload_ti = link.to_payload()["configData"]["templateInputs"]
     config_ti = link.to_config()["config_data"]["template_inputs"]
     diff_ti = link.to_diff_dict()["configData"]["templateInputs"]
     assert payload_ti.get(secret_alias) == list(template_inputs.values())[0]
-    assert secret_pyname not in config_ti
+    assert config_ti[secret_pyname] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
     assert secret_alias not in diff_ti
 
 
 def test_non_secret_fields_survive_in_config():
-    """Non-secret template fields remain visible in output."""
+    """Non-secret template fields stay visible; secrets are masked, not dropped."""
     link = _link("ebgpVrfLite", {"linkMtu": 9216, "defaultVrfEbgpNeighborPassword": "secret"})
     config_ti = link.to_config()["config_data"]["template_inputs"]
     assert config_ti.get("link_mtu") == 9216
-    assert "default_vrf_ebgp_neighbor_password" not in config_ti
+    assert config_ti["default_vrf_ebgp_neighbor_password"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+
+
+def test_collect_secret_values_finds_free_form_template_input_secrets():
+    """collect_secret_values surfaces free-form template_inputs secrets for no_log."""
+    config_item = {
+        "src_interface_name": "Ethernet1/30",
+        "config_data": {
+            "policy_type": "ebgpVrfLite",
+            "template_inputs": {"ebgp_password": "S3cret!", "link_mtu": 9216},
+        },
+    }
+    assert NDLinkModel.collect_secret_values(config_item) == {"S3cret!"}
+
+
+def test_collect_secret_values_empty_when_no_secrets():
+    """No secrets (e.g. gathered/empty config) yields an empty set, no error."""
+    assert NDLinkModel.collect_secret_values({}) == set()
+    assert NDLinkModel.collect_secret_values({"config_data": {"template_inputs": {"link_mtu": 9216}}}) == set()
 
 
 # ---------------------------------------------------------------------------

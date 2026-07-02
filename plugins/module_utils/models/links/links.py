@@ -7,8 +7,9 @@ from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.discriminated_union import LinkTemplateInputs
+from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.discriminated_union import LinkTemplateInputs, all_secret_template_input_keys
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.utils import NO_LOG_PLACEHOLDER
 
 
 class LinkConfigDataModel(NDNestedModel):
@@ -32,13 +33,19 @@ class LinkConfigDataModel(NDNestedModel):
     @model_validator(mode="before")
     @classmethod
     def _inject_policy_marker(cls, data: Any) -> Any:
-        """Copy policy_type into template_inputs so the discriminated union resolves."""
+        """Copy policy_type into template_inputs so the discriminated union resolves.
+
+        Returns a shallow copy rather than mutating the input in place: ``data``
+        is a reference into ``module.params``, so an in-place ``setdefault`` would
+        leak the internal marker back into the invocation echo.
+        """
         if not isinstance(data, dict):
             return data
         policy_type = data.get("policy_type") or data.get("policyType")
         template_inputs = data.get("template_inputs") or data.get("templateInputs")
-        if policy_type and isinstance(template_inputs, dict):
-            template_inputs.setdefault("policy_type_marker", policy_type)
+        if policy_type and isinstance(template_inputs, dict) and "policy_type_marker" not in template_inputs:
+            key = "template_inputs" if data.get("template_inputs") is not None else "templateInputs"
+            data = {**data, key: {**template_inputs, "policy_type_marker": policy_type}}
         return data
 
 
@@ -116,6 +123,25 @@ class NDLinkModel(NDBaseModel):
 
     config_data: LinkConfigDataModel | None = Field(default=None, alias="configData")
 
+    @classmethod
+    def collect_secret_values(cls, config_item: dict[str, Any]) -> set[str]:
+        """Secret values for no_log masking, including free-form template_inputs.
+
+        Extends the base (top-level secret fields) to also cover the secret keys
+        nested inside the free-form ``config_data.template_inputs`` dict, which
+        Ansible cannot mark ``no_log`` in the argument spec.
+        """
+        values = super().collect_secret_values(config_item)
+        if isinstance(config_item, dict):
+            config_data = config_item.get("config_data") or {}
+            template_inputs = config_data.get("template_inputs") or {}
+            if isinstance(template_inputs, dict):
+                for key in all_secret_template_input_keys(by_alias=False):
+                    value = template_inputs.get(key)
+                    if value:
+                        values.add(value)
+        return values
+
     def to_diff_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Serialize for diff comparison and strip noise keys ND returns on read."""
         data = self.model_dump(
@@ -137,11 +163,16 @@ class NDLinkModel(NDBaseModel):
         removed from after/before/proposed output and from the diff.
         """
         data = super().to_config(**kwargs)
-        self._strip_secret_template_inputs(data, by_alias=False)
+        self._strip_secret_template_inputs(data, by_alias=False, mask=True)
         return data
 
-    def _strip_secret_template_inputs(self, data: dict[str, Any], by_alias: bool) -> None:
-        """Remove secret template_inputs fields from an output/diff dict in place."""
+    def _strip_secret_template_inputs(self, data: dict[str, Any], by_alias: bool, mask: bool = False) -> None:
+        """Handle secret template_inputs fields in an output/diff dict in place.
+
+        ``mask=True`` (output) replaces a present secret with ``NO_LOG_PLACEHOLDER``
+        so the key stays visible; ``mask=False`` (diff) pops it entirely so a
+        secret-only change is never detected.
+        """
         if self.config_data is None or self.config_data.template_inputs is None:
             return
         config_data_key = "configData" if by_alias else "config_data"
@@ -153,7 +184,11 @@ class NDLinkModel(NDBaseModel):
         if not isinstance(template_inputs, dict):
             return
         for key in type(self.config_data.template_inputs).secret_field_keys(by_alias=by_alias):
-            template_inputs.pop(key, None)
+            if mask:
+                if key in template_inputs:
+                    template_inputs[key] = NO_LOG_PLACEHOLDER
+            else:
+                template_inputs.pop(key, None)
 
     @staticmethod
     def _remove_nested_key(data: dict, key_path: list[str]) -> None:

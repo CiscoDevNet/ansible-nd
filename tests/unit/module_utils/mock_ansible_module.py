@@ -65,6 +65,9 @@ class MockAnsibleModule:
         "check_mode": False,
     }
     supports_check_mode = True
+    # Real AnsibleModule initializes this in __init__; mirror it so code that
+    # registers secret values for no_log masking works under test.
+    no_log_values = set()
 
     def __init__(self) -> None:
         self.warnings: list[str] = []

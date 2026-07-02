@@ -41,7 +41,10 @@ class NDStateMachine:
         self.rest_send.response_handler = ResponseHandler()
 
         # Operation tracking
-        self.output = NDOutput(output_level=module.params.get("output_level", "normal"))
+        self.output = NDOutput(
+            output_level=module.params.get("output_level", "normal"),
+            state=module.params.get("state", ""),
+        )
         self.results = Results()
         self.results.state = self.module.params.get("state", "")
         self.results.check_mode = self.module.check_mode
@@ -65,6 +68,16 @@ class NDStateMachine:
         self.supports_bulk_create = self.model_orchestrator.supports_bulk_create
         self.supports_bulk_delete = self.model_orchestrator.supports_bulk_delete
 
+        # Mask secret input values in the invocation echo. Ansible auto-masks
+        # ``no_log`` argument-spec params, but secrets in free-form/nested dicts
+        # have no static suboption to flag; the model declares them via
+        # ``collect_secret_values`` and we register them here, generically for
+        # every module rather than per-module boilerplate. ``no_log_values`` is
+        # always present on a real AnsibleModule; guard for module stubs.
+        if hasattr(self.module, "no_log_values"):
+            for config_item in self.module.params.get("config") or []:
+                self.module.no_log_values |= self.model_class.collect_secret_values(config_item)
+
         # Initialize collections
         try:
             response_data = self.model_orchestrator.query_all()
@@ -81,11 +94,17 @@ class NDStateMachine:
             # identifier-only items for ``deleted``). Models that do not read the context ignore it.
             raw_config = self.module.params.get("config") or []
             raw_config = self.model_orchestrator.prepare_config_data(raw_config)
-            self.proposed = NDConfigCollection.from_ansible_config(
-                data=raw_config, model_class=self.model_class, context={"state": self.state}
-            )
+            self.proposed = NDConfigCollection.from_ansible_config(data=raw_config, model_class=self.model_class, context={"state": self.state})
 
-            self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
+            # Argument-spec ``config.options`` drives pruning of gathered output
+            # so it round-trips cleanly as ``config``. Derived from the model,
+            # so it is generic across modules and needs no per-module wiring.
+            gathered_spec = {}
+            get_argument_spec = getattr(self.model_class, "get_argument_spec", None)
+            if callable(get_argument_spec):
+                gathered_spec = get_argument_spec().get("config", {}).get("options", {}) or {}
+
+            self.output.assign(after=self.existing, before=self.before, proposed=self.proposed, gathered_spec=gathered_spec)
 
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}") from e

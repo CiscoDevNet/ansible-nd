@@ -127,9 +127,27 @@
       ansible.builtin.assert:
         that:
           - gathered_numbered is not changed
-          - (gathered_numbered.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | list) | length == 1
-          - (gathered_numbered.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 1
-          - (gathered_numbered.after | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 1
+          - (gathered_numbered.gathered | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | list) | length == 1
+          - (gathered_numbered.gathered | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 1
+          - (gathered_numbered.gathered | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 1
+          # Gathered is pruned to the module's argument spec: response-only keys
+          # (e.g. link_id) must not leak, and the config-shaped keys must survive.
+          - (gathered_numbered.gathered | selectattr('link_id', 'defined') | list) | length == 0
+          - (gathered_numbered.gathered | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "numbered"
+          - (gathered_numbered.gathered | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.src_ip == "10.99.30.1"
+
+    - name: Re-apply gathered numbered links as config (round-trip)
+      cisco.nd.nd_manage_links:
+        state: merged
+        config: "{{ gathered_numbered.gathered }}"
+      register: numbered_roundtrip
+
+    - name: Assert gathered output round-trips cleanly with no changes
+      ansible.builtin.assert:
+        that:
+          # Pasting gathered straight back as config must be idempotent, proving
+          # it validates against the argument spec at every nesting level.
+          - numbered_roundtrip is not changed
 
     - name: Update numbered link Eth1/30 (merged - check mode)
       cisco.nd.nd_manage_links: &numbered_update

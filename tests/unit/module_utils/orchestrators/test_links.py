@@ -113,3 +113,49 @@ def test_bulk_failure_message_includes_id_and_reason():
         NDLinkOrchestrator._raise_on_bulk_failures({"links": [{"linkId": "L9", "status": "failure", "message": "bad mtu"}]}, "create")
     text = str(exc.value)
     assert "L9" in text and "bad mtu" in text
+
+
+# ---------------------------------------------------------------------------
+# prepare_config_data must not mutate the caller's config (module.params),
+# or resolved switch_name/switch_id leak into the invocation echo.
+# ---------------------------------------------------------------------------
+
+
+class _FakeSwitch:
+    def __init__(self, switch_id, hostname):
+        self.switch_id = switch_id
+        self.hostname = hostname
+
+
+class _FakeIndex:
+    def __init__(self, by_ip_map):
+        self._by_ip = by_ip_map
+
+    def by_ip(self):
+        return self._by_ip
+
+    def by_id(self):
+        return {}
+
+
+def _orchestrator():
+    from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+
+    return NDLinkOrchestrator(rest_send=RestSend({"check_mode": False}), strategy=ManageLinkStrategy(fabric_name="f"))
+
+
+def test_prepare_config_data_backfills_on_copy_not_input():
+    orch = _orchestrator()
+    # Pre-seed the fabric index cache so no controller call is made.
+    orch._switch_index_by_fabric["f"] = _FakeIndex({"1.1.1.1": _FakeSwitch("SID1", "host1")})
+    raw = [{"src_fabric_name": "f", "src_switch_ip": "1.1.1.1", "dst_fabric_name": "f", "dst_switch_ip": "1.1.1.1"}]
+
+    result = orch.prepare_config_data(raw)
+
+    # Input (module.params) is untouched, nothing leaks into the invocation echo.
+    assert "src_switch_name" not in raw[0]
+    assert "src_switch_id" not in raw[0]
+    # The returned copy carries the resolved identity used to build the proposed collection.
+    assert result is not raw
+    assert result[0]["src_switch_name"] == "host1"
+    assert result[0]["src_switch_id"] == "SID1"

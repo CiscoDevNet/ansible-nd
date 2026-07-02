@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 from typing import Any, ClassVar
 
@@ -73,9 +74,14 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
 
         Identity uses switch_name, so callers who only supplied IP or serial need it
         populated before the proposed collection is built.
+
+        Operates on a copy: ``raw_config`` is a reference into ``module.params``,
+        so backfilling in place would leak the resolved switch_name/switch_id
+        back into the invocation echo.
         """
         if not isinstance(raw_config, list):
             return raw_config
+        raw_config = copy.deepcopy(raw_config)
         for entry in raw_config:
             if not isinstance(entry, dict):
                 continue

@@ -47,9 +47,42 @@ LinkTemplateInputs = Annotated[
     Field(discriminator="policy_type_marker"),
 ]
 
+# Every policy-type model in the union, used to enumerate secret keys across all
+# of them without knowing which one a given link resolves to.
+_LINK_TEMPLATE_INPUT_MODELS = (
+    NumberedTemplateInputs,
+    UnnumberedTemplateInputs,
+    Ipv6LinkLocalTemplateInputs,
+    EbgpVrfLiteTemplateInputs,
+    Layer2DciTemplateInputs,
+    Layer3DciVrfLiteTemplateInputs,
+    MultisiteOverlayTemplateInputs,
+    MultisiteUnderlayTemplateInputs,
+    MplsOverlayTemplateInputs,
+    MplsUnderlayTemplateInputs,
+    PreprovisionTemplateInputs,
+    UserDefinedTemplateInputs,
+    VpcPeerKeepaliveTemplateInputs,
+)
+
+
+def all_secret_template_input_keys(by_alias: bool = False) -> set[str]:
+    """Union of secret (``no_log``-worthy) key names across every policy type.
+
+    ``template_inputs`` is a free-form dict, so Ansible cannot mark its secret
+    keys ``no_log`` in the argument spec. The module registers these values with
+    ``module.no_log_values`` at runtime instead; this returns the key names to
+    look for, derived from the models so it never drifts as fields are added.
+    """
+    keys: set[str] = set()
+    for model in _LINK_TEMPLATE_INPUT_MODELS:
+        keys |= model.secret_field_keys(by_alias=by_alias)
+    return keys
+
 
 __all__ = [
     "LinkTemplateInputs",
+    "all_secret_template_input_keys",
     "NumberedTemplateInputs",
     "UnnumberedTemplateInputs",
     "Ipv6LinkLocalTemplateInputs",

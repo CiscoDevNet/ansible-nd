@@ -161,9 +161,9 @@ options:
             - The accepted keys depend on O(config.config_data.policy_type). Keys that do not belong to the selected policy type are rejected.
             - 'In the lists below, a key shown as C(name) (int) or C(name) (bool) takes that type; all other keys are strings.'
             - 'Secret fields - C(ebgp_password), C(default_vrf_ebgp_neighbor_password), C(macsec_primary_key_string) and C(macsec_fallback_key_string)
-              are sent to the controller and are masked from this module''s output and diffs. A change to only a secret value is therefore not detected
-              as a change. Because O(config.config_data.template_inputs) is a free-form dict these values are not individually marked no_log, so they may
-              appear in task invocation logs at high verbosity.'
+              are sent to the controller but their values are masked as C(VALUE_SPECIFIED_IN_NO_LOG_PARAMETER) in this module''s output and excluded
+              from diffs. A change to only a secret value is therefore not detected as a change. Because O(config.config_data.template_inputs) is a
+              free-form dict these values are not individually marked no_log, so they may appear in task invocation logs at high verbosity.'
             - 'Common interface fields, available on V(numbered), V(unnumbered) and V(ipv6LinkLocal) - C(interface_admin_state) (bool), C(mtu) (int),
               C(speed), C(fec), C(src_interface_description), C(dst_interface_description), C(src_interface_config), C(dst_interface_config)
               and C(macsec) (bool).'
@@ -213,7 +213,7 @@ options:
     - Use V(replaced) to replace the configuration of the listed links with O(config).
     - Use V(overridden) to make the links match O(config) exactly. Links in scope that are not listed are deleted.
     - Use V(deleted) to delete the listed links.
-    - Use V(gathered) to read the existing links in scope and return them in O(config) format. No changes are made.
+    - Use V(gathered) to read the existing links in scope and return them under the C(gathered) key in O(config) format. No changes are made.
     type: str
     choices: [ merged, replaced, overridden, deleted, gathered ]
     default: merged

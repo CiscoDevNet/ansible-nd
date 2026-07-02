@@ -131,6 +131,47 @@
 
           - nm_vrflite_update_again is not changed
 
+    # -----------------------------------------------------------------------
+    # Secret handling (check mode, no controller write): a free-form
+    # template_inputs secret must be stripped from proposed and masked in the
+    # invocation echo. Applied-state stripping and diff exclusion are covered
+    # by unit tests; they are not asserted against live state here because the
+    # controller-side prerequisites for a secret vary by lab.
+    # -----------------------------------------------------------------------
+    - name: Set a secret on ebgpVrfLite link Eth1/30 (merged - check mode)
+      cisco.nd.nd_manage_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_vrflite_src }}'
+            dst_fabric_name: '{{ test_fabric_vrflite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: ebgpVrfLite
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address_mask: "10.99.30.1/30"
+                dst_ip_address: "10.99.30.2"
+                link_mtu: 1500
+                default_vrf_ebgp_neighbor_password: ansibleSecretKeyAAA
+        state: merged
+      check_mode: true
+      register: cm_vrflite_secret
+
+    - name: Asserts for ebgpVrfLite secret handling
+      ansible.builtin.assert:
+        that:
+          # Secret is masked (not the real value) in module output, key stays visible.
+          - cm_vrflite_secret.proposed.0.config_data.template_inputs.default_vrf_ebgp_neighbor_password == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+          # Non-secret fields in the same block survive.
+          - cm_vrflite_secret.proposed.0.config_data.template_inputs.link_mtu == 1500
+      # The invocation echo is also masked (shows VALUE_SPECIFIED_IN_NO_LOG_PARAMETER
+      # at high verbosity), via the module's runtime no_log_values registration, covered by
+      # unit tests (collect_secret_values); not asserted here because ``invocation``
+      # is not reliably present in registered results.
+
     - name: Replace ebgpVrfLite link Eth1/30 (replaced - check mode)
       cisco.nd.nd_manage_links: &vrflite_replace
         config:
