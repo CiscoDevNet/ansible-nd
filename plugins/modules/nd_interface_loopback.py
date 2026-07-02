@@ -11,7 +11,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_interface_loopback
-version_added: "1.4.0"
+version_added: "2.0.0"
 short_description: Manage loopback interfaces on Cisco Nexus Dashboard
 description:
 - Manage loopback interfaces on Cisco Nexus Dashboard.
