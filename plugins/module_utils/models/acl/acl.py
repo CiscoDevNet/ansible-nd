@@ -50,8 +50,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.acl.enums import (
     PORT_ACTION_SNAKE_TO_WIRE,
 )
 
-# Allowed characters for ACL names (from OpenAPI pattern).
-_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+# Allowed characters for ACL names (from OpenAPI pattern). The ``~`` separates
+# an optional tenant qualifier from the ACL name (e.g. ``tenant1~acl3``) for
+# tenant-scoped ACLs, so it is part of the permitted character set.
+_NAME_RE = re.compile(r"^[a-zA-Z0-9_~-]+$")
+
+# Maximum ACL name length permitted by the OpenAPI schema. Tenant-qualified
+# names (``<tenant>~<name>``) are longer than plain names, hence 115.
+_NAME_MAX_LENGTH = 115
 
 # Argument-spec choices for port operators (Ansible snake_case).
 _PORT_ACTION_CHOICES = ["none", "equal_to", "greater_than", "less_than", "not_equal_to", "port_range"]
@@ -190,8 +196,8 @@ class AclModel(NDBaseModel):
     name: str = Field(
         alias="name",
         min_length=1,
-        max_length=63,
-        description="Name of the ACL (pattern: ^[a-zA-Z0-9_-]+$).",
+        max_length=_NAME_MAX_LENGTH,
+        description="Name of the ACL (pattern: ^[a-zA-Z0-9_~-]+$).",
     )
 
     type: Optional[AclTypeEnum] = Field(
@@ -224,9 +230,9 @@ class AclModel(NDBaseModel):
     @field_validator("name")
     @classmethod
     def validate_name(cls, value: str) -> str:
-        """Enforce API name pattern: ^[a-zA-Z0-9_-]+$."""
+        """Enforce API name pattern: ^[a-zA-Z0-9_~-]+$."""
         if not _NAME_RE.match(value):
-            raise ValueError(f"ACL name '{value}' is invalid. Only alphanumeric characters, '_', and '-' are allowed.")
+            raise ValueError(f"ACL name '{value}' is invalid. Only alphanumeric characters, '_', '-', and '~' are allowed.")
         return value
 
     # --- Model Validators (cross-field) ---
@@ -242,9 +248,7 @@ class AclModel(NDBaseModel):
 
         for idx, entry in enumerate(entries):
             if entry.sequence_number in seen_sequence_numbers:
-                raise ValueError(
-                    f"entries[{idx}].sequenceNumber '{entry.sequence_number}' is duplicated. Sequence numbers must be unique within an ACL."
-                )
+                raise ValueError(f"entries[{idx}].sequenceNumber '{entry.sequence_number}' is duplicated. Sequence numbers must be unique within an ACL.")
             seen_sequence_numbers.add(entry.sequence_number)
             self._validate_entry(idx, entry)
 

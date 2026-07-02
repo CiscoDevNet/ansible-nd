@@ -21,7 +21,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStrin
 class AclNameMixin(BaseModel):
     """Mixin for endpoints that require acl_name parameter."""
 
-    acl_name: Optional[str] = Field(default=None, min_length=1, max_length=63, description="ACL name")
+    acl_name: str | None = Field(default=None, min_length=1, max_length=115, description="ACL name")
 
 
 class ClusterNameMixin(BaseModel):

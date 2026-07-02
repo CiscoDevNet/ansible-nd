@@ -39,8 +39,9 @@ options:
       name:
         description:
         - The name of the ACL.
-        - Allowed characters are C([a-zA-Z0-9_-]).
-        - Maximum length is 63 characters.
+        - Allowed characters are C([a-zA-Z0-9_~-]).
+        - Tenant-qualified names in the form C(<tenant>~<name>) (for example C(tenant1~acl3)) are supported.
+        - Maximum length is 115 characters.
         type: str
         required: true
       type:

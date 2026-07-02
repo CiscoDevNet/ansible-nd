@@ -370,6 +370,36 @@ def test_manage_acl_00130() -> None:
         AclModel(**bad_config)
 
 
+def test_manage_acl_00131() -> None:
+    """
+    # Summary
+
+    Verify tenant-qualified ACL names and long names are accepted.
+
+    ## Test
+
+    - A tenant-qualified name using '~' (e.g. 'tenant1~acl3') is accepted
+    - A 115-character name is accepted (OpenAPI maximum)
+    - A 116-character name is rejected
+
+    ## Classes and Methods
+
+    - AclModel.validate_name
+    """
+    tenant_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    tenant_config["name"] = "tenant1~acl3"
+    assert AclModel(**tenant_config).name == "tenant1~acl3"
+
+    max_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    max_config["name"] = "a" * 115
+    assert AclModel(**max_config).name == "a" * 115
+
+    too_long_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    too_long_config["name"] = "a" * 116
+    with pytest.raises(ValidationError):
+        AclModel(**too_long_config)
+
+
 # =============================================================================
 # Test: AclModel identifier strategy
 # =============================================================================
