@@ -150,15 +150,16 @@
                 interface_ipv4_address: 10.0.0.2
         routing_details:
           routing_protocol: bgp
-          auth: false
-          bfd: true
-          hold_interval: 240
-          keep_alive_interval: 60
-          fabric1_details:
-            advertise_default_route: true
-            ipv4_peering_details:
-              ipv4_route_map_in: rm-in
-              ipv4_route_map_out: rm-out
+          bgp:
+            auth: false
+            bfd: true
+            hold_interval: 240
+            keep_alive_interval: 60
+            fabric1_details:
+              advertise_default_route: true
+              ipv4_peering_details:
+                ipv4_route_map_in: rm-in
+                ipv4_route_map_out: rm-out
     state: merged
   check_mode: true
   register: cm_merged_mgmt_ip_idem

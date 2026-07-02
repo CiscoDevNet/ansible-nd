@@ -82,20 +82,94 @@ class StaticRouteModel(NDNestedModel):
     next_hop_vrf_name: Optional[str] = Field(default=None, alias="nextHopVrfName")
 
 
-class RoutingDetailsModel(NDNestedModel):
-    """Routing configuration for L3Out (BGP or static)."""
+class BgpRoutingModel(NDNestedModel):
+    """BGP-specific routing configuration for an L3Out.
 
-    routing_protocol: str = Field(alias="routingProtocol")
-    # BGP fields
+    Groups the BGP attributes that live flat under ``routingDetails`` on the
+    ND wire into a single user-facing ``bgp`` dict. RoutingDetailsModel hoists
+    these fields back to the wire's flat layout during payload/diff
+    serialization.
+    """
+
     auth: Optional[bool] = Field(default=None, alias="auth")
     bfd: Optional[bool] = Field(default=None, alias="bfd")
     hold_interval: Optional[int] = Field(default=None, alias="holdInterval")
     keep_alive_interval: Optional[int] = Field(default=None, alias="keepAliveInterval")
     fabric1_details: Optional[FabricBgpDetailsModel] = Field(default=None, alias="fabric1Details")
     fabric2_details: Optional[FabricBgpDetailsModel] = Field(default=None, alias="fabric2Details")
-    # Static routing fields
+
+
+class StaticRoutingModel(NDNestedModel):
+    """Static-routing-specific configuration for an L3Out.
+
+    Groups the static-route attributes that live flat under ``routingDetails``
+    on the ND wire into a single user-facing ``static`` dict.
+    """
+
     fabric1_static_routes: Optional[List[StaticRouteModel]] = Field(default=None, alias="fabric1StaticRoutes")
     fabric2_static_routes: Optional[List[StaticRouteModel]] = Field(default=None, alias="fabric2StaticRoutes")
+
+
+class RoutingDetailsModel(NDNestedModel):
+    """Routing configuration for L3Out.
+
+    The user-facing schema exposes two mutually-exclusive dicts, ``bgp`` and
+    ``static``, selected by ``routing_protocol``. The ND wire format is flat
+    (BGP and static fields sit directly under ``routingDetails``), so this
+    model groups the flat wire fields into the nested dicts on input and
+    flattens them back out on payload/diff serialization.
+    """
+
+    # Wire keys that belong to each protocol group, used to regroup a flat
+    # ND response into the nested bgp/static dicts.
+    _BGP_WIRE_KEYS: ClassVar[set] = {"auth", "bfd", "holdInterval", "keepAliveInterval", "fabric1Details", "fabric2Details"}
+    _STATIC_WIRE_KEYS: ClassVar[set] = {"fabric1StaticRoutes", "fabric2StaticRoutes"}
+
+    routing_protocol: str = Field(alias="routingProtocol")
+    bgp: Optional[BgpRoutingModel] = Field(default=None)
+    static: Optional[StaticRoutingModel] = Field(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _group_wire_fields(cls, data: Any) -> Any:
+        """Regroup a flat ND response into the nested bgp/static dicts.
+
+        Config input already arrives nested (the argspec exposes bgp/static),
+        so it is passed through untouched. A flat ND response carries the
+        BGP/static fields directly under routingDetails; those are collected
+        into bgp/static sub-dicts so the nested model can validate them.
+        """
+        if not isinstance(data, dict):
+            return data
+        # Already nested (Ansible config input) -> leave as-is.
+        if "bgp" in data or "static" in data:
+            return data
+        bgp_sub = {key: data.pop(key) for key in list(data) if key in cls._BGP_WIRE_KEYS}
+        static_sub = {key: data.pop(key) for key in list(data) if key in cls._STATIC_WIRE_KEYS}
+        if bgp_sub:
+            data["bgp"] = bgp_sub
+        if static_sub:
+            data["static"] = static_sub
+        return data
+
+    @model_serializer(mode="wrap")
+    def _flatten_wire(self, handler, info: SerializationInfo) -> Dict[str, Any]:
+        """Flatten the nested bgp/static dicts back to the ND wire layout.
+
+        For payload and diff serialization the bgp/static sub-dict contents are
+        hoisted directly under routingDetails (matching the ND wire format).
+        For config output (mode='config') the nested user-facing schema is
+        preserved.
+        """
+        data = handler(self)
+        mode = info.context.get("mode") if info.context else None
+        if mode == "config":
+            return data
+        for key in ("bgp", "static"):
+            sub = data.pop(key, None)
+            if isinstance(sub, dict):
+                data.update(sub)
+        return data
 
 
 class SwitchDetailsModel(NDNestedModel):
@@ -358,23 +432,31 @@ class L3OutModel(NDBaseModel):
             ipv6_peering_details=dict(type="dict", options=ipv6_peering_details_spec),
         )
 
-        # Routing details spec - discriminated by routing_protocol
-        routing_details_spec = dict(
-            routing_protocol=dict(
-                type="str",
-                required=True,
-                choices=["static", "bgp"],
-            ),
-            # Static routing fields
-            fabric1_static_routes=dict(type="list", elements="dict", options=static_route_spec),
-            fabric2_static_routes=dict(type="list", elements="dict", options=static_route_spec),
-            # BGP routing fields
+        # Routing details spec - discriminated by routing_protocol, with the
+        # protocol-specific configuration grouped under mutually-exclusive
+        # bgp/static dicts so required attributes are enforced by the argspec.
+        bgp_spec = dict(
             auth=dict(type="bool"),
             bfd=dict(type="bool"),
             hold_interval=dict(type="int"),
             keep_alive_interval=dict(type="int"),
             fabric1_details=dict(type="dict", options=fabric_peering_details_spec),
             fabric2_details=dict(type="dict", options=fabric_peering_details_spec),
+        )
+
+        static_spec = dict(
+            fabric1_static_routes=dict(type="list", elements="dict", options=static_route_spec),
+            fabric2_static_routes=dict(type="list", elements="dict", options=static_route_spec),
+        )
+
+        routing_details_spec = dict(
+            routing_protocol=dict(
+                type="str",
+                required=True,
+                choices=["static", "bgp"],
+            ),
+            bgp=dict(type="dict", options=bgp_spec),
+            static=dict(type="dict", options=static_spec),
         )
 
         # L3Out spec
@@ -390,7 +472,17 @@ class L3OutModel(NDBaseModel):
             configured_fabrics=dict(type="str", choices=["both", "fabric1", "fabric2"]),
             ip_version=dict(type="str", choices=["ipv4", "ipv6", "both"]),
             connectivity_details=dict(type="dict", options=connectivity_details_spec),
-            routing_details=dict(type="dict", options=routing_details_spec),
+            routing_details=dict(
+                type="dict",
+                options=routing_details_spec,
+                # bgp and static are mutually exclusive; the one matching
+                # routing_protocol is required.
+                mutually_exclusive=[("bgp", "static")],
+                required_if=[
+                    ("routing_protocol", "bgp", ("bgp",)),
+                    ("routing_protocol", "static", ("static",)),
+                ],
+            ),
         )
 
         return dict(

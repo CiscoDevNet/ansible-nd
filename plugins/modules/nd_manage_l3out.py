@@ -263,6 +263,8 @@ options:
         description:
         - Routing configuration for the L3Out.
         - Required when O(state) is C(merged) or C(replaced).
+        - Provide O(config.routing_details.bgp) when O(config.routing_details.routing_protocol) is C(bgp),
+          or O(config.routing_details.static) when it is C(static). The two are mutually exclusive.
         type: dict
         suboptions:
           routing_protocol:
@@ -273,312 +275,326 @@ options:
             type: str
             required: true
             choices: [ bgp, static ]
-          auth:
+          bgp:
             description:
-            - Enable BGP authentication.
-            - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
-            type: bool
-          bfd:
-            description:
-            - Enable BFD for BGP.
-            - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
-            type: bool
-          hold_interval:
-            description:
-            - BGP hold interval in seconds.
-            - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
-            type: int
-          keep_alive_interval:
-            description:
-            - BGP keepalive interval in seconds.
-            - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
-            type: int
-          fabric1_details:
-            description:
-            - BGP configuration details for fabric 1.
-            - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
+            - BGP routing configuration.
+            - Required when O(config.routing_details.routing_protocol) is C(bgp).
+            - Mutually exclusive with O(config.routing_details.static).
             type: dict
             suboptions:
-              local_asn:
+              auth:
                 description:
-                - Local ASN for BGP peering.
-                type: str
-              auth_key:
-                description:
-                - BGP authentication key.
-                - This field is not logged in module output (no_log).
-                type: str
-              auth_key_encryption_type:
-                description:
-                - Encryption type for the authentication key.
-                - C(3des) - 3DES encryption.
-                - C(type6) - Type 6 encryption.
-                - C(type7) - Type 7 encryption.
-                type: str
-                choices: [ 3des, type6, type7 ]
-              advertise_host_routes:
-                description:
-                - Advertise host routes.
+                - Enable BGP authentication.
+                - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
                 type: bool
-              advertise_default_route:
+              bfd:
                 description:
-                - Advertise default route.
+                - Enable BFD for BGP.
+                - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
                 type: bool
-              configure_static_default_route:
+              hold_interval:
                 description:
-                - Configure static default route.
-                type: bool
-              soft_reconfiguration_inbound:
-                description:
-                - Soft reconfiguration inbound setting.
-                type: str
-                choices: [ enabled, disabled, enabledAlways ]
-              default_originate:
-                description:
-                - Enable default originate.
-                type: bool
-              log_neighbor_change:
-                description:
-                - Log neighbor state changes.
-                type: bool
-              no_prepend:
-                description:
-                - Do not prepend local ASN to AS path.
-                type: bool
-              replace_as:
-                description:
-                - Replace AS path with local ASN.
-                type: bool
-              as_override:
-                description:
-                - Override AS path.
-                type: bool
-              disable_peer_as_check:
-                description:
-                - Disable peer AS check.
-                type: bool
-              allow_as_in_asn_occurence_number:
-                description:
-                - Number of times to allow local ASN in AS path.
+                - BGP hold interval in seconds.
+                - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
                 type: int
-              ipv4_peering_details:
+              keep_alive_interval:
                 description:
-                - IPv4 BGP peering details.
+                - BGP keepalive interval in seconds.
+                - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
+                type: int
+              fabric1_details:
+                description:
+                - BGP configuration details for fabric 1.
+                - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
                 type: dict
                 suboptions:
-                  ipv4_route_map_in:
+                  local_asn:
                     description:
-                    - Inbound route map for IPv4.
+                    - Local ASN for BGP peering.
                     type: str
-                  ipv4_route_map_out:
+                  auth_key:
                     description:
-                    - Outbound route map for IPv4.
+                    - BGP authentication key.
+                    - This field is not logged in module output (no_log).
                     type: str
-              ipv6_peering_details:
+                  auth_key_encryption_type:
+                    description:
+                    - Encryption type for the authentication key.
+                    - C(3des) - 3DES encryption.
+                    - C(type6) - Type 6 encryption.
+                    - C(type7) - Type 7 encryption.
+                    type: str
+                    choices: [ 3des, type6, type7 ]
+                  advertise_host_routes:
+                    description:
+                    - Advertise host routes.
+                    type: bool
+                  advertise_default_route:
+                    description:
+                    - Advertise default route.
+                    type: bool
+                  configure_static_default_route:
+                    description:
+                    - Configure static default route.
+                    type: bool
+                  soft_reconfiguration_inbound:
+                    description:
+                    - Soft reconfiguration inbound setting.
+                    type: str
+                    choices: [ enabled, disabled, enabledAlways ]
+                  default_originate:
+                    description:
+                    - Enable default originate.
+                    type: bool
+                  log_neighbor_change:
+                    description:
+                    - Log neighbor state changes.
+                    type: bool
+                  no_prepend:
+                    description:
+                    - Do not prepend local ASN to AS path.
+                    type: bool
+                  replace_as:
+                    description:
+                    - Replace AS path with local ASN.
+                    type: bool
+                  as_override:
+                    description:
+                    - Override AS path.
+                    type: bool
+                  disable_peer_as_check:
+                    description:
+                    - Disable peer AS check.
+                    type: bool
+                  allow_as_in_asn_occurence_number:
+                    description:
+                    - Number of times to allow local ASN in AS path.
+                    type: int
+                  ipv4_peering_details:
+                    description:
+                    - IPv4 BGP peering details.
+                    type: dict
+                    suboptions:
+                      ipv4_route_map_in:
+                        description:
+                        - Inbound route map for IPv4.
+                        type: str
+                      ipv4_route_map_out:
+                        description:
+                        - Outbound route map for IPv4.
+                        type: str
+                  ipv6_peering_details:
+                    description:
+                    - IPv6 BGP peering details.
+                    type: dict
+                    suboptions:
+                      ipv6_route_map_in:
+                        description:
+                        - Inbound route map for IPv6.
+                        type: str
+                      ipv6_route_map_out:
+                        description:
+                        - Outbound route map for IPv6.
+                        type: str
+              fabric2_details:
                 description:
-                - IPv6 BGP peering details.
+                - BGP configuration details for fabric 2.
+                - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
                 type: dict
                 suboptions:
-                  ipv6_route_map_in:
+                  local_asn:
                     description:
-                    - Inbound route map for IPv6.
+                    - Local ASN for BGP peering.
                     type: str
-                  ipv6_route_map_out:
+                  auth_key:
                     description:
-                    - Outbound route map for IPv6.
+                    - BGP authentication key.
+                    - This field is not logged in module output (no_log).
                     type: str
-          fabric2_details:
+                  auth_key_encryption_type:
+                    description:
+                    - Encryption type for the authentication key.
+                    - C(3des) - 3DES encryption.
+                    - C(type6) - Type 6 encryption.
+                    - C(type7) - Type 7 encryption.
+                    type: str
+                    choices: [ 3des, type6, type7 ]
+                  advertise_host_routes:
+                    description:
+                    - Advertise host routes.
+                    type: bool
+                  advertise_default_route:
+                    description:
+                    - Advertise default route.
+                    type: bool
+                  configure_static_default_route:
+                    description:
+                    - Configure static default route.
+                    type: bool
+                  soft_reconfiguration_inbound:
+                    description:
+                    - Soft reconfiguration inbound setting.
+                    type: str
+                    choices: [ enabled, disabled, enabledAlways ]
+                  default_originate:
+                    description:
+                    - Enable default originate.
+                    type: bool
+                  log_neighbor_change:
+                    description:
+                    - Log neighbor state changes.
+                    type: bool
+                  no_prepend:
+                    description:
+                    - Do not prepend local ASN to AS path.
+                    type: bool
+                  replace_as:
+                    description:
+                    - Replace AS path with local ASN.
+                    type: bool
+                  as_override:
+                    description:
+                    - Override AS path.
+                    type: bool
+                  disable_peer_as_check:
+                    description:
+                    - Disable peer AS check.
+                    type: bool
+                  allow_as_in_asn_occurence_number:
+                    description:
+                    - Number of times to allow local ASN in AS path.
+                    type: int
+                  ipv4_peering_details:
+                    description:
+                    - IPv4 BGP peering details.
+                    type: dict
+                    suboptions:
+                      ipv4_route_map_in:
+                        description:
+                        - Inbound route map for IPv4.
+                        type: str
+                      ipv4_route_map_out:
+                        description:
+                        - Outbound route map for IPv4.
+                        type: str
+                  ipv6_peering_details:
+                    description:
+                    - IPv6 BGP peering details.
+                    type: dict
+                    suboptions:
+                      ipv6_route_map_in:
+                        description:
+                        - Inbound route map for IPv6.
+                        type: str
+                      ipv6_route_map_out:
+                        description:
+                        - Outbound route map for IPv6.
+                        type: str
+          static:
             description:
-            - BGP configuration details for fabric 2.
-            - Only applicable when O(config.routing_details.routing_protocol) is C(bgp).
+            - Static routing configuration.
+            - Required when O(config.routing_details.routing_protocol) is C(static).
+            - Mutually exclusive with O(config.routing_details.bgp).
             type: dict
             suboptions:
-              local_asn:
+              fabric1_static_routes:
                 description:
-                - Local ASN for BGP peering.
-                type: str
-              auth_key:
-                description:
-                - BGP authentication key.
-                - This field is not logged in module output (no_log).
-                type: str
-              auth_key_encryption_type:
-                description:
-                - Encryption type for the authentication key.
-                - C(3des) - 3DES encryption.
-                - C(type6) - Type 6 encryption.
-                - C(type7) - Type 7 encryption.
-                type: str
-                choices: [ 3des, type6, type7 ]
-              advertise_host_routes:
-                description:
-                - Advertise host routes.
-                type: bool
-              advertise_default_route:
-                description:
-                - Advertise default route.
-                type: bool
-              configure_static_default_route:
-                description:
-                - Configure static default route.
-                type: bool
-              soft_reconfiguration_inbound:
-                description:
-                - Soft reconfiguration inbound setting.
-                type: str
-                choices: [ enabled, disabled, enabledAlways ]
-              default_originate:
-                description:
-                - Enable default originate.
-                type: bool
-              log_neighbor_change:
-                description:
-                - Log neighbor state changes.
-                type: bool
-              no_prepend:
-                description:
-                - Do not prepend local ASN to AS path.
-                type: bool
-              replace_as:
-                description:
-                - Replace AS path with local ASN.
-                type: bool
-              as_override:
-                description:
-                - Override AS path.
-                type: bool
-              disable_peer_as_check:
-                description:
-                - Disable peer AS check.
-                type: bool
-              allow_as_in_asn_occurence_number:
-                description:
-                - Number of times to allow local ASN in AS path.
-                type: int
-              ipv4_peering_details:
-                description:
-                - IPv4 BGP peering details.
-                type: dict
-                suboptions:
-                  ipv4_route_map_in:
-                    description:
-                    - Inbound route map for IPv4.
-                    type: str
-                  ipv4_route_map_out:
-                    description:
-                    - Outbound route map for IPv4.
-                    type: str
-              ipv6_peering_details:
-                description:
-                - IPv6 BGP peering details.
-                type: dict
-                suboptions:
-                  ipv6_route_map_in:
-                    description:
-                    - Inbound route map for IPv6.
-                    type: str
-                  ipv6_route_map_out:
-                    description:
-                    - Outbound route map for IPv6.
-                    type: str
-          fabric1_static_routes:
-            description:
-            - Static routes for fabric 1.
-            - Only applicable when O(config.routing_details.routing_protocol) is C(static).
-            type: list
-            elements: dict
-            suboptions:
-              ip_version:
-                description:
-                - IP version for the static route.
-                type: str
-                required: true
-                choices: [ ipv4, ipv6 ]
-              ip_prefix:
-                description:
-                - Destination IP prefix for the route.
-                type: str
-                required: true
-              next_hop:
-                description:
-                - Next hop IP address.
-                type: str
-                required: true
-              switch_ids:
-                description:
-                - List of switch IDs where the route should be configured.
+                - Static routes for fabric 1.
+                - Only applicable when O(config.routing_details.routing_protocol) is C(static).
                 type: list
-                elements: str
-                required: true
-              route_preference:
+                elements: dict
+                suboptions:
+                  ip_version:
+                    description:
+                    - IP version for the static route.
+                    type: str
+                    required: true
+                    choices: [ ipv4, ipv6 ]
+                  ip_prefix:
+                    description:
+                    - Destination IP prefix for the route.
+                    type: str
+                    required: true
+                  next_hop:
+                    description:
+                    - Next hop IP address.
+                    type: str
+                    required: true
+                  switch_ids:
+                    description:
+                    - List of switch IDs where the route should be configured.
+                    type: list
+                    elements: str
+                    required: true
+                  route_preference:
+                    description:
+                    - Administrative distance for the route.
+                    type: int
+                  next_hop_name:
+                    description:
+                    - Name for the next hop.
+                    type: str
+                  tag:
+                    description:
+                    - Tag value for the route.
+                    type: int
+                  track_id:
+                    description:
+                    - Track ID for route tracking.
+                    type: int
+                  next_hop_vrf_name:
+                    description:
+                    - VRF name for the next hop.
+                    type: str
+              fabric2_static_routes:
                 description:
-                - Administrative distance for the route.
-                type: int
-              next_hop_name:
-                description:
-                - Name for the next hop.
-                type: str
-              tag:
-                description:
-                - Tag value for the route.
-                type: int
-              track_id:
-                description:
-                - Track ID for route tracking.
-                type: int
-              next_hop_vrf_name:
-                description:
-                - VRF name for the next hop.
-                type: str
-          fabric2_static_routes:
-            description:
-            - Static routes for fabric 2.
-            - Only applicable when O(config.routing_details.routing_protocol) is C(static).
-            type: list
-            elements: dict
-            suboptions:
-              ip_version:
-                description:
-                - IP version for the static route.
-                type: str
-                required: true
-                choices: [ ipv4, ipv6 ]
-              ip_prefix:
-                description:
-                - Destination IP prefix for the route.
-                type: str
-                required: true
-              next_hop:
-                description:
-                - Next hop IP address.
-                type: str
-                required: true
-              switch_ids:
-                description:
-                - List of switch IDs where the route should be configured.
+                - Static routes for fabric 2.
+                - Only applicable when O(config.routing_details.routing_protocol) is C(static).
                 type: list
-                elements: str
-                required: true
-              route_preference:
-                description:
-                - Administrative distance for the route.
-                type: int
-              next_hop_name:
-                description:
-                - Name for the next hop.
-                type: str
-              tag:
-                description:
-                - Tag value for the route.
-                type: int
-              track_id:
-                description:
-                - Track ID for route tracking.
-                type: int
-              next_hop_vrf_name:
-                description:
-                - VRF name for the next hop.
-                type: str
+                elements: dict
+                suboptions:
+                  ip_version:
+                    description:
+                    - IP version for the static route.
+                    type: str
+                    required: true
+                    choices: [ ipv4, ipv6 ]
+                  ip_prefix:
+                    description:
+                    - Destination IP prefix for the route.
+                    type: str
+                    required: true
+                  next_hop:
+                    description:
+                    - Next hop IP address.
+                    type: str
+                    required: true
+                  switch_ids:
+                    description:
+                    - List of switch IDs where the route should be configured.
+                    type: list
+                    elements: str
+                    required: true
+                  route_preference:
+                    description:
+                    - Administrative distance for the route.
+                    type: int
+                  next_hop_name:
+                    description:
+                    - Name for the next hop.
+                    type: str
+                  tag:
+                    description:
+                    - Tag value for the route.
+                    type: int
+                  track_id:
+                    description:
+                    - Track ID for route tracking.
+                    type: int
+                  next_hop_vrf_name:
+                    description:
+                    - VRF name for the next hop.
+                    type: str
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -588,6 +604,9 @@ notes:
 - The fabric_name parameter refers to the fabric context for the L3Out operations (typically fabric1).
 - The RV(before) output shows existing L3Outs in the fabric before any changes.
 - The RV(after) output shows L3Outs in the fabric after changes are applied.
+- Changing the O(config.routing_details.routing_protocol) of an existing L3Out (for example from C(static) to C(bgp))
+  is rejected by Nexus Dashboard with an HTTP 400 error. To switch routing protocol, remove the L3Out and recreate it
+  with the desired protocol.
 """
 
 EXAMPLES = r"""
@@ -620,19 +639,20 @@ EXAMPLES = r"""
                 interface_ipv4_address: 10.0.0.2
         routing_details:
           routing_protocol: bgp
-          auth: false
-          bfd: true
-          hold_interval: 180
-          keep_alive_interval: 60
-          fabric1_details:
-            local_asn: "65001"
-            advertise_default_route: true
-            ipv4_peering_details:
-              ipv4_route_map_in: rm-in
-              ipv4_route_map_out: rm-out
-          fabric2_details:
-            local_asn: "65002"
-            advertise_default_route: true
+          bgp:
+            auth: false
+            bfd: true
+            hold_interval: 180
+            keep_alive_interval: 60
+            fabric1_details:
+              local_asn: "65001"
+              advertise_default_route: true
+              ipv4_peering_details:
+                ipv4_route_map_in: rm-in
+                ipv4_route_map_out: rm-out
+            fabric2_details:
+              local_asn: "65002"
+              advertise_default_route: true
   register: create_l3out
 
 - name: Create L3Out with attach (deploy after creation)
@@ -664,10 +684,11 @@ EXAMPLES = r"""
                 interface_ipv4_address: 10.0.0.2
         routing_details:
           routing_protocol: bgp
-          fabric1_details:
-            local_asn: "65001"
-          fabric2_details:
-            local_asn: "65002"
+          bgp:
+            fabric1_details:
+              local_asn: "65001"
+            fabric2_details:
+              local_asn: "65002"
 
 - name: Detach (undeploy) an existing L3Out
   cisco.nd.nd_manage_l3out:
@@ -698,10 +719,11 @@ EXAMPLES = r"""
                 interface_ipv4_address: 10.0.0.2
         routing_details:
           routing_protocol: bgp
-          fabric1_details:
-            local_asn: "65001"
-          fabric2_details:
-            local_asn: "65002"
+          bgp:
+            fabric1_details:
+              local_asn: "65001"
+            fabric2_details:
+              local_asn: "65002"
 
 - name: Create L3Out with subInterface and static routing
   cisco.nd.nd_manage_l3out:
@@ -733,13 +755,14 @@ EXAMPLES = r"""
                 interface_description: "Link from DC1"
         routing_details:
           routing_protocol: static
-          fabric1_static_routes:
-            - ip_version: ipv4
-              ip_prefix: 0.0.0.0/0
-              next_hop: 192.168.100.254
-              switch_ids:
-                - FDO12345678
-              route_preference: 1
+          static:
+            fabric1_static_routes:
+              - ip_version: ipv4
+                ip_prefix: 0.0.0.0/0
+                next_hop: 192.168.100.254
+                switch_ids:
+                  - FDO12345678
+                route_preference: 1
 
 - name: Replace an existing L3Out completely
   cisco.nd.nd_manage_l3out:
@@ -767,12 +790,13 @@ EXAMPLES = r"""
                 interface_ipv4_address: 10.0.1.2
         routing_details:
           routing_protocol: static
-          fabric1_static_routes:
-            - ip_version: ipv4
-              ip_prefix: 0.0.0.0/0
-              next_hop: 10.0.1.2
-              switch_ids:
-                - FDO12345678
+          static:
+            fabric1_static_routes:
+              - ip_version: ipv4
+                ip_prefix: 0.0.0.0/0
+                next_hop: 10.0.1.2
+                switch_ids:
+                  - FDO12345678
 
 - name: Delete specific L3Outs
   cisco.nd.nd_manage_l3out:

@@ -17,6 +17,7 @@ from contextlib import contextmanager
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.models.l3out.l3out import (
+    BgpRoutingModel,
     ConnectivityDetailsModel,
     FabricBgpDetailsModel,
     Ipv4PeeringModel,
@@ -25,6 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.l3out.l3out import
     LinkModel,
     RoutingDetailsModel,
     StaticRouteModel,
+    StaticRoutingModel,
     SwitchDetailsModel,
 )
 from pydantic import ValidationError  # pylint: disable=unused-import
@@ -111,14 +113,16 @@ SAMPLE_ANSIBLE_CONFIG = {
     },
     "routing_details": {
         "routing_protocol": "bgp",
-        "bfd": True,
-        "hold_interval": 180,
-        "keep_alive_interval": 60,
-        "fabric1_details": {
-            "advertise_default_route": True,
-            "ipv4_peering_details": {
-                "ipv4_route_map_in": "rm-in",
-                "ipv4_route_map_out": "rm-out",
+        "bgp": {
+            "bfd": True,
+            "hold_interval": 180,
+            "keep_alive_interval": 60,
+            "fabric1_details": {
+                "advertise_default_route": True,
+                "ipv4_peering_details": {
+                    "ipv4_route_map_in": "rm-in",
+                    "ipv4_route_map_out": "rm-out",
+                },
             },
         },
     },
@@ -528,18 +532,20 @@ def test_l3out_00400():
     with does_not_raise():
         instance = RoutingDetailsModel(
             routing_protocol="bgp",
-            bfd=True,
-            hold_interval=180,
-            keep_alive_interval=60,
-            fabric1_details=FabricBgpDetailsModel(
-                advertise_default_route=True,
+            bgp=BgpRoutingModel(
+                bfd=True,
+                hold_interval=180,
+                keep_alive_interval=60,
+                fabric1_details=FabricBgpDetailsModel(
+                    advertise_default_route=True,
+                ),
             ),
         )
     assert instance.routing_protocol == "bgp"
-    assert instance.bfd is True
-    assert instance.hold_interval == 180
-    assert instance.fabric1_details.advertise_default_route is True
-    assert instance.fabric1_static_routes is None
+    assert instance.bgp.bfd is True
+    assert instance.bgp.hold_interval == 180
+    assert instance.bgp.fabric1_details.advertise_default_route is True
+    assert instance.static is None
 
 
 def test_l3out_00410():
@@ -560,19 +566,130 @@ def test_l3out_00410():
     with does_not_raise():
         instance = RoutingDetailsModel(
             routing_protocol="static",
-            fabric1_static_routes=[
-                StaticRouteModel(
-                    ip_version="ipv4",
-                    ip_prefix="0.0.0.0/0",
-                    next_hop="192.168.100.254",
-                    switch_ids=["FDO12345678"],
-                )
-            ],
+            static=StaticRoutingModel(
+                fabric1_static_routes=[
+                    StaticRouteModel(
+                        ip_version="ipv4",
+                        ip_prefix="0.0.0.0/0",
+                        next_hop="192.168.100.254",
+                        switch_ids=["FDO12345678"],
+                    )
+                ],
+            ),
         )
     assert instance.routing_protocol == "static"
-    assert len(instance.fabric1_static_routes) == 1
-    assert instance.fabric1_static_routes[0].next_hop == "192.168.100.254"
-    assert instance.fabric1_details is None
+    assert len(instance.static.fabric1_static_routes) == 1
+    assert instance.static.fabric1_static_routes[0].next_hop == "192.168.100.254"
+    assert instance.bgp is None
+
+
+def test_l3out_00420():
+    """
+    # Summary
+
+    Verify RoutingDetailsModel regroups a flat ND wire response into nested bgp.
+
+    ## Test
+
+    - Validate a flat camelCase ND response (BGP fields directly under
+      routingDetails)
+    - The before-validator collects them into the nested bgp dict
+    - static remains None
+
+    ## Classes and Methods
+
+    - RoutingDetailsModel._group_wire_fields()
+    """
+    with does_not_raise():
+        instance = RoutingDetailsModel.model_validate(
+            {
+                "routingProtocol": "bgp",
+                "bfd": True,
+                "holdInterval": 180,
+                "fabric1Details": {"localAsn": "65001"},
+            }
+        )
+    assert instance.routing_protocol == "bgp"
+    assert instance.bgp is not None
+    assert instance.bgp.bfd is True
+    assert instance.bgp.hold_interval == 180
+    assert instance.bgp.fabric1_details.local_asn == "65001"
+    assert instance.static is None
+
+
+def test_l3out_00430():
+    """
+    # Summary
+
+    Verify RoutingDetailsModel flattens nested bgp back to the ND wire layout on
+    payload/diff serialization while preserving the nested layout for config.
+
+    ## Test
+
+    - Construct from nested config input
+    - Payload serialization hoists bgp fields flat under routingDetails
+    - Config serialization keeps the nested bgp dict
+
+    ## Classes and Methods
+
+    - RoutingDetailsModel._flatten_wire()
+    """
+    instance = RoutingDetailsModel.model_validate(
+        {
+            "routing_protocol": "bgp",
+            "bgp": {"bfd": True, "hold_interval": 180, "fabric1_details": {"local_asn": "65001"}},
+        }
+    )
+
+    # Payload (wire) layout: bgp fields hoisted flat, no nested bgp key.
+    payload = instance.model_dump(by_alias=True, exclude_none=True, context={"mode": "payload"})
+    assert "bgp" not in payload
+    assert payload["bfd"] is True
+    assert payload["holdInterval"] == 180
+    assert payload["fabric1Details"]["localAsn"] == "65001"
+
+    # Config layout: nested bgp dict preserved.
+    config = instance.model_dump(exclude_none=True, context={"mode": "config"})
+    assert "bgp" in config
+    assert config["bgp"]["bfd"] is True
+    assert config["bgp"]["fabric1_details"]["local_asn"] == "65001"
+
+
+def test_l3out_00440():
+    """
+    # Summary
+
+    Verify a flat ND response round-trips to a nested config and back to an
+    identical flat payload (idempotency for the wire layout).
+
+    ## Test
+
+    - Validate a flat ND response
+    - Re-serialize to payload
+    - Payload matches the original flat wire fields
+
+    ## Classes and Methods
+
+    - RoutingDetailsModel._group_wire_fields()
+    - RoutingDetailsModel._flatten_wire()
+    """
+    wire = {
+        "routingProtocol": "static",
+        "fabric1StaticRoutes": [
+            {
+                "ipVersion": "ipv4",
+                "ipPrefix": "0.0.0.0/0",
+                "nextHop": "192.168.100.254",
+                "switchIds": ["FDO12345678"],
+            }
+        ],
+    }
+    instance = RoutingDetailsModel.model_validate(wire)
+    payload = instance.model_dump(by_alias=True, exclude_none=True, context={"mode": "payload"})
+    assert "static" not in payload
+    assert payload["routingProtocol"] == "static"
+    assert payload["fabric1StaticRoutes"][0]["nextHop"] == "192.168.100.254"
+    assert payload["fabric1StaticRoutes"][0]["switchIds"] == ["FDO12345678"]
 
 
 # =============================================================================
@@ -719,9 +836,9 @@ def test_l3out_00620():
     assert instance.connectivity_details.links[0].mtu == 9216
     assert instance.connectivity_details.links[0].switch1_details.switch_id == "FDO12345678"
     assert instance.routing_details.routing_protocol == "bgp"
-    assert instance.routing_details.bfd is True
-    assert instance.routing_details.fabric1_details.advertise_default_route is True
-    assert instance.routing_details.fabric1_details.ipv4_peering_details.ipv4_route_map_in == "rm-in"
+    assert instance.routing_details.bgp.bfd is True
+    assert instance.routing_details.bgp.fabric1_details.advertise_default_route is True
+    assert instance.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in == "rm-in"
 
 
 def test_l3out_00630():
@@ -744,7 +861,7 @@ def test_l3out_00630():
     assert instance.name == "test-l3out"
     assert instance.fabric1_name == "DC1-Fabric"
     assert instance.connectivity_details.routing_interface_type == "routed"
-    assert instance.routing_details.hold_interval == 180
+    assert instance.routing_details.bgp.hold_interval == 180
 
 
 # =============================================================================
@@ -932,7 +1049,7 @@ def test_l3out_00910():
     """
     config_a = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
     config_b = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
-    config_b["routing_details"]["hold_interval"] = 240
+    config_b["routing_details"]["bgp"]["hold_interval"] = 240
 
     instance_a = L3OutModel(**config_a)
     instance_b = L3OutModel(**config_b)
@@ -994,12 +1111,14 @@ def test_l3out_01000():
         name="test-l3out",
         routing_details=RoutingDetailsModel(
             routing_protocol="bgp",
-            hold_interval=240,
+            bgp=BgpRoutingModel(
+                hold_interval=240,
+            ),
         ),
     )
 
     base.merge(update)
-    assert base.routing_details.hold_interval == 240
+    assert base.routing_details.bgp.hold_interval == 240
     # Other fields should be preserved
     assert base.fabric1_name == "DC1-Fabric"
     assert base.configured_fabrics == "both"
@@ -1080,8 +1199,16 @@ def test_l3out_01200():
     assert routing_opts["routing_protocol"]["required"] is True
     assert set(routing_opts["routing_protocol"]["choices"]) == {"static", "bgp"}
 
-    # auth_key has no_log
-    fabric_details_opts = routing_opts["fabric1_details"]["options"]
+    # bgp and static are mutually-exclusive sub-dicts selected by routing_protocol
+    assert "bgp" in routing_opts
+    assert "static" in routing_opts
+    assert ("bgp", "static") in l3out_opts["routing_details"]["mutually_exclusive"]
+    required_if = l3out_opts["routing_details"]["required_if"]
+    assert ("routing_protocol", "bgp", ("bgp",)) in required_if
+    assert ("routing_protocol", "static", ("static",)) in required_if
+
+    # auth_key has no_log (now nested under bgp.fabric1_details)
+    fabric_details_opts = routing_opts["bgp"]["options"]["fabric1_details"]["options"]
     assert fabric_details_opts["auth_key"]["no_log"] is True
 
 
@@ -1112,10 +1239,12 @@ class TestAuthKeySecretHandling:
                 },
                 "routing_details": {
                     "routing_protocol": "bgp",
-                    "fabric1_details": {
-                        "local_asn": "65001",
-                        "auth_key": self.AUTH_KEY_PLAINTEXT,
-                        "auth_key_encryption_type": "type7",
+                    "bgp": {
+                        "fabric1_details": {
+                            "local_asn": "65001",
+                            "auth_key": self.AUTH_KEY_PLAINTEXT,
+                            "auth_key_encryption_type": "type7",
+                        },
                     },
                 },
             }
@@ -1126,7 +1255,7 @@ class TestAuthKeySecretHandling:
         model = self._build_model_with_auth_key()
         config = model.to_config()
 
-        auth_key_value = config["routing_details"]["fabric1_details"]["auth_key"]
+        auth_key_value = config["routing_details"]["bgp"]["fabric1_details"]["auth_key"]
         assert auth_key_value == self.AUTH_KEY_MASKED
         assert self.AUTH_KEY_PLAINTEXT not in str(config)
 
@@ -1164,10 +1293,12 @@ class TestAuthKeySecretHandling:
                 },
                 "routing_details": {
                     "routing_protocol": "bgp",
-                    "fabric1_details": {
-                        "local_asn": "65001",
-                        "auth_key": "DifferentSecretKey456",
-                        "auth_key_encryption_type": "type7",
+                    "bgp": {
+                        "fabric1_details": {
+                            "local_asn": "65001",
+                            "auth_key": "DifferentSecretKey456",
+                            "auth_key_encryption_type": "type7",
+                        },
                     },
                 },
             }
@@ -1197,15 +1328,17 @@ class TestAuthKeySecretHandling:
                 },
                 "routing_details": {
                     "routing_protocol": "bgp",
-                    "fabric1_details": {
-                        "local_asn": "65001",
+                    "bgp": {
+                        "fabric1_details": {
+                            "local_asn": "65001",
+                        },
                     },
                 },
             }
         )
 
         config = model.to_config()
-        assert "auth_key" not in config["routing_details"]["fabric1_details"]
+        assert "auth_key" not in config["routing_details"]["bgp"]["fabric1_details"]
 
         payload = model.to_payload()
         assert "authKey" not in payload["routingDetails"]["fabric1Details"]
