@@ -214,13 +214,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         Require a policy on every interface being created. ND rejects a policy-less create per-interface (`mode is
         required` / `invalid policyType ''`) and never creates an empty interface, but the failure surfaces as
-        `interface[0] '<name>'` inside a generic create error after a round-trip. This guard fails fast — before any
-        API call, in check mode too — naming the offending `(switch_ip, interface_name)` in module terms (issue #350).
+        `interface[0] '<name>'` inside a generic create error after a round-trip. This guard is local-only and fails
+        fast — before the API-backed capability preflight and before any mutation, in check mode too — naming the
+        offending `(switch_ip, interface_name)` in module terms (issue #350). Only the initial inventory fetch
+        precedes it.
 
-        Invoked by `NDStateMachine` with only the items diffed as create (`new`), so a `merged`/`replaced` update that
-        legitimately omits a policy already present on the switch is never affected. A config item with no `config_data`
-        (identifier only) is correct for `state: deleted`, which does not route through this hook. Offenders are
-        aggregated into a single `RuntimeError` so one message names every policy-less create item.
+        Invoked by `NDStateMachine` with only the proposed items not present in the existing inventory (the create
+        subset), so a `merged`/`replaced` update that legitimately omits a policy already present on the switch is
+        never affected. A config item with no `config_data` (identifier only) is correct for `state: deleted`, which
+        does not route through this hook. Offenders are aggregated into a single `RuntimeError` so one message names
+        every policy-less create item.
 
         ## Raises
 

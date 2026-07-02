@@ -10,12 +10,12 @@ Unit tests for `NDStateMachine` preflight wiring.
 Verifies that `manage_state` invokes the orchestrator's preflight hooks at points that run BEFORE
 mutation operations are gated by check mode:
 
-- For create/update states (merged/replaced/overridden) `preflight` (capability, PR #275 / issue #273) is
-  called over the proposed set, in check mode as well as normal mode, even though the underlying create/update
-  calls are skipped in check mode.
-- `preflight_create` (policy-required-on-create, issue #350) is called with only the create (`new`) subset,
-  ahead of the mutation loops; an already-present item re-submitted without a policy is not a create and is
-  not validated, and a failure propagates before any mutation.
+- For create/update states (merged/replaced/overridden) `preflight_create` (policy-required-on-create, issue #350)
+  runs FIRST, with only the create subset (proposed items not present in the existing inventory): it is local-only,
+  so it fails before any API-backed preflight and before `existing` is mutated (PR #362 review). An already-present
+  item re-submitted without a policy is not a create and is not validated.
+- `preflight` (capability, PR #275 / issue #273) is then called over the proposed set, in check mode as well as
+  normal mode, even though the underlying create/update calls are skipped in check mode.
 - For `deleted` state neither preflight is called (removing configuration does not depend on capability, and a
   policy-less item is correct for delete -- the documented out-of-scope decision).
 
@@ -132,7 +132,7 @@ def test_nd_state_machine_00100() -> None:
     ## Test
 
     - `state: merged`, `check_mode: True`, one proposed interface (new vs empty inventory)
-    - `preflight` is recorded, then `preflight_create` over the create subset (both run before the check-mode gate)
+    - `preflight_create` is recorded first over the create subset, then `preflight` (both run before the check-mode gate)
     - No `create`/`create_bulk` call is recorded (skipped in check mode)
 
     ## Classes and Methods
@@ -148,11 +148,11 @@ def test_nd_state_machine_00100() -> None:
 
     calls = instance.model_orchestrator._calls
     names = [name for name, _ in calls]
-    assert names == ["preflight", "preflight_create"]
-    assert len(calls[0][1]) == 1
-    assert calls[0][1][0].get_identifier_value() == ("192.168.12.151", "loopback10")
-    # preflight_create receives the same single new item (create subset)
-    assert [m.get_identifier_value() for m in calls[1][1]] == [("192.168.12.151", "loopback10")]
+    assert names == ["preflight_create", "preflight"]
+    # preflight_create receives the single new item (create subset)
+    assert [m.get_identifier_value() for m in calls[0][1]] == [("192.168.12.151", "loopback10")]
+    assert len(calls[1][1]) == 1
+    assert calls[1][1][0].get_identifier_value() == ("192.168.12.151", "loopback10")
 
 
 def test_nd_state_machine_00110() -> None:
@@ -166,7 +166,7 @@ def test_nd_state_machine_00110() -> None:
     ## Test
 
     - `state: merged`, `check_mode: False`, one proposed interface
-    - `preflight`, then `preflight_create`, then `create_bulk` are recorded (loopback supports bulk create)
+    - `preflight_create`, then `preflight`, then `create_bulk` are recorded (loopback supports bulk create)
     - Both preflights precede the mutation
 
     ## Classes and Methods
@@ -182,7 +182,7 @@ def test_nd_state_machine_00110() -> None:
         instance.manage_state()
 
     names = [name for name, _ in instance.model_orchestrator._calls]
-    assert names == ["preflight", "preflight_create", "create_bulk"]
+    assert names == ["preflight_create", "preflight", "create_bulk"]
 
 
 def test_nd_state_machine_00120() -> None:
@@ -224,7 +224,7 @@ def test_nd_state_machine_00130() -> None:
     ## Test
 
     - `state: overridden`, `check_mode: True`, one proposed interface
-    - `preflight` is recorded exactly once, with the proposed model
+    - `preflight` is recorded exactly once, with the proposed model, after the policy guard
     - No mutation is recorded (check mode)
 
     ## Classes and Methods
@@ -240,8 +240,9 @@ def test_nd_state_machine_00130() -> None:
     calls = instance.model_orchestrator._calls
     names = [name for name, _ in calls]
     assert names.count("preflight") == 1
-    assert names[0] == "preflight"
-    assert len(calls[0][1]) == 1
+    assert names[0] == "preflight_create"
+    assert names[1] == "preflight"
+    assert len(calls[1][1]) == 1
 
 
 class _ExistingLoopbackSpy(_SpyLoopbackOrchestrator):
@@ -327,3 +328,85 @@ def test_nd_state_machine_00150() -> None:
     assert "preflight_create" in names
     assert "create" not in names
     assert "create_bulk" not in names
+
+
+def test_nd_state_machine_00160() -> None:
+    """
+    # Summary
+
+    Verify a `preflight_create` failure leaves the module output unchanged: `changed` is `False` and `after` equals
+    `before`, with no phantom item for the rejected create. Guards the PR #362 review finding where `self.existing`
+    (aliased by `NDOutput` as `after`) was mutated before the policy guard ran, so a failed policy-less create
+    reported `changed=True` and the never-created interface in `after`.
+
+    ## Test
+
+    - `state: merged`, `check_mode: False`, one new policy-less item; `preflight_create` raises `RuntimeError`
+    - The error propagates from `manage_state`
+    - `output.format()` reports `changed is False`, `before == []`, and `after == []` (no phantom item)
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - NDStateMachine._manage_create_update_state()
+    - NDOutput.format()
+    """
+    spy = _RaisingPreflightCreateSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(RuntimeError, match=r"without a policy"):
+        instance.manage_state()
+
+    output = instance.output.format()
+    assert output["changed"] is False
+    assert output["before"] == []
+    assert output["after"] == []
+
+
+class _CapabilityFailingSpy(_SpyLoopbackOrchestrator):
+    """Spy whose capability `preflight` raises, while `preflight_create` delegates to the real policy guard.
+
+    Models the PR #362 review scenario: a policy-less create targeting a switch that fails capability preflight.
+    The local-only policy guard must win, so the user sees the clearer `config_data.network_os.policy` error rather
+    than a switch/capability error.
+    """
+
+    def preflight(self, model_instances) -> None:
+        self._calls.append(("preflight", list(model_instances)))
+        raise RuntimeError("capability preflight failed: switch not capable")
+
+    def preflight_create(self, model_instances) -> None:
+        self._calls.append(("preflight_create", list(model_instances)))
+        LoopbackInterfaceOrchestrator.preflight_create(self, model_instances)
+
+
+def test_nd_state_machine_00170() -> None:
+    """
+    # Summary
+
+    Verify the local-only policy guard runs BEFORE the API-backed capability preflight, so a policy-less create
+    surfaces the policy error even when capability preflight would also fail (PR #362 review finding: the guard
+    was previously masked by switch resolution / `capableSwitches` failures that ran first).
+
+    ## Test
+
+    - `state: merged`, `check_mode: False`, one new policy-less item
+    - Capability `preflight` is rigged to raise, and `preflight_create` is the real `base_interface` guard
+    - The policy error (`without a policy`) propagates, not the capability error
+    - The recorded call order shows `preflight_create` first
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+    spy = _CapabilityFailingSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(RuntimeError, match=r"without a policy"):
+        instance.manage_state()
+
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert names[0] == "preflight_create"

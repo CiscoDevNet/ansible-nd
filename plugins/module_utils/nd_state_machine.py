@@ -93,9 +93,19 @@ class NDStateMachine:
         Manage state according to desired configuration.
         """
         if self.state in ["merged", "replaced", "overridden"]:
+            proposed_items = list(self.proposed)
+
+            # Policy-required-on-create guard (issue #350) runs FIRST: it is local-only (self.existing is
+            # already in memory), so it fails before the API-backed capability preflight below and before
+            # _manage_create_update_state mutates self.existing, which NDOutput aliases as `after`. Create
+            # subset = proposed items not present in the existing inventory -- the same key-membership
+            # criterion get_diff_config uses to classify "new" (PR #362 review).
+            items_to_create = [item for item in proposed_items if self.existing.get(item.get_identifier_value()) is None]
+            self.model_orchestrator.preflight_create(items_to_create)
+
             # Capability preflight runs here -- before _manage_create_update_state, whose mutations are
             # skipped in check mode -- so dry-runs surface incapable switches (PR #275 / issue #273).
-            self.model_orchestrator.preflight(list(self.proposed))
+            self.model_orchestrator.preflight(proposed_items)
             self._manage_create_update_state()
 
             if self.state == "overridden":
@@ -176,10 +186,8 @@ class NDStateMachine:
                 if not self.ignore_errors:
                     raise NDStateMachineError(error_msg) from e
 
-        # Fail fast before any mutation if a create item carries no policy (issue #350). Create-only:
-        # a merged/replaced update may legitimately omit a policy that already exists on the switch, and
-        # state: deleted does not route through here, so only genuine new items are validated.
-        self.model_orchestrator.preflight_create(items_to_create)
+        # The policy-required-on-create guard (issue #350) runs in manage_state, before the capability
+        # preflight and before this method mutates self.existing (PR #362 review).
 
         # Execute updates (always individual)
         for item in items_to_update:
