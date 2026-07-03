@@ -192,7 +192,7 @@ class NDPolicyModule:
         self.fabric_name = self.module.params.get("fabric_name")
         self.config = self.module.params.get("config")
         self.state = self.module.params.get("state")
-        self.use_desc_as_key = self.module.params.get("use_desc_as_key")
+        self.use_description_as_key = self.module.params.get("use_description_as_key")
         self.deploy = self.module.params.get("deploy")
         self.ticket_id = self.module.params.get("ticket_id")
         self.cluster_name = self.module.params.get("cluster_name")
@@ -371,7 +371,7 @@ class NDPolicyModule:
     # =========================================================================
 
     @staticmethod
-    def translate_config(config, use_desc_as_key):
+    def translate_config(config, use_description_as_key):
         """Translate the playbook config into a flat list of per-switch policy dicts.
 
         The playbook config uses a two-level structure:
@@ -383,8 +383,8 @@ class NDPolicyModule:
             1. Separates global policy entries from the switch entry (non-destructive).
             2. Collects per-switch overrides keyed by ``(template_name, switch_sn)``.
             3. For each (global_policy, switch) pair, emits either the override
-               (when ``use_desc_as_key=false`` and a same-name override exists)
-               or the global.  When ``use_desc_as_key=true``, both are emitted.
+               (when ``use_description_as_key=false`` and a same-name override exists)
+               or the global.  When ``use_description_as_key=true``, both are emitted.
             4. Appends per-switch-only policies (overrides whose template name
                doesn't appear in any global).
             5. Returns a flat list where each dict has a ``switch`` key with a
@@ -394,7 +394,7 @@ class NDPolicyModule:
 
         Args:
             config: The raw config list from the playbook.
-            use_desc_as_key: Whether descriptions are used as unique keys.
+            use_description_as_key: Whether descriptions are used as unique keys.
 
         Returns:
             Flat list of policy dicts, each with a ``switch`` (serial number) key.
@@ -531,11 +531,11 @@ class NDPolicyModule:
             sn_overrides = overrides_by_switch.get(sn, [])
 
             # 4a: Emit global policies for this switch.
-            #     When use_desc_as_key=false, skip globals whose template
+            #     When use_description_as_key=false, skip globals whose template
             #     name is overridden for this switch.
             for g in global_policies:
                 gname = g.get("name")
-                if not use_desc_as_key and gname in sn_override_names:
+                if not use_description_as_key and gname in sn_override_names:
                     # Overridden for this switch — skip the global
                     continue
                 entry = copy.deepcopy(g)
@@ -551,11 +551,11 @@ class NDPolicyModule:
                 result.append(entry)
 
             # 4b: Emit per-switch overrides for this switch.
-            #     When use_desc_as_key=false, only overrides whose name
+            #     When use_description_as_key=false, only overrides whose name
             #     matches a global were "replacements" (handled above by
             #     skipping the global).  Overrides with names NOT in
             #     globals are "extras" — always emitted.
-            #     When use_desc_as_key=true, all overrides are emitted
+            #     When use_description_as_key=true, all overrides are emitted
             #     (globals were already emitted above, both coexist).
             for ovr in sn_overrides:
                 entry = copy.deepcopy(ovr)
@@ -777,7 +777,7 @@ class NDPolicyModule:
         # Step 1: Pydantic validation + normalization
         validation_context = {
             "state": self.state,
-            "use_desc_as_key": self.use_desc_as_key,
+            "use_description_as_key": self.use_description_as_key,
         }
         normalized_config = []
         for idx, entry in enumerate(self.config):
@@ -800,7 +800,7 @@ class NDPolicyModule:
         # Step 3: Flatten multi-switch config into one entry per (policy, switch)
         translated_config = self.translate_config(
             resolved_config,
-            self.use_desc_as_key,
+            self.use_description_as_key,
         )
 
         # Step 4: Validate translated config
@@ -861,7 +861,7 @@ class NDPolicyModule:
     def _validate_config(self) -> None:
         """Validate cross-entry invariants before any API calls are made.
 
-        When ``use_desc_as_key=true``, the ``description + switch``
+        When ``use_description_as_key=true``, the ``description + switch``
         combination must be unique across all config entries within
         the playbook.  Duplicate pairs would lead to ambiguous matching
         at the controller and are rejected.
@@ -871,7 +871,7 @@ class NDPolicyModule:
             priority range, max-length, etc.) are handled by
             ``PlaybookPolicyConfig`` Pydantic validation in
             ``validate_and_prepare_config()``.  In particular, the
-            ``use_desc_as_key=true`` + empty-description rule is
+            ``use_description_as_key=true`` + empty-description rule is
             enforced by ``PlaybookPolicyConfig.validate_state_requirements``
             (see ``models/manage_policies/config_models.py``), which
             raises a ``ValueError`` for any template-name entry without
@@ -882,10 +882,10 @@ class NDPolicyModule:
         Returns:
             None.
         """
-        if not self.use_desc_as_key:
+        if not self.use_description_as_key:
             return
 
-        self.log.debug("ENTER: _validate_config() [use_desc_as_key=true]")
+        self.log.debug("ENTER: _validate_config() [use_description_as_key=true]")
 
         desc_switch_counts: dict[str, int] = {}
 
@@ -917,7 +917,7 @@ class NDPolicyModule:
             raise NDModuleError(
                 msg=(
                     "Duplicate description+switch combinations found in the "
-                    "playbook config (use_desc_as_key=true requires each "
+                    "playbook config (use_description_as_key=true requires each "
                     "description to be unique per switch): " + "; ".join(duplicates)
                 )
             )
@@ -1771,8 +1771,8 @@ class NDPolicyModule:
 
         Dispatches to :meth:`_build_have_from_cache`:
             - Case A: Policy ID given -> O(1) policyId index lookup
-            - Case B: use_desc_as_key=false, templateName given -> O(1) (switchId, templateName) index
-            - Case C: use_desc_as_key=true,  templateName given -> O(1) (switchId, templateName) index + exact description post-filter
+            - Case B: use_description_as_key=false, templateName given -> O(1) (switchId, templateName) index
+            - Case C: use_description_as_key=true,  templateName given -> O(1) (switchId, templateName) index + exact description post-filter
             - Case D: Switch-only (no templateName or policyId) -> O(1) switchId index
 
         :meth:`_prefetch_all_policies` **must** be called by every state
@@ -1840,9 +1840,9 @@ class NDPolicyModule:
 
         template_name = want["templateName"]
 
-        # Case B: use_desc_as_key=false, filter by templateName.
+        # Case B: use_description_as_key=false, filter by templateName.
         # O(1) composite-index lookup instead of linear scan of switch_policies.
-        if not self.use_desc_as_key:
+        if not self.use_description_as_key:
             matches = list(self._policies_by_switch_template_cache.get((switch_id, template_name), []))
 
             want_desc = want.get("description", "")
@@ -1854,9 +1854,9 @@ class NDPolicyModule:
             self.log.debug(f"[cache] Case B: matched {len(matches)} policies")
             return matches, None
 
-        # Case C: use_desc_as_key=true, filter by exact description on the switch.
+        # Case C: use_description_as_key=true, filter by exact description on the switch.
         #
-        # When use_desc_as_key=true, *description* is the identity within a
+        # When use_description_as_key=true, *description* is the identity within a
         # (switch, fabric) scope — NOT (switch, templateName).  We therefore
         # scan all policies on the switch and match by description, ignoring
         # templateName at lookup time.  The downstream classifier
@@ -1878,7 +1878,7 @@ class NDPolicyModule:
         if not want_desc:
             return (
                 [],
-                "description is required when use_desc_as_key=true and name is a template name",
+                "description is required when use_description_as_key=true and name is a template name",
             )
 
         switch_policies_all = self._policies_by_switch_cache.get(switch_id, [])
@@ -1912,7 +1912,7 @@ class NDPolicyModule:
         match_count = len(have_list)
 
         # =================================================================
-        # CASES 1-6: Template name given, use_desc_as_key=false
+        # CASES 1-6: Template name given, use_description_as_key=false
         #
         # Template names are not unique — multiple policies can share the
         # same template.  Therefore, existing policies are never updated
@@ -1924,7 +1924,7 @@ class NDPolicyModule:
         # =================================================================
         create_additional = want.get("create_additional_policy", True)
 
-        if not self.use_desc_as_key and "templateName" in want:
+        if not self.use_description_as_key and "templateName" in want:
             if match_count == 0:
                 # Case 1: No match → CREATE
                 result["action"] = "create"
@@ -2007,9 +2007,9 @@ class NDPolicyModule:
             return result
 
         # =================================================================
-        # CASES 12-16: use_desc_as_key=true
+        # CASES 12-16: use_description_as_key=true
         # =================================================================
-        if self.use_desc_as_key:
+        if self.use_description_as_key:
             if match_count == 0:
                 # Case 12: No match → CREATE
                 result["action"] = "create"
@@ -2052,7 +2052,7 @@ class NDPolicyModule:
                     f"Multiple policies ({match_count}) found with description "
                     f"'{want.get('description')}' on switch {want.get('switchId')}. "
                     "Cannot determine which policy to update when "
-                    "use_desc_as_key=true. Remove the duplicate policies from "
+                    "use_description_as_key=true. Remove the duplicate policies from "
                     "the controller or use a policy ID directly."
                 )
             )
@@ -2535,7 +2535,7 @@ class NDPolicyModule:
 
         # D-13 to D-16: Switch-only (no name given)
         if "templateName" not in want:
-            if self.use_desc_as_key and want.get("description"):
+            if self.use_description_as_key and want.get("description"):
                 want_desc = want["description"]
                 filtered = [p for p in have_list if (p.get("description") or "") == want_desc]
                 policy_ids = [p.get("policyId") for p in filtered if p.get("policyId")]
@@ -2552,7 +2552,7 @@ class NDPolicyModule:
                             f"Multiple policies ({len(filtered)}) found with description "
                             f"'{want_desc}' on switch {want.get('switchId')}. "
                             "Descriptions must be unique per switch when "
-                            "use_desc_as_key=true. Remove the duplicate policies from "
+                            "use_description_as_key=true. Remove the duplicate policies from "
                             "the controller manually."
                         )
                     )
@@ -2564,8 +2564,8 @@ class NDPolicyModule:
                 result["action"] = "delete_all"
             return result
 
-        # D-1 to D-6: Template name given, use_desc_as_key=false
-        if not self.use_desc_as_key:
+        # D-1 to D-6: Template name given, use_description_as_key=false
+        if not self.use_description_as_key:
             if match_count == 0:
                 result["action"] = "skip"
             elif match_count == 1:
@@ -2574,8 +2574,8 @@ class NDPolicyModule:
                 result["action"] = "delete_all"
             return result
 
-        # D-9 to D-12: Template name given, use_desc_as_key=true
-        if self.use_desc_as_key:
+        # D-9 to D-12: Template name given, use_description_as_key=true
+        if self.use_description_as_key:
             # Note: description-empty is already caught by Pydantic
             # (state=deleted) and _build_have Case C upstream.
             want_desc = want.get("description", "")
@@ -2596,7 +2596,7 @@ class NDPolicyModule:
                     f"Multiple policies ({match_count}) found with description "
                     f"'{want_desc}' on switch {want.get('switchId')}. "
                     "Descriptions must be unique per switch when "
-                    "use_desc_as_key=true. Remove the duplicate policies from "
+                    "use_description_as_key=true. Remove the duplicate policies from "
                     "the controller or use a policy ID directly."
                 )
             )

@@ -3,7 +3,7 @@
 ##               SETUP                      ##
 ##############################################
 #
-# Validates default key mode (use_desc_as_key=false / omitted).
+# Validates default key mode (use_description_as_key=false / omitted).
 #
 # In default mode the matcher uses (switchId + templateName) — but template
 # names are NOT unique on a switch, so the orchestrator deliberately
@@ -16,7 +16,7 @@
 #   - >=2 matches, no diff  → SKIP
 #   - >=2 matches, has diff → CREATE new  (only with create_additional=true)
 #
-# This is fundamentally different from use_desc_as_key=true, where (switchId
+# This is fundamentally different from use_description_as_key=true, where (switchId
 # + description) uniquely identifies a policy and an in-place UPDATE (PUT)
 # is performed on a diff.
 #
@@ -40,7 +40,7 @@
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        # use_desc_as_key omitted → default (false)
+        # use_description_as_key omitted → default (false)
         config:
           - name: clock_timezone
             create_additional_policy: false
@@ -137,7 +137,7 @@
     #       place; it must CREATE a new policy and leave the original alone.
     #       (The user's intent to "modify" silently turns into a duplicate.
     #        This is a known semantic of default mode and is the reason
-    #        use_desc_as_key=true exists.)
+    #        use_description_as_key=true exists.)
     - name: "DEFAULT_KEY TC2 - Apply same template with NEW priority"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"

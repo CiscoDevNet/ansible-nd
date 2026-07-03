@@ -50,13 +50,13 @@
           - result.failed == true
       tags: sanity
 
-    # TC-3: Duplicate descriptions with use_desc_as_key should fail atomically
-    - name: "SANITY TC3 - Duplicate descriptions with use_desc_as_key"
+    # TC-3: Duplicate descriptions with use_description_as_key should fail atomically
+    - name: "SANITY TC3 - Duplicate descriptions with use_description_as_key"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: switch_freeform
             description: "Same description"
@@ -78,13 +78,13 @@
           - result.failed == true
       tags: sanity
 
-    # TC-4: Empty description with use_desc_as_key should fail
-    - name: "SANITY TC4 - Empty description with use_desc_as_key"
+    # TC-4: Empty description with use_description_as_key should fail
+    - name: "SANITY TC4 - Empty description with use_description_as_key"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: switch_freeform
             description: ""
@@ -212,19 +212,19 @@
       tags: sanity
 
     ##############################################
-    ##  TC8 - use_desc_as_key + non-existent    ##
+    ##  TC8 - use_description_as_key + non-existent    ##
     ##  POLICY-ID must FAIL (regression for B2) ##
     ##############################################
     #
     # Previously this case silently skipped (action="skip" in Case 7 of
     # _get_diff_merged_single).  Bugfix B2 changed it to a hard failure
     # so an operator typo in a POLICY-ID does not look like success.
-    - name: "SANITY TC8 - use_desc_as_key with non-existent POLICY-ID must fail"
+    - name: "SANITY TC8 - use_description_as_key with non-existent POLICY-ID must fail"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: "POLICY-99999999"
             description: "ghost policy reference"

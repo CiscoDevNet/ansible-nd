@@ -13,7 +13,7 @@ input before any API or translation logic runs:
 - ``PlaybookSwitchPolicyConfig``  - per-switch policy override entry.
 - ``PlaybookSwitchEntry``         - switch list entry with ``ip`` alias.
 - ``PlaybookPolicyConfig``        - top-level config entry with state-aware
-                                    validation (``state``, ``use_desc_as_key``).
+                                    validation (``state``, ``use_description_as_key``).
 """
 
 # pylint: disable=use-implicit-booleaness-not-comparison
@@ -527,7 +527,7 @@ def test_manage_policies_config_models_00320() -> None:
 
 
 # =============================================================================
-# Test: PlaybookPolicyConfig use_desc_as_key handling
+# Test: PlaybookPolicyConfig use_description_as_key handling
 # =============================================================================
 
 
@@ -536,7 +536,7 @@ def test_manage_policies_config_models_00400(state) -> None:
     """
     # Summary
 
-    Verify ``use_desc_as_key=True`` requires a non-empty ``description`` for
+    Verify ``use_description_as_key=True`` requires a non-empty ``description`` for
     template-name entries in ``merged`` and ``deleted`` states.
 
     ## Test
@@ -551,7 +551,7 @@ def test_manage_policies_config_models_00400(state) -> None:
     with pytest.raises(ValidationError, match="'description'"):
         PlaybookPolicyConfig.model_validate(
             {"name": "switch_freeform"},
-            context={"state": state, "use_desc_as_key": True},
+            context={"state": state, "use_description_as_key": True},
         )
 
 
@@ -559,7 +559,7 @@ def test_manage_policies_config_models_00410() -> None:
     """
     # Summary
 
-    Verify ``use_desc_as_key=True`` is satisfied when description is supplied.
+    Verify ``use_description_as_key=True`` is satisfied when description is supplied.
 
     ## Test
 
@@ -572,7 +572,7 @@ def test_manage_policies_config_models_00410() -> None:
     with does_not_raise():
         instance = PlaybookPolicyConfig.model_validate(
             {"name": "switch_freeform", "description": "MOTD"},
-            context={"state": "merged", "use_desc_as_key": True},
+            context={"state": "merged", "use_description_as_key": True},
         )
     assert instance.description == "MOTD"
 
@@ -581,13 +581,13 @@ def test_manage_policies_config_models_00420() -> None:
     """
     # Summary
 
-    Verify ``use_desc_as_key=True`` does NOT require a description when the
+    Verify ``use_description_as_key=True`` does NOT require a description when the
     name is a policy ID (``POLICY-<digits>`` style).
 
     ## Test
 
     - Policy ID entry without description passes under ``state=merged`` even
-      when ``use_desc_as_key`` is True.
+      when ``use_description_as_key`` is True.
 
     ## Classes and Methods
 
@@ -596,7 +596,7 @@ def test_manage_policies_config_models_00420() -> None:
     with does_not_raise():
         instance = PlaybookPolicyConfig.model_validate(
             {"name": "POLICY-12345"},
-            context={"state": "merged", "use_desc_as_key": True},
+            context={"state": "merged", "use_description_as_key": True},
         )
     assert instance.name == "POLICY-12345"
     assert instance.description == ""
@@ -606,12 +606,12 @@ def test_manage_policies_config_models_00430() -> None:
     """
     # Summary
 
-    Verify ``use_desc_as_key=True`` is ignored for state=gathered.
+    Verify ``use_description_as_key=True`` is ignored for state=gathered.
 
     ## Test
 
     - Template-name entry without description under ``state=gathered`` passes
-      even when ``use_desc_as_key`` is True.
+      even when ``use_description_as_key`` is True.
 
     ## Classes and Methods
 
@@ -620,7 +620,7 @@ def test_manage_policies_config_models_00430() -> None:
     with does_not_raise():
         instance = PlaybookPolicyConfig.model_validate(
             {"name": "switch_freeform"},
-            context={"state": "gathered", "use_desc_as_key": True},
+            context={"state": "gathered", "use_description_as_key": True},
         )
     assert instance.description == ""
 
@@ -629,13 +629,13 @@ def test_manage_policies_config_models_00440() -> None:
     """
     # Summary
 
-    Verify ``use_desc_as_key=False`` (the default) does not require a
+    Verify ``use_description_as_key=False`` (the default) does not require a
     description for template-name entries.
 
     ## Test
 
     - Template-name entry without description under ``state=merged`` passes
-      when ``use_desc_as_key`` is False.
+      when ``use_description_as_key`` is False.
 
     ## Classes and Methods
 
@@ -644,7 +644,7 @@ def test_manage_policies_config_models_00440() -> None:
     with does_not_raise():
         instance = PlaybookPolicyConfig.model_validate(
             {"name": "switch_freeform"},
-            context={"state": "merged", "use_desc_as_key": False},
+            context={"state": "merged", "use_description_as_key": False},
         )
     assert instance.description == ""
 
@@ -664,7 +664,7 @@ def test_manage_policies_config_models_00500() -> None:
     ## Test
 
     - Empty-name entry passes under ``state=deleted`` so long as
-      ``use_desc_as_key`` is not set.
+      ``use_description_as_key`` is not set.
 
     ## Classes and Methods
 
@@ -694,7 +694,7 @@ def test_manage_policies_config_models_00600() -> None:
     - All expected keys are present.
     - ``fabric_name`` is required and aliased to ``fabric``.
     - ``state`` defaults to ``merged`` with the documented choices.
-    - ``deploy`` defaults to ``True`` and ``use_desc_as_key`` defaults to
+    - ``deploy`` defaults to ``True`` and ``use_description_as_key`` defaults to
       ``False``.
 
     ## Classes and Methods
@@ -706,7 +706,7 @@ def test_manage_policies_config_models_00600() -> None:
     assert set(spec) == {
         "fabric_name",
         "config",
-        "use_desc_as_key",
+        "use_description_as_key",
         "deploy",
         "ticket_id",
         "cluster_name",
@@ -717,7 +717,7 @@ def test_manage_policies_config_models_00600() -> None:
     assert spec["state"]["default"] == "merged"
     assert spec["state"]["choices"] == ["merged", "deleted", "gathered"]
     assert spec["deploy"]["default"] is True
-    assert spec["use_desc_as_key"]["default"] is False
+    assert spec["use_description_as_key"]["default"] is False
     assert spec["config"]["type"] == "list"
     assert spec["config"]["elements"] == "dict"
 
@@ -780,7 +780,7 @@ def test_manage_policies_config_models_00260() -> None:
 
     instance = PlaybookPolicyConfig.model_validate(
         entry,
-        context={"state": "merged", "use_desc_as_key": False},
+        context={"state": "merged", "use_description_as_key": False},
     )
     dumped = instance.model_dump(by_alias=False, exclude_none=False)
 
@@ -795,7 +795,7 @@ def test_manage_policies_config_models_00450() -> None:
     """
     # Summary
 
-    Verify ``use_desc_as_key=True`` does NOT require a non-empty
+    Verify ``use_description_as_key=True`` does NOT require a non-empty
     description when the entry carries an explicit ``policy_id``. The
     self-contained promotion path rewrites ``name`` to the policy_id
     before any description-keyed matching runs, so requiring a non-
@@ -806,7 +806,7 @@ def test_manage_policies_config_models_00450() -> None:
 
     - Template-name entry with empty description but a populated
       ``policy_id`` validates successfully under ``state=merged`` with
-      ``use_desc_as_key=True``.
+      ``use_description_as_key=True``.
 
     ## Classes and Methods
 
@@ -819,7 +819,7 @@ def test_manage_policies_config_models_00450() -> None:
                 "policy_id": "POLICY-28440",
                 "description": "",
             },
-            context={"state": "merged", "use_desc_as_key": True},
+            context={"state": "merged", "use_description_as_key": True},
         )
     assert instance.policy_id == "POLICY-28440"
     assert instance.description == ""

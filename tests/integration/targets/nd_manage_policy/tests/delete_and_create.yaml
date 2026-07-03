@@ -6,7 +6,7 @@
 # Validates the delete_and_create (replace) classification path.
 #
 # delete_and_create is triggered ONLY when ALL of the following hold:
-#   - use_desc_as_key=true
+#   - use_description_as_key=true
 #   - exactly ONE existing policy matches by (switchId + description)
 #   - the existing policy's templateName DIFFERS from want.templateName
 #
@@ -37,7 +37,7 @@
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: clock_timezone
             create_additional_policy: false
@@ -94,7 +94,7 @@
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: clock_summertime
             create_additional_policy: false
@@ -178,7 +178,7 @@
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: switch_freeform
             create_additional_policy: false
@@ -227,7 +227,7 @@
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: feature_enable
             create_additional_policy: false

@@ -140,7 +140,7 @@ def _default_params(**overrides: object) -> dict[str, Any]:
                 "switch": [{"serial_number": "FDO111"}],
             }
         ],
-        "use_desc_as_key": False,
+        "use_description_as_key": False,
         "deploy": True,
         "ticket_id": None,
         "cluster_name": None,
@@ -189,7 +189,7 @@ def test_nd_policy_resources_module_00010() -> None:
 
     ## Test
 
-    - ``fabric_name`` / ``state`` / ``use_desc_as_key`` / ``deploy`` /
+    - ``fabric_name`` / ``state`` / ``use_description_as_key`` / ``deploy`` /
       ``cluster_name`` / ``ticket_id`` / ``check_mode`` come from
       ``params`` (or ``check_mode``).
 
@@ -201,7 +201,7 @@ def test_nd_policy_resources_module_00010() -> None:
         params=_default_params(
             fabric_name="fab-x",
             state="merged",
-            use_desc_as_key=True,
+            use_description_as_key=True,
             deploy=False,
             cluster_name="cluster-a",
             ticket_id="JIRA-1",
@@ -211,7 +211,7 @@ def test_nd_policy_resources_module_00010() -> None:
 
     assert module.fabric_name == "fab-x"
     assert module.state == "merged"
-    assert module.use_desc_as_key is True
+    assert module.use_description_as_key is True
     assert module.deploy is False
     assert module.cluster_name == "cluster-a"
     assert module.ticket_id == "JIRA-1"
@@ -524,7 +524,7 @@ def test_nd_policy_resources_module_00220() -> None:
     """
     # Summary
 
-    Verify Case B: ``use_desc_as_key=False`` with both ``switchId`` and
+    Verify Case B: ``use_description_as_key=False`` with both ``switchId`` and
     ``templateName`` uses the O(1) composite index.
 
     ## Test
@@ -588,7 +588,7 @@ def test_nd_policy_resources_module_00240() -> None:
     """
     # Summary
 
-    Verify Case C: with ``use_desc_as_key=True``, the lookup matches by
+    Verify Case C: with ``use_description_as_key=True``, the lookup matches by
     EXACT description across the entire switch (any template). This is
     what allows Case 15 (description matches existing policy under a
     different template -> delete+create).
@@ -602,7 +602,7 @@ def test_nd_policy_resources_module_00240() -> None:
 
     - ``NDPolicyModule._build_have_from_cache``
     """
-    module, _nd, _log = _make_module(params=_default_params(use_desc_as_key=True))
+    module, _nd, _log = _make_module(params=_default_params(use_description_as_key=True))
     p1 = {
         "policyId": "P1",
         "switchId": "FDO111",
@@ -629,7 +629,7 @@ def test_nd_policy_resources_module_00250() -> None:
     """
     # Summary
 
-    Verify Case C error path: ``use_desc_as_key=True`` requires a
+    Verify Case C error path: ``use_description_as_key=True`` requires a
     description -- supplying ``templateName`` without one is reported as
     an error rather than silently matching the empty string.
 
@@ -642,7 +642,7 @@ def test_nd_policy_resources_module_00250() -> None:
 
     - ``NDPolicyModule._build_have_from_cache``
     """
-    module, _nd, _log = _make_module(params=_default_params(use_desc_as_key=True))
+    module, _nd, _log = _make_module(params=_default_params(use_description_as_key=True))
     _seed_policy_cache(module, [])
 
     have, err = module._build_have_from_cache({"switchId": "FDO111", "templateName": "tpl_a"})

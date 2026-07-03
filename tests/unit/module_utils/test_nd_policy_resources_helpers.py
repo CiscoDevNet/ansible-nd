@@ -948,8 +948,8 @@ def test_nd_policy_resources_helpers_00700() -> None:
 
     - ``NDPolicyModule.translate_config``
     """
-    assert NDPolicyModule.translate_config([], use_desc_as_key=False) == []
-    assert NDPolicyModule.translate_config(None, use_desc_as_key=False) == []
+    assert NDPolicyModule.translate_config([], use_description_as_key=False) == []
+    assert NDPolicyModule.translate_config(None, use_description_as_key=False) == []
 
 
 def test_nd_policy_resources_helpers_00710() -> None:
@@ -974,7 +974,7 @@ def test_nd_policy_resources_helpers_00710() -> None:
         {"switch": [{"serial_number": "S1"}, {"serial_number": "S2"}]},
     ]
 
-    out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+    out = NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert out == [
         {"name": "g1", "description": "Global 1", "priority": 100, "switch": "S1"},
@@ -1002,7 +1002,7 @@ def test_nd_policy_resources_helpers_00720() -> None:
     """
     config = [{"switch": [{"serial_number": "S1"}, {"serial_number": "S2"}]}]
 
-    out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+    out = NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert out == [{"switch": "S1"}, {"switch": "S2"}]
 
@@ -1013,7 +1013,7 @@ def test_nd_policy_resources_helpers_00730() -> None:
 
     Verify a per-switch override with the SAME name as a global
     REPLACES the global on that switch (when
-    ``use_desc_as_key=False``). Other switches still get the global.
+    ``use_description_as_key=False``). Other switches still get the global.
 
     ## Test
 
@@ -1037,7 +1037,7 @@ def test_nd_policy_resources_helpers_00730() -> None:
         },
     ]
 
-    out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+    out = NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert out == [
         # S1: override wins (priority 999), global skipped
@@ -1051,7 +1051,7 @@ def test_nd_policy_resources_helpers_00740() -> None:
     """
     # Summary
 
-    Verify with ``use_desc_as_key=True``, BOTH the global AND the same-
+    Verify with ``use_description_as_key=True``, BOTH the global AND the same-
     name per-switch override are emitted (no replacement). This is the
     "create_additional_policy" model where descriptions are the dedup
     key, not template names.
@@ -1078,7 +1078,7 @@ def test_nd_policy_resources_helpers_00740() -> None:
         },
     ]
 
-    out = NDPolicyModule.translate_config(config, use_desc_as_key=True)
+    out = NDPolicyModule.translate_config(config, use_description_as_key=True)
 
     assert out == [
         {"name": "g1", "description": "first", "priority": 100, "switch": "S1"},
@@ -1092,7 +1092,7 @@ def test_nd_policy_resources_helpers_00750() -> None:
 
     Verify a per-switch override whose template name does NOT appear in
     any global is always emitted as an "extra" (regardless of the
-    ``use_desc_as_key`` flag).
+    ``use_description_as_key`` flag).
 
     ## Test
 
@@ -1115,7 +1115,7 @@ def test_nd_policy_resources_helpers_00750() -> None:
         },
     ]
 
-    out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+    out = NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert out == [
         {"name": "g1", "priority": 100, "switch": "S1"},
@@ -1147,7 +1147,7 @@ def test_nd_policy_resources_helpers_00760() -> None:
     ]
     snapshot = copy.deepcopy(config)
 
-    NDPolicyModule.translate_config(config, use_desc_as_key=False)
+    NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert config == snapshot
 
@@ -1183,7 +1183,7 @@ def test_nd_policy_resources_helpers_00770() -> None:
         },
     ]
 
-    out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+    out = NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert out == [
         {"name": "feature_enable", "priority": 100, "switch": "S1"},
@@ -1219,7 +1219,7 @@ def test_nd_policy_resources_helpers_00780() -> None:
         }
     ]
 
-    out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+    out = NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert len(out) == 1
     entry = out[0]
@@ -1260,7 +1260,7 @@ def test_nd_policy_resources_helpers_00790() -> None:
     ]
 
     with pytest.raises(NDModuleError):
-        NDPolicyModule.translate_config(config, use_desc_as_key=False)
+        NDPolicyModule.translate_config(config, use_description_as_key=False)
 
 
 def test_nd_policy_resources_helpers_00800() -> None:
@@ -1287,7 +1287,7 @@ def test_nd_policy_resources_helpers_00800() -> None:
         {"switch": [{"ip": "10.1.2.3"}]},
     ]
 
-    out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+    out = NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert out == [{"name": "g1", "priority": 100, "switch": "10.1.2.3"}]
 
@@ -1322,7 +1322,7 @@ def test_nd_policy_resources_helpers_00810() -> None:
     ]
 
     with does_not_raise():
-        out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+        out = NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert len(out) == 1
     assert out[0]["name"] == "POLICY-99"
@@ -1354,7 +1354,7 @@ def test_nd_policy_resources_helpers_00820() -> None:
     ]
 
     with pytest.raises(NDModuleError) as exc:
-        NDPolicyModule.translate_config(config, use_desc_as_key=False)
+        NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert "POLICY-12345" in str(exc.value)
     assert "switch" in str(exc.value).lower()
@@ -1380,7 +1380,7 @@ def test_nd_policy_resources_helpers_00830() -> None:
     config = [{"switch": []}]
 
     with does_not_raise():
-        out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+        out = NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert out == []
 
@@ -1415,7 +1415,7 @@ def test_nd_policy_resources_helpers_00840() -> None:
         {"switch": [{"serial_number": "S1"}, {"serial_number": "S2"}]},
     ]
 
-    out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+    out = NDPolicyModule.translate_config(config, use_description_as_key=False)
 
     assert len(out) == 2
     for entry in out:
@@ -1453,7 +1453,7 @@ def test_nd_policy_resources_helpers_00850() -> None:
         }
     ]
 
-    out1 = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+    out1 = NDPolicyModule.translate_config(config, use_description_as_key=False)
     assert len(out1) == 1
     assert out1[0]["name"] == "POLICY-28440"
     assert "policy_id" not in out1[0]
@@ -1470,7 +1470,7 @@ def test_nd_policy_resources_helpers_00850() -> None:
         }
     ]
 
-    out2 = NDPolicyModule.translate_config(re_round_tripped, use_desc_as_key=False)
+    out2 = NDPolicyModule.translate_config(re_round_tripped, use_description_as_key=False)
     assert len(out2) == 1
     assert out2[0]["name"] == "POLICY-28440"
     assert "policy_id" not in out2[0]

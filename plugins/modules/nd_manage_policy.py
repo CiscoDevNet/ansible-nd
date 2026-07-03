@@ -30,10 +30,10 @@ options:
       every switch in that switch list. A switch can also define
       O(config[].switch[].policies) for switch-specific policy overrides or additional
       policies.
-    - In the two-level shape, when O(use_desc_as_key=false), a per-switch policy whose
+    - In the two-level shape, when O(use_description_as_key=false), a per-switch policy whose
       template name matches a global policy B(replaces) that global for the particular
       switch; per-switch entries with different template names are B(added) alongside
-      the globals. When O(use_desc_as_key=true), global and per-switch policy entries
+      the globals. When O(use_description_as_key=true), global and per-switch policy entries
       are both emitted; there is no name-based replacement.
     - B(Gathered output shape) - each named policy entry includes its own
       O(config[].switch) list. This is the shape returned by O(state=gathered) and
@@ -46,7 +46,7 @@ options:
         - Template name (for example, C(switch_freeform) or C(feature_enable)) or
           policy ID (for example, C(POLICY-121110)).
         - Template names are not unique policy identifiers. When
-          O(use_desc_as_key=false), use a policy ID to update a specific existing
+          O(use_description_as_key=false), use a policy ID to update a specific existing
           policy.
         - In gathered output shape, O(config[].name) contains the template name and
           O(config[].policy_id) contains the controller-assigned policy ID.
@@ -68,15 +68,15 @@ options:
           specific policy by ID.
         - To force fresh policy creation from gathered output, remove C(policy_id) values
           before replaying; matching will then fall back to (C(template_name), C(description))
-          or (C(name), C(switch)) per the O(use_desc_as_key) mode.
+          or (C(name), C(switch)) per the O(use_description_as_key) mode.
         type: str
       description:
         description:
         - Description of the policy.
-        - When O(use_desc_as_key=true), this is used as the unique identifier for the policy
+        - When O(use_description_as_key=true), this is used as the unique identifier for the policy
           and must be non-empty and unique per switch when O(config[].name) is a
           policy template name. Policy IDs are exempt.
-        - When O(use_desc_as_key=false) and O(config[].name) is a policy template
+        - When O(use_description_as_key=false) and O(config[].name) is a policy template
           name, for example C(clock_timezone) or C(switch_freeform), the name
           selects the policy template and does not uniquely identify an existing
           policy. If O(config[].description) is omitted in C(state=merged), the
@@ -97,7 +97,7 @@ options:
         - A flag indicating if a policy is to be created even if an identical policy already exists.
         - When set to V(true), a new duplicate policy is created regardless of whether a matching one exists.
         - When set to V(false), duplicate creation is skipped if an identical policy already exists.
-        - Most relevant when O(use_desc_as_key=false) and O(config[].name) is a template name.
+        - Most relevant when O(use_description_as_key=false) and O(config[].name) is a template name.
         - Ignored when O(config[].name) is a policy ID; policy-ID entries update the
           exact existing policy, or skip/deploy when there is no diff.
         type: bool
@@ -143,7 +143,7 @@ options:
               description:
                 description:
                 - Description of the policy.
-                - When O(use_desc_as_key=false) and O(config[].switch[].policies[].name)
+                - When O(use_description_as_key=false) and O(config[].switch[].policies[].name)
                   is a policy template name, for example C(clock_timezone) or
                   C(switch_freeform), the name selects the policy template and does
                   not uniquely identify an existing policy. If
@@ -171,7 +171,7 @@ options:
                 - Dictionary of name/value pairs passed to the policy template.
                 - When omitted, no template inputs are sent.
                 type: dict
-  use_desc_as_key:
+  use_description_as_key:
     description:
     - When set to V(true), policy descriptions are used as unique keys per switch.
     - When O(config[].name) is a policy template name, the description must be
@@ -212,7 +212,7 @@ options:
       content-type policies that use the direct C(DELETE) fallback are removed from
       the controller, but their running config remains on the switch until deploy.
     - Switch-level deploy is also used for C(merged) replacement flows where
-      O(use_desc_as_key=true) and the template name changes. Switch-level deploy
+      O(use_description_as_key=true) and the template name changes. Switch-level deploy
       pushes every pending configuration change staged for the targeted switches, not
       only the changes made by this task.
     - If an earlier delete ran with O(deploy=false), a later delete with
@@ -263,11 +263,11 @@ seealso:
 notes:
 - The module is validation-first but not transactionally rolled back. Playbook
   schema validation, switch IP resolution, empty-description checks for
-  O(use_desc_as_key=true), and duplicate description+switch checks run before
+  O(use_description_as_key=true), and duplicate description+switch checks run before
   write operations.
 - O(config[].description) has C(default=""). When O(config[].name) is a policy
-  template name and O(use_desc_as_key=false), omitting the description creates the
-  policy with an empty description. When O(use_desc_as_key=true), policy template
+  template name and O(use_description_as_key=false), omitting the description creates the
+  policy with an empty description. When O(use_description_as_key=true), policy template
   names require a non-empty description. Policy-ID updates preserve the existing
   description when O(config[].description) is omitted.
 - Template-input validation is per-entry, so invalid policy entries are reported as
@@ -380,7 +380,7 @@ EXAMPLES = r"""
 # MODIFY POLICY (using policy ID)
 
 # NOTE: Since there can be multiple policies with the same template name, policy-id MUST be used
-#       to modify a particular policy when use_desc_as_key is false.
+#       to modify a particular policy when use_description_as_key is false.
 
 - name: Modify policies using policy IDs
   cisco.nd.nd_manage_policy:
@@ -404,7 +404,7 @@ EXAMPLES = r"""
 - name: Use description as key to update
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
-    use_desc_as_key: true
+    use_description_as_key: true
     config:
       - name: feature_enable
         description: "Enable LACP"
@@ -421,7 +421,7 @@ EXAMPLES = r"""
 - name: Create policies with description as key
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
-    use_desc_as_key: true
+    use_description_as_key: true
     config:
       - name: switch_freeform
         create_additional_policy: false
@@ -510,7 +510,7 @@ EXAMPLES = r"""
 - name: Delete policies using description as key
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
-    use_desc_as_key: true
+    use_description_as_key: true
     state: deleted
     config:
       - name: switch_freeform

@@ -319,13 +319,13 @@
           - result.changed == true
       tags: deleted
 
-    # TC-6: Delete using use_desc_as_key
+    # TC-6: Delete using use_description_as_key
     - name: "DELETED TC6 SETUP - Create policy with unique description"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: switch_freeform
             create_additional_policy: false
@@ -342,7 +342,7 @@
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - description: "Delete me by description"
           - switch:

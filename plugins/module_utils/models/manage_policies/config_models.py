@@ -20,7 +20,7 @@ Usage in nd_manage_policy.py main()::
     for idx, entry in enumerate(module.params["config"]):
         PlaybookPolicyConfig.model_validate(
             entry,
-            context={"state": state, "use_desc_as_key": use_desc_as_key},
+            context={"state": state, "use_description_as_key": use_description_as_key},
         )
 """
 
@@ -66,7 +66,7 @@ class PlaybookSwitchPolicyConfig(NDNestedModel):
         max_length=255,
         description=(
             "Policy description (max 255 characters). When the policy name is "
-            "a policy template name and use_desc_as_key is false, omitted "
+            "a policy template name and use_description_as_key is false, omitted "
             "descriptions create policies with an empty description. Policy-ID "
             "updates preserve the existing description when omitted."
         ),
@@ -149,7 +149,7 @@ class PlaybookPolicyConfig(NDNestedModel):
 
     Context-aware validation (pass via ``model_validate(..., context={})``:
         - ``state``: The module state (merged, deleted, gathered).
-        - ``use_desc_as_key``: Whether descriptions are used as unique keys.
+        - ``use_description_as_key``: Whether descriptions are used as unique keys.
 
     OpenAPI constraints applied:
         - name: maxLength=255 (templateName)
@@ -181,7 +181,7 @@ class PlaybookPolicyConfig(NDNestedModel):
         max_length=255,
         description=(
             "Policy description (max 255 characters). When the policy name is "
-            "a policy template name and use_desc_as_key is false, omitted "
+            "a policy template name and use_description_as_key is false, omitted "
             "descriptions create policies with an empty description. Policy-ID "
             "updates preserve the existing description when omitted."
         ),
@@ -209,11 +209,11 @@ class PlaybookPolicyConfig(NDNestedModel):
     def validate_state_requirements(self, info: ValidationInfo) -> PlaybookPolicyConfig:
         """Apply state-aware validation using context.
 
-        When ``context={"state": "merged", "use_desc_as_key": True}`` is
+        When ``context={"state": "merged", "use_description_as_key": True}`` is
         passed to ``model_validate()``:
 
         - **merged + policy entry**: ``name`` is required.
-        - **use_desc_as_key + merged/deleted + template name**: ``description``
+        - **use_description_as_key + merged/deleted + template name**: ``description``
           must be non-empty.
 
         Switch-only entries (``name`` is None, ``switch`` is present) skip
@@ -230,7 +230,7 @@ class PlaybookPolicyConfig(NDNestedModel):
         """
         ctx = info.context or {} if info else {}
         state = ctx.get("state")
-        use_desc_as_key = ctx.get("use_desc_as_key", False)
+        use_description_as_key = ctx.get("use_description_as_key", False)
 
         # Switch-only entry - no policy fields to validate
         if self.name is None and self.switch is not None:
@@ -244,13 +244,13 @@ class PlaybookPolicyConfig(NDNestedModel):
                 "or a policy ID like 'POLICY-12345'."
             )
 
-        # When use_desc_as_key=true, description must not be empty when the
+        # When use_description_as_key=true, description must not be empty when the
         # policy name is a policy template name in merged/deleted states.
         # Entries that carry an explicit `policy_id` are exempt because the
         # gathered output promotion path (translate_config) rewrites `name`
         # to the policy_id before any description-keyed matching runs.
         if (
-            use_desc_as_key
+            use_description_as_key
             and state in ("merged", "deleted")
             and self.name
             and not self.name.startswith("POLICY-")
@@ -258,10 +258,10 @@ class PlaybookPolicyConfig(NDNestedModel):
             and not self.description
         ):
             raise ValueError(
-                f"'description' cannot be empty when use_desc_as_key=true "
+                f"'description' cannot be empty when use_description_as_key=true "
                 f"and name is a template name ('{self.name}'). "
                 f"Provide a unique description for each policy "
-                f"or set use_desc_as_key=false."
+                f"or set use_description_as_key=false."
             )
 
         return self
@@ -276,7 +276,7 @@ class PlaybookPolicyConfig(NDNestedModel):
         return dict(
             fabric_name=dict(type="str", required=True, aliases=["fabric"]),
             config=dict(type="list", elements="dict"),
-            use_desc_as_key=dict(type="bool", default=False),
+            use_description_as_key=dict(type="bool", default=False),
             deploy=dict(type="bool", default=True),
             ticket_id=dict(type="str"),
             cluster_name=dict(type="str"),

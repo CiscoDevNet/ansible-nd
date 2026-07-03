@@ -34,7 +34,7 @@
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: clock_timezone
             create_additional_policy: false
@@ -74,13 +74,13 @@
     ##         MODIFY TEST CASES                ##
     ##############################################
 
-    # TC-1: Modify priority of an existing policy using use_desc_as_key
-    - name: "MODIFY TC1 - Update priority using use_desc_as_key"
+    # TC-1: Modify priority of an existing policy using use_description_as_key
+    - name: "MODIFY TC1 - Update priority using use_description_as_key"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: clock_timezone
             create_additional_policy: false
@@ -107,7 +107,7 @@
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: clock_timezone
             create_additional_policy: false
@@ -130,12 +130,12 @@
 
     # TC-3: Modify template_inputs of an existing policy while omitting priority.
     # The existing priority must be preserved instead of being reset to 500.
-    - name: "MODIFY TC3 - Update template_inputs without priority using use_desc_as_key"
+    - name: "MODIFY TC3 - Update template_inputs without priority using use_description_as_key"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
-        use_desc_as_key: true
+        use_description_as_key: true
         config:
           - name: switch_freeform
             create_additional_policy: false
