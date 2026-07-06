@@ -104,7 +104,7 @@ options:
         required: false
       switches:
         description:
-          - Switch IP addresses or DNS names of the management interface of the switch to which the
+          - Switch management IP addresses or switch IDs/serial numbers of the switch to which the
             allocated resource is assigned.
           - Required for C(state=merged) and C(state=deleted) when C(scope_type) is not C(fabric).
           - Optional filter for C(state=gathered).
