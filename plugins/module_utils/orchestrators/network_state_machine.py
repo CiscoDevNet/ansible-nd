@@ -367,6 +367,19 @@ class NetworkStateMachine:
         current_networks = self.coordinator._query_current_networks(module_args, strategy)
         current_network_names = {network.get("networkName") or network.get("network_name") for network in current_networks}
         target_network_names = [network_name for network_name in requested_network_names if network_name in current_network_names]
+        self._trace(
+            "delete_existing_networks_resolved",
+            configured_count=len(requested_network_names),
+            existing_count=len(target_network_names),
+            existing_network_names=target_network_names,
+        )
+
+        if not target_network_names:
+            self._trace("delete_no_existing_networks_skip_detach")
+            result = self.coordinator._run_state_machine(module_args, strategy=strategy)
+            self._trace("delete_manage_state_end", changed=result.get("changed"), failed=result.get("failed"))
+            return result
+
         self.coordinator._ensure_networks_have_no_networks(
             module_args,
             strategy,

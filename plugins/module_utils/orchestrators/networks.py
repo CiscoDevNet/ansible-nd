@@ -66,77 +66,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     delete_retry_delay: ClassVar[int] = 30
     scoped_query_threshold: ClassVar[int] = 5
     unfiltered_query_page_size: ClassVar[int] = 10000
-    definition_config_fields: ClassVar[set[str]] = {
-        "net_template",
-        "network_template_name",
-        "networkTemplateName",
-        "net_extension_template",
-        "network_extension_template_name",
-        "networkExtensionTemplateName",
-        "network_template_config",
-        "networkTemplateConfig",
-        "network_id",
-        "networkId",
-        "network_type",
-        "networkType",
-        "display_name",
-        "displayName",
-        "vrf_name",
-        "vrfName",
-        "vlan_id",
-        "vlanId",
-        "tenant_name",
-        "tenantName",
-        "layer",
-        "is_l2only",
-        "isL2Only",
-        "vlan_name",
-        "vlanName",
-        "rt_auto",
-        "rtAuto",
-        "x_connect",
-        "xConnect",
-        "l2_fabric_data",
-        "l2FabricData",
-        "stretch",
-        "enable_ir",
-        "enableIr",
-        "multicast_group_address",
-        "multicastGroup",
-        "ds_vni",
-        "dsVni",
-        "gateway_ipv4_address",
-        "gatewayIpv4Address",
-        "gateway_ipv6_address",
-        "gatewayIpv6Address",
-        "secondary_gateway_ipv4_collection",
-        "secondaryGatewayIpv4Collection",
-        "secondary_gateway_ipv6_collection",
-        "secondaryGatewayIpv6Collection",
-        "vlan_intf_desc",
-        "vlanIntfDesc",
-        "mtu",
-        "arp_suppression",
-        "arpSuppression",
-        "routing_tag",
-        "routingTag",
-        "dhcp_servers",
-        "dhcpServers",
-        "loopback_id",
-        "loopbackId",
-        "igmp_version",
-        "igmpVersion",
-        "trm_enable",
-        "trmEnable",
-        "ipv6_trm",
-        "ipv6Trm",
-        "netflow_enable",
-        "netflowEnable",
-        "gateway_on_border",
-        "gatewayOnBorder",
-        "child_fabric_config",
-        "childFabricConfig",
-    }
     definition_intent_fields: ClassVar[set[str]] = {
         "net_template",
         "network_template_name",
@@ -392,10 +321,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             if l3_data:
                 transformed["l3_data"] = l3_data
         return transformed
-
-    @classmethod
-    def has_network_definition_fields(cls, config: dict[str, Any]) -> bool:
-        return any(key in config and config[key] is not None for key in cls.definition_config_fields)
 
     @classmethod
     def has_network_definition_intent(cls, config: dict[str, Any]) -> bool:

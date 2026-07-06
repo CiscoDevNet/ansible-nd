@@ -1567,6 +1567,57 @@ def test_network_check_mode_delete_skips_deploy_and_wait():
     ]
 
 
+def test_network_state_machine_deleted_absent_network_skips_detach_and_deploy():
+    class Module:
+        check_mode = False
+
+    class Strategy:
+        is_child = False
+        is_parent = True
+        is_multicluster = True
+
+    class Coordinator:
+        module = Module()
+        strategy = Strategy()
+
+        def __init__(self):
+            self.calls = []
+
+        def _configured_network_names(self, _config):
+            return ["MISSING_NET"]
+
+        def _query_current_networks(self, *_args, **_kwargs):
+            return []
+
+        def _ensure_networks_have_no_networks(self, *_args, **_kwargs):
+            raise AssertionError("absent Network must not run dependency checks")
+
+        def _apply_deleted_attachment_phase(self, *_args, **_kwargs):
+            raise AssertionError("absent Network must not detach")
+
+        def _deploy_network_attachments(self, *_args, **_kwargs):
+            raise AssertionError("absent Network must not deploy")
+
+        def _run_state_machine(self, _args, strategy=None):
+            self.calls.append("delete")
+            assert strategy is not None
+            return {"changed": False, "before": [], "after": []}
+
+        def _trace(self, *_args, **_kwargs):
+            return None
+
+    coordinator = Coordinator()
+    result = NetworkStateMachine(coordinator).run(
+        {
+            "state": "deleted",
+            "config": [{"network_name": "MISSING_NET"}],
+        }
+    )
+
+    assert coordinator.calls == ["delete"]
+    assert result["changed"] is False
+
+
 def test_network_check_mode_attachment_phase_returns_planned_payload():
     class Module:
         check_mode = True
