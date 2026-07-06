@@ -27,7 +27,7 @@ IPv4 and IPv6 ACLs share a single API namespace and are distinguished by the
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
 from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -42,7 +42,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKe
 class AclsEndpointParams(EndpointQueryParams):
     """Query parameters shared by single-item ACL endpoints."""
 
-    cluster_name: Optional[str] = Field(
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Name of the target Nexus Dashboard cluster to execute this API, in a multi-cluster deployment",
@@ -52,30 +52,30 @@ class AclsEndpointParams(EndpointQueryParams):
 class AclsListEndpointParams(EndpointQueryParams):
     """Query parameters for the ACL collection (list) endpoint."""
 
-    cluster_name: Optional[str] = Field(
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Name of the target Nexus Dashboard cluster to execute this API, in a multi-cluster deployment",
     )
 
-    filter: Optional[str] = Field(
+    filter: str | None = Field(
         default=None,
         description="Lucene format filter - Filter the response based on this filter field",
     )
 
-    max: Optional[int] = Field(
+    max: int | None = Field(
         default=None,
         ge=1,
         description="Number of records to return",
     )
 
-    offset: Optional[int] = Field(
+    offset: int | None = Field(
         default=None,
         ge=0,
         description="Number of records to skip for pagination",
     )
 
-    sort: Optional[str] = Field(
+    sort: str | None = Field(
         default=None,
         description="Sort the records by the declared fields in either ascending (default) or descending (:desc) order",
     )

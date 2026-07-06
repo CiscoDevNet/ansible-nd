@@ -33,7 +33,7 @@ controller responses that omit inactive port operators.
 from __future__ import annotations
 
 import re
-from typing import Any, ClassVar, Dict, List, Literal, Optional, Set
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -88,58 +88,58 @@ class AclEntryModel(NDNestedModel):
         description="Action for the entry: permit, deny, or remark.",
     )
 
-    remark_comment: Optional[str] = Field(
+    remark_comment: str | None = Field(
         default=None,
         alias="remarkComment",
         description="Remark text (required when action is 'remark').",
     )
 
-    protocol: Optional[AclProtocolEnum] = Field(
+    protocol: AclProtocolEnum | None = Field(
         default=None,
         alias="protocol",
         description="Matched protocol (required for permit/deny entries).",
     )
 
-    custom_protocol: Optional[int] = Field(
+    custom_protocol: int | None = Field(
         default=None,
         alias="customProtocol",
         description="Custom IP protocol number (required when protocol is 'custom').",
     )
 
-    src: Optional[str] = Field(
+    src: str | None = Field(
         default=None,
         alias="src",
         description="Source match (address/CIDR or 'any').",
     )
 
-    dst: Optional[str] = Field(
+    dst: str | None = Field(
         default=None,
         alias="dst",
         description="Destination match (address/CIDR or 'any').",
     )
 
-    src_port_action: Optional[PortActionEnum] = Field(
+    src_port_action: PortActionEnum | None = Field(
         default=None,
         alias="srcPortAction",
         description="Source port operator (tcp/udp).",
     )
 
-    src_port: Optional[str] = Field(default=None, alias="srcPort", description="Source port value (number or service name, e.g. 'www').")
-    src_port_range_start: Optional[str] = Field(default=None, alias="srcPortRangeStart", description="Source port range start (number or service name).")
-    src_port_range_end: Optional[str] = Field(default=None, alias="srcPortRangeEnd", description="Source port range end (number or service name).")
+    src_port: str | None = Field(default=None, alias="srcPort", description="Source port value (number or service name, e.g. 'www').")
+    src_port_range_start: str | None = Field(default=None, alias="srcPortRangeStart", description="Source port range start (number or service name).")
+    src_port_range_end: str | None = Field(default=None, alias="srcPortRangeEnd", description="Source port range end (number or service name).")
 
-    dst_port_action: Optional[PortActionEnum] = Field(
+    dst_port_action: PortActionEnum | None = Field(
         default=None,
         alias="dstPortAction",
         description="Destination port operator (tcp/udp).",
     )
 
-    dst_port: Optional[str] = Field(default=None, alias="dstPort", description="Destination port value (number or service name, e.g. 'ftp').")
-    dst_port_range_start: Optional[str] = Field(default=None, alias="dstPortRangeStart", description="Destination port range start (number or service name).")
-    dst_port_range_end: Optional[str] = Field(default=None, alias="dstPortRangeEnd", description="Destination port range end (number or service name).")
+    dst_port: str | None = Field(default=None, alias="dstPort", description="Destination port value (number or service name, e.g. 'ftp').")
+    dst_port_range_start: str | None = Field(default=None, alias="dstPortRangeStart", description="Destination port range start (number or service name).")
+    dst_port_range_end: str | None = Field(default=None, alias="dstPortRangeEnd", description="Destination port range end (number or service name).")
 
-    icmp_option: Optional[str] = Field(default=None, alias="icmpOption", description="ICMP option (icmp protocol only).")
-    tcp_option: Optional[str] = Field(default=None, alias="tcpOption", description="TCP option (tcp protocol only).")
+    icmp_option: str | None = Field(default=None, alias="icmpOption", description="ICMP option (icmp protocol only).")
+    tcp_option: str | None = Field(default=None, alias="tcpOption", description="TCP option (tcp protocol only).")
 
     # --- Field Validators ---
 
@@ -209,14 +209,14 @@ class AclModel(NDBaseModel):
 
     # --- Identifier Configuration ---
 
-    identifiers: ClassVar[Optional[List[str]]] = ["name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifiers: ClassVar[list[str] | None] = ["name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
 
     # --- Serialization Configuration ---
 
-    exclude_from_diff: ClassVar[Set[str]] = {"last_update_timestamp", "description"}
-    payload_exclude_fields: ClassVar[Set[str]] = {"last_update_timestamp"}
-    unwanted_keys: ClassVar[List] = []
+    exclude_from_diff: ClassVar[set[str]] = {"last_update_timestamp", "description"}
+    payload_exclude_fields: ClassVar[set[str]] = {"last_update_timestamp"}
+    unwanted_keys: ClassVar[list] = []
 
     # --- Fields ---
 
@@ -227,26 +227,26 @@ class AclModel(NDBaseModel):
         description="Name of the ACL (pattern: ^[a-zA-Z0-9_~-]+$).",
     )
 
-    type: Optional[AclTypeEnum] = Field(
+    type: AclTypeEnum | None = Field(
         default=None,
         alias="type",
         description="IP address family of the ACL: 'ipv4' or 'ipv6'. Required for all states except 'deleted'.",
     )
 
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None,
         alias="description",
         max_length=90,
         description="Description of the ACL.",
     )
 
-    last_update_timestamp: Optional[str] = Field(
+    last_update_timestamp: str | None = Field(
         default=None,
         alias="lastUpdateTimestamp",
         description="Timestamp of the last update (read-only, set by ND).",
     )
 
-    entries: Optional[List[AclEntryModel]] = Field(
+    entries: list[AclEntryModel] | None = Field(
         default=None,
         alias="entries",
         description="List of ACL entries.",
@@ -292,7 +292,7 @@ class AclModel(NDBaseModel):
         sequence numbers within the ACL.
         """
         entries = self.entries or []
-        seen_sequence_numbers: Set[int] = set()
+        seen_sequence_numbers: set[int] = set()
 
         for idx, entry in enumerate(entries):
             if entry.sequence_number in seen_sequence_numbers:
@@ -355,7 +355,7 @@ class AclModel(NDBaseModel):
     # --- Argument Spec ---
 
     @classmethod
-    def get_argument_spec(cls) -> Dict[str, Any]:
+    def get_argument_spec(cls) -> dict[str, Any]:
         entry_spec = dict(
             sequence_number=dict(type="int", required=True, aliases=["sequenceNumber"]),
             action=dict(type="str", required=True, choices=["permit", "deny", "remark"]),

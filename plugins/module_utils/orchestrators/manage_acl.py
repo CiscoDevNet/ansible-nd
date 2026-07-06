@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, List
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_acl import (
@@ -97,7 +97,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
         items = result.get("results")
         if not isinstance(items, list) or not items:
             return
-        failures: List[str] = []
+        failures: list[str] = []
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -156,7 +156,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
         """
         try:
             page_size = self.query_all_page_size
-            collected: List[dict] = []
+            collected: list[dict] = []
             seen: set = set()
             offset = 0
             pages_fetched = 0
@@ -190,7 +190,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
 
-    def create_bulk(self, model_instances: List[AclModel], **kwargs) -> ResponseType:
+    def create_bulk(self, model_instances: list[AclModel], **kwargs) -> ResponseType:
         """Bulk-create ACLs in a single request and check the 207 body."""
         try:
             api_endpoint = self.create_bulk_endpoint()
@@ -202,7 +202,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
         except Exception as e:
             raise Exception(f"Bulk create failed: {e}") from e
 
-    def delete_bulk(self, model_instances: List[AclModel], **kwargs) -> ResponseType:
+    def delete_bulk(self, model_instances: list[AclModel], **kwargs) -> ResponseType:
         """Bulk-delete ACLs in a single request and check the 207 body."""
         try:
             api_endpoint = self.delete_bulk_endpoint()
