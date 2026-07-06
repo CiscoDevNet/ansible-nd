@@ -1439,8 +1439,8 @@ def test_apply_gathered_filters_multiple_filters_with_dedup():
     assert len(gathered) == 1
 
 
-def test_apply_gathered_filters_merges_switches_after_pool_type_filter():
-    """Filtered gathered output keeps the same switch aggregation as gathered-all."""
+def test_apply_gathered_filters_keeps_switch_entries_separate_after_pool_type_filter():
+    """Filtered gathered output keeps one entry per resource switch."""
     module = _resource_manager()
     module.config = [{"pool_type": "ID"}]
     module._all_resources = [  # pylint: disable=protected-access
@@ -1477,8 +1477,16 @@ def test_apply_gathered_filters_merges_switches_after_pool_type_filter():
             "pool_name": "LOOPBACK_ID",
             "scope_type": "device",
             "resource": "200",
-            "switches": ["192.168.10.201", "192.168.10.202"],
-        }
+            "switches": ["192.168.10.201"],
+        },
+        {
+            "entity_name": "loopback_dev",
+            "pool_type": "ID",
+            "pool_name": "LOOPBACK_ID",
+            "scope_type": "device",
+            "resource": "200",
+            "switches": ["192.168.10.202"],
+        },
     ]
 
 

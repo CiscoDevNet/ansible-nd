@@ -163,10 +163,8 @@
           - "l3_vni_fabric"
           - "l2_vni_fabric"
           - "loopback_dev"
-          - "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}"
           - "{{ ansible_sno_2 }}~{{ ansible_sno_1 }}"
           - "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
-          - "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
           - "{{ ansible_sno_2 }}~{{ intf_1_3 }}~{{ ansible_sno_1 }}~{{ intf_1_3 }}"
           - "mmudigon-2"
 
@@ -178,19 +176,17 @@
           - entity_name: "l3_vni_fabric"             # A unique name to identify the resource
           - entity_name: "l2_vni_fabric"             # A unique name to identify the resource
           - entity_name: "loopback_dev"              # A unique name to identify the resource
-          - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}"  # A unique name to identify the resource
+          - entity_name: "{{ ansible_sno_2 }}~{{ ansible_sno_1 }}"  # A unique name to identify the resource
           - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"  # A unique name to identify the resource
-          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"  # A unique name to identify the resource
           - entity_name: "mmudigon-2"  # A unique name to identify the resource
-          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}"  # A unique name to identify the resource
-          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"  # A unique name to identify the resource
+          - entity_name: "{{ ansible_sno_2 }}~{{ intf_1_3 }}~{{ ansible_sno_1 }}~{{ intf_1_3 }}"  # A unique name to identify the resource
       register: result
 
     - name: ASSERT - Check condition
       ansible.builtin.assert:
         that:
-          - 'item["entity_name"] in {{ entity_names }}'
-      loop: '{{ result.gathered }}'
+          - '(result["gathered"] | length) == (entity_names | length)'
+          - '(result["gathered"] | map(attribute="entity_name") | sort | list) == (entity_names | sort | list)'
 
 
   ##############################################
