@@ -201,6 +201,14 @@ notes:
   O(config.entries.tcp_option) is only valid when O(config.entries.protocol) is C(tcp).
 - Port operators (O(config.entries.src_port_action) and O(config.entries.dst_port_action))
   are accepted in snake_case and stored/returned in the controller's native form.
+- The RV(after) return value reflects the module's predicted post-write state (the intended
+  configuration merged into the existing state), not a re-read from the controller after the
+  write. See the RETURN documentation for RV(after).
+- On Nexus Dashboard 4.2.1, the single-object ACL GET endpoint returns IPv6 ACLs with
+  C(type=ipv4) (a controller-side readback defect); the collection (list) endpoint used by this
+  module returns the correct C(type=ipv6). Module output therefore reports the correct address
+  family and remains idempotent, but a direct GET of a single IPv6 ACL from the controller may
+  report C(type=ipv4).
 - Feature boundary. This module models the ACL match capability exposed by the Nexus
   Dashboard Manage ACL API on 4.1.1. Per entry that is O(config.entries.action),
   O(config.entries.protocol) (with O(config.entries.custom_protocol) for C(custom)),
@@ -337,6 +345,8 @@ after:
   - This reflects the module's predicted post-write state (the intended configuration merged into
     the existing state); it is not re-read from the controller after the write.
   - In check mode, the configuration that would result had the module run outside of check mode.
+  - For IPv6 ACLs, this echoes the requested C(type=ipv6); note that a direct single-object GET
+    from the controller may report C(type=ipv4) on Nexus Dashboard 4.1.1 (see the module notes).
   returned: always
   type: list
   elements: dict
