@@ -427,10 +427,12 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         try:
             if not scoped_vrf_names:
                 return self._query_all_unfiltered()
+            if self._is_mcfg_parent():
+                return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
             if len(scoped_vrf_names) >= self.scoped_query_threshold:
                 return self._query_all_unfiltered()
             if len(scoped_vrf_names) > 1:
-                return self._query_all_scoped(scoped_vrf_names)
+                return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
             endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
             if scoped_vrf_names and hasattr(endpoint, "endpoint_params"):
                 endpoint.endpoint_params.filter = self._vrf_name_filter(scoped_vrf_names)
@@ -449,24 +451,23 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             raise Exception(f"Query all VRFs failed: {e}") from e
 
     def _query_all_scoped(self, vrf_names: list[str]) -> ResponseType:
-        """GET selected VRFs with a batched filter and per-name fallback."""
+        """GET selected VRFs with a single batched filter."""
         vrfs: list[dict[str, Any]] = []
         seen: set[str] = set()
         ordered_names = list(dict.fromkeys(vrf_names))
-        try:
-            self._append_scoped_vrf_items(vrfs, seen, self._query_all_scoped_batch(ordered_names), ordered_names)
-            return self._enrich_mcfg_parent_vrfs_from_children(vrfs)
-        except Exception:
-            for vrf_name in ordered_names:
-                self._append_scoped_vrf_items(vrfs, seen, self._query_all_scoped_one(vrf_name), [vrf_name])
-
+        self._append_scoped_vrf_items(vrfs, seen, self._query_all_scoped_batch(ordered_names), ordered_names)
         return self._enrich_mcfg_parent_vrfs_from_children(vrfs)
+
+    @staticmethod
+    def _filter_query_items_by_name(items: list[Any], vrf_names: list[str]) -> list[Any]:
+        requested = set(vrf_names)
+        return [item for item in items or [] if not isinstance(item, dict) or (item.get("vrfName") or item.get("vrf_name")) in requested]
 
     def _query_all_scoped_batch(self, vrf_names: list[str]) -> list[dict[str, Any]]:
         endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
         if hasattr(endpoint, "endpoint_params"):
             endpoint.endpoint_params.filter = self._vrf_name_filter(vrf_names)
-            endpoint.endpoint_params.max = max(len(vrf_names), 1)
+            endpoint.endpoint_params.max = 1
         result = self._request(
             path=endpoint.path,
             verb=endpoint.verb,
@@ -877,9 +878,26 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             "vrfTemplateConfig": json.dumps(template_config),
         }
 
+    def _mcfg_parent_vrf_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
+        """Build the schema-style OneManage manage payload for MCFG parent VRF operations."""
+        payload = model_instance.to_payload()
+        payload["fabricName"] = self.strategy.fabric_name
+        payload.setdefault("vrfType", self._default_vrf_type())
+        payload.pop("vlanId", None)
+        payload.pop("tenantName", None)
+
+        core_data = dict(payload.get("coreData") or {})
+        for key in ("vrfVlanName", "vrfInterfaceDescription", "vrfDescription"):
+            core_data.setdefault(key, "")
+        for key in ("routeTargetImport", "routeTargetExport", "evpnRouteTargetImport", "evpnRouteTargetExport"):
+            core_data.setdefault(key, [])
+        payload["coreData"] = core_data
+        payload["fabricData"] = {}
+        return payload
+
     def _create_or_update_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
         if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
-            return self._top_down_vrf_payload(model_instance)
+            return self._mcfg_parent_vrf_payload(model_instance)
         return model_instance.to_payload()
 
     # ── Create ────────────────────────────────────────────────────
@@ -897,15 +915,12 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         try:
             endpoint = self._make_endpoint(self.strategy.vrfs_post_cls())
             if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
-                return [
-                    self._request(
-                        path=endpoint.path,
-                        verb=endpoint.verb,
-                        data=self._create_or_update_payload(model_instance),
-                        operation_type=OperationType.CREATE,
-                    )
-                    for model_instance in model_instances
-                ]
+                return self._request(
+                    path=endpoint.path,
+                    verb=endpoint.verb,
+                    data={"vrfs": [self._create_or_update_payload(m) for m in model_instances]},
+                    operation_type=OperationType.CREATE,
+                )
             return self._request(
                 path=endpoint.path,
                 verb=endpoint.verb,

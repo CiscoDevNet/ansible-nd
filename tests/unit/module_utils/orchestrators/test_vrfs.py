@@ -233,12 +233,12 @@ def test_vrfs_00020_transform_applies_schema_defaults_for_minimal_config():
     assert payload["fabricData"]["trmData"]["v4RpAbsent"] is False
 
 
-def test_vrfs_00021_transform_mcfg_parent_preserves_fabric_data_for_template_payload():
+def test_vrfs_00021_transform_mcfg_parent_uses_schema_payload_not_template_payload():
     """
     # Summary
 
-    Verify MCFG parent configs keep parent fabricData so the template payload
-    can serialize advertise/static route flags into vrfTemplateConfig.
+    Verify MCFG parent create/update payloads use the OneManage manage schema,
+    not the deprecated template-config/top-down payload shape.
     """
     transformed = _transform(
         {
@@ -250,6 +250,7 @@ def test_vrfs_00021_transform_mcfg_parent_preserves_fabric_data_for_template_pay
             "static_default_route": False,
         },
         fabric_name="MCFG_FAB",
+        fabric_data={"managementType": "vxlan"},
         is_parent=True,
         is_multicluster=True,
     )
@@ -262,12 +263,20 @@ def test_vrfs_00021_transform_mcfg_parent_preserves_fabric_data_for_template_pay
 
     orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
     object.__setattr__(orchestrator, "strategy", _McfgTopDownStrategy())
-    top_down_payload = orchestrator._top_down_vrf_payload(VrfDataModel.from_config(transformed))
-    template_config = json.loads(top_down_payload["vrfTemplateConfig"])
+    mcfg_payload = orchestrator._create_or_update_payload(VrfDataModel.from_config(transformed))
 
-    assert template_config["advertiseHostRouteFlag"] is True
-    assert template_config["advertiseDefaultRouteFlag"] is False
-    assert template_config["configureStaticDefaultRouteFlag"] is False
+    assert mcfg_payload["fabricName"] == "MCFG_FAB"
+    assert mcfg_payload["vrfName"] == "ansible-mcfg-parent"
+    assert mcfg_payload["vrfType"] == "vxlan"
+    assert mcfg_payload["vrfId"] == 9008031
+    assert "vlanId" not in mcfg_payload
+    assert "vrfTemplateConfig" not in mcfg_payload
+    assert mcfg_payload["fabricData"] == {}
+    assert mcfg_payload["coreData"]["vrfVlanName"] == ""
+    assert mcfg_payload["coreData"]["vrfInterfaceDescription"] == ""
+    assert mcfg_payload["coreData"]["vrfDescription"] == ""
+    assert mcfg_payload["coreData"]["routeTargetImport"] == []
+    assert mcfg_payload["coreData"]["routeTargetExport"] == []
 
 
 def test_vrfs_00022_transform_msd_parent_omits_fabric_data():
@@ -641,6 +650,7 @@ def test_vrfs_00080_query_all_scopes_targeted_state_reads():
             "vrfs": [
                 {"vrfName": "ansible-vrf-b"},
                 {"vrfName": "ansible-vrf-a"},
+                {"vrfName": "ansible-vrf-other"},
             ]
         }
 
@@ -651,16 +661,43 @@ def test_vrfs_00080_query_all_scopes_targeted_state_reads():
         {"vrfName": "ansible-vrf-a"},
     ]
     assert requested_paths == [
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?max=2&filter=%28vrfName%3Aansible-vrf-a%20OR%20vrfName%3Aansible-vrf-b%29",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=10000",
     ]
 
 
-def test_vrfs_00081_query_all_scoped_falls_back_when_batch_query_fails():
+def test_vrfs_00081_query_all_scoped_single_name_uses_fielded_filter():
     """
     # Summary
 
-    Verify scoped reads use the per-name filter fallback only when the batched
-    scoped query itself fails.
+    Verify single-name scoped reads use the VRF name filter form supported by
+    the controller.
+    """
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "replaced",
+            "config": [{"vrf_name": "ansible-vrf-a"}],
+        }
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {"vrfs": [{"vrfName": "ansible-vrf-a"}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    assert orchestrator.query_all() == [{"vrfName": "ansible-vrf-a"}]
+    assert requested_paths == [
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3Aansible-vrf-a",
+    ]
+
+
+def test_vrfs_00081a_query_all_scoped_multi_name_uses_unfiltered_local_filter():
+    """
+    # Summary
+
+    Verify multi-name VRF reads avoid unsupported Lucene OR filters and
+    exact-filter the paginated read in module code.
     """
     orchestrator = _orchestrator_for_request_tests(
         {
@@ -675,11 +712,13 @@ def test_vrfs_00081_query_all_scoped_falls_back_when_batch_query_fails():
 
     def request(**kwargs):
         requested_paths.append(kwargs["path"])
-        if len(requested_paths) == 1:
-            raise RuntimeError("batch filter rejected")
-        if "ansible-vrf-b" in kwargs["path"]:
-            return {"vrfs": [{"vrfName": "ansible-vrf-b"}]}
-        return {"vrfs": [{"vrfName": "ansible-vrf-a"}]}
+        return {
+            "vrfs": [
+                {"vrfName": "ansible-vrf-b"},
+                {"vrfName": "ansible-vrf-a"},
+                {"vrfName": "ansible-vrf-other"},
+            ]
+        }
 
     object.__setattr__(orchestrator, "_request", request)
 
@@ -688,10 +727,52 @@ def test_vrfs_00081_query_all_scoped_falls_back_when_batch_query_fails():
         {"vrfName": "ansible-vrf-a"},
     ]
     assert requested_paths == [
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?max=2&filter=%28vrfName%3Aansible-vrf-a%20OR%20vrfName%3Aansible-vrf-b%29",
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3Aansible-vrf-b",
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3Aansible-vrf-a",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=10000",
     ]
+
+
+def test_vrfs_00081b_mcfg_parent_scoped_query_uses_unfiltered_read_and_local_filter():
+    """
+    # Summary
+
+    Verify MCFG parent scoped reads avoid Lucene filters on the OneManage
+    parent surface and exact-filter the paginated read in module code.
+    """
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(
+        orchestrator,
+        "strategy",
+        MulticlusterParentVrfStrategy(
+            fabric_name="MCFG_FAB",
+            fabric_data={"management": {"type": "vxlan"}, "members": []},
+        ),
+    )
+    object.__setattr__(
+        orchestrator,
+        "rest_send",
+        _RestSend(
+            {
+                "state": "replaced",
+                "config": [{"vrf_name": "ansible-vrf-a"}],
+            }
+        ),
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {
+            "vrfs": [
+                {"vrfName": "ansible-vrf-a", "fabricName": "MCFG_FAB"},
+                {"vrfName": "ansible-vrf-other", "fabricName": "MCFG_FAB"},
+            ],
+            "meta": {"counts": {"remaining": 0, "total": 2}},
+        }
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    assert orchestrator.query_all() == [{"vrfName": "ansible-vrf-a", "fabricName": "MCFG_FAB", "vrfType": "vxlan"}]
+    assert requested_paths == ["/api/v1/oneManage/manage/fabrics/MCFG_FAB/vrfs?offset=0&max=10000"]
 
 
 def test_vrfs_00082_query_all_uses_unfiltered_read_at_scoped_threshold():
@@ -1017,7 +1098,7 @@ def test_vrfs_00091_mcfg_parent_delete_uses_remove_action_body():
 
     assert requests == [
         {
-            "path": "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/vrfActions/remove",
+            "path": "/api/v1/oneManage/manage/fabrics/MCFG_FAB/vrfActions/remove",
             "verb": HttpVerbEnum.POST,
             "data": {"vrfNames": ["ansible-vrf-a", "ansible-vrf-b"]},
             "operation_type": OperationType.DELETE,
@@ -1084,6 +1165,91 @@ def test_vrfs_00095_bulk_create_uses_single_vrfs_payload():
         "ansible-vrf-a",
         "ansible-vrf-b",
     ]
+
+
+def test_vrfs_00096_mcfg_parent_bulk_create_uses_onemanage_schema_payload():
+    """
+    # Summary
+
+    Verify MCFG parent VRF create uses the OneManage manage schema payload
+    accepted by ND 4.2: ``{"vrfs": [{fabricName, vrfName, vrfType, coreData,
+    fabricData, vrfId}]}``.
+    """
+    strategy = MulticlusterParentVrfStrategy(
+        fabric_name="MCFG_C",
+        fabric_data={
+            "managementType": "vxlan",
+            "manageFabricDetails": {"management": {"type": "vxlan"}},
+        },
+    )
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(orchestrator, "strategy", strategy)
+    object.__setattr__(orchestrator, "rest_send", _RestSend({"state": "merged", "config": []}))
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        return {"results": [{"vrfName": "MyVRF_50000", "status": "success"}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+    model = VrfDataModel.from_config(
+        {
+            "fabric_name": "MCFG_C",
+            "vrf_name": "MyVRF_50000",
+            "vrf_type": "vxlan",
+            "vrf_id": 50000,
+            "vlan_id": 3123,
+            "core_data": {
+                "mtu": 9216,
+                "routingTag": 12345,
+                "vrfRouteMap": "FABRIC-RMAP-REDIST-SUBNET",
+                "v6VrfRouteMap": "FABRIC-RMAP-REDIST-SUBNET",
+                "maxBgpPaths": 1,
+                "maxIbgpPaths": 2,
+                "ipv6LinkLocal": True,
+                "disableRtAuto": False,
+            },
+            "fabric_data": {
+                "advertiseHostRoute": True,
+                "advertiseDefaultRoute": False,
+            },
+        }
+    )
+
+    orchestrator.create_bulk([model])
+
+    assert len(requests) == 1
+    assert requests[0]["path"] == "/api/v1/oneManage/manage/fabrics/MCFG_C/vrfs"
+    assert requests[0]["verb"] == HttpVerbEnum.POST
+    assert requests[0]["operation_type"] == OperationType.CREATE
+    assert requests[0]["data"] == {
+        "vrfs": [
+            {
+                "fabricName": "MCFG_C",
+                "vrfName": "MyVRF_50000",
+                "vrfType": "vxlan",
+                "coreData": {
+                    "vrfVlanName": "",
+                    "vrfInterfaceDescription": "",
+                    "vrfDescription": "",
+                    "mtu": 9216,
+                    "routingTag": 12345,
+                    "vrfRouteMap": "FABRIC-RMAP-REDIST-SUBNET",
+                    "v6VrfRouteMap": "FABRIC-RMAP-REDIST-SUBNET",
+                    "maxBgpPaths": 1,
+                    "maxIbgpPaths": 2,
+                    "ipv6LinkLocal": True,
+                    "disableRtAuto": False,
+                    "routeTargetImport": [],
+                    "routeTargetExport": [],
+                    "evpnRouteTargetImport": [],
+                    "evpnRouteTargetExport": [],
+                },
+                "fabricData": {},
+                "vrfId": 50000,
+            }
+        ]
+    }
 
 
 def test_vrfs_00100_child_create_bulk_uses_update_endpoint():

@@ -21,7 +21,7 @@ class MulticlusterParentVrfStrategy(MultisiteParentVrfStrategy):
 
     Reuses the Multisite parent workflow contract, including child task
     construction and parent/child result aggregation, while routing parent
-    VRF operations through the OneManage proxy endpoint surface.
+    VRF operations through the OneManage manage endpoint surface.
     """
 
     @property
@@ -57,4 +57,7 @@ class MulticlusterParentVrfStrategy(MultisiteParentVrfStrategy):
     def configure_endpoint(self, ep) -> None:
         super().configure_endpoint(ep)
         if hasattr(ep, "proxy_path"):
-            ep.proxy_path = self.fabric_data.get("onemanageProxyPath", "")
+            # ``onemanageProxyPath`` is used only for MCFG fabric association
+            # discovery. Resource endpoints under /oneManage/manage are reached
+            # directly through the OneManage server root.
+            ep.proxy_path = ""

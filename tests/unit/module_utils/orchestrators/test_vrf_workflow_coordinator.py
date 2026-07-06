@@ -100,6 +100,10 @@ class _StandaloneStrategy:
     def is_parent(self):
         return False
 
+    @property
+    def is_multicluster(self):
+        return False
+
 
 class _ChildStrategy:
     config_model_cls = VrfConfigModel
@@ -113,6 +117,31 @@ class _ChildStrategy:
     @property
     def is_parent(self):
         return False
+
+
+class _Results:
+    def __init__(self):
+        self.finalized = 0
+
+    def build_final_result(self):
+        self.finalized += 1
+        return {}
+
+
+class _AttachmentQueryOrchestrator:
+    def __init__(self, strategy, responses):
+        self.strategy = strategy
+        self.responses = responses
+        self.requests = []
+
+    def _make_endpoint(self, endpoint_cls):
+        endpoint = endpoint_cls()
+        endpoint.fabric_name = self.strategy.fabric_name
+        return endpoint
+
+    def _request(self, **kwargs):
+        self.requests.append(kwargs)
+        return self.responses.pop(0)
 
 
 def test_vrf_attachment_query_chunks_large_vrf_name_sets():
@@ -136,6 +165,38 @@ def test_vrf_attachment_query_chunks_large_vrf_name_sets():
 
     assert result == []
     assert coordinator.queried_chunks == [["vrf-0", "vrf-1"], ["vrf-2", "vrf-3"], ["vrf-4"]]
+
+
+def test_vrf_attachment_query_walks_paginated_results():
+    strategy = _StandaloneStrategy()
+    responses = [
+        {
+            "attachments": [{"vrfName": "BLUE", "switchId": "SW1"}],
+            "meta": {"counts": {"remaining": 1, "total": 2}},
+        },
+        {
+            "attachments": [{"vrfName": "BLUE", "switchId": "SW2"}],
+            "meta": {"counts": {"remaining": 0, "total": 2}},
+        },
+    ]
+    orchestrator = _AttachmentQueryOrchestrator(strategy, responses)
+    results = _Results()
+
+    class Coordinator:
+        def _new_vrf_orchestrator(self, _module_args, _strategy):
+            return orchestrator, results
+
+    manager = VrfAttachmentManager(coordinator=Coordinator())
+    manager.attachment_query_page_size = 1
+
+    assert manager.current_attachment_details({}, strategy, ["BLUE"]) == [
+        {"vrfName": "BLUE", "switchId": "SW1"},
+        {"vrfName": "BLUE", "switchId": "SW2"},
+    ]
+    assert orchestrator.requests[0]["path"].endswith("/vrfAttachments/query?offset=0&max=1&includeAll=true")
+    assert orchestrator.requests[1]["path"].endswith("/vrfAttachments/query?offset=1&max=1&includeAll=true")
+    assert orchestrator.requests[0]["data"] == {"vrfNames": ["BLUE"]}
+    assert results.finalized == 2
 
 
 def test_vrf_workflow_coordinator_00001_arg_spec_blocks_invalid_child_suboptions():
@@ -667,6 +728,38 @@ def test_vrf_workflow_coordinator_00031_build_pending_vrf_deploy_payload_for_pen
 
     payloads = coordinator._build_pending_vrf_deploy_payloads(
         {"after": [{"vrf_name": "ansible-msd-vrf", "vrf_status": "deployed"}]},
+        [{"vrf_name": "ansible-msd-vrf", "deploy": True}],
+        {"config": []},
+        _ParentStrategy(),
+    )
+
+    assert payloads == [
+        {
+            "switchIds": ["SERIAL1"],
+            "vrfNames": ["ansible-msd-vrf"],
+        }
+    ]
+
+
+def test_vrf_workflow_coordinator_00031a_build_pending_vrf_deploy_payload_for_pending_attach():
+    """
+    # Summary
+
+    Verify deploy=true can recover an already-staged attached row that is still
+    pending, even when the current task does not need another attach POST.
+    """
+    coordinator = VrfWorkflowCoordinator.__new__(VrfWorkflowCoordinator)
+    coordinator._current_attachment_details = lambda *_args, **_kwargs: [
+        {
+            "vrfName": "ansible-msd-vrf",
+            "switchId": "SERIAL1",
+            "attach": True,
+            "status": "pending",
+        }
+    ]
+
+    payloads = coordinator._build_pending_vrf_deploy_payloads(
+        {"after": [{"vrf_name": "ansible-msd-vrf", "vrf_status": "notApplicable"}]},
         [{"vrf_name": "ansible-msd-vrf", "deploy": True}],
         {"config": []},
         _ParentStrategy(),
@@ -1331,7 +1424,7 @@ def test_vrf_workflow_coordinator_mcfg_parent_uses_manage_deploy_endpoint():
     )
     endpoint = strategy.vrf_actions_deploy_post_cls()(fabric_name="MCFG_C")
 
-    assert endpoint.path == "/api/v1/manage/fabrics/MCFG_C/vrfActions/deploy"
+    assert endpoint.path == "/api/v1/oneManage/manage/fabrics/MCFG_C/vrfActions/deploy"
 
 
 def test_vrf_workflow_coordinator_check_mode_attachment_phase_returns_planned_payload():
@@ -1381,6 +1474,110 @@ def test_vrf_workflow_coordinator_check_mode_attachment_phase_returns_planned_pa
             "attach": True,
         }
     ]
+
+
+def test_vrf_workflow_coordinator_attachment_payload_includes_vrf_vlan_id():
+    """Verify VRF attach payloads inherit the VRF VLAN ID."""
+
+    class Coordinator:
+        @staticmethod
+        def _resolve_switch_ids(_module_args, _strategy, _config):
+            return {"10.1.1.11": "SERIAL1"}
+
+        @staticmethod
+        def _attachment_instance_values(_attachment):
+            return {}
+
+    manager = VrfAttachmentManager(Coordinator())
+    module_args = {
+        "config": [
+            {
+                "vrf_name": "ansible-vrf",
+                "vlan_id": 3701,
+                "attach": [{"ip_address": "10.1.1.11"}],
+            }
+        ]
+    }
+
+    desired = manager.desired_attachment_map(module_args, _StandaloneStrategy())
+
+    assert desired[("ansible-vrf", "SERIAL1")] == {
+        "vrfName": "ansible-vrf",
+        "switchId": "SERIAL1",
+        "vlanId": 3701,
+        "attach": True,
+    }
+
+
+def test_vrf_workflow_coordinator_expands_vpc_peer_from_existing_attachment_query():
+    """Verify peerSwitchId from the existing attachment query expands desired attachments."""
+
+    desired = {
+        ("ansible-vrf", "SERIAL1"): {
+            "vrfName": "ansible-vrf",
+            "switchId": "SERIAL1",
+            "vlanId": 3701,
+            "attach": True,
+        }
+    }
+    attachment_details = [
+        {
+            "vrfName": "ansible-vrf",
+            "switchId": "SERIAL1",
+            "peerSwitchId": "SERIAL2",
+            "attach": False,
+            "status": "notApplicable",
+        },
+        {
+            "vrfName": "ansible-vrf",
+            "switchId": "SERIAL2",
+            "peerSwitchId": "SERIAL1",
+            "attach": False,
+            "status": "notApplicable",
+        },
+    ]
+
+    expanded = VrfAttachmentManager.expand_desired_attachments_with_vpc_peers(desired, attachment_details)
+
+    assert expanded == {
+        ("ansible-vrf", "SERIAL1"): {
+            "vrfName": "ansible-vrf",
+            "switchId": "SERIAL1",
+            "vlanId": 3701,
+            "attach": True,
+        },
+        ("ansible-vrf", "SERIAL2"): {
+            "vrfName": "ansible-vrf",
+            "switchId": "SERIAL2",
+            "vlanId": 3701,
+            "attach": True,
+        },
+    }
+
+
+def test_vrf_workflow_coordinator_attachment_207_failure_fails_fast():
+    """Verify per-switch attachment failures are surfaced instead of entering deploy wait loops."""
+
+    module = _Module({})
+
+    class Coordinator:
+        def __init__(self):
+            self.module = module
+
+    manager = VrfAttachmentManager(Coordinator())
+    response = {
+        "results": [
+            {
+                "status": "failed",
+                "switchId": "SERIAL1",
+                "vrfName": "ansible-vrf",
+                "message": "Attach Response : Failed : VPC details not found",
+            }
+        ]
+    }
+
+    with pytest.raises(AssertionError, match="VRF attachment failed"):
+        manager._raise_on_attachment_failures(response)
 
 
 def test_vrf_workflow_coordinator_00085_overridden_new_vrf_does_not_query_missing_attachments():

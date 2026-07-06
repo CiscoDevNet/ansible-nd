@@ -16,6 +16,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsVrfAttachmentsPost,
     EpManageFabricsVrfAttachmentsQueryPost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_vrfs import (
+    EpOneManageFabricsVrfAttachmentsPost,
+    EpOneManageFabricsVrfAttachmentsQueryPost,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import (
     EpManageSwitchesListGet,
 )
@@ -48,9 +52,22 @@ class VrfAttachmentManager:
 
     delete_wait_delay = 5
     delete_wait_chunk_size = 30
+    attachment_query_page_size = 10000
 
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
+
+    @staticmethod
+    def _attachments_query_endpoint_cls(strategy: BaseVrfStrategy) -> type:
+        if strategy.is_multicluster and strategy.is_parent:
+            return EpOneManageFabricsVrfAttachmentsQueryPost
+        return EpManageFabricsVrfAttachmentsQueryPost
+
+    @staticmethod
+    def _attachments_post_endpoint_cls(strategy: BaseVrfStrategy) -> type:
+        if strategy.is_multicluster and strategy.is_parent:
+            return EpOneManageFabricsVrfAttachmentsPost
+        return EpManageFabricsVrfAttachmentsPost
 
     def apply_phase(
         self,
@@ -85,8 +102,13 @@ class VrfAttachmentManager:
         query_vrf_names = current_vrf_names
         if query_vrf_names is None:
             query_vrf_names = None if query_all else vrf_names
+        attachment_details = None
         if current is None:
-            current = self.coordinator._current_attachment_map(module_args, strategy, query_vrf_names)
+            attachment_details = self.coordinator._current_attachment_details(module_args, strategy, query_vrf_names)
+            current = self.coordinator._attachment_map_from_details(attachment_details)
+
+        if desired:
+            desired = self.coordinator._expand_desired_attachments_with_vpc_peers(desired, attachment_details or current.values())
 
         if phase == "pre":
             payloads = self.coordinator._planned_detach_payloads(state, config, current, desired)
@@ -111,6 +133,7 @@ class VrfAttachmentManager:
         )
         trace["current"] = current
         trace["payloads"] = payloads
+        trace["desired"] = desired
         return trace
 
     def attachment_map_after_detach(
@@ -229,6 +252,9 @@ class VrfAttachmentManager:
                     "switchId": switch_id,
                     "attach": True,
                 }
+                vlan_id = vrf.get("vlan_id") or vrf.get("vlanId")
+                if vlan_id is not None:
+                    payload["vlanId"] = vlan_id
                 instance_values = self.coordinator._attachment_instance_values(attachment)
                 if instance_values:
                     payload["instanceValues"] = instance_values
@@ -238,6 +264,42 @@ class VrfAttachmentManager:
                 desired[(vrf_name, switch_id)] = payload
 
         return desired
+
+    @staticmethod
+    def expand_desired_attachments_with_vpc_peers(
+        desired: dict[tuple[str, str], dict[str, Any]],
+        attachment_details: Any,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        """Add vPC peer attachments from existing attachment-query rows."""
+        if not desired or not attachment_details:
+            return desired
+
+        details = list(attachment_details)
+        detail_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+        for attachment in details:
+            if not isinstance(attachment, dict):
+                continue
+            vrf_name = attachment.get("vrfName")
+            switch_id = attachment.get("switchId")
+            if vrf_name and switch_id:
+                detail_by_key[(vrf_name, switch_id)] = attachment
+
+        expanded = dict(desired)
+        for key, payload in list(desired.items()):
+            detail = detail_by_key.get(key)
+            peer_switch_id = detail.get("peerSwitchId") if detail else None
+            if not peer_switch_id:
+                continue
+
+            peer_key = (key[0], peer_switch_id)
+            if peer_key in expanded:
+                continue
+
+            peer_payload = dict(payload)
+            peer_payload["switchId"] = peer_switch_id
+            expanded[peer_key] = peer_payload
+
+        return expanded
 
     def resolve_switch_ids(
         self,
@@ -360,10 +422,35 @@ class VrfAttachmentManager:
         vrf_names: Optional[list[str]],
     ) -> list[dict[str, Any]]:
         """Gather all attachment details, including pending detach entries."""
+        attachments: list[dict[str, Any]] = []
+        offset = 0
+
+        while True:
+            data = self._current_attachment_details_page(module_args, strategy, vrf_names, offset)
+            page_items = self._attachment_items_from_query_result(data)
+            attachments.extend(page_items)
+            if not self._has_more_attachment_pages(data, len(page_items), len(attachments)):
+                break
+            if not page_items:
+                break
+            offset += len(page_items)
+
+        return attachments
+
+    def _current_attachment_details_page(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        vrf_names: Optional[list[str]],
+        offset: int,
+    ) -> Any:
+        """Query one page of attachment details."""
         orchestrator, results = self.coordinator._new_vrf_orchestrator(module_args, strategy)
-        endpoint = orchestrator._make_endpoint(EpManageFabricsVrfAttachmentsQueryPost)
+        endpoint = orchestrator._make_endpoint(self._attachments_query_endpoint_cls(strategy))
         if hasattr(endpoint, "endpoint_params"):
             endpoint.endpoint_params.include_all = True
+            endpoint.endpoint_params.max = self.attachment_query_page_size
+            endpoint.endpoint_params.offset = offset
 
         query = VrfAttachmentQueryRequestModel(vrf_names=vrf_names or None)
         data = orchestrator._request(
@@ -373,12 +460,42 @@ class VrfAttachmentManager:
             operation_type=OperationType.QUERY,
         )
         results.build_final_result()
+        return data
 
+    @staticmethod
+    def _attachment_items_from_query_result(data: Any) -> list[dict[str, Any]]:
         if isinstance(data, dict):
             return data.get("attachments") or data.get("items") or []
         if isinstance(data, list):
             return data
         return []
+
+    @staticmethod
+    def _safe_int(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _has_more_attachment_pages(self, data: Any, page_count: int, total_seen: int) -> bool:
+        if not isinstance(data, dict):
+            return False
+
+        metadata = data.get("metadata") or data.get("meta") or {}
+        counts = metadata.get("counts") or {}
+        remaining = self._safe_int(counts.get("remaining"))
+        if remaining is not None:
+            return remaining > 0
+
+        total = self._safe_int(counts.get("total"))
+        if total is not None:
+            return total_seen < total
+
+        links = metadata.get("links") or {}
+        if links.get("next"):
+            return True
+
+        return page_count == self.attachment_query_page_size
 
     def current_attachment_details_ignore_missing(
         self,
@@ -490,14 +607,38 @@ class VrfAttachmentManager:
             }
         request = VrfAttachDetachRequestModel(attachments=[VrfAttachmentModel(**payload) for payload in payloads])
         orchestrator, results = self.coordinator._new_vrf_orchestrator(module_args, strategy)
-        endpoint = orchestrator._make_endpoint(EpManageFabricsVrfAttachmentsPost)
-        orchestrator._request(
+        endpoint = orchestrator._make_endpoint(self._attachments_post_endpoint_cls(strategy))
+        response = orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,
             data=request.to_payload(),
             operation_type=operation_type,
         )
+        self._raise_on_attachment_failures(response)
         return self.coordinator._finalize_api_trace(results, deploy_targets)
+
+    def _raise_on_attachment_failures(self, response: Any) -> None:
+        """Fail immediately when a 207 attachment response contains failed rows."""
+        if not isinstance(response, dict):
+            return
+        results = response.get("results")
+        if not isinstance(results, list):
+            return
+
+        failures: list[str] = []
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "").lower()
+            if status not in {"failed", "failure", "error"}:
+                continue
+            vrf_name = item.get("vrfName") or "unknown-vrf"
+            switch_id = item.get("switchId") or item.get("switchName") or "unknown-switch"
+            message = item.get("message") or "attachment operation failed"
+            failures.append(f"{vrf_name}/{switch_id}: {message}")
+
+        if failures:
+            self.coordinator.module.fail_json(msg="VRF attachment failed: " + "; ".join(failures))
 
     @staticmethod
     def record_deploy_target(
@@ -602,7 +743,12 @@ class VrfAttachmentManager:
             switch_id = attachment.get("switchId")
             if vrf_name not in configured_vrfs or not deploy_enabled.get(vrf_name, True):
                 continue
-            if attachment.get("attach") is False and self.attachment_has_pending_delete_work(attachment):
+            if attachment.get("attach") is True and self.attachment_has_pending_delete_work(attachment):
+                if deploy_type.get(vrf_name, "switch") == "vrf" or not switch_id:
+                    deploy_target_map.setdefault(vrf_name, set())
+                else:
+                    deploy_target_map.setdefault(vrf_name, set()).add(switch_id)
+            elif attachment.get("attach") is False and self.attachment_has_pending_delete_work(attachment):
                 if deploy_type.get(vrf_name, "switch") == "vrf" or not switch_id:
                     deploy_target_map.setdefault(vrf_name, set())
                 else:

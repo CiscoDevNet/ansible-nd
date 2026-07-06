@@ -13,6 +13,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationTyp
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_networks import (
     EpManageFabricsNetworksGet,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
+    EpOneManageFabricsNetworksGet,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
     BaseVrfStrategy,
 )
@@ -31,6 +34,12 @@ class VrfDependencyChecker:
 
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
+
+    @staticmethod
+    def _networks_get_endpoint_cls(strategy: BaseVrfStrategy) -> type:
+        if strategy.is_multicluster and strategy.is_parent:
+            return EpOneManageFabricsNetworksGet
+        return EpManageFabricsNetworksGet
 
     def ensure_no_networks(
         self,
@@ -87,7 +96,7 @@ class VrfDependencyChecker:
     ) -> list[dict[str, Any]]:
         """Query the networks endpoint, optionally scoped by VRF filter."""
         orchestrator, _results = self.coordinator._new_vrf_orchestrator(module_args, strategy)
-        endpoint = orchestrator._make_endpoint(EpManageFabricsNetworksGet)
+        endpoint = orchestrator._make_endpoint(self._networks_get_endpoint_cls(strategy))
         if hasattr(endpoint, "endpoint_params"):
             endpoint.endpoint_params.max = 10000
             if use_filter:

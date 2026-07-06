@@ -847,6 +847,14 @@ class VrfWorkflowCoordinator:
         """Compute attach payloads for missing or changed desired attachments."""
         return self.attachments.planned_attach_payloads(current, desired)
 
+    def _expand_desired_attachments_with_vpc_peers(
+        self,
+        desired: dict[tuple[str, str], dict[str, Any]],
+        attachment_details: Any,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        """Add vPC peer attachments using existing attachment-query rows."""
+        return self.attachments.expand_desired_attachments_with_vpc_peers(desired, attachment_details)
+
     def _attachment_matches(
         self,
         existing: dict[str, Any],

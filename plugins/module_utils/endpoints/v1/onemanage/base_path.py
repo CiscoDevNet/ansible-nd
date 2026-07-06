@@ -22,7 +22,7 @@ class BasePath:
     API endpoints for ND onemanage.
     """
 
-    API: Final = "/appcenter/cisco/ndfc/api/v1/onemanage"
+    API: Final = "/api/v1/oneManage"
 
     @classmethod
     def path(cls, *segments: str, proxy_path: str = "") -> str:

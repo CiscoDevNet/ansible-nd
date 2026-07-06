@@ -95,6 +95,7 @@ class VrfStateMachine:
             desired=desired_attachments,
             current_vrf_names=desired_vrf_names,
         )
+        desired_attachments = pre_attach.get("desired", desired_attachments)
         current_attachments = self._current_after_pre_detach(pre_attach)
 
         result = self.coordinator._run_state_machine(module_args, strategy=active_strategy)
@@ -172,6 +173,7 @@ class VrfStateMachine:
                 current_vrf_names=current_desired_vrf_names,
                 current=current_desired_attachments,
             )
+            desired_attachments = pre_attach.get("desired", desired_attachments)
             current_attachments = self._current_after_pre_detach(
                 pre_attach,
                 empty_when_absent=current_desired_vrf_names == [],
