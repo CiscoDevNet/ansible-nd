@@ -657,7 +657,7 @@ def test_subinterface_unmanaged_interface_00700(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen, state="overridden")
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "overridden"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
 
     with does_not_raise():
         result = orchestrator.query_all()
@@ -764,7 +764,7 @@ def test_subinterface_unmanaged_interface_00703(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen, state="overridden")
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "overridden"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
 
     with does_not_raise():
         result = orchestrator.query_all()
@@ -802,7 +802,7 @@ def test_subinterface_unmanaged_interface_00704(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen, state="overridden")
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "overridden"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
 
     with does_not_raise():
         result = orchestrator.query_all()
@@ -843,7 +843,7 @@ def test_subinterface_unmanaged_interface_00705(monkeypatch) -> None:
     config = [{"switch_ip": "192.168.12.151", "interface_name": "Ethernet1/3.20"}]
     rest_send = _build_rest_send(gen, state="merged", config=config)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
 
     with does_not_raise():
         result = orchestrator.query_all()
