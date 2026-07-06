@@ -33,8 +33,16 @@ def responses_subinterface_unmanaged_interface(key: str):
     return load_fixture("test_subinterface_unmanaged_interface")[key]
 
 
-def _build_rest_send(gen_responses: ResponseGenerator) -> RestSend:
-    """Build a `RestSend` wired to a file-based `Sender` and `ResponseHandler`."""
+def _build_rest_send(
+    gen_responses: ResponseGenerator,
+    state: str | None = None,
+    config: list[dict] | None = None,
+) -> RestSend:
+    """Build a `RestSend` wired to a file-based `Sender` and `ResponseHandler`.
+
+    `state` and `config` populate `rest_send.params` so `query_all`'s `_switches_to_query` scoping
+    (fabric-wide for `overridden`, config-scoped otherwise) can be exercised.
+    """
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
     sender.gen = gen_responses
@@ -44,7 +52,13 @@ def _build_rest_send(gen_responses: ResponseGenerator) -> RestSend:
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    rest_send = RestSend({"check_mode": False, "fabric_name": "fabric_1"})
+    params: dict = {"check_mode": False, "fabric_name": "fabric_1"}
+    if state is not None:
+        params["state"] = state
+    if config is not None:
+        params["config"] = config
+
+    rest_send = RestSend(params)
     rest_send.sender = sender
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
@@ -613,11 +627,13 @@ def test_subinterface_unmanaged_interface_00700(monkeypatch) -> None:
     """
     # Summary
 
-    Verify `query_all` validates prerequisites, iterates all switches, filters for `monitorSubinterface` policyType,
-    and enriches each result with `switchIp`.
+    Verify `query_all` validates prerequisites, iterates all switches in the fabric (`state: overridden` is
+    fabric-wide per `_switches_to_query`), filters for `monitorSubinterface` policyType, and enriches each
+    result with `switchIp`.
 
     ## Test
 
+    - state is `overridden`, so `_switches_to_query` returns the full switch map
     - Fabric summary fetched once (validate_prerequisites)
     - Switches-list fetched once (switch_map)
     - Switch A returns a mix: one managed subinterface (policyType=subinterface) + one unmanaged (policyType=monitorSubinterface)
@@ -627,6 +643,7 @@ def test_subinterface_unmanaged_interface_00700(monkeypatch) -> None:
     ## Classes and Methods
 
     - SubinterfaceUnmanagedInterfaceOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator._switches_to_query()
     - NDBaseInterfaceOrchestrator.validate_prerequisites()
     """
     method_name = inspect.stack()[0][3]
@@ -638,9 +655,9 @@ def test_subinterface_unmanaged_interface_00700(monkeypatch) -> None:
         yield responses_subinterface_unmanaged_interface(f"{method_name}d")
 
     gen = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen)
+    rest_send = _build_rest_send(gen, state="overridden")
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "overridden"})
 
     with does_not_raise():
         result = orchestrator.query_all()
@@ -729,6 +746,7 @@ def test_subinterface_unmanaged_interface_00703(monkeypatch) -> None:
 
     ## Test
 
+    - state is `overridden`, so the switch's interfaces are fetched (fabric-wide scope)
     - One switch with only ethernet interfaces
     - `query_all` returns []
 
@@ -744,9 +762,9 @@ def test_subinterface_unmanaged_interface_00703(monkeypatch) -> None:
         yield responses_subinterface_unmanaged_interface(f"{method_name}c")
 
     gen = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen)
+    rest_send = _build_rest_send(gen, state="overridden")
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "overridden"})
 
     with does_not_raise():
         result = orchestrator.query_all()
@@ -763,6 +781,7 @@ def test_subinterface_unmanaged_interface_00704(monkeypatch) -> None:
 
     ## Test
 
+    - state is `overridden`, so the switch's interfaces are fetched (fabric-wide scope)
     - Fabric summary returns valid (local, default)
     - Switches list returns one switch
     - That switch's interfaces GET returns a bare list as DATA
@@ -770,6 +789,46 @@ def test_subinterface_unmanaged_interface_00704(monkeypatch) -> None:
 
     ## Classes and Methods
 
+    - SubinterfaceUnmanagedInterfaceOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator._switch_interfaces()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}c")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen, state="overridden")
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "overridden"})
+
+    with does_not_raise():
+        result = orchestrator.query_all()
+
+    assert result == []
+
+
+def test_subinterface_unmanaged_interface_00705(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `query_all` scopes its per-switch interface-list fan-out to switches named in the user config when
+    `state` is not `overridden`, rather than querying every switch in the fabric.
+
+    ## Test
+
+    - Fabric has two switches (192.168.12.151, 192.168.12.152), but config names only 192.168.12.151
+    - state is `merged` (non-overridden), so `_switches_to_query` returns only the config switch
+    - Only the config switch's interfaces are fetched; the second switch is never queried (the response
+      generator yields exactly three responses — summary, switch list, switch-1 interfaces — and would raise
+      if a second per-switch GET were issued)
+    - Result contains only the unmanaged subinterface on the config switch
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._switches_to_query()
     - SubinterfaceUnmanagedInterfaceOrchestrator.query_all()
     """
     method_name = inspect.stack()[0][3]
@@ -780,11 +839,16 @@ def test_subinterface_unmanaged_interface_00704(monkeypatch) -> None:
         yield responses_subinterface_unmanaged_interface(f"{method_name}c")
 
     gen = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen)
+
+    config = [{"switch_ip": "192.168.12.151", "interface_name": "Ethernet1/3.20"}]
+    rest_send = _build_rest_send(gen, state="merged", config=config)
 
     orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
 
     with does_not_raise():
         result = orchestrator.query_all()
 
-    assert result == []
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "Ethernet1/3.20"
+    assert result[0]["switchIp"] == "192.168.12.151"

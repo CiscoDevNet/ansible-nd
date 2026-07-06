@@ -68,7 +68,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         # Summary
 
         Initialize mutable private state after Pydantic model construction. Pydantic disallows `Field()` on
-        underscore-prefixed names, so these are set here to ensure each instance gets its own list.
+        underscore-prefixed names, so these are set here to ensure each instance gets its own container: the
+        deploy/remove queues and the per-switch interface cache read by `_switch_interfaces`.
 
         ## Raises
 
@@ -76,6 +77,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         self._pending_deploys: list[tuple[str, str]] = []
         self._pending_removes: list[tuple[str, str]] = []
+        self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
 
     @property
     def fabric_name(self) -> str:
@@ -118,6 +120,56 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - If no switch matches the given IP in the fabric.
         """
         return self.fabric_context.get_switch_id(switch_ip)
+
+    def _switch_interfaces(self, switch_id: str) -> dict[str, dict]:
+        """
+        # Summary
+
+        Return every interface on `switch_id`, keyed by lower-cased interface name. The underlying
+        `interfaceList` GET is issued at most once per switch per module run; the result is cached so
+        that `query_all` and any other per-interface lookups (e.g. ethernet's port-channel membership
+        check) share a single fetch per switch rather than each querying the controller independently.
+
+        Requires the subclass's `query_all_endpoint` to be the per-switch interfaces-list GET
+        (`EpManageInterfacesListGet`). Subclasses whose `query_all_endpoint` targets a different
+        resource (e.g. `MaintenanceModeOrchestrator`, which lists switches) must not call this method.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_request` if the interface-list API request fails with a non-404 status.
+        """
+        if switch_id not in self._switch_interfaces_cache:
+            api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
+            self._switch_interfaces_cache[switch_id] = {iface["interfaceName"].lower(): iface for iface in interfaces if iface.get("interfaceName")}
+        return self._switch_interfaces_cache[switch_id]
+
+    def _switches_to_query(self) -> dict[str, str]:
+        """
+        # Summary
+
+        Return the `{switch_ip: switch_id}` subset that `query_all` should scan.
+
+        For `state: overridden` the scope is fabric-wide, so the full switch map is returned. For every other state
+        the state machine only consults existing interfaces identified by `switch_ip` values present in the user
+        config, so only those switches are returned. This keeps the interface-list request count proportional to
+        config size rather than fabric size (CLAUDE.md performance rule: no per-switch fan-out over the whole fabric).
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `FabricContext.switch_map` if the switches API query fails.
+        """
+        switch_map = self.fabric_context.switch_map
+        if self.rest_send.params.get("state") == "overridden":
+            return switch_map
+        config_items = self.rest_send.params.get("config") or []
+        config_ips = {item.get("switch_ip") for item in config_items if item.get("switch_ip")}
+        return {ip: sid for ip, sid in switch_map.items() if ip in config_ips}
 
     @property
     def capability_preflight(self) -> InterfaceCapabilityPreflight:

@@ -243,30 +243,6 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def _switches_to_query(self) -> dict[str, str]:
-        """
-        # Summary
-
-        Return the `{switch_ip: switch_id}` subset that `query_all` should scan.
-
-        For `state: overridden` the scope is fabric-wide, so the full switch map is returned. For every other state
-        the state machine only consults existing interfaces identified by `switch_ip` values present in the user
-        config, so only those switches are returned. This keeps the interface-list request count proportional to
-        config size rather than fabric size (CLAUDE.md performance rule: no per-switch fan-out over the whole fabric).
-
-        ## Raises
-
-        ### RuntimeError
-
-        - Via `FabricContext.switch_map` if the switches API query fails.
-        """
-        switch_map = self.fabric_context.switch_map
-        if self.rest_send.params.get("state") == "overridden":
-            return switch_map
-        config_items = self.rest_send.params.get("config") or []
-        config_ips = {item.get("switch_ip") for item in config_items if item.get("switch_ip")}
-        return {ip: sid for ip, sid in switch_map.items() if ip in config_ips}
-
     def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
         """
         # Summary
