@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import time
 
-from typing import Any, ClassVar
+from typing import Any, Callable, ClassVar
 from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
@@ -61,10 +61,146 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     delete_bulk_endpoint: type | None = EpManageFabricsNetworkActionsRemovePost
 
     strategy: BaseNetworkStrategy | None = None
+    trace_hook: Callable[..., None] | None = None
     delete_retry_attempts: ClassVar[int] = 3
     delete_retry_delay: ClassVar[int] = 30
     scoped_query_threshold: ClassVar[int] = 5
     unfiltered_query_page_size: ClassVar[int] = 10000
+    definition_config_fields: ClassVar[set[str]] = {
+        "net_template",
+        "network_template_name",
+        "networkTemplateName",
+        "net_extension_template",
+        "network_extension_template_name",
+        "networkExtensionTemplateName",
+        "network_template_config",
+        "networkTemplateConfig",
+        "network_id",
+        "networkId",
+        "network_type",
+        "networkType",
+        "display_name",
+        "displayName",
+        "vrf_name",
+        "vrfName",
+        "vlan_id",
+        "vlanId",
+        "tenant_name",
+        "tenantName",
+        "layer",
+        "is_l2only",
+        "isL2Only",
+        "vlan_name",
+        "vlanName",
+        "rt_auto",
+        "rtAuto",
+        "x_connect",
+        "xConnect",
+        "l2_fabric_data",
+        "l2FabricData",
+        "stretch",
+        "enable_ir",
+        "enableIr",
+        "multicast_group_address",
+        "multicastGroup",
+        "ds_vni",
+        "dsVni",
+        "gateway_ipv4_address",
+        "gatewayIpv4Address",
+        "gateway_ipv6_address",
+        "gatewayIpv6Address",
+        "secondary_gateway_ipv4_collection",
+        "secondaryGatewayIpv4Collection",
+        "secondary_gateway_ipv6_collection",
+        "secondaryGatewayIpv6Collection",
+        "vlan_intf_desc",
+        "vlanIntfDesc",
+        "mtu",
+        "arp_suppression",
+        "arpSuppression",
+        "routing_tag",
+        "routingTag",
+        "dhcp_servers",
+        "dhcpServers",
+        "loopback_id",
+        "loopbackId",
+        "igmp_version",
+        "igmpVersion",
+        "trm_enable",
+        "trmEnable",
+        "ipv6_trm",
+        "ipv6Trm",
+        "netflow_enable",
+        "netflowEnable",
+        "gateway_on_border",
+        "gatewayOnBorder",
+        "child_fabric_config",
+        "childFabricConfig",
+    }
+    definition_intent_fields: ClassVar[set[str]] = {
+        "net_template",
+        "network_template_name",
+        "networkTemplateName",
+        "net_extension_template",
+        "network_extension_template_name",
+        "networkExtensionTemplateName",
+        "network_template_config",
+        "networkTemplateConfig",
+        "network_id",
+        "networkId",
+        "network_type",
+        "networkType",
+        "display_name",
+        "displayName",
+        "vrf_name",
+        "vrfName",
+        "vlan_id",
+        "vlanId",
+        "tenant_name",
+        "tenantName",
+        "layer",
+        "is_l2only",
+        "isL2Only",
+        "vlan_name",
+        "vlanName",
+        "rt_auto",
+        "rtAuto",
+        "x_connect",
+        "xConnect",
+        "l2_fabric_data",
+        "l2FabricData",
+        "stretch",
+        "multicast_group_address",
+        "multicastGroup",
+        "ds_vni",
+        "dsVni",
+        "gateway_ipv4_address",
+        "gatewayIpv4Address",
+        "gateway_ipv6_address",
+        "gatewayIpv6Address",
+        "secondary_gateway_ipv4_collection",
+        "secondaryGatewayIpv4Collection",
+        "secondary_gateway_ipv6_collection",
+        "secondaryGatewayIpv6Collection",
+        "vlan_intf_desc",
+        "vlanIntfDesc",
+        "routing_tag",
+        "routingTag",
+        "dhcp_servers",
+        "dhcpServers",
+        "loopback_id",
+        "loopbackId",
+        "igmp_version",
+        "igmpVersion",
+        "trm_enable",
+        "trmEnable",
+        "ipv6_trm",
+        "ipv6Trm",
+        "gateway_on_border",
+        "gatewayOnBorder",
+        "child_fabric_config",
+        "childFabricConfig",
+    }
 
     def model_post_init(self, __context) -> None:
         if self.strategy is None:
@@ -98,6 +234,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         return NetworkLayer.LAYER3.value
 
     def _l2_data(self, config: dict[str, Any], network_type: str) -> dict[str, Any] | None:
+        fabric_data_payload = None
         kwargs = {
             "vlan_name": self._value(config, "vlan_name", "vlanName"),
             "fabric_data": self._value(config, "l2_fabric_data", "l2FabricData"),
@@ -122,15 +259,32 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 if value is not None:
                     fabric_data_value[target] = value
 
+            if fabric_data_value:
+                known_keys = {
+                    "stretch",
+                    "enable_ir",
+                    "enableIr",
+                    "multicast_group",
+                    "multicastGroup",
+                    "ds_vni",
+                    "dsVni",
+                }
+                fabric_data_payload = {key: value for key, value in fabric_data_value.items() if key not in known_keys}
+                fabric_data_payload.update(
+                    DefaultL2FabricDataModel(**fabric_data_value).to_payload(exclude_unset=bool(self.strategy and self.strategy.is_child))
+                )
+
             kwargs.update(
                 {
                     "rt_auto": self._value(config, "rt_auto", "rtAuto"),
                     "x_connect": self._value(config, "x_connect", "xConnect"),
-                    "fabric_data": DefaultL2FabricDataModel(**fabric_data_value) if fabric_data_value else None,
+                    "fabric_data": fabric_data_payload,
                 }
             )
             model = DefaultL2DataModel(**{k: v for k, v in kwargs.items() if v is not None})
-        payload = model.to_payload()
+        payload = model.to_payload(exclude_unset=bool(self.strategy and self.strategy.is_child))
+        if fabric_data_payload and isinstance(payload, dict):
+            payload["fabricData"] = fabric_data_payload
         return payload or None
 
     def _l3_data(self, config: dict[str, Any], network_type: str) -> dict[str, Any] | None:
@@ -147,14 +301,20 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             NetworkType.CLASSIC_LAN_ENHANCED.value,
         ):
             model = ClassicOrRoutedL3DataModel(**{k: v for k, v in common.items() if v is not None})
-            payload = model.to_payload()
+            payload = model.to_payload(exclude_unset=bool(self.strategy and self.strategy.is_child))
             return payload or None
 
         fabric_data = VxlanL3FabricDataModel(
             dhcp_servers=self._value(config, "dhcp_servers", "dhcpServers"),
             loopback_id=self._value(config, "loopback_id", "loopbackId"),
             igmp_version=self._value(config, "igmp_version", "igmpVersion"),
-            netflow=self._value(config, "netflow_enable", "netflowEnable", "netflow", default=False),
+            netflow=self._value(
+                config,
+                "netflow_enable",
+                "netflowEnable",
+                "netflow",
+                default=None if self.strategy and self.strategy.is_child else False,
+            ),
             gateway_on_border=self._value(config, "gateway_on_border", "gatewayOnBorder"),
             ipv4_trm=self._value(config, "trm_enable", "trmEnable", "ipv4Trm"),
             ipv6_trm=self._value(config, "ipv6_trm", "ipv6Trm"),
@@ -174,10 +334,16 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             arp_suppression=self._value(config, "arp_suppression", "arpSuppression", default=False),
             fabric_data=fabric_data,
         )
-        payload = model.to_payload()
+        payload = model.to_payload(exclude_unset=bool(self.strategy and self.strategy.is_child))
         return payload or None
 
     def _transform_config_to_payload_model_data(self, config: dict[str, Any], fabric_name: str) -> dict[str, Any]:
+        if not self.has_network_definition_intent(config):
+            return {
+                "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
+                "network_name": self._value(config, "network_name", "networkName"),
+            }
+
         network_type = self._value(config, "network_type", "networkType", default=self._default_network_type())
         transformed: dict[str, Any] = {
             "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
@@ -227,14 +393,38 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 transformed["l3_data"] = l3_data
         return transformed
 
+    @classmethod
+    def has_network_definition_fields(cls, config: dict[str, Any]) -> bool:
+        return any(key in config and config[key] is not None for key in cls.definition_config_fields)
+
+    @classmethod
+    def has_network_definition_intent(cls, config: dict[str, Any]) -> bool:
+        if any(key in config and config[key] is not None for key in cls.definition_intent_fields):
+            return True
+        default_sensitive_fields = {
+            "enable_ir": False,
+            "enableIr": False,
+            "netflow_enable": False,
+            "netflowEnable": False,
+            "arp_suppression": False,
+            "arpSuppression": False,
+            "mtu": 9216,
+        }
+        return any(config.get(key) not in (None, default) for key, default in default_sensitive_fields.items() if key in config)
+
     def prepare_config_data(self, raw_config):
         if not isinstance(raw_config, list):
             return raw_config
         fabric_name = self.strategy.fabric_name
         result = []
+        if self.strategy and self.strategy.is_child:
+            self._child_payload_source_by_name = {}
         for entry in raw_config:
             if isinstance(entry, dict):
-                result.append(self._transform_config_to_payload_model_data(entry, fabric_name))
+                transformed = self._transform_config_to_payload_model_data(entry, fabric_name)
+                if self.strategy and self.strategy.is_child and transformed.get("network_name"):
+                    self._child_payload_source_by_name[transformed["network_name"]] = transformed
+                result.append(transformed)
             else:
                 result.append(entry)
         return result
@@ -247,11 +437,75 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             setattr(ep, attr, val)
         return ep
 
+    def _trace(self, event: str, **details: Any) -> None:
+        if self.trace_hook is not None:
+            self.trace_hook(event, **details)
+
+    def _request(
+        self,
+        path: str,
+        verb,
+        data: dict[str, Any] | None = None,
+        not_found_ok: bool = False,
+        operation_type: OperationType = OperationType.QUERY,
+    ) -> ResponseType:
+        self._trace(
+            "api_request_start",
+            path=path,
+            verb=getattr(verb, "value", str(verb)),
+            operation_type=operation_type.value,
+            payload=data,
+            not_found_ok=not_found_ok,
+        )
+        try:
+            response = super()._request(
+                path=path,
+                verb=verb,
+                data=data,
+                not_found_ok=not_found_ok,
+                operation_type=operation_type,
+            )
+        except Exception as exc:
+            self._trace(
+                "api_request_error",
+                path=path,
+                verb=getattr(verb, "value", str(verb)),
+                operation_type=operation_type.value,
+                error=repr(exc),
+            )
+            raise
+        self._trace(
+            "api_request_end",
+            path=path,
+            verb=getattr(verb, "value", str(verb)),
+            operation_type=operation_type.value,
+            response_summary=self._response_summary(response),
+        )
+        return response
+
+    @staticmethod
+    def _response_summary(response: Any) -> dict[str, Any]:
+        if isinstance(response, dict):
+            summary: dict[str, Any] = {"type": "dict", "keys": sorted(response.keys())}
+            for key in ("networks", "items", "attachments", "results"):
+                value = response.get(key)
+                if isinstance(value, list):
+                    summary[f"{key}_count"] = len(value)
+            metadata = response.get("metadata") or response.get("meta")
+            if isinstance(metadata, dict):
+                summary["metadata"] = metadata
+            return summary
+        if isinstance(response, list):
+            return {"type": "list", "count": len(response)}
+        return {"type": type(response).__name__}
+
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
         scoped_network_names = self._query_scope_network_names()
         try:
             if not scoped_network_names:
                 return self._query_all_unfiltered()
+            if self._is_mcfg_parent():
+                return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_network_names)
             if len(scoped_network_names) >= self.scoped_query_threshold:
                 return self._query_all_unfiltered()
             if len(scoped_network_names) > 1:
@@ -277,19 +531,21 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         networks: list[dict[str, Any]] = []
         seen: set[str] = set()
         ordered_names = list(dict.fromkeys(network_names))
-        try:
-            self._append_scoped_network_items(networks, seen, self._query_all_scoped_batch(ordered_names), ordered_names)
-            return networks
-        except Exception:
-            for network_name in ordered_names:
-                self._append_scoped_network_items(networks, seen, self._query_all_scoped_one(network_name), [network_name])
+        self._append_scoped_network_items(networks, seen, self._query_all_scoped_batch(ordered_names), ordered_names)
         return networks
+
+    @staticmethod
+    def _filter_query_items_by_name(items: list[Any], network_names: list[str]) -> list[Any]:
+        requested = set(network_names)
+        return [item for item in items or [] if not isinstance(item, dict) or (item.get("networkName") or item.get("network_name")) in requested]
 
     def _query_all_scoped_batch(self, network_names: list[str]) -> list[dict[str, Any]]:
         endpoint = self._make_endpoint(self.strategy.networks_get_cls())
         if hasattr(endpoint, "endpoint_params"):
-            endpoint.endpoint_params.filter = self._network_name_filter(network_names)
-            endpoint.endpoint_params.max = max(len(network_names), 1)
+            endpoint.endpoint_params.filter = (
+                self._network_name_filter(network_names) if len(network_names) == 1 else self._network_names_unfielded_filter(network_names)
+            )
+            endpoint.endpoint_params.max = self.unfiltered_query_page_size if len(network_names) > 1 else 1
         result = self._request(
             path=endpoint.path,
             verb=endpoint.verb,
@@ -401,6 +657,12 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     @staticmethod
     def _network_name_filter(network_names: list[str]) -> str:
         terms = [f"networkName:{name}" for name in sorted(set(network_names))]
+        expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
+        return quote(expression, safe="")
+
+    @staticmethod
+    def _network_names_unfielded_filter(network_names: list[str]) -> str:
+        terms = sorted(set(network_names))
         expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
         return quote(expression, safe="")
 
@@ -633,9 +895,110 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             "networkTemplateConfig": json.dumps(template_config),
         }
 
+    def _mcfg_parent_network_payload(self, model_instance: NDNetworkModel) -> dict[str, Any]:
+        """Build the schema-style OneManage manage payload for MCFG parent Network operations."""
+        payload = model_instance.to_payload()
+        payload["fabricName"] = self.strategy.fabric_name
+        payload.setdefault("networkType", self._default_network_type())
+        payload.setdefault("displayName", model_instance.network_name)
+        payload.pop("vlanId", None)
+        network_mode = payload.pop("layer", None)
+        if network_mode:
+            payload["networkMode"] = network_mode
+        if payload.get("networkType") == NetworkType.VXLAN.value:
+            payload.setdefault("vlanNetworkType", "normal")
+        if not payload.get("vrfName") and payload.get("networkMode") == NetworkLayer.LAYER2.value:
+            payload["vrfName"] = "NA"
+
+        l2_data = payload.get("l2Data")
+        if isinstance(l2_data, dict):
+            l2_data = dict(l2_data)
+            l2_data["vlanName"] = ""
+            l2_data["fabricData"] = {}
+            payload["l2Data"] = l2_data
+
+        if payload.get("networkMode") == NetworkLayer.LAYER2.value:
+            payload["l3Data"] = self._mcfg_parent_default_l3_data()
+            return payload
+
+        l3_data = payload.get("l3Data")
+        if isinstance(l3_data, dict):
+            l3_data = dict(l3_data)
+            l3_data.pop("fabricData", None)
+            payload["l3Data"] = l3_data
+
+        return payload
+
+    def _child_network_update_payload(self, model_instance: NDNetworkModel) -> dict[str, Any]:
+        """Build a child-fabric update payload using current context plus requested fabric-data deltas."""
+        source_model = model_instance
+        source_by_name = getattr(self, "_child_payload_source_by_name", {})
+        source_config = source_by_name.get(model_instance.network_name)
+        if source_config:
+            source_model = self.model_class.from_config(source_config)
+        source = source_model.to_payload(exclude_unset=True)
+
+        payload = model_instance.to_payload()
+        payload["fabricName"] = self.strategy.fabric_name
+        payload["networkName"] = source.get("networkName") or payload["networkName"]
+        payload.setdefault("displayName", payload["networkName"])
+        payload["networkType"] = source.get("networkType") or payload.get("networkType") or self._default_network_type()
+
+        source_layer = source.get("layer")
+        payload_layer = payload.pop("layer", None)
+        network_mode = source_layer or payload_layer
+        if network_mode:
+            payload["networkMode"] = network_mode
+        if payload.get("networkType") in (
+            NetworkType.VXLAN.value,
+            NetworkType.VXLAN_IBGP.value,
+            NetworkType.VXLAN_EBGP.value,
+            NetworkType.AIML_VXLAN_IBGP.value,
+            NetworkType.AIML_VXLAN_EBGP.value,
+        ):
+            payload.setdefault("vlanNetworkType", "normal")
+        if not payload.get("vrfName") and payload.get("networkMode") == NetworkLayer.LAYER2.value:
+            payload["vrfName"] = "NA"
+
+        l2_fabric_data = self._nested_fabric_data(source.get("l2Data"))
+        if l2_fabric_data:
+            payload.setdefault("l2Data", {})
+            payload["l2Data"].setdefault("fabricData", {})
+            payload["l2Data"]["fabricData"].update(l2_fabric_data)
+
+        l3_fabric_data = self._nested_fabric_data(source.get("l3Data"))
+        if l3_fabric_data:
+            payload.setdefault("l3Data", {})
+            payload["l3Data"].setdefault("fabricData", {})
+            payload["l3Data"]["fabricData"].update(l3_fabric_data)
+
+        return payload
+
+    @staticmethod
+    def _nested_fabric_data(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        fabric_data = value.get("fabricData")
+        return dict(fabric_data) if isinstance(fabric_data, dict) else {}
+
+    @staticmethod
+    def _mcfg_parent_default_l3_data() -> dict[str, Any]:
+        """Return the OneManage parent L3 compatibility block expected on L2 Network creates."""
+        return {
+            "gatewayIpv4Address": "",
+            "gatewayIpv6Address": "",
+            "secondaryGatewayIpv6Collection": [],
+            "vlanInterfaceDescription": "",
+            "mtu": None,
+            "secondaryGatewayIpv4Collection": None,
+            "routingTag": 12345,
+        }
+
     def _create_or_update_payload(self, model_instance: NDNetworkModel) -> dict[str, Any]:
+        if self.strategy.is_child:
+            return self._child_network_update_payload(model_instance)
         if self._is_mcfg_parent():
-            return self._top_down_network_payload(model_instance)
+            return self._mcfg_parent_network_payload(model_instance)
         return model_instance.to_payload()
 
     def create(self, model_instance: NDNetworkModel, **kwargs) -> ResponseType:
@@ -648,15 +1011,19 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             return [self.update(model_instance) for model_instance in model_instances]
         endpoint = self._make_endpoint(self.strategy.networks_post_cls())
         if self._is_mcfg_parent():
-            return [
-                self._request(
-                    path=endpoint.path,
-                    verb=endpoint.verb,
-                    data=self._create_or_update_payload(model_instance),
-                    operation_type=OperationType.CREATE,
-                )
-                for model_instance in model_instances
-            ]
+            payload = {
+                "networks": [self._create_or_update_payload(model_instance) for model_instance in model_instances],
+            }
+            if any((model.vrf_name or "NA") == "NA" for model in model_instances):
+                payload["vrfName"] = "NA"
+            response = self._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                data=payload,
+                operation_type=OperationType.CREATE,
+            )
+            self._raise_on_failed_results(response, "Network create failed")
+            return response
         response = self._request(
             path=endpoint.path,
             verb=endpoint.verb,

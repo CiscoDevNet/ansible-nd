@@ -97,22 +97,11 @@ class NetworkChildConfigModel(NDNestedModel):
     identifiers: ClassVar[list[str]] = []
 
     fabric_name: str
-    network_id: int | None = Field(default=None, alias="networkId")
-    vlan_id: int | None = Field(default=None, alias="vlanId")
-    vlan_name: str | None = Field(default=None, alias="vlanName")
-    gateway_ipv4_address: str | None = Field(default=None, alias="gatewayIpv4Address")
-    gateway_ipv6_address: str | None = Field(default=None, alias="gatewayIpv6Address")
-    secondary_gateway_ipv4_collection: list[str] | None = Field(default=None, alias="secondaryGatewayIpv4Collection")
-    secondary_gateway_ipv6_collection: list[str] | None = Field(default=None, alias="secondaryGatewayIpv6Collection")
-    vlan_intf_desc: str | None = Field(default=None, alias="vlanIntfDesc")
-    mtu: int | None = Field(default=9216)
     l2_fabric_data: dict[str, Any] | None = Field(default=None, alias="l2FabricData")
     stretch: str | None = None
-    enable_ir: bool | None = Field(default=False, alias="enableIr")
+    enable_ir: bool | None = Field(default=None, alias="enableIr")
     multicast_group_address: str | None = Field(default=None, alias="multicastGroup")
     ds_vni: int | None = Field(default=None, alias="dsVni")
-    arp_suppression: bool | None = Field(default=None, alias="arpSuppression")
-    routing_tag: int | None = Field(default=None, alias="routingTag")
     dhcp_servers: list[dict[str, Any]] | None = Field(default=None, alias="dhcpServers")
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion")
@@ -121,45 +110,28 @@ class NetworkChildConfigModel(NDNestedModel):
     netflow_enable: bool | None = Field(default=None, alias="netflowEnable")
     gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
 
-    @field_validator("network_id", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _validate_network_id(cls, v: int | None) -> int | None:
-        return NetworkValidators.validate_network_id(v)
+    def _normalize_legacy_child_keys(cls, data):
+        if not isinstance(data, dict):
+            return data
 
-    @field_validator("vlan_id", mode="before")
-    @classmethod
-    def _validate_vlan_id(cls, v: int | None) -> int | None:
-        return NetworkValidators.validate_vlan_id(v)
+        normalized = dict(data)
+        aliases = {
+            "dhcp_loopback_id": "loopback_id",
+            "l3gw_on_border": "gateway_on_border",
+        }
+        for legacy, current in aliases.items():
+            if legacy in normalized and current not in normalized:
+                normalized[current] = normalized[legacy]
 
-    @field_validator("gateway_ipv4_address", mode="before")
-    @classmethod
-    def _validate_ipv4_cidr(cls, v: str | None) -> str | None:
-        return NetworkValidators.validate_cidrv4(v)
+        normalized["dhcp_servers"] = NetworkConfigModel._normalize_legacy_dhcp_servers(normalized)
+        return normalized
 
     @field_validator("multicast_group_address", mode="before")
     @classmethod
     def _validate_multicast_group(cls, v: str | None) -> str | None:
         return NetworkValidators.validate_multicast_ipv4(v)
-
-    @field_validator("gateway_ipv6_address", mode="before")
-    @classmethod
-    def _validate_ipv6_cidr(cls, v: str | None) -> str | None:
-        return NetworkValidators.validate_cidrv6(v)
-
-    @field_validator("secondary_gateway_ipv4_collection", mode="before")
-    @classmethod
-    def _validate_ipv4_collection(cls, v: list[str] | None) -> list[str] | None:
-        return [NetworkValidators.validate_cidrv4(item) for item in v] if v is not None else None
-
-    @field_validator("secondary_gateway_ipv6_collection", mode="before")
-    @classmethod
-    def _validate_ipv6_collection(cls, v: list[str] | None) -> list[str] | None:
-        return [NetworkValidators.validate_cidrv6(item) for item in v] if v is not None else None
-
-    @field_validator("mtu", mode="before")
-    @classmethod
-    def _validate_mtu(cls, v: int | None) -> int | None:
-        return NetworkValidators.validate_mtu(v)
 
     @field_validator("igmp_version", mode="before")
     @classmethod

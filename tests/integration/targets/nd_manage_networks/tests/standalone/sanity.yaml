@@ -42,7 +42,7 @@
         is_l2only: true
         network_id: "{{ nd_network_base_id + 40 }}"
         vlan_id: "{{ nd_network_base_vlan + 40 }}"
-        vlan_name: ansible_nd_net_sanity_a_replaced
+        vlan_name: ans_nd_net_sanity_a_repl
         enable_ir: false
         deploy: false
     nd_network_sanity_delete_config:

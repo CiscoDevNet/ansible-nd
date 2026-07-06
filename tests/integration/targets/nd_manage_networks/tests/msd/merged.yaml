@@ -22,62 +22,50 @@
         is_l2only: true
         network_id: "{{ nd_network_base_id + 201 }}"
         vlan_id: "{{ nd_network_base_vlan + 201 }}"
-        vlan_name: ansible_nd_net_msd_merged_switch
+        vlan_name: ans_nd_net_msd_mrg_sw
         rt_auto: true
         enable_ir: false
         deploy: false
         deploy_type: switch
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 201 }}"
-            vlan_id: "{{ nd_network_base_vlan + 201 }}"
-            vlan_name: ansible_nd_net_msd_merged_switch
             enable_ir: false
       - network_name: ansible-nd-net-msd-merged-resource
         is_l2only: true
         network_id: "{{ nd_network_base_id + 202 }}"
         vlan_id: "{{ nd_network_base_vlan + 202 }}"
-        vlan_name: ansible_nd_net_msd_merged_resource
+        vlan_name: ans_nd_net_msd_mrg_res
         rt_auto: true
         enable_ir: false
         deploy: false
         deploy_type: network
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 202 }}"
-            vlan_id: "{{ nd_network_base_vlan + 202 }}"
-            vlan_name: ansible_nd_net_msd_merged_resource
             enable_ir: false
     nd_network_msd_merged_deploy_config:
       - network_name: ansible-nd-net-msd-merged-switch
         is_l2only: true
         network_id: "{{ nd_network_base_id + 201 }}"
         vlan_id: "{{ nd_network_base_vlan + 201 }}"
-        vlan_name: ansible_nd_net_msd_merged_switch
+        vlan_name: ans_nd_net_msd_mrg_sw
         rt_auto: true
         enable_ir: false
         deploy: true
         deploy_type: switch
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 201 }}"
-            vlan_id: "{{ nd_network_base_vlan + 201 }}"
-            vlan_name: ansible_nd_net_msd_merged_switch
             enable_ir: false
       - network_name: ansible-nd-net-msd-merged-resource
         is_l2only: true
         network_id: "{{ nd_network_base_id + 202 }}"
         vlan_id: "{{ nd_network_base_vlan + 202 }}"
-        vlan_name: ansible_nd_net_msd_merged_resource
+        vlan_name: ans_nd_net_msd_mrg_res
         rt_auto: true
         enable_ir: false
         deploy: true
         deploy_type: network
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 202 }}"
-            vlan_id: "{{ nd_network_base_vlan + 202 }}"
-            vlan_name: ansible_nd_net_msd_merged_resource
             enable_ir: false
   delegate_to: localhost
   tags:
@@ -202,12 +190,12 @@
       - network_name: ansible-nd-net-msd-merged-switch
         network_id: "{{ nd_network_base_id + 201 }}"
         vlan_id: "{{ nd_network_base_vlan + 201 }}"
-        vlan_name: ansible_nd_net_msd_merged_switch
+        vlan_name: ans_nd_net_msd_mrg_sw
         enable_ir: false
       - network_name: ansible-nd-net-msd-merged-resource
         network_id: "{{ nd_network_base_id + 202 }}"
         vlan_id: "{{ nd_network_base_vlan + 202 }}"
-        vlan_name: ansible_nd_net_msd_merged_resource
+        vlan_name: ans_nd_net_msd_mrg_res
         enable_ir: false
   when: nd_network_run_msd | bool
   tags:

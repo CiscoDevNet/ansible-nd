@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
     Field,
     field_validator,
 )
@@ -101,6 +102,10 @@ class AciDataModel(NDNestedModel):
 
 class DefaultL2FabricDataModel(NDNestedModel):
     """Fabric-specific configuration for default VXLAN L2 data."""
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True, use_enum_values=True, validate_assignment=True, populate_by_name=True, arbitrary_types_allowed=True, extra="allow"
+    )
 
     identifiers: ClassVar[list[str]] = []
     stretch: str | None = Field(default=None, description="Stretch border gateway list name")
@@ -310,6 +315,8 @@ class NetworkCommonModel(NDBaseModel):
 
     identifiers: ClassVar[list[str]] = ["network_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    exclude_from_diff: ClassVar[set[str]] = {"network_status"}
+    payload_exclude_fields: ClassVar[set[str]] = {"network_status"}
 
     fabric_name: str | None = Field(default=None, alias="fabricName")
     network_name: str = Field(default=..., alias="networkName", max_length=128)

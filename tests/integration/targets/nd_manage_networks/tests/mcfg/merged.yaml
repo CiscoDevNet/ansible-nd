@@ -22,62 +22,50 @@
         is_l2only: true
         network_id: "{{ nd_network_base_id + 241 }}"
         vlan_id: "{{ nd_network_base_vlan + 241 }}"
-        vlan_name: ansible_nd_net_mcfg_merged_switch
+        vlan_name: ans_nd_net_mcfg_mrg_sw
         rt_auto: true
         enable_ir: false
         deploy: false
         deploy_type: switch
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 241 }}"
-            vlan_id: "{{ nd_network_base_vlan + 241 }}"
-            vlan_name: ansible_nd_net_mcfg_merged_switch
             enable_ir: false
       - network_name: ansible-nd-net-mcfg-merged-resource
         is_l2only: true
         network_id: "{{ nd_network_base_id + 242 }}"
         vlan_id: "{{ nd_network_base_vlan + 242 }}"
-        vlan_name: ansible_nd_net_mcfg_merged_resource
+        vlan_name: ans_nd_net_mcfg_mrg_res
         rt_auto: true
         enable_ir: false
         deploy: false
         deploy_type: network
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 242 }}"
-            vlan_id: "{{ nd_network_base_vlan + 242 }}"
-            vlan_name: ansible_nd_net_mcfg_merged_resource
             enable_ir: false
     nd_network_mcfg_merged_deploy_config:
       - network_name: ansible-nd-net-mcfg-merged-switch
         is_l2only: true
         network_id: "{{ nd_network_base_id + 241 }}"
         vlan_id: "{{ nd_network_base_vlan + 241 }}"
-        vlan_name: ansible_nd_net_mcfg_merged_switch
+        vlan_name: ans_nd_net_mcfg_mrg_sw
         rt_auto: true
         enable_ir: false
         deploy: true
         deploy_type: switch
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 241 }}"
-            vlan_id: "{{ nd_network_base_vlan + 241 }}"
-            vlan_name: ansible_nd_net_mcfg_merged_switch
             enable_ir: false
       - network_name: ansible-nd-net-mcfg-merged-resource
         is_l2only: true
         network_id: "{{ nd_network_base_id + 242 }}"
         vlan_id: "{{ nd_network_base_vlan + 242 }}"
-        vlan_name: ansible_nd_net_mcfg_merged_resource
+        vlan_name: ans_nd_net_mcfg_mrg_res
         rt_auto: true
         enable_ir: false
         deploy: true
         deploy_type: network
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 242 }}"
-            vlan_id: "{{ nd_network_base_vlan + 242 }}"
-            vlan_name: ansible_nd_net_mcfg_merged_resource
             enable_ir: false
   delegate_to: localhost
   tags:
@@ -130,13 +118,9 @@
       - mcfg_merged_staged.fabric_type == "multicluster_parent"
       - >-
         mcfg_merged_staged.workflow ==
-        "Multicluster Parent with Child Fabric Processing"
+        "Multicluster Parent without Child Fabric Processing"
       - mcfg_merged_staged.parent_fabric.fabric_type == "multicluster_parent"
-      - mcfg_merged_staged.child_fabrics | length == 1
-      - >-
-        mcfg_merged_staged.child_fabrics[0].fabric_name ==
-        nd_network_mcfg_child_fabric
-      - mcfg_merged_staged.child_fabrics[0].fabric_type == "multicluster_child"
+      - mcfg_merged_staged.child_fabrics is not defined
   when: nd_network_run_mcfg | bool
   tags:
     - mcfg
@@ -158,7 +142,7 @@
   ansible.builtin.assert:
     that:
       - mcfg_merged_deployed.changed == true
-      - mcfg_merged_deployed.child_fabrics | length == 1
+      - mcfg_merged_deployed.child_fabrics is not defined
   when: nd_network_run_mcfg | bool
   tags:
     - mcfg
@@ -202,12 +186,12 @@
       - network_name: ansible-nd-net-mcfg-merged-switch
         network_id: "{{ nd_network_base_id + 241 }}"
         vlan_id: "{{ nd_network_base_vlan + 241 }}"
-        vlan_name: ansible_nd_net_mcfg_merged_switch
+        vlan_name: ans_nd_net_mcfg_mrg_sw
         enable_ir: false
       - network_name: ansible-nd-net-mcfg-merged-resource
         network_id: "{{ nd_network_base_id + 242 }}"
         vlan_id: "{{ nd_network_base_vlan + 242 }}"
-        vlan_name: ansible_nd_net_mcfg_merged_resource
+        vlan_name: ans_nd_net_mcfg_mrg_res
         enable_ir: false
   when: nd_network_run_mcfg | bool
   tags:

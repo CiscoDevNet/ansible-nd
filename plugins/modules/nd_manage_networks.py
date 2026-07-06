@@ -308,7 +308,9 @@ options:
         type: bool
       child_fabric_config:
         description:
-          - Per-child-fabric overrides for parent fabrics.
+          - Per-child-fabric instance options for parent fabrics.
+          - Parent fabrics own Network creation, deletion, identity, VLAN, gateway,
+            attachment, and deployment fields.
         type: list
         elements: dict
         suboptions:
@@ -316,71 +318,6 @@ options:
             description: Child fabric name.
             type: str
             required: true
-          network_id:
-            description: Network segment ID.
-            type: int
-          net_id:
-            description: Compatibility alias for C(network_id).
-            type: int
-          vlan_id:
-            description: VLAN ID.
-            type: int
-          vlan_name:
-            description: VLAN name.
-            type: str
-          gateway_ipv4_address:
-            description: IPv4 gateway address and prefix.
-            type: str
-          gw_ip_subnet:
-            description: Compatibility alias for C(gateway_ipv4_address).
-            type: str
-          gateway_ipv6_address:
-            description: IPv6 gateway address and prefix.
-            type: str
-          gw_ipv6_subnet:
-            description: Compatibility alias for C(gateway_ipv6_address).
-            type: str
-          secondary_gateway_ipv4_collection:
-            description: Secondary IPv4 gateway addresses.
-            type: list
-            elements: str
-          secondary_ip_gw1:
-            description: Compatibility secondary IPv4 gateway field.
-            type: str
-          secondary_ip_gw2:
-            description: Compatibility secondary IPv4 gateway field.
-            type: str
-          secondary_ip_gw3:
-            description: Compatibility secondary IPv4 gateway field.
-            type: str
-          secondary_ip_gw4:
-            description: Compatibility secondary IPv4 gateway field.
-            type: str
-          secondary_gateway_ipv6_collection:
-            description: Secondary IPv6 gateway addresses.
-            type: list
-            elements: str
-          vlan_intf_desc:
-            description: VLAN interface description.
-            type: str
-          int_desc:
-            description: Compatibility alias for C(vlan_intf_desc).
-            type: str
-          mtu:
-            description: Network interface MTU.
-            type: int
-          mtu_l3intf:
-            description: Compatibility alias for C(mtu).
-            type: int
-          arp_suppression:
-            description: Enable ARP suppression.
-            type: bool
-          arp_suppress:
-            description: Compatibility alias for C(arp_suppression).
-            type: bool
-          routing_tag:
-            description: Routing tag.
-            type: int
           dhcp_servers:
             description: DHCP server definitions.
             type: list
@@ -427,9 +364,6 @@ options:
           ipv6_trm:
             description: Enable IPv6 Tenant Routed Multicast.
             type: bool
-          route_target_both:
-            description: Compatibility route-target auto flag.
-            type: bool
           l2_fabric_data:
             description: L2 fabric data overrides.
             type: dict
@@ -448,12 +382,6 @@ options:
           netflow_enable:
             description: Enable netflow.
             type: bool
-          intfvlan_nf_monitor:
-            description: Interface VLAN netflow monitor name.
-            type: str
-          vlan_nf_monitor:
-            description: VLAN netflow monitor name.
-            type: str
           gateway_on_border:
             description: Enable gateway on border.
             type: bool

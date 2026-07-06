@@ -27,9 +27,6 @@
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 261 }}"
-            vlan_id: "{{ nd_network_base_vlan + 261 }}"
-            vlan_name: ansible_nd_net_mcfg_over_seed
       - network_name: ansible-nd-net-mcfg-over-keep
         is_l2only: true
         network_id: "{{ nd_network_base_id + 262 }}"
@@ -38,22 +35,16 @@
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 262 }}"
-            vlan_id: "{{ nd_network_base_vlan + 262 }}"
-            vlan_name: ansible_nd_net_mcfg_over_keep
     nd_network_mcfg_over_config:
       - network_name: ansible-nd-net-mcfg-over-keep
         is_l2only: true
         network_id: "{{ nd_network_base_id + 262 }}"
         vlan_id: "{{ nd_network_base_vlan + 262 }}"
-        vlan_name: ansible_nd_net_mcfg_over_keep_updated
+        vlan_name: ans_nd_net_mcfg_over_upd
         rt_auto: true
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 262 }}"
-            vlan_id: "{{ nd_network_base_vlan + 262 }}"
-            vlan_name: ansible_nd_net_mcfg_over_keep_updated
   delegate_to: localhost
   when: nd_network_run_overridden | bool
   tags:
@@ -125,7 +116,7 @@
     that:
       - mcfg_over_result.changed == true
       - mcfg_over_result.fabric_type == "multicluster_parent"
-      - mcfg_over_result.child_fabrics | length == 1
+      - mcfg_over_result.child_fabrics is not defined
   when:
     - nd_network_run_mcfg | bool
     - nd_network_run_overridden | bool

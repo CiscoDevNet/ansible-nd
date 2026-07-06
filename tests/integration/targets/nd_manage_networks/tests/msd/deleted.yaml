@@ -21,9 +21,6 @@
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 231 }}"
-            vlan_id: "{{ nd_network_base_vlan + 231 }}"
-            vlan_name: ansible_nd_net_msd_deleted
     nd_network_msd_delete_request:
       - network_name: ansible-nd-net-msd-deleted
         is_l2only: true

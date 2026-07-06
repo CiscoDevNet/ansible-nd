@@ -15,6 +15,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsNetworkAttachmentsQueryPost,
     EpManageFabricsNetworkAttachmentsValidateInterfacesPost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
+    EpOneManageFabricsNetworkAttachmentsPost,
+    EpOneManageFabricsNetworkAttachmentsQueryPost,
+    EpOneManageFabricsNetworkAttachmentsValidateInterfacesPost,
+    EpOneManageFabricsSwitchActionsDeployPost,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import (
     EpManageSwitchesListGet,
 )
@@ -49,9 +55,28 @@ class NetworkAttachmentManager:
     wait_delay = 15
     wait_chunk_size = 30
     undeploy_retry_attempts = 3
+    attachment_query_page_size = 10000
 
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
+
+    @staticmethod
+    def _attachments_query_endpoint_cls(strategy: BaseNetworkStrategy) -> type:
+        if strategy.is_multicluster and strategy.is_parent:
+            return EpOneManageFabricsNetworkAttachmentsQueryPost
+        return EpManageFabricsNetworkAttachmentsQueryPost
+
+    @staticmethod
+    def _attachments_post_endpoint_cls(strategy: BaseNetworkStrategy) -> type:
+        if strategy.is_multicluster and strategy.is_parent:
+            return EpOneManageFabricsNetworkAttachmentsPost
+        return EpManageFabricsNetworkAttachmentsPost
+
+    @staticmethod
+    def _attachments_validate_endpoint_cls(strategy: BaseNetworkStrategy) -> type:
+        if strategy.is_multicluster and strategy.is_parent:
+            return EpOneManageFabricsNetworkAttachmentsValidateInterfacesPost
+        return EpManageFabricsNetworkAttachmentsValidateInterfacesPost
 
     def apply_phase(
         self,
@@ -211,21 +236,75 @@ class NetworkAttachmentManager:
         strategy: BaseNetworkStrategy,
         network_names: Optional[list[str]] = None,
     ) -> list[dict[str, Any]]:
+        attachments: list[dict[str, Any]] = []
+        offset = 0
+
+        while True:
+            data = self._current_attachment_details_page(module_args, strategy, network_names, offset)
+            page_items = self._attachment_items_from_query_result(data)
+            attachments.extend(page_items)
+            if not self._has_more_attachment_pages(data, len(page_items), len(attachments)):
+                break
+            if not page_items:
+                break
+            offset += len(page_items)
+
+        return attachments
+
+    def _current_attachment_details_page(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        network_names: Optional[list[str]],
+        offset: int,
+    ) -> Any:
         orchestrator, _results = self.coordinator._new_network_orchestrator(module_args, strategy)
-        endpoint = orchestrator._make_endpoint(EpManageFabricsNetworkAttachmentsQueryPost)
+        endpoint = orchestrator._make_endpoint(self._attachments_query_endpoint_cls(strategy))
         if hasattr(endpoint, "endpoint_params"):
             endpoint.endpoint_params.include_all = True
+            endpoint.endpoint_params.max = self.attachment_query_page_size
+            endpoint.endpoint_params.offset = offset
         query = NetworkAttachmentQueryRequestModel(network_names=network_names or None)
-        data = orchestrator._request(
+        return orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,
             data=query.to_payload(),
             not_found_ok=True,
             operation_type=OperationType.QUERY,
         )
+
+    @staticmethod
+    def _attachment_items_from_query_result(data: Any) -> list[dict[str, Any]]:
         if isinstance(data, dict):
             return data.get("attachments") or data.get("items") or []
         return data or []
+
+    @staticmethod
+    def _safe_int(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _has_more_attachment_pages(self, data: Any, page_count: int, total_seen: int) -> bool:
+        if not isinstance(data, dict):
+            return False
+
+        metadata = data.get("metadata") or data.get("meta") or {}
+        counts = metadata.get("counts") or {}
+        remaining = self._safe_int(counts.get("remaining"))
+        if remaining is not None:
+            return remaining > 0
+
+        total = self._safe_int(counts.get("total"))
+        if total is not None:
+            return total_seen < total
+
+        links = metadata.get("links") or {}
+        if links.get("next"):
+            return True
+
+        return page_count == self.attachment_query_page_size
 
     def current_attachment_details_ignore_missing(
         self,
@@ -233,12 +312,29 @@ class NetworkAttachmentManager:
         strategy: BaseNetworkStrategy,
         network_names: Optional[list[str]] = None,
     ) -> list[dict[str, Any]]:
+        if network_names and len(network_names) > self.wait_chunk_size:
+            attachments: list[dict[str, Any]] = []
+            for index in range(0, len(network_names), self.wait_chunk_size):
+                chunk = network_names[index : index + self.wait_chunk_size]
+                attachments.extend(self.current_attachment_details_ignore_missing(module_args, strategy, chunk))
+            return attachments
         try:
             return self.current_attachment_details(module_args, strategy, network_names)
         except Exception as exc:
-            if network_names and self._attachment_query_missing_network(exc):
-                return []
-            raise
+            if not self._attachment_query_missing_network(exc):
+                raise
+
+        if not network_names or len(network_names) <= 1:
+            return []
+
+        attachments: list[dict[str, Any]] = []
+        for network_name in network_names:
+            try:
+                attachments.extend(self.current_attachment_details(module_args, strategy, [network_name]))
+            except Exception as exc:
+                if not self._attachment_query_missing_network(exc):
+                    raise
+        return attachments
 
     @staticmethod
     def _attachment_query_missing_network(error: Exception) -> bool:
@@ -396,10 +492,11 @@ class NetworkAttachmentManager:
                 "payloads": payloads,
                 "check_mode_attachment_payloads": payloads,
             }
+        payloads = self._prepare_attachment_payloads(strategy, payloads)
         request = NetworkAttachDetachPayloadModel(attachments=[NetworkAttachmentModel(**payload) for payload in payloads])
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
-        self.validate_attachment_interfaces(orchestrator, payloads)
-        endpoint = orchestrator._make_endpoint(EpManageFabricsNetworkAttachmentsPost)
+        self.validate_attachment_interfaces(orchestrator, strategy, payloads)
+        endpoint = orchestrator._make_endpoint(self._attachments_post_endpoint_cls(strategy))
         response = orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,
@@ -409,15 +506,15 @@ class NetworkAttachmentManager:
         self._raise_on_failed_results(response, "Network attachment failed")
         return self.coordinator._finalize_api_trace(results, deploy_targets)
 
-    def validate_attachment_interfaces(self, orchestrator: Any, payloads: list[dict[str, Any]]) -> None:
+    def validate_attachment_interfaces(self, orchestrator: Any, strategy: BaseNetworkStrategy, payloads: list[dict[str, Any]]) -> None:
         """Ask ND to validate attachment interfaces before mutation."""
-        validation_payloads = [self._validation_payload(payload) for payload in payloads if payload.get("interfaces")]
+        validation_payloads = [self._validation_payload(payload) for payload in payloads if "interfaces" in payload]
         if not validation_payloads:
             return
         request = NetworkAttachmentValidateInterfacesPayloadModel(
             attachments=[NetworkAttachmentValidateInterfaceModel(**payload) for payload in validation_payloads]
         )
-        endpoint = orchestrator._make_endpoint(EpManageFabricsNetworkAttachmentsValidateInterfacesPost)
+        endpoint = orchestrator._make_endpoint(self._attachments_validate_endpoint_cls(strategy))
         response = orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,
@@ -425,6 +522,20 @@ class NetworkAttachmentManager:
             operation_type=OperationType.QUERY,
         )
         self._raise_on_failed_results(response, "Network attachment interface validation failed")
+
+    @staticmethod
+    def _prepare_attachment_payloads(strategy: BaseNetworkStrategy, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Fill OneManage MCFG attachment defaults observed in GUI payloads."""
+        if not (strategy.is_multicluster and strategy.is_parent):
+            return payloads
+        prepared = []
+        for payload in payloads:
+            item = dict(payload)
+            item.setdefault("instanceValues", {})
+            item.setdefault("interfaces", [])
+            item.setdefault("extraConfig", "")
+            prepared.append(item)
+        return prepared
 
     @staticmethod
     def _validation_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -550,11 +661,16 @@ class NetworkAttachmentManager:
 
     def deploy_network_attachments(self, module_args: dict, strategy: BaseNetworkStrategy, deploy_payload: dict[str, Any]) -> dict[str, Any]:
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
-        endpoint = orchestrator._make_endpoint(strategy.network_actions_deploy_post_cls())
+        data = deploy_payload
+        if strategy.is_multicluster and strategy.is_parent and deploy_payload.get("switchIds"):
+            endpoint = orchestrator._make_endpoint(EpOneManageFabricsSwitchActionsDeployPost)
+            data = {"switchIds": deploy_payload.get("switchIds")}
+        else:
+            endpoint = orchestrator._make_endpoint(strategy.network_actions_deploy_post_cls())
         orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,
-            data=deploy_payload,
+            data=data,
             operation_type=OperationType.UPDATE,
         )
         return self.coordinator._finalize_api_trace(results)

@@ -13,10 +13,17 @@ from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin, NetworkNameMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin, NetworkNameMixin, TicketIdMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_network_actions import (
     NetworkActionsNoParamsEndpointParams,
     NetworkActionsTicketEndpointParams,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_network_attachments import (
+    NetworkAttachmentsNoParamsEndpointParams,
+    NetworkAttachmentsQueryEndpointParams,
+    NetworkAttachmentsTicketEndpointParams,
+    NetworkAttachmentsValidateInterfacesEndpointParams,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_networks import (
     NetworkGetEndpointParams,
@@ -40,7 +47,7 @@ class _EpOneManageFabricsNetworksBase(FabricNameMixin, NDEndpointBaseModel):
 
 
 class EpOneManageFabricsNetworksGet(_EpOneManageFabricsNetworksBase):
-    """GET /onemanage/manage/fabrics/{fabricName}/networks."""
+    """GET /api/v1/oneManage/manage/fabrics/{fabricName}/networks."""
 
     class_name: Literal["EpOneManageFabricsNetworksGet"] = Field(
         default="EpOneManageFabricsNetworksGet",
@@ -62,7 +69,7 @@ class EpOneManageFabricsNetworksGet(_EpOneManageFabricsNetworksBase):
 
 
 class EpOneManageFabricsNetworksPost(_EpOneManageFabricsNetworksBase):
-    """POST /onemanage/manage/fabrics/{fabricName}/networks."""
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/networks."""
 
     class_name: Literal["EpOneManageFabricsNetworksPost"] = Field(
         default="EpOneManageFabricsNetworksPost",
@@ -98,7 +105,7 @@ class _EpOneManageFabricsNetworksNetworkNameBase(FabricNameMixin, NetworkNameMix
 
 
 class EpOneManageFabricsNetworksNetworkNameGet(_EpOneManageFabricsNetworksNetworkNameBase):
-    """GET /onemanage/manage/fabrics/{fabricName}/networks/{networkName}."""
+    """GET /api/v1/oneManage/manage/fabrics/{fabricName}/networks/{networkName}."""
 
     class_name: Literal["EpOneManageFabricsNetworksNetworkNameGet"] = Field(
         default="EpOneManageFabricsNetworksNetworkNameGet",
@@ -120,7 +127,7 @@ class EpOneManageFabricsNetworksNetworkNameGet(_EpOneManageFabricsNetworksNetwor
 
 
 class EpOneManageFabricsNetworksNetworkNamePut(_EpOneManageFabricsNetworksNetworkNameBase):
-    """PUT /onemanage/manage/fabrics/{fabricName}/networks/{networkName}."""
+    """PUT /api/v1/oneManage/manage/fabrics/{fabricName}/networks/{networkName}."""
 
     class_name: Literal["EpOneManageFabricsNetworksNetworkNamePut"] = Field(
         default="EpOneManageFabricsNetworksNetworkNamePut",
@@ -142,7 +149,7 @@ class EpOneManageFabricsNetworksNetworkNamePut(_EpOneManageFabricsNetworksNetwor
 
 
 class EpOneManageFabricsNetworksNetworkNameDelete(_EpOneManageFabricsNetworksNetworkNameBase):
-    """DELETE /onemanage/manage/fabrics/{fabricName}/networks/{networkName}."""
+    """DELETE /api/v1/oneManage/manage/fabrics/{fabricName}/networks/{networkName}."""
 
     class_name: Literal["EpOneManageFabricsNetworksNetworkNameDelete"] = Field(
         default="EpOneManageFabricsNetworksNetworkNameDelete",
@@ -161,6 +168,134 @@ class EpOneManageFabricsNetworksNetworkNameDelete(_EpOneManageFabricsNetworksNet
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.DELETE
+
+
+class _EpOneManageFabricsNetworkAttachmentsBase(FabricNameMixin, NDEndpointBaseModel):
+    """Base class for OneManage network attachment endpoints."""
+
+    proxy_path: str = Field(default="", description="Optional ND proxy prefix")
+
+    @property
+    def _base_path(self) -> str:
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        return BasePath.manage_fabrics(self.fabric_name, "networkAttachments", proxy_path=self.proxy_path)
+
+
+class EpOneManageFabricsNetworkAttachmentsPost(_EpOneManageFabricsNetworkAttachmentsBase):
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/networkAttachments."""
+
+    class_name: Literal["EpOneManageFabricsNetworkAttachmentsPost"] = Field(
+        default="EpOneManageFabricsNetworkAttachmentsPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: NetworkAttachmentsTicketEndpointParams = Field(default_factory=NetworkAttachmentsTicketEndpointParams)
+
+    @property
+    def path(self) -> str:
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{self._base_path}?{query_string}"
+        return self._base_path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpOneManageFabricsNetworkAttachmentsValidateInterfacesPost(_EpOneManageFabricsNetworkAttachmentsBase):
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/networkAttachments/validateInterfaces."""
+
+    class_name: Literal["EpOneManageFabricsNetworkAttachmentsValidateInterfacesPost"] = Field(
+        default="EpOneManageFabricsNetworkAttachmentsValidateInterfacesPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: NetworkAttachmentsValidateInterfacesEndpointParams = Field(default_factory=NetworkAttachmentsValidateInterfacesEndpointParams)
+
+    @property
+    def path(self) -> str:
+        query_string = self.endpoint_params.to_query_string()
+        path = f"{self._base_path}/validateInterfaces"
+        if query_string:
+            return f"{path}?{query_string}"
+        return path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpOneManageFabricsNetworkAttachmentsExportPost(_EpOneManageFabricsNetworkAttachmentsBase):
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/networkAttachment/export."""
+
+    class_name: Literal["EpOneManageFabricsNetworkAttachmentsExportPost"] = Field(
+        default="EpOneManageFabricsNetworkAttachmentsExportPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: NetworkAttachmentsNoParamsEndpointParams = Field(default_factory=NetworkAttachmentsNoParamsEndpointParams)
+
+    @property
+    def path(self) -> str:
+        query_string = self.endpoint_params.to_query_string()
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        path = BasePath.manage_fabrics(self.fabric_name, "networkAttachment", "export", proxy_path=self.proxy_path)
+        if query_string:
+            return f"{path}?{query_string}"
+        return path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpOneManageFabricsNetworkAttachmentsImportPost(_EpOneManageFabricsNetworkAttachmentsBase):
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/networkAttachments/import."""
+
+    class_name: Literal["EpOneManageFabricsNetworkAttachmentsImportPost"] = Field(
+        default="EpOneManageFabricsNetworkAttachmentsImportPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: NetworkAttachmentsTicketEndpointParams = Field(default_factory=NetworkAttachmentsTicketEndpointParams)
+
+    @property
+    def path(self) -> str:
+        query_string = self.endpoint_params.to_query_string()
+        path = f"{self._base_path}/import"
+        if query_string:
+            return f"{path}?{query_string}"
+        return path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpOneManageFabricsNetworkAttachmentsQueryPost(_EpOneManageFabricsNetworkAttachmentsBase):
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/networkAttachments/query."""
+
+    class_name: Literal["EpOneManageFabricsNetworkAttachmentsQueryPost"] = Field(
+        default="EpOneManageFabricsNetworkAttachmentsQueryPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: NetworkAttachmentsQueryEndpointParams = Field(default_factory=NetworkAttachmentsQueryEndpointParams)
+
+    @property
+    def path(self) -> str:
+        query_string = self.endpoint_params.to_query_string()
+        path = f"{self._base_path}/query"
+        if query_string:
+            return f"{path}?{query_string}"
+        return path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
 
 
 class _OneManageNetworkActionsPostBase(FabricNameMixin, NDEndpointBaseModel):
@@ -191,7 +326,7 @@ class _OneManageNetworkActionsPostBase(FabricNameMixin, NDEndpointBaseModel):
 
 
 class EpOneManageFabricsNetworkActionsRemovePost(_OneManageNetworkActionsPostBase):
-    """POST /onemanage/manage/fabrics/{fabricName}/networkActions/remove."""
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/networkActions/remove."""
 
     class_name: Literal["EpOneManageFabricsNetworkActionsRemovePost"] = Field(
         default="EpOneManageFabricsNetworkActionsRemovePost",
@@ -203,7 +338,7 @@ class EpOneManageFabricsNetworkActionsRemovePost(_OneManageNetworkActionsPostBas
 
 
 class EpOneManageFabricsNetworkActionsDeployPost(_OneManageNetworkActionsPostBase):
-    """POST /onemanage/manage/fabrics/{fabricName}/networkActions/deploy."""
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/networkActions/deploy."""
 
     class_name: Literal["EpOneManageFabricsNetworkActionsDeployPost"] = Field(
         default="EpOneManageFabricsNetworkActionsDeployPost",
@@ -212,3 +347,35 @@ class EpOneManageFabricsNetworkActionsDeployPost(_OneManageNetworkActionsPostBas
     )
     action_name: Literal["deploy"] = Field(default="deploy", frozen=True)
     endpoint_params: NetworkActionsTicketEndpointParams = Field(default_factory=NetworkActionsTicketEndpointParams)
+
+
+class OneManageSwitchActionsDeployEndpointParams(TicketIdMixin, EndpointQueryParams):
+    """Query parameters for OneManage switch deploy."""
+
+    force_show_run: bool = Field(default=False, description="Force show running config before deploy")
+
+
+class EpOneManageFabricsSwitchActionsDeployPost(FabricNameMixin, NDEndpointBaseModel):
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/switchActions/deploy."""
+
+    class_name: Literal["EpOneManageFabricsSwitchActionsDeployPost"] = Field(
+        default="EpOneManageFabricsSwitchActionsDeployPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: OneManageSwitchActionsDeployEndpointParams = Field(default_factory=OneManageSwitchActionsDeployEndpointParams)
+    proxy_path: str = Field(default="", description="Optional ND proxy prefix")
+
+    @property
+    def path(self) -> str:
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        query_string = self.endpoint_params.to_query_string()
+        path = BasePath.manage_fabrics(self.fabric_name, "switchActions", "deploy", proxy_path=self.proxy_path)
+        if query_string:
+            return f"{path}?{query_string}"
+        return path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST

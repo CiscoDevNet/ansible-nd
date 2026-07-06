@@ -30,7 +30,7 @@ def test_base_paths_onemanage_00010():
     """
     with does_not_raise():
         result = BasePath.API
-    assert result == "/appcenter/cisco/ndfc/api/v1/onemanage"
+    assert result == "/api/v1/oneManage"
 
 
 def test_base_paths_onemanage_00100():
@@ -41,7 +41,7 @@ def test_base_paths_onemanage_00100():
     """
     with does_not_raise():
         result = BasePath.path()
-    assert result == "/appcenter/cisco/ndfc/api/v1/onemanage"
+    assert result == "/api/v1/oneManage"
 
 
 def test_base_paths_onemanage_00110():
@@ -51,8 +51,8 @@ def test_base_paths_onemanage_00110():
     Verify path() supports the ND proxy prefix.
     """
     with does_not_raise():
-        result = BasePath.path("fabrics", proxy_path="/onemanage")
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/fabrics"
+        result = BasePath.manage_fabrics("MCFG_FAB", "networks", proxy_path="/onemanage")
+    assert result == "/onemanage/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks"
 
 
 def test_base_paths_onemanage_00120():
@@ -62,5 +62,5 @@ def test_base_paths_onemanage_00120():
     Verify manage_fabrics() builds onemanage fabric resource paths.
     """
     with does_not_raise():
-        result = BasePath.manage_fabrics("MCFG_FAB", "networks", proxy_path="/onemanage")
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networks"
+        result = BasePath.manage_fabrics("MCFG_FAB", "networks")
+    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks"

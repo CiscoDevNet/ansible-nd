@@ -25,9 +25,6 @@
         enable_ir: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 20 }}"
-            vlan_id: "{{ nd_network_base_vlan + 20 }}"
-            vlan_name: ansible_nd_net_msd_sanity
         deploy: false
   delegate_to: localhost
   tags: sanity
@@ -60,7 +57,7 @@
     that:
       - msd_sanity_merged.changed == true
       - msd_sanity_merged.fabric_type == "multisite_parent"
-      - msd_sanity_merged.child_fabrics | default([]) | length >= 1
+      - msd_sanity_merged.child_fabrics is not defined
   when: nd_network_run_msd | bool
   tags: sanity
 

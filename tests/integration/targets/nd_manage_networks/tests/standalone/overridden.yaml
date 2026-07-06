@@ -38,7 +38,7 @@
         is_l2only: true
         network_id: "{{ nd_network_base_id + 8 }}"
         vlan_id: "{{ nd_network_base_vlan + 8 }}"
-        vlan_name: ansible_nd_net_over_keep_updated
+        vlan_name: ans_nd_net_over_keep_upd
         rt_auto: true
         enable_ir: false
         deploy: false

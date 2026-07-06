@@ -10,8 +10,10 @@ This consolidates fabric-type detection and workflow routing into a single,
 testable, reusable component under the orchestrator layer.
 
 Detection algorithm:
- 1. Query federated fabric associations (MFD / "mcfg" scope).
- 2. If federation manager absent, fall back to MSD associations.
+ 1. Query Manage MSD fabric associations. This covers standalone, MSD parent,
+    and MSD child fabrics without touching OneManage.
+ 2. If the target fabric is not present there, probe the OneManage MCFG
+    resource surface.
  3. Classify the target fabric:
       multicluster_parent, multicluster_child,
       multisite_parent,    multisite_child,
@@ -28,7 +30,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsMembersGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics import (
-    EpOneManageFabricsGet,
+    EpOneManageFabricsMembersGet,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
+    EpOneManageFabricsNetworksGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_network import (
     BaseNetworkStrategy,
@@ -62,24 +67,15 @@ _FEDERATION_MANAGER_NOT_FOUND_ERRORS: frozenset[str] = frozenset(
 )
 
 
-def _nd_onemanage_proxy(version_str: str) -> str:
+def _nd_onemanage_proxy(_version_str: str) -> str:
     """
-    Return ``'/onemanage'`` for ND >= 3.2 (NDFC >= 12.4) where the NDFC API
-    is accessed via the onemanage proxy, otherwise return ``''``.
+    Return the OneManage proxy prefix.
 
-    ``NDModule.version`` returns a string built from major.minor.maintenance
-    (e.g. "3.2.1"), so we compare against ND version numbers, not NDFC ones.
-    Defaults to the proxy path for unknown/unparseable versions since
-    NDBR-Network targets modern ND deployments.
+    The OneManage OpenAPI server is ``/api/v1/oneManage``.  Resource paths
+    in this module are built directly from that server root and must not be
+    routed through an additional proxy prefix.
     """
-    try:
-        parts = str(version_str).split(".")
-        major, minor = int(parts[0]), int(parts[1])
-        if major > 3 or (major == 3 and minor >= 2):
-            return "/onemanage"
-        return ""
-    except (ValueError, IndexError, AttributeError):
-        return "/onemanage"  # default: assume modern ND deployment
+    return ""
 
 
 def _response_data(response: Any) -> Any:
@@ -94,6 +90,20 @@ def _response_data(response: Any) -> Any:
     if isinstance(response, dict) and "DATA" in response:
         return response.get("DATA")
     return response
+
+
+def _response_message(data: Any) -> str:
+    """Extract a controller message from common ND response shapes."""
+    if isinstance(data, dict):
+        message = data.get("message")
+        if isinstance(message, str):
+            return message
+        error = data.get("error")
+        if isinstance(error, dict):
+            error_message = error.get("message")
+            if isinstance(error_message, str):
+                return error_message
+    return str(data)
 
 
 # ---------------------------------------------------------------------------
@@ -189,15 +199,15 @@ class NetworkFabricResolver:
 
     # ── Internal helpers ───────────────────────────────────────────
 
-    def _fetch_federated_fabric_associations(self) -> Any:
+    def _fetch_federated_fabric_associations(self, fabric_details: dict[str, Any] | None = None) -> Any:
         """
-        GET federated fabric associations (multicluster / MFD scope).
+        Detect whether the fabric is managed through OneManage MCFG.
 
-        Calls the NDFC onemanage fabrics endpoint through ND's REST proxy:
-            GET {proxy}/appcenter/cisco/ndfc/api/v1/onemanage/fabrics
-
-        where {proxy} is '/onemanage' for ND >= 3.2 (NDFC >= 12.4) and ''
-        for older releases.
+        ``oneManage.json`` does not expose a fabric-association endpoint.
+        The live 4.2 controller returns 404 for ``/api/v1/oneManage/fabrics``.
+        After MSD/standalone classification has failed, use the schema-backed
+        MCFG resource surface as a bounded probe:
+            GET /api/v1/oneManage/manage/fabrics/{fabricName}/networks?max=1
 
         Returns:
             dict: Mapping of fabricName -> fabric properties dict (including
@@ -205,60 +215,66 @@ class NetworkFabricResolver:
             str:  ``_NO_FEDERATION_MANAGER`` sentinel when the site is not
                   part of a federation (standalone or MSD-only deployments).
         """
-        proxy = _nd_onemanage_proxy(self._nd.version or "")
-        endpoint = EpOneManageFabricsGet(proxy_path=proxy)
+        fabric_details = fabric_details if fabric_details is not None else self._fetch_manage_fabric_details(self.fabric_name)
+        if fabric_details.get("category") != "fabricGroup":
+            return self._NO_FEDERATION_MANAGER
 
-        response = self._nd.request(
-            endpoint.path,
-            method=endpoint.verb.value,
-            ignore_not_found_error=True,
-        )
+        endpoint = EpOneManageFabricsNetworksGet(fabric_name=self.fabric_name)
+        endpoint.endpoint_params.max = 1
+
+        response = self._request_onemanage_probe(endpoint.path, endpoint.verb.value)
 
         # Empty / falsy response: API unavailable or returned an HTTP error.
-        # Treat as "no federation manager" so Phase 2 takes over.
+        # Treat as "no OneManage resource surface" so Phase 2 takes over.
         if not response:
             return self._NO_FEDERATION_MANAGER
 
-        # The NDFC API sometimes returns HTTP 200 with an error string
-        # (e.g. "A federation manager does not exist").  Detect those here.
         data = _response_data(response)
         if isinstance(data, str):
             if data in _FEDERATION_MANAGER_NOT_FOUND_ERRORS:
                 return self._NO_FEDERATION_MANAGER
-            # Any other unexpected string in DATA: fall back to Phase 2.
             return self._NO_FEDERATION_MANAGER
 
-        # Build fabricName -> fabric_data mapping from the DATA list.
-        # Each entry may contain a nested ``members`` list for parent fabrics.
-        fabric_associations: dict[str, Any] = {}
-        for fabric in (data if isinstance(data, list) else []):
-            if not isinstance(fabric, dict):
-                continue
-            parent_name = fabric.get("fabricName")
-            if not parent_name:
-                continue
-            parent_entry: dict[str, Any] = {
-                "fabricName": parent_name,
-                "fabricType": fabric.get("fabricType"),
-                "fabricState": fabric.get("fabricState"),
+        return {
+            self.fabric_name: {
+                "fabricName": self.fabric_name,
+                "fabricType": "MFD",
+                "fabricState": "active",
             }
-            fabric_associations[parent_name] = parent_entry
-            for child in fabric.get("members", []):
-                if not isinstance(child, dict):
-                    continue
-                child_name = child.get("fabricName")
-                if not child_name:
-                    continue
-                child_entry: dict[str, Any] = {
-                    "fabricName": child_name,
-                    "clusterName": child.get("clusterName"),
-                    "fabricType": child.get("fabricType"),
-                    "fabricState": child.get("fabricState"),
-                }
-                fabric_associations[child_name] = child_entry
-                parent_entry.setdefault("members", []).append(child_entry)
+        }
 
-        return fabric_associations
+    def _request_onemanage_probe(self, path: str, method: str) -> Any:
+        """
+        Call the OneManage resource probe without letting HTTP errors abort the module.
+
+        ``NDModule.request()`` converts non-2xx responses into ``fail_json``.
+        For fabric detection, OneManage probe errors are expected on standalone
+        and MSD-only controllers, so use the lower-level connection response and
+        return an empty result for known "not MCFG" failures.
+        """
+        connection = getattr(self._nd, "connection", None)
+        if connection is None:
+            return self._nd.request(path, method=method, ignore_not_found_error=True)
+
+        try:
+            info = connection.send_request(method, path)
+            if hasattr(self._nd, "httpapi_logs") and hasattr(connection, "pop_messages"):
+                self._nd.httpapi_logs.extend(connection.pop_messages())
+        except Exception:
+            return {}
+
+        status = info.get("status", -1) if isinstance(info, dict) else -1
+        body = info.get("body") if isinstance(info, dict) else None
+        if status in (200, 201, 202, 204):
+            return body
+        if status == 404:
+            return {}
+        if status >= 400:
+            message = _response_message(body)
+            if message in _FEDERATION_MANAGER_NOT_FOUND_ERRORS or "this API is allowed only for remote user" in message:
+                return {}
+            return {}
+        return body
 
     def _fetch_fabric_associations(self) -> dict[str, Any]:
         """
@@ -284,7 +300,7 @@ class NetworkFabricResolver:
 
         data = _response_data(response)
         fabric_associations: dict[str, Any] = {}
-        for fabric in (data if isinstance(data, list) else []):
+        for fabric in data if isinstance(data, list) else []:
             if not isinstance(fabric, dict):
                 continue
             fabric_name = fabric.get("fabricName")
@@ -354,6 +370,44 @@ class NetworkFabricResolver:
                     return [member for member in members if isinstance(member, dict)]
         return []
 
+    def _fetch_onemanage_fabric_members(self, fabric_name: str) -> list[dict[str, Any]]:
+        """
+        GET OneManage member fabrics for a multicluster parent fabric.
+
+        API:
+            GET /api/v1/oneManage/manage/fabrics/{fabricName}/members
+        """
+        endpoint = EpOneManageFabricsMembersGet(fabric_name=fabric_name)
+        response = self._nd.request(
+            endpoint.path,
+            method=endpoint.verb.value,
+            ignore_not_found_error=True,
+        )
+        data = _response_data(response)
+        raw_members: list[Any] = []
+        if isinstance(data, list):
+            raw_members = data
+        elif isinstance(data, dict):
+            for key in ("fabrics", "members", "items", "data", "DATA"):
+                members = data.get(key)
+                if isinstance(members, list):
+                    raw_members = members
+                    break
+
+        normalized_members: list[dict[str, Any]] = []
+        for member in raw_members:
+            if not isinstance(member, dict):
+                continue
+            fabric_name_value = member.get("fabricName") or member.get("name")
+            if not fabric_name_value:
+                continue
+            normalized = dict(member)
+            normalized["fabricName"] = fabric_name_value
+            normalized.setdefault("fabricState", "member")
+            normalized.setdefault("fabricType", member.get("fabricType") or member.get("type"))
+            normalized_members.append(normalized)
+        return normalized_members
+
     def _enrich_with_manage_fabric_details(self, fabric_data: dict) -> dict:
         """
         Add ``networkType`` and Manage fabric details to fabric_data when available.
@@ -379,7 +433,7 @@ class NetworkFabricResolver:
         if enriched.get("fabricType") == "MFD":
             enriched["onemanageProxyPath"] = _nd_onemanage_proxy(self._nd.version or "")
             try:
-                members = self._fetch_manage_fabric_members(self.fabric_name, enriched.get("clusterName"))
+                members = self._fetch_onemanage_fabric_members(self.fabric_name)
             except Exception:
                 members = []
             if members:
@@ -389,11 +443,12 @@ class NetworkFabricResolver:
 
     def _resolve_fabric_type(self) -> tuple[str, dict]:
         """
-        Run the two-phase detection logic (mcfg → msd fallback).
+        Run the two-phase detection logic (Manage/MSD → MCFG fallback).
 
-        Phase 1: Try federated (MFD / "mcfg") associations.
-        Phase 2: Fall back to MSD associations if Phase 1 fails or the
-                 fabric is not classified by mcfg data.
+        Phase 1: Try Manage MSD associations, which classify standalone, MSD
+                 parent, and MSD child fabrics without OneManage.
+        Phase 2: Fall back to the OneManage MCFG resource probe only if the
+                 fabric is not classified by Phase 1.
 
         Returns:
             (fabric_type_string, raw_fabric_data_dict)
@@ -401,26 +456,39 @@ class NetworkFabricResolver:
         Raises:
             ValueError if the fabric cannot be found in any data source.
         """
-        # Phase 1 — federated (MFD / "mcfg")
-        # Mirrors the action plugin: if Phase 1 returns the sentinel string
-        # or fails for any reason, fall straight through to Phase 2.
+        # Phase 1 — Manage MSD / standalone association data.
         try:
-            fed_data = self._fetch_federated_fabric_associations()
+            msd_data = self._fetch_fabric_associations()
+            fabric_type, fabric_data = _detect_fabric_type(self.fabric_name, msd_data, "msd")
+            if fabric_type:
+                return fabric_type, fabric_data
+        except Exception:
+            pass
+
+        try:
+            fabric_details = self._fetch_manage_fabric_details(self.fabric_name)
+        except Exception:
+            fabric_details = {}
+
+        if fabric_details and fabric_details.get("category") != "fabricGroup":
+            return "standalone", {
+                "fabricName": self.fabric_name,
+                "fabricType": fabric_details.get("fabricType") or fabric_details.get("type"),
+                "fabricState": fabric_details.get("fabricState") or "active",
+            }
+
+        # Phase 2 — federated MCFG fallback.
+        try:
+            fed_data = self._fetch_federated_fabric_associations(fabric_details)
             if fed_data != self._NO_FEDERATION_MANAGER:
                 fabric_type, fabric_data = _detect_fabric_type(self.fabric_name, fed_data, "mcfg")
                 if fabric_type:
                     return fabric_type, fabric_data
-                # Fabric present but unclassified by mcfg — fall through to Phase 2
+                # Fabric present but unclassified by mcfg — fail below.
         except Exception:
-            # Phase 1 unavailable or failed; fall straight through to Phase 2
             pass
 
-        # Phase 2 — MSD associations
-        msd_data = self._fetch_fabric_associations()
-        fabric_type, fabric_data = _detect_fabric_type(self.fabric_name, msd_data, "msd")
-        if not fabric_type:
-            raise ValueError(f"Fabric '{self.fabric_name}' not found in any NDFC fabric " "associations. Verify the fabric name and ND connectivity.")
-        return fabric_type, fabric_data
+        raise ValueError(f"Fabric '{self.fabric_name}' not found in any NDFC fabric " "associations. Verify the fabric name and ND connectivity.")
 
     def _build_strategy(self, fabric_type: str, fabric_data: dict) -> BaseNetworkStrategy:
         """Instantiate and return the strategy that matches fabric_type."""

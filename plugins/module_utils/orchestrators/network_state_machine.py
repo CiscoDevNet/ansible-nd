@@ -40,6 +40,11 @@ class NetworkStateMachine:
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
 
+    def _trace(self, event: str, **details: Any) -> None:
+        trace = getattr(self.coordinator, "_trace", None)
+        if trace is not None:
+            trace(event, **details)
+
     def _check_mode(self) -> bool:
         """Return True when the owning Ansible module is running in check mode."""
         return bool(getattr(getattr(self.coordinator, "module", None), "check_mode", False))
@@ -52,7 +57,9 @@ class NetworkStateMachine:
         sm, original_config, original_state = self.coordinator._new_state_machine(module_args, strategy)
         try:
             if state != "gathered":
+                self._trace("manage_state_start", state=state)
                 sm.manage_state()
+                self._trace("manage_state_end", state=state)
 
             return self.coordinator._format_state_machine_output(sm)
         finally:
@@ -88,6 +95,7 @@ class NetworkStateMachine:
                 active_strategy,
             )
 
+        self._trace("attachment_phase_pre_start", state=state)
         pre_attach = self.coordinator._apply_attachment_phase(
             module_args,
             active_strategy,
@@ -95,6 +103,7 @@ class NetworkStateMachine:
             desired=desired_attachments,
             current_network_names=desired_network_names,
         )
+        self._trace("attachment_phase_pre_end", changed=pre_attach.get("changed"), payload_count=len(pre_attach.get("payloads", [])))
         current_attachments = self._current_after_pre_detach(pre_attach)
 
         result = self.coordinator._run_state_machine(module_args, strategy=active_strategy)
@@ -104,6 +113,7 @@ class NetworkStateMachine:
         if result.get("failed", False):
             return result
 
+        self._trace("attachment_phase_post_start", state=state)
         post_attach = self.coordinator._apply_attachment_phase(
             module_args,
             active_strategy,
@@ -112,6 +122,7 @@ class NetworkStateMachine:
             current_network_names=desired_network_names,
             current=current_attachments,
         )
+        self._trace("attachment_phase_post_end", changed=post_attach.get("changed"), payload_count=len(post_attach.get("payloads", [])))
         self.coordinator._merge_api_trace(result, post_attach)
 
         return self._deploy_after_attachment_changes(
@@ -237,6 +248,7 @@ class NetworkStateMachine:
             pre_attach.get("deploy_targets", {}),
             post_attach.get("deploy_targets", {}),
         )
+        self._trace("deploy_payloads_from_attachments", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if not deploy_payloads:
             deploy_payloads = self.coordinator._build_pending_network_deploy_payloads(
                 result,
@@ -244,7 +256,9 @@ class NetworkStateMachine:
                 module_args,
                 strategy,
             )
+            self._trace("deploy_payloads_from_result", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if not deploy_payloads and self._should_query_pending_networks(result, config):
+            self._trace("deploy_pending_query_start")
             current_networks, query_trace = self.coordinator._query_current_networks_with_trace(module_args, strategy)
             self.coordinator._merge_api_trace(result, query_trace)
             deploy_payloads = self.coordinator._build_pending_network_deploy_payloads(
@@ -253,6 +267,7 @@ class NetworkStateMachine:
                 module_args,
                 strategy,
             )
+            self._trace("deploy_pending_query_end", current_count=len(current_networks), payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if not deploy_payloads:
             return result
 
@@ -272,12 +287,14 @@ class NetworkStateMachine:
             return result
 
         for deploy_payload in deploy_payloads:
+            self._trace("deploy_start", deploy_payload=deploy_payload)
             deploy_trace = self.coordinator._deploy_network_attachments(
                 module_args,
                 strategy,
                 deploy_payload,
             )
             self.coordinator._merge_api_trace(result, deploy_trace)
+            self._trace("deploy_end", deploy_payload=deploy_payload)
         return result
 
     def _should_query_pending_networks(self, result: dict[str, Any], config: list[dict]) -> bool:

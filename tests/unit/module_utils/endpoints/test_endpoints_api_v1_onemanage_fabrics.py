@@ -5,7 +5,7 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """
-Unit tests for onemanage fabrics endpoint classes.
+Unit tests for schema-backed OneManage fabric endpoint classes.
 """
 
 from __future__ import absolute_import, annotations, division, print_function
@@ -15,7 +15,8 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics import (
-    EpOneManageFabricsGet,
+    EpOneManageFabricsFabricNameGet,
+    EpOneManageFabricsMembersGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
@@ -27,11 +28,12 @@ def test_endpoints_api_v1_onemanage_fabrics_00010():
     """
     # Summary
 
-    Verify EpOneManageFabricsGet basic instantiation.
+    Verify OneManage fabric detail path and verb.
     """
     with does_not_raise():
-        endpoint = EpOneManageFabricsGet()
-    assert endpoint.class_name == "EpOneManageFabricsGet"
+        endpoint = EpOneManageFabricsFabricNameGet(fabric_name="MCFG_C")
+        result = endpoint.path
+    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_C"
     assert endpoint.verb == HttpVerbEnum.GET
 
 
@@ -39,21 +41,10 @@ def test_endpoints_api_v1_onemanage_fabrics_00020():
     """
     # Summary
 
-    Verify EpOneManageFabricsGet path without proxy prefix.
+    Verify OneManage fabric members path and verb.
     """
     with does_not_raise():
-        endpoint = EpOneManageFabricsGet()
+        endpoint = EpOneManageFabricsMembersGet(fabric_name="MCFG_C")
         result = endpoint.path
-    assert result == "/appcenter/cisco/ndfc/api/v1/onemanage/fabrics"
-
-
-def test_endpoints_api_v1_onemanage_fabrics_00030():
-    """
-    # Summary
-
-    Verify EpOneManageFabricsGet path with proxy prefix.
-    """
-    with does_not_raise():
-        endpoint = EpOneManageFabricsGet(proxy_path="/onemanage")
-        result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/fabrics"
+    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_C/members"
+    assert endpoint.verb == HttpVerbEnum.GET

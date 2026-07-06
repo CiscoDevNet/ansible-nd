@@ -17,10 +17,16 @@ __metaclass__ = type
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
     EpOneManageFabricsNetworkActionsDeployPost,
     EpOneManageFabricsNetworkActionsRemovePost,
+    EpOneManageFabricsNetworkAttachmentsExportPost,
+    EpOneManageFabricsNetworkAttachmentsImportPost,
+    EpOneManageFabricsNetworkAttachmentsPost,
+    EpOneManageFabricsNetworkAttachmentsQueryPost,
+    EpOneManageFabricsNetworkAttachmentsValidateInterfacesPost,
     EpOneManageFabricsNetworksGet,
     EpOneManageFabricsNetworksNetworkNameDelete,
     EpOneManageFabricsNetworksNetworkNamePut,
     EpOneManageFabricsNetworksPost,
+    EpOneManageFabricsSwitchActionsDeployPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
@@ -35,9 +41,9 @@ def test_endpoints_api_v1_onemanage_networks_00010():
     Verify list networks endpoint path and verb.
     """
     with does_not_raise():
-        endpoint = EpOneManageFabricsNetworksGet(fabric_name="MCFG_FAB", proxy_path="/onemanage")
+        endpoint = EpOneManageFabricsNetworksGet(fabric_name="MCFG_FAB")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networks"
+    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks"
     assert endpoint.verb == HttpVerbEnum.GET
 
 
@@ -48,9 +54,9 @@ def test_endpoints_api_v1_onemanage_networks_00020():
     Verify create networks endpoint path and verb.
     """
     with does_not_raise():
-        endpoint = EpOneManageFabricsNetworksPost(fabric_name="MCFG_FAB", proxy_path="/onemanage")
+        endpoint = EpOneManageFabricsNetworksPost(fabric_name="MCFG_FAB")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networks"
+    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks"
     assert endpoint.verb == HttpVerbEnum.POST
 
 
@@ -61,9 +67,9 @@ def test_endpoints_api_v1_onemanage_networks_00030():
     Verify update network endpoint path and verb.
     """
     with does_not_raise():
-        endpoint = EpOneManageFabricsNetworksNetworkNamePut(fabric_name="MCFG_FAB", network_name="MyNetwork_40001", proxy_path="/onemanage")
+        endpoint = EpOneManageFabricsNetworksNetworkNamePut(fabric_name="MCFG_FAB", network_name="MyNetwork_40001")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networks/MyNetwork_40001"
+    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks/MyNetwork_40001"
     assert endpoint.verb == HttpVerbEnum.PUT
 
 
@@ -77,10 +83,9 @@ def test_endpoints_api_v1_onemanage_networks_00040():
         endpoint = EpOneManageFabricsNetworksNetworkNameDelete(
             fabric_name="MCFG_FAB",
             network_name="MyNetwork_40001",
-            proxy_path="/onemanage",
         )
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networks/MyNetwork_40001"
+    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks/MyNetwork_40001"
     assert endpoint.verb == HttpVerbEnum.DELETE
 
 
@@ -91,9 +96,9 @@ def test_endpoints_api_v1_onemanage_networks_00050():
     Verify deploy network action endpoint path and verb.
     """
     with does_not_raise():
-        endpoint = EpOneManageFabricsNetworkActionsDeployPost(fabric_name="MCFG_FAB", proxy_path="/onemanage")
+        endpoint = EpOneManageFabricsNetworkActionsDeployPost(fabric_name="MCFG_FAB")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networkActions/deploy"
+    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networkActions/deploy"
     assert endpoint.verb == HttpVerbEnum.POST
 
 
@@ -104,7 +109,48 @@ def test_endpoints_api_v1_onemanage_networks_00060():
     Verify remove network action endpoint path and verb.
     """
     with does_not_raise():
-        endpoint = EpOneManageFabricsNetworkActionsRemovePost(fabric_name="MCFG_FAB", proxy_path="/onemanage")
+        endpoint = EpOneManageFabricsNetworkActionsRemovePost(fabric_name="MCFG_FAB")
         result = endpoint.path
-    assert result == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/manage/fabrics/MCFG_FAB/networkActions/remove"
+    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networkActions/remove"
+    assert endpoint.verb == HttpVerbEnum.POST
+
+
+def test_endpoints_api_v1_onemanage_networks_00070():
+    """
+    # Summary
+
+    Verify network attachment endpoints match oneManage.json paths.
+    """
+    with does_not_raise():
+        attach = EpOneManageFabricsNetworkAttachmentsPost(fabric_name="MCFG_FAB")
+        export = EpOneManageFabricsNetworkAttachmentsExportPost(fabric_name="MCFG_FAB")
+        import_ = EpOneManageFabricsNetworkAttachmentsImportPost(fabric_name="MCFG_FAB")
+        query = EpOneManageFabricsNetworkAttachmentsQueryPost(fabric_name="MCFG_FAB")
+        validate = EpOneManageFabricsNetworkAttachmentsValidateInterfacesPost(fabric_name="MCFG_FAB")
+        attach.endpoint_params.ticket_id = "CHG123"
+        query.endpoint_params.max = 100
+        query.endpoint_params.include_all = True
+
+    assert attach.path == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networkAttachments?ticketId=CHG123"
+    assert validate.path == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networkAttachments/validateInterfaces?strictModeValidation=false"
+    assert export.path == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networkAttachment/export"
+    assert import_.path == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networkAttachments/import"
+    assert query.path == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networkAttachments/query?max=100&includeAll=true"
+    assert attach.verb == HttpVerbEnum.POST
+    assert validate.verb == HttpVerbEnum.POST
+    assert export.verb == HttpVerbEnum.POST
+    assert import_.verb == HttpVerbEnum.POST
+    assert query.verb == HttpVerbEnum.POST
+
+
+def test_endpoints_api_v1_onemanage_networks_00080():
+    """
+    # Summary
+
+    Verify OneManage switch deploy endpoint path and verb.
+    """
+    with does_not_raise():
+        endpoint = EpOneManageFabricsSwitchActionsDeployPost(fabric_name="MCFG_FAB")
+        result = endpoint.path
+    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/switchActions/deploy?forceShowRun=false"
     assert endpoint.verb == HttpVerbEnum.POST

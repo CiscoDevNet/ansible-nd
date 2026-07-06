@@ -90,6 +90,31 @@ def _shared_network_fields(defaults=True):
     )
 
 
+def _child_network_fields():
+    return dict(
+        l2_fabric_data=dict(type="dict"),
+        stretch=dict(type="str"),
+        enable_ir=dict(type="bool"),
+        multicast_group_address=dict(type="str"),
+        ds_vni=dict(type="int"),
+        dhcp_servers=dict(type="list", elements="dict", options=_dhcp_server_spec()),
+        dhcp_srvr1_ip=dict(type="str"),
+        dhcp_srvr1_vrf=dict(type="str"),
+        dhcp_srvr2_ip=dict(type="str"),
+        dhcp_srvr2_vrf=dict(type="str"),
+        dhcp_srvr3_ip=dict(type="str"),
+        dhcp_srvr3_vrf=dict(type="str"),
+        loopback_id=dict(type="int"),
+        dhcp_loopback_id=dict(type="int"),
+        igmp_version=dict(type="int", choices=[1, 2, 3]),
+        trm_enable=dict(type="bool"),
+        ipv6_trm=dict(type="bool"),
+        netflow_enable=dict(type="bool"),
+        gateway_on_border=dict(type="bool"),
+        l3gw_on_border=dict(type="bool"),
+    )
+
+
 def network_base_argument_spec():
     """Argument spec for a single network config entry."""
     spec = dict(
@@ -118,7 +143,7 @@ def network_base_argument_spec():
 
 def _child_fabric_config_element_spec():
     spec = dict(fabric_name=dict(type="str", required=True))
-    spec.update(_shared_network_fields(defaults=False))
+    spec.update(_child_network_fields())
     return spec
 
 

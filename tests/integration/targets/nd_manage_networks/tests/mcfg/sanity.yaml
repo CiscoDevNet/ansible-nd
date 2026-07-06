@@ -40,9 +40,6 @@
         enable_ir: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
-            network_id: "{{ nd_network_base_id + 30 }}"
-            vlan_id: "{{ nd_network_base_vlan + 30 }}"
-            vlan_name: ansible_nd_net_mcfg_sanity
         deploy: false
   delegate_to: localhost
   tags: sanity
@@ -75,7 +72,7 @@
     that:
       - mcfg_sanity_merged.changed == true
       - mcfg_sanity_merged.fabric_type == "multicluster_parent"
-      - mcfg_sanity_merged.child_fabrics | default([]) | length >= 1
+      - mcfg_sanity_merged.child_fabrics is not defined
   when: nd_network_run_mcfg | bool
   tags: sanity
 
