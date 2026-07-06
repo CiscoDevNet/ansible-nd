@@ -155,7 +155,7 @@ def test_subinterface_unmanaged_interface_00100(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
 
     with does_not_raise():
@@ -200,7 +200,7 @@ def test_subinterface_unmanaged_interface_00101(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
 
     with pytest.raises(RuntimeError, match=r"Create failed.*ND rejected"):
@@ -235,7 +235,7 @@ def test_subinterface_unmanaged_interface_00102(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
 
     match = r"Create failed for .*Ethernet1/3\.20"
@@ -276,7 +276,7 @@ def test_subinterface_unmanaged_interface_00200(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
 
     with does_not_raise():
@@ -316,7 +316,7 @@ def test_subinterface_unmanaged_interface_00201(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
 
     match = r"Update failed for .*Ethernet1/3\.20"
@@ -358,7 +358,7 @@ def test_subinterface_unmanaged_interface_00300(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "deleted"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
 
     with does_not_raise():
@@ -394,7 +394,7 @@ def test_subinterface_unmanaged_interface_00301(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "deleted"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
 
     match = r"No switch found with fabricManagementIp '192\.168\.12\.151'"
@@ -437,7 +437,7 @@ def test_subinterface_unmanaged_interface_00400(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     models = [
         SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20"),
         SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.21"),
@@ -487,7 +487,7 @@ def test_subinterface_unmanaged_interface_00401(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     models = [
         SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20"),
         SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.152", interface_name="Ethernet1/3.20"),
@@ -529,7 +529,7 @@ def test_subinterface_unmanaged_interface_00500(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "deleted"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     models = [
         SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20"),
         SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.152", interface_name="Ethernet1/3.20"),
@@ -574,7 +574,7 @@ def test_subinterface_unmanaged_interface_00600(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
 
     with does_not_raise():
@@ -610,7 +610,7 @@ def test_subinterface_unmanaged_interface_00601(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
 
     match = r"Query failed for .*Ethernet1/3\.20"
@@ -697,7 +697,7 @@ def test_subinterface_unmanaged_interface_00701(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
 
     with does_not_raise():
         result = orchestrator.query_all()
@@ -731,7 +731,7 @@ def test_subinterface_unmanaged_interface_00702(monkeypatch) -> None:
     gen = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen)
 
-    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
 
     match = r"Query all failed.*deployment freeze"
     with pytest.raises(RuntimeError, match=match):
