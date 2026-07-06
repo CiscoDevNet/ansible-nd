@@ -40,6 +40,11 @@ class VrfStateMachine:
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
 
+    def _trace(self, event: str, **details: Any) -> None:
+        trace = getattr(self.coordinator, "_trace", None)
+        if trace is not None:
+            trace(event, **details)
+
     def _check_mode(self) -> bool:
         """Return True when the owning Ansible module is running in check mode."""
         return bool(getattr(getattr(self.coordinator, "module", None), "check_mode", False))
@@ -52,7 +57,9 @@ class VrfStateMachine:
         sm, original_config, original_state = self.coordinator._new_state_machine(module_args, strategy)
         try:
             if state != "gathered":
+                self._trace("manage_state_start", state=state)
                 sm.manage_state()
+                self._trace("manage_state_end", state=state)
 
             return self.coordinator._format_state_machine_output(sm)
         finally:
@@ -88,6 +95,7 @@ class VrfStateMachine:
                 active_strategy,
             )
 
+        self._trace("attachment_phase_pre_start", state=state)
         pre_attach = self.coordinator._apply_attachment_phase(
             module_args,
             active_strategy,
@@ -95,6 +103,7 @@ class VrfStateMachine:
             desired=desired_attachments,
             current_vrf_names=desired_vrf_names,
         )
+        self._trace("attachment_phase_pre_end", changed=pre_attach.get("changed"), payload_count=len(pre_attach.get("payloads", [])))
         desired_attachments = pre_attach.get("desired", desired_attachments)
         current_attachments = self._current_after_pre_detach(pre_attach)
 
@@ -105,6 +114,7 @@ class VrfStateMachine:
         if result.get("failed", False):
             return result
 
+        self._trace("attachment_phase_post_start", state=state)
         post_attach = self.coordinator._apply_attachment_phase(
             module_args,
             active_strategy,
@@ -113,6 +123,7 @@ class VrfStateMachine:
             current_vrf_names=desired_vrf_names,
             current=current_attachments,
         )
+        self._trace("attachment_phase_post_end", changed=post_attach.get("changed"), payload_count=len(post_attach.get("payloads", [])))
         self.coordinator._merge_api_trace(result, post_attach)
 
         return self._deploy_after_attachment_changes(
@@ -165,6 +176,7 @@ class VrfStateMachine:
                 omitted_vrf_names,
                 current_attachment_details,
             )
+            self._trace("attachment_phase_pre_start", state="overridden")
             pre_attach = self.coordinator._apply_attachment_phase(
                 module_args,
                 strategy,
@@ -173,13 +185,16 @@ class VrfStateMachine:
                 current_vrf_names=current_desired_vrf_names,
                 current=current_desired_attachments,
             )
+            self._trace("attachment_phase_pre_end", changed=pre_attach.get("changed"), payload_count=len(pre_attach.get("payloads", [])))
             desired_attachments = pre_attach.get("desired", desired_attachments)
             current_attachments = self._current_after_pre_detach(
                 pre_attach,
                 empty_when_absent=current_desired_vrf_names == [],
             )
 
+            self._trace("manage_state_start", state="overridden")
             sm.manage_state()
+            self._trace("manage_state_end", state="overridden")
             result = self.coordinator._format_state_machine_output(sm)
 
             self._prepend_traces(result, pre_delete_traces + [pre_attach])
@@ -187,6 +202,7 @@ class VrfStateMachine:
             if result.get("failed", False):
                 return result
 
+            self._trace("attachment_phase_post_start", state="overridden")
             post_attach = self.coordinator._apply_attachment_phase(
                 module_args,
                 strategy,
@@ -195,6 +211,7 @@ class VrfStateMachine:
                 current_vrf_names=desired_vrf_names,
                 current=current_attachments,
             )
+            self._trace("attachment_phase_post_end", changed=post_attach.get("changed"), payload_count=len(post_attach.get("payloads", [])))
             self.coordinator._merge_api_trace(result, post_attach)
 
             return self._deploy_after_attachment_changes(
@@ -239,6 +256,7 @@ class VrfStateMachine:
             pre_attach.get("deploy_targets", {}),
             post_attach.get("deploy_targets", {}),
         )
+        self._trace("deploy_payloads_from_attachments", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if not deploy_payloads:
             deploy_payloads = self.coordinator._build_pending_vrf_deploy_payloads(
                 result,
@@ -246,6 +264,7 @@ class VrfStateMachine:
                 module_args,
                 strategy,
             )
+            self._trace("deploy_payloads_from_result", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if not deploy_payloads:
             return result
 
@@ -265,12 +284,14 @@ class VrfStateMachine:
             return result
 
         for deploy_payload in deploy_payloads:
+            self._trace("deploy_start", deploy_payload=deploy_payload)
             deploy_trace = self.coordinator._deploy_vrf_attachments(
                 module_args,
                 strategy,
                 deploy_payload,
             )
             self.coordinator._merge_api_trace(result, deploy_trace)
+            self._trace("deploy_end", deploy_payload=deploy_payload)
         return result
 
     def _prepare_overridden_deletions(
@@ -321,12 +342,33 @@ class VrfStateMachine:
         if not config:
             return self.delete_all_existing_vrfs(module_args, strategy)
 
+        configured_vrf_names = self.coordinator._configured_vrf_names(config)
+        current_vrfs = self.coordinator._query_current_vrfs(module_args, strategy)
+        current_vrf_names = set(self._vrf_names_from_records(current_vrfs))
+        existing_vrf_names = [vrf_name for vrf_name in configured_vrf_names if vrf_name in current_vrf_names]
+        self._trace(
+            "delete_existing_vrfs_resolved",
+            configured_count=len(configured_vrf_names),
+            existing_count=len(existing_vrf_names),
+            existing_vrf_names=existing_vrf_names,
+        )
+
+        if not existing_vrf_names:
+            self._trace("delete_no_existing_vrfs_skip_detach")
+            result = self.coordinator._run_state_machine(module_args, strategy=strategy)
+            self._trace("delete_manage_state_end", changed=result.get("changed"), failed=result.get("failed"))
+            return result
+
+        self._trace("delete_dependency_check_start", vrf_count=len(existing_vrf_names))
         self.coordinator._ensure_vrfs_have_no_networks(
             module_args,
             strategy,
-            self.coordinator._configured_vrf_names(config),
+            existing_vrf_names,
         )
-        detach_trace = self.coordinator._apply_deleted_attachment_phase(module_args, strategy)
+        self._trace("delete_dependency_check_end", vrf_count=len(existing_vrf_names))
+        self._trace("delete_detach_phase_start", vrf_count=len(existing_vrf_names))
+        detach_trace = self.coordinator._apply_deleted_attachment_phase(module_args, strategy, existing_vrf_names)
+        self._trace("delete_detach_phase_end", changed=detach_trace.get("changed"), payload_count=len(detach_trace.get("payloads", [])))
         traces = self._deploy_detach_traces(
             api_args=module_args,
             wait_args=module_args,
@@ -335,9 +377,21 @@ class VrfStateMachine:
             detach_trace=detach_trace,
         )
 
+        self._trace("delete_manage_state_start", vrf_count=len(config))
         result = self.coordinator._run_state_machine(module_args, strategy=strategy)
+        self._trace("delete_manage_state_end", changed=result.get("changed"), failed=result.get("failed"))
         self._prepend_traces(result, traces)
         return result
+
+    @staticmethod
+    def _vrf_names_from_records(vrfs: list[dict[str, Any]]) -> list[str]:
+        """Return VRF names from current-state records."""
+        names: list[str] = []
+        for vrf in vrfs:
+            name = vrf.get("vrf_name") or vrf.get("vrfName")
+            if name:
+                names.append(name)
+        return names
 
     def delete_all_existing_vrfs(
         self,
@@ -399,6 +453,7 @@ class VrfStateMachine:
             config,
             detach_trace.get("deploy_targets", {}) if detach_trace else {},
         )
+        self._trace("delete_deploy_payloads_built", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if self._check_mode():
             if deploy_payloads:
                 traces.append(
@@ -411,6 +466,7 @@ class VrfStateMachine:
             return traces
 
         for deploy_payload in deploy_payloads:
+            self._trace("delete_deploy_start", deploy_payload=deploy_payload)
             traces.append(
                 self.coordinator._deploy_vrf_attachments(
                     api_args,
@@ -418,12 +474,15 @@ class VrfStateMachine:
                     deploy_payload,
                 )
             )
+            self._trace("delete_deploy_end", deploy_payload=deploy_payload)
 
         if deploy_payloads:
+            self._trace("delete_wait_ready_start", vrf_names=wait_vrf_names)
             if wait_vrf_names is None:
                 self.coordinator._wait_for_vrfs_delete_ready(wait_args, strategy)
             else:
                 self.coordinator._wait_for_vrfs_delete_ready(wait_args, strategy, wait_vrf_names)
+            self._trace("delete_wait_ready_end", vrf_names=wait_vrf_names)
         return traces
 
     def _deploy_pending_vrfs_before_delete(

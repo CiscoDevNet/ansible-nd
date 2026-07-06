@@ -18,6 +18,9 @@ directly. For parent fabrics it:
 from __future__ import annotations
 
 import copy
+import json
+import os
+import time
 
 from typing import Any, Optional, Union
 
@@ -72,6 +75,9 @@ class VrfWorkflowCoordinator:
     ):
         self.module = module
         self.strategy = strategy
+        self._workflow_trace: list[dict[str, Any]] = []
+        self._trace_started_at = time.monotonic()
+        self._workflow_trace_file: str | None = None
 
     @property
     def attachments(self) -> VrfAttachmentManager:
@@ -96,15 +102,73 @@ class VrfWorkflowCoordinator:
         Returns a result dict suitable for module.exit_json(**result).
         """
         module_args: dict = dict(self.module.params)
-        fabric_type: str = self.strategy.fabric_type
-        self._validate_topology_argument_scope(module_args, fabric_type)
+        self._trace(
+            "workflow_start",
+            fabric_name=module_args.get("fabric_name"),
+            state=module_args.get("state"),
+            config_count=len(module_args.get("config") or []),
+            strategy=self.strategy.__class__.__name__,
+            fabric_type=self.strategy.fabric_type,
+            check_mode=self.module.check_mode,
+        )
+        try:
+            self._normalize_module_args(module_args)
+            fabric_type: str = self.strategy.fabric_type
+            self._validate_topology_argument_scope(module_args, fabric_type)
 
-        if self.strategy.is_child:
-            return self._handle_child_workflow(module_args, fabric_type)
-        elif self.strategy.is_parent:
-            return self._handle_parent_workflow(module_args, fabric_type)
-        else:
-            return self._handle_standalone_workflow(module_args, fabric_type)
+            if self.strategy.is_child:
+                result = self._handle_child_workflow(module_args, fabric_type)
+            elif self.strategy.is_parent:
+                result = self._handle_parent_workflow(module_args, fabric_type)
+            else:
+                result = self._handle_standalone_workflow(module_args, fabric_type)
+        except Exception as exc:
+            self._trace("workflow_error", error=repr(exc), exception=type(exc).__name__)
+            raise
+
+        self._trace("workflow_end", changed=result.get("changed"), failed=result.get("failed"))
+        return self._attach_workflow_trace(result)
+
+    def _trace_enabled(self) -> bool:
+        verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
+        params = getattr(self.module, "params", {}) or {}
+        return params.get("output_level") == "debug" or verbosity >= 3
+
+    def _trace_file_enabled(self) -> bool:
+        params = getattr(self.module, "params", {}) or {}
+        return params.get("output_level") == "debug"
+
+    def _trace_file_path(self) -> str:
+        if self._workflow_trace_file is None:
+            self._workflow_trace_file = f"/private/tmp/nd_manage_vrfs_trace_{os.getpid()}.jsonl"
+        return self._workflow_trace_file
+
+    def _trace(self, event: str, **details: Any) -> None:
+        if not (self._trace_enabled() or self._trace_file_enabled()):
+            return
+        entry = {
+            "sequence": len(self._workflow_trace) + 1,
+            "elapsed_ms": int((time.monotonic() - self._trace_started_at) * 1000),
+            "event": event,
+        }
+        entry.update(details)
+        self._workflow_trace.append(entry)
+        if self._trace_file_enabled():
+            with open(self._trace_file_path(), "a", encoding="utf-8") as trace_file:
+                trace_file.write(json.dumps(entry, default=str, sort_keys=True) + "\n")
+
+    def _attach_workflow_trace(self, result: dict[str, Any]) -> dict[str, Any]:
+        if self._trace_enabled():
+            result["workflow_trace"] = list(self._workflow_trace)
+        if self._workflow_trace_file:
+            result["workflow_trace_file"] = self._workflow_trace_file
+        return result
+
+    @staticmethod
+    def _normalize_module_args(module_args: dict) -> None:
+        """Normalize legacy module-level aliases before workflow routing."""
+        if module_args.get("state") == "query":
+            module_args["state"] = "gathered"
 
     def _validate_topology_argument_scope(
         self,
@@ -180,10 +244,13 @@ class VrfWorkflowCoordinator:
         to child fabrics that are targeted directly with state=gathered.
         """
         state = module_args.get("state", "merged")
+        self._trace("standalone_workflow_start", state=state, fabric_type=fabric_type)
         module_args["config"] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
+        self._trace("standalone_config_parsed", parsed_count=len(module_args["config"]))
         result = self._run_state_machine_with_attachments(module_args)
         result.setdefault("fabric_type", fabric_type)
         result.setdefault("workflow", "Standalone Fabric VRF Processing")
+        self._trace("standalone_workflow_end", changed=result.get("changed"), failed=result.get("failed"))
         return result
 
     def _handle_child_workflow(self, module_args: dict, fabric_type: str) -> dict[str, Any]:
@@ -195,15 +262,18 @@ class VrfWorkflowCoordinator:
         """
         state = module_args.get("state")
         fabric_name = module_args.get("fabric_name")
+        self._trace("child_workflow_start", state=state, fabric_name=fabric_name, fabric_type=fabric_type)
 
         if state == "gathered":
             module_args["config"] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
+            self._trace("child_config_parsed", parsed_count=len(module_args["config"]))
             result = self._run_state_machine(module_args)
             result.setdefault("fabric_type", fabric_type)
             result.setdefault(
                 "workflow",
                 f"{fabric_type.replace('_', ' ').title()} VRF Gathered",
             )
+            self._trace("child_workflow_end", changed=result.get("changed"), failed=result.get("failed"))
             return result
 
         self.module.fail_json(
@@ -231,12 +301,15 @@ class VrfWorkflowCoordinator:
         log_type = "multicluster" if "multicluster" in fabric_type else "multisite"
         parent_fabric = module_args.get("fabric_name")
         state = module_args.get("state", "merged")
+        self._trace("parent_workflow_start", state=state, parent_fabric=parent_fabric, fabric_type=fabric_type)
         config: list[dict] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
+        self._trace("parent_config_parsed", parsed_count=len(config))
 
         # Collect member fabric names for relationship validation
         child_member_names = self.strategy.child_fabric_members()
         child_member_name_set = set(child_member_names)
         child_fabric_data_map: dict[str, dict] = {m.get("fabricName"): m for m in self.strategy.fabric_data.get("members", []) if m.get("fabricName")}
+        self._trace("parent_members_resolved", child_members=child_member_names)
 
         # Step 2 & 3 — split config into parent config + child task groups
         parent_config: list[dict] = []
@@ -270,22 +343,33 @@ class VrfWorkflowCoordinator:
                 if child_configs:
                     self._remove_child_owned_mcfg_parent_fabric_options(parent_vrf)
             parent_config.append(parent_vrf)
+        self._trace("parent_child_tasks_built", parent_config_count=len(parent_config), child_task_count=len(child_tasks_dict))
 
         # Step 4 — run parent state machine
         parent_module_args = dict(module_args)
         parent_module_args["config"] = parent_config
+        self._trace("parent_state_machine_start", config_count=len(parent_config), defer_deploy=True)
         parent_result = self._run_state_machine_with_attachments(
             parent_module_args,
             defer_deploy=True,
         )
+        self._trace("parent_state_machine_end", changed=parent_result.get("changed"), failed=parent_result.get("failed"))
 
         # Step 5 — execute child tasks (only if parent succeeded)
         child_results: list[dict] = []
         if not parent_result.get("failed", False) and child_tasks_dict:
             for child_task in child_tasks_dict.values():
+                self._trace("child_task_start", child_fabric=child_task["fabric"], config_count=len(child_task["module_args"].get("config") or []))
                 child_result = self._run_child_task(child_task)
                 child_result["child_fabric"] = child_task["fabric"]
                 child_results.append(child_result)
+                self._trace(
+                    "child_task_end",
+                    child_fabric=child_task["fabric"],
+                    changed=child_result.get("changed"),
+                    failed=child_result.get("failed"),
+                    msg=child_result.get("msg"),
+                )
                 if child_result.get("failed", False):
                     # Abort on first child failure
                     break
@@ -295,17 +379,22 @@ class VrfWorkflowCoordinator:
             deploy_payload = parent_result.pop("_deferred_deploy_payload", None)
             if deploy_payload:
                 deploy_payloads.append(deploy_payload)
+            self._trace("parent_deferred_deploys_start", deploy_payload_count=len(deploy_payloads))
             for deploy_payload in deploy_payloads:
                 if deploy_payload:
+                    self._trace("parent_deferred_deploy_start", deploy_payload=deploy_payload)
                     deploy_trace = self._deploy_vrf_attachments(
                         parent_module_args,
                         self.strategy,
                         deploy_payload,
                     )
                     self._merge_api_trace(parent_result, deploy_trace)
+                    self._trace("parent_deferred_deploy_end", deploy_payload=deploy_payload)
 
         # Step 6 — aggregate and structure results
-        return self._build_structured_result(parent_result, child_results, parent_fabric, fabric_type, log_type)
+        result = self._build_structured_result(parent_result, child_results, parent_fabric, fabric_type, log_type)
+        self._trace("parent_workflow_end", changed=result.get("changed"), failed=result.get("failed"), child_result_count=len(child_results))
+        return result
 
     # ── Config splitting helpers ──────────────────────────────────
 
@@ -426,6 +515,7 @@ class VrfWorkflowCoordinator:
                 "vrf_list": [child_cfg["vrf_name"]],
                 "strategy": VrfFabricResolver.strategy_from_fabric_details(child_fabric_name, child_fabric_data),
             }
+        self._trace("child_task_accumulated", child_fabric=child_fabric_name, state=state)
 
         return child_tasks_dict
 
@@ -443,7 +533,20 @@ class VrfWorkflowCoordinator:
         VRF-specific payload transformation is kept here so the shared state
         machine does not need to know about VRF playbook field aliases.
         """
-        return self._vrf_state_machine().run_basic(module_args, strategy=strategy)
+        self._trace(
+            "state_machine_basic_start",
+            fabric_name=(strategy or self.strategy).fabric_name,
+            strategy=(strategy or self.strategy).__class__.__name__,
+            state=module_args.get("state"),
+            config_count=len(module_args.get("config") or []),
+        )
+        try:
+            result = self._vrf_state_machine().run_basic(module_args, strategy=strategy)
+        except Exception as exc:
+            self._trace("state_machine_basic_error", error=repr(exc), exception=type(exc).__name__)
+            raise
+        self._trace("state_machine_basic_end", changed=result.get("changed"), failed=result.get("failed"))
+        return result
 
     def _vrf_state_machine(self) -> VrfStateMachine:
         """Return the VRF-specific state machine wrapper for this coordinator."""
@@ -482,7 +585,22 @@ class VrfWorkflowCoordinator:
             )
             self.module.params["config"] = orchestrator.prepare_config_data(module_args.get("config") or [])
             self.module.params["state"] = state
+            self._trace(
+                "state_machine_init_start",
+                fabric_name=active_strategy.fabric_name,
+                strategy=active_strategy.__class__.__name__,
+                state=state,
+                prepared_config_count=len(self.module.params["config"] or []),
+            )
             sm = NDStateMachine(module=self.module, model_orchestrator=orchestrator)
+            self._trace(
+                "state_machine_init_end",
+                fabric_name=active_strategy.fabric_name,
+                strategy=active_strategy.__class__.__name__,
+                state=state,
+                existing_count=len(sm.existing),
+                proposed_count=len(sm.proposed),
+            )
             return sm, original_config, original_state
         finally:
             if sm is None:
@@ -513,7 +631,21 @@ class VrfWorkflowCoordinator:
         separate endpoints.  Keep attach/deploy out of the VRF payload and
         apply them around the normal state machine.
         """
-        return self._vrf_state_machine().run(module_args, strategy=strategy, defer_deploy=defer_deploy)
+        self._trace(
+            "state_machine_with_attachments_start",
+            fabric_name=(strategy or self.strategy).fabric_name,
+            strategy=(strategy or self.strategy).__class__.__name__,
+            state=module_args.get("state"),
+            config_count=len(module_args.get("config") or []),
+            defer_deploy=defer_deploy,
+        )
+        try:
+            result = self._vrf_state_machine().run(module_args, strategy=strategy, defer_deploy=defer_deploy)
+        except Exception as exc:
+            self._trace("state_machine_with_attachments_error", error=repr(exc), exception=type(exc).__name__)
+            raise
+        self._trace("state_machine_with_attachments_end", changed=result.get("changed"), failed=result.get("failed"))
+        return result
 
     def _run_overridden_state_machine_with_attachments(
         self,

@@ -1031,8 +1031,9 @@ def test_vrf_workflow_coordinator_00070_deleted_deploys_before_delete():
     )
     call_order = []
 
-    def detach(_args, _strategy):
+    def detach(_args, _strategy, vrf_names=None):
         call_order.append("detach")
+        assert vrf_names == ["ansible-msd-vrf"]
         return {"deploy_targets": {"ansible-msd-vrf": {"SERIAL1"}}}
 
     def deploy(_args, _strategy, payload):
@@ -1040,8 +1041,9 @@ def test_vrf_workflow_coordinator_00070_deleted_deploys_before_delete():
         assert payload == {"vrfNames": ["ansible-msd-vrf"]}
         return {}
 
-    def wait(_args, _strategy):
+    def wait(_args, _strategy, vrf_names=None):
         call_order.append("wait")
+        assert vrf_names is None
 
     def delete(_args, strategy=None):
         call_order.append("delete")
@@ -1059,6 +1061,11 @@ def test_vrf_workflow_coordinator_00070_deleted_deploys_before_delete():
     object.__setattr__(coordinator, "_wait_for_vrfs_delete_ready", wait)
     object.__setattr__(coordinator, "_run_state_machine", delete)
     object.__setattr__(coordinator, "_ensure_vrfs_have_no_networks", lambda *_args, **_kwargs: None)
+    object.__setattr__(
+        coordinator,
+        "_query_current_vrfs",
+        lambda *_args, **_kwargs: [{"vrfName": "ansible-msd-vrf"}],
+    )
 
     result = coordinator._run_state_machine_with_attachments(
         dict(module_args),
@@ -1068,6 +1075,60 @@ def test_vrf_workflow_coordinator_00070_deleted_deploys_before_delete():
     assert call_order == ["detach", "deploy", "wait", "delete"]
     assert result["changed"] is True
     assert "_deferred_deploy_payloads" not in result
+
+
+def test_vrf_workflow_coordinator_deleted_absent_vrf_skips_detach_and_deploy():
+    """
+    # Summary
+
+    Verify targeted state=deleted does not query attachments or deploy when
+    every requested VRF is already absent.
+    """
+    module_args = {
+        "fabric_name": "msd_p",
+        "state": "deleted",
+        "output_level": "debug",
+        "config": [{"vrf_name": "already-absent-vrf"}],
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_ParentStrategy(),
+    )
+    call_order = []
+
+    def delete(_args, strategy=None):
+        call_order.append("delete")
+        assert strategy is not None
+        return {
+            "changed": False,
+            "output_level": "debug",
+            "before": [],
+            "after": [],
+            "diff": [],
+        }
+
+    object.__setattr__(coordinator, "_query_current_vrfs", lambda *_args, **_kwargs: [])
+    object.__setattr__(
+        coordinator,
+        "_ensure_vrfs_have_no_networks",
+        lambda *_args, **_kwargs: (_sentinel for _sentinel in ()).throw(AssertionError("absent VRF must not run dependency checks")),
+    )
+    object.__setattr__(
+        coordinator,
+        "_apply_deleted_attachment_phase",
+        lambda *_args, **_kwargs: (_sentinel for _sentinel in ()).throw(AssertionError("absent VRF must not detach")),
+    )
+    object.__setattr__(
+        coordinator,
+        "_deploy_vrf_attachments",
+        lambda *_args, **_kwargs: (_sentinel for _sentinel in ()).throw(AssertionError("absent VRF must not deploy")),
+    )
+    object.__setattr__(coordinator, "_run_state_machine", delete)
+
+    result = coordinator._run_state_machine_with_attachments(dict(module_args))
+
+    assert call_order == ["delete"]
+    assert result["changed"] is False
 
 
 def test_vrf_workflow_coordinator_00075_deleted_empty_config_deletes_state_machine_existing():
@@ -1319,8 +1380,9 @@ def test_vrf_workflow_coordinator_check_mode_deleted_skips_deploy_and_wait():
     )
     call_order = []
 
-    def detach(_args, _strategy):
+    def detach(_args, _strategy, vrf_names=None):
         call_order.append("detach")
+        assert vrf_names == ["ansible-msd-vrf"]
         return {"deploy_targets": {"ansible-msd-vrf": {"SERIAL1"}}}
 
     def deploy(*_args):
@@ -1345,6 +1407,11 @@ def test_vrf_workflow_coordinator_check_mode_deleted_skips_deploy_and_wait():
     object.__setattr__(coordinator, "_wait_for_vrfs_delete_ready", wait)
     object.__setattr__(coordinator, "_run_state_machine", delete)
     object.__setattr__(coordinator, "_ensure_vrfs_have_no_networks", lambda *_args, **_kwargs: None)
+    object.__setattr__(
+        coordinator,
+        "_query_current_vrfs",
+        lambda *_args, **_kwargs: [{"vrfName": "ansible-msd-vrf"}],
+    )
 
     result = coordinator._run_state_machine_with_attachments(dict(module_args))
 

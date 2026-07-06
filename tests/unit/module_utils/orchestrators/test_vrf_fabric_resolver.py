@@ -31,13 +31,17 @@ class _ND:
 
 
 class _Connection:
-    def __init__(self, responses):
+    def __init__(self, responses, options=None):
         self.responses = responses
+        self.options = options or {}
         self.calls = []
 
     def send_request(self, method, path):
         self.calls.append({"path": path, "method": method})
         return self.responses.get(path, {"status": 404, "body": {}})
+
+    def get_option(self, name):
+        return self.options.get(name)
 
     def pop_messages(self):
         return []
@@ -58,10 +62,36 @@ class _MSDND(_ND):
 
     def request(self, path, method="GET", **kwargs):
         self.calls.append({"path": path, "method": method, "kwargs": kwargs})
+        if path == "/api/v1/manage/fabrics/msd_p":
+            return {"name": "msd_p", "category": "fabricGroup", "management": {"type": "vxlan"}}
         if path == "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/fabrics/msd/fabric-associations":
             return [
                 {"fabricName": "msd_p", "fabricType": "MSD", "fabricState": "active"},
                 {"fabricName": "nacfab", "fabricType": "VXLAN", "fabricState": "member", "fabricParent": "msd_p"},
+            ]
+        return {}
+
+
+class _ChildND(_ND):
+    def __init__(self, member_parent, member_name, member_probe_body):
+        super().__init__()
+        self.member_parent = member_parent
+        self.member_name = member_name
+        self.httpapi_logs = []
+        self.connection = _Connection(
+            {
+                f"/api/v1/oneManage/manage/fabrics/{member_parent}/members": member_probe_body,
+            }
+        )
+
+    def request(self, path, method="GET", **kwargs):
+        self.calls.append({"path": path, "method": method, "kwargs": kwargs})
+        if path == f"/api/v1/manage/fabrics/{self.member_name}":
+            return {"name": self.member_name, "category": "fabric", "management": {"type": "vxlanIbgp"}}
+        if path == "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/fabrics/msd/fabric-associations":
+            return [
+                {"fabricName": self.member_parent, "fabricType": "MSD", "fabricState": "msd", "fabricParent": "None"},
+                {"fabricName": self.member_name, "fabricType": "Switch_Fabric", "fabricState": "member", "fabricParent": self.member_parent},
             ]
         return {}
 
@@ -107,6 +137,26 @@ def test_vrf_fabric_resolver_00030_mcfg_detection_uses_schema_backed_onemanage_r
     ]
 
 
+def test_vrf_fabric_resolver_00031_mcfg_detection_uses_httpapi_connection_probe():
+    nd = _ND()
+    nd.httpapi_logs = []
+    nd.connection = _Connection(
+        {
+            "/api/v1/oneManage/manage/fabrics/MCFG_C/vrfs?max=1": {
+                "status": 200,
+                "body": {"vrfs": [], "meta": {"total": 0, "remaining": 0}},
+            }
+        },
+    )
+    resolver = VrfFabricResolver(nd_module=nd, fabric_name="MCFG_C")
+
+    fabric_type, fabric_data = resolver._resolve_fabric_type()
+
+    assert fabric_type == "multicluster_parent"
+    assert fabric_data == {"fabricName": "MCFG_C", "fabricType": "MFD", "fabricState": "active"}
+    assert [call["path"] for call in nd.connection.calls] == ["/api/v1/oneManage/manage/fabrics/MCFG_C/vrfs?max=1"]
+
+
 def test_vrf_fabric_resolver_00040_standalone_detection_does_not_probe_onemanage():
     nd = _ND()
     resolver = VrfFabricResolver(nd_module=nd, fabric_name="fab1")
@@ -121,7 +171,7 @@ def test_vrf_fabric_resolver_00040_standalone_detection_does_not_probe_onemanage
     ]
 
 
-def test_vrf_fabric_resolver_00050_msd_detection_does_not_probe_onemanage():
+def test_vrf_fabric_resolver_00050_msd_detection_falls_back_when_onemanage_unavailable():
     nd = _MSDND()
     resolver = VrfFabricResolver(nd_module=nd, fabric_name="msd_p")
 
@@ -132,9 +182,56 @@ def test_vrf_fabric_resolver_00050_msd_detection_does_not_probe_onemanage():
         "fabricName": "msd_p",
         "fabricType": "MSD",
         "fabricState": "active",
-        "members": [{"fabricName": "nacfab", "fabricType": "VXLAN", "fabricState": "member"}],
+        "fabricParent": None,
+        "members": [{"fabricName": "nacfab", "fabricType": "VXLAN", "fabricState": "member", "fabricParent": "msd_p"}],
     }
     assert [call["path"] for call in nd.calls] == [
         "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/fabrics/msd/fabric-associations",
+        "/api/v1/manage/fabrics/msd_p",
     ]
-    assert nd.connection.calls == []
+    assert [call["path"] for call in nd.connection.calls] == [
+        "/api/v1/oneManage/manage/fabrics/msd_p/vrfs?max=1",
+    ]
+
+
+def test_vrf_fabric_resolver_00060_mcfg_child_uses_parent_onemanage_members_cluster():
+    nd = _ChildND(
+        "MCFG_C",
+        "nacfab",
+        {
+            "status": 200,
+            "body": {"fabrics": [{"name": "nacfab", "clusterName": "ND42-REL", "fabricGroupName": "MCFG_C", "type": "vxlanIbgp"}]},
+        },
+    )
+    resolver = VrfFabricResolver(nd_module=nd, fabric_name="nacfab")
+
+    fabric_type, fabric_data = resolver._resolve_fabric_type()
+
+    assert fabric_type == "multicluster_child"
+    assert fabric_data["fabricName"] == "nacfab"
+    assert fabric_data["fabricParent"] == "MCFG_C"
+    assert fabric_data["clusterName"] == "ND42-REL"
+    assert [call["path"] for call in nd.connection.calls] == ["/api/v1/oneManage/manage/fabrics/MCFG_C/members"]
+
+
+def test_vrf_fabric_resolver_00070_msd_child_falls_back_when_parent_onemanage_unavailable():
+    nd = _ChildND(
+        "msd_p",
+        "AK-VXLAN",
+        {
+            "status": 500,
+            "body": {"code": 500, "message": "this API is allowed only for remote user"},
+        },
+    )
+    resolver = VrfFabricResolver(nd_module=nd, fabric_name="AK-VXLAN")
+
+    fabric_type, fabric_data = resolver._resolve_fabric_type()
+
+    assert fabric_type == "multisite_child"
+    assert fabric_data == {
+        "fabricName": "AK-VXLAN",
+        "fabricType": "Switch_Fabric",
+        "fabricState": "member",
+        "fabricParent": "msd_p",
+    }
+    assert [call["path"] for call in nd.connection.calls] == ["/api/v1/oneManage/manage/fabrics/msd_p/members"]
