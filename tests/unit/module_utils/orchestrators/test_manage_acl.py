@@ -169,7 +169,9 @@ def test_manage_acl_00030() -> None:
         result = instance.query_all()
 
     assert rest_send.verb == HttpVerbEnum.GET.value
-    assert rest_send.path.endswith("/accessControlLists")
+    assert "/accessControlLists" in rest_send.path
+    assert "max=100" in rest_send.path
+    assert "offset=0" in rest_send.path
     assert isinstance(result, list)
     assert len(result) == 1
     assert result[0]["name"] == "ACL-IPV4-WEB"
@@ -202,6 +204,86 @@ def test_manage_acl_00040() -> None:
         result = instance.query_all()
 
     assert result == []
+
+
+def test_manage_acl_00035(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify ``query_all`` follows offset pagination across multiple pages and
+    stops on the first short (< page size) page, returning every ACL.
+
+    ## Test
+
+    - With a page size of 2, three GETs are issued (offset 0, 2, 4).
+    - Pages 1 and 2 are full (2 rows) so the walk continues; page 3 is short
+      (1 row) so it terminates.
+    - All 5 ACLs across the three pages are collected, in order.
+    - The final request carries ``max``/``offset`` reflecting the last page.
+
+    ## Classes and Methods
+
+    - ManageAclOrchestrator.query_all
+    """
+    monkeypatch.setattr(ManageAclOrchestrator, "query_all_page_size", 2)
+
+    def responses():
+        yield responses_manage_acl("acls_page_1")
+        yield responses_manage_acl("acls_page_2")
+        yield responses_manage_acl("acls_page_3")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = ManageAclOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert isinstance(result, list)
+    assert [row["name"] for row in result] == [
+        "ACL-PAGE-1",
+        "ACL-PAGE-2",
+        "ACL-PAGE-3",
+        "ACL-PAGE-4",
+        "ACL-PAGE-5",
+    ]
+    # Last request was the short page at offset 4.
+    assert "max=2" in rest_send.path
+    assert "offset=4" in rest_send.path
+
+
+def test_manage_acl_00036(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify ``query_all`` cannot loop forever when the controller ignores
+    ``offset`` and keeps returning the same full page.
+
+    ## Test
+
+    - With a page size of 2, page 1 is full; page 2 is also full but its rows
+      duplicate page 1 (no new names).
+    - The de-duplication guard detects zero new rows and stops after page 2.
+    - Only the two unique ACLs are returned (duplicates dropped).
+
+    ## Classes and Methods
+
+    - ManageAclOrchestrator.query_all
+    """
+    monkeypatch.setattr(ManageAclOrchestrator, "query_all_page_size", 2)
+
+    def responses():
+        yield responses_manage_acl("acls_page_1")
+        yield responses_manage_acl("acls_dup_page")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = ManageAclOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert [row["name"] for row in result] == ["ACL-PAGE-1", "ACL-PAGE-2"]
 
 
 def test_manage_acl_00050() -> None:
