@@ -290,67 +290,96 @@ class AclModel(NDBaseModel):
         """
         Validate semantic correctness of every entry and enforce unique
         sequence numbers within the ACL.
+
+        All problems are collected and reported together in a single error. 
+        The complete set of duplicated sequence numbers is reported,
+        not just the first collision.
         """
         entries = self.entries or []
+        errors: list[str] = []
         seen_sequence_numbers: set[int] = set()
-
-        for idx, entry in enumerate(entries):
+        duplicate_sequence_numbers: set[int] = set()
+        for entry in entries:
             if entry.sequence_number in seen_sequence_numbers:
-                raise ValueError(f"entries[{idx}].sequenceNumber '{entry.sequence_number}' is duplicated. Sequence numbers must be unique within an ACL.")
+                duplicate_sequence_numbers.add(entry.sequence_number)
             seen_sequence_numbers.add(entry.sequence_number)
-            self._validate_entry(idx, entry)
+        if duplicate_sequence_numbers:
+            duplicates = ", ".join(str(number) for number in sorted(duplicate_sequence_numbers))
+            errors.append(f"sequenceNumber values {duplicates} are duplicated. Sequence numbers must be unique within an ACL.")
+
+        # Collect every entry's semantic errors instead of stopping at the first.
+        for idx, entry in enumerate(entries):
+            errors.extend(self._validate_entry(idx, entry))
+
+        if errors:
+            raise ValueError("; ".join(errors))
 
         return self
 
     @staticmethod
-    def _validate_entry(idx: int, entry: "AclEntryModel") -> None:
-        """Validate a single ACL entry's field combination."""
+    def _validate_entry(idx: int, entry: "AclEntryModel") -> list[str]:
+        """
+        Validate a single ACL entry's field combination and return a list of
+        error messages (empty when the entry is valid). Collecting rather than
+        raising lets the caller aggregate errors across all entries.
+        """
+        errors: list[str] = []
         action = str(entry.action)
 
         if action == "remark":
             if not entry.remark_comment:
-                raise ValueError(f"entries[{idx}]: 'remark_comment' is required when action is 'remark'.")
-            return
+                errors.append(f"entries[{idx}]: 'remark_comment' is required when action is 'remark'.")
+            return errors
 
         for field_name in ("protocol", "src", "dst"):
             if getattr(entry, field_name) is None:
-                raise ValueError(f"entries[{idx}]: '{field_name}' is required for permit/deny entries.")
+                errors.append(f"entries[{idx}]: '{field_name}' is required for permit/deny entries.")
 
-        protocol = str(entry.protocol)
-        if protocol == "custom" and entry.custom_protocol is None:
-            raise ValueError(f"entries[{idx}]: 'custom_protocol' is required when protocol is 'custom'.")
+        # Protocol-dependent checks only apply when a protocol was supplied; when
+        # it is missing the 'required for permit/deny' error above already covers it.
+        if entry.protocol is not None:
+            protocol = str(entry.protocol)
+            if protocol == "custom" and entry.custom_protocol is None:
+                errors.append(f"entries[{idx}]: 'custom_protocol' is required when protocol is 'custom'.")
 
-        if protocol in ("tcp", "udp"):
-            AclModel._validate_port_options(idx, entry, "src")
-            AclModel._validate_port_options(idx, entry, "dst")
+            if protocol in ("tcp", "udp"):
+                errors.extend(AclModel._validate_port_options(idx, entry, "src"))
+                errors.extend(AclModel._validate_port_options(idx, entry, "dst"))
 
-        if entry.icmp_option is not None and protocol != "icmp":
-            raise ValueError(f"entries[{idx}]: 'icmp_option' is only valid when protocol is 'icmp'.")
-        if entry.tcp_option is not None and protocol != "tcp":
-            raise ValueError(f"entries[{idx}]: 'tcp_option' is only valid when protocol is 'tcp'.")
+            if entry.icmp_option is not None and protocol != "icmp":
+                errors.append(f"entries[{idx}]: 'icmp_option' is only valid when protocol is 'icmp'.")
+            if entry.tcp_option is not None and protocol != "tcp":
+                errors.append(f"entries[{idx}]: 'tcp_option' is only valid when protocol is 'tcp'.")
+
+        return errors
 
     @staticmethod
-    def _validate_port_options(idx: int, entry: "AclEntryModel", prefix: str) -> None:
-        """Validate port operator and range consistency for one direction."""
+    def _validate_port_options(idx: int, entry: "AclEntryModel", prefix: str) -> list[str]:
+        """
+        Validate port operator and range consistency for one direction and
+        return a list of error messages (empty when valid).
+        """
+        errors: list[str] = []
         action = getattr(entry, f"{prefix}_port_action")
         if action is None:
-            return
+            return errors
         action = str(action)
 
         if action == "portRange":
             start = getattr(entry, f"{prefix}_port_range_start")
             end = getattr(entry, f"{prefix}_port_range_end")
             if start is None or end is None:
-                raise ValueError(
+                errors.append(
                     f"entries[{idx}]: '{prefix}_port_range_start' and '{prefix}_port_range_end' are required when {prefix}_port_action is 'port_range'."
                 )
             # Ports may be numeric or service names (e.g. 'www'); only enforce
             # start <= end ordering when both endpoints are numeric.
-            if str(start).isdigit() and str(end).isdigit() and int(start) > int(end):
-                raise ValueError(f"entries[{idx}]: '{prefix}_port_range_start' must be less than or equal to '{prefix}_port_range_end'.")
+            elif str(start).isdigit() and str(end).isdigit() and int(start) > int(end):
+                errors.append(f"entries[{idx}]: '{prefix}_port_range_start' must be less than or equal to '{prefix}_port_range_end'.")
         else:
             if getattr(entry, f"{prefix}_port") is None:
-                raise ValueError(f"entries[{idx}]: '{prefix}_port' is required when {prefix}_port_action is set.")
+                errors.append(f"entries[{idx}]: '{prefix}_port' is required when {prefix}_port_action is set.")
+        return errors
 
     # --- Argument Spec ---
 

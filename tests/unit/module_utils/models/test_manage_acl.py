@@ -787,3 +787,65 @@ def test_manage_acl_00220() -> None:
     assert entries["required"] is False
 
     assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
+
+
+def test_manage_acl_00230() -> None:
+    """
+    # Summary
+
+    Verify duplicate sequence-number validation reports the complete set of
+    duplicated sequence numbers, not just the first collision.
+
+    ## Test
+
+    - Entries with sequence numbers [10, 10, 20, 20] raise a single
+      ValidationError naming both 10 and 20.
+
+    ## Classes and Methods
+
+    - AclModel.validate_entries
+    """
+    bad_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    bad_config["entries"] = [
+        {"sequence_number": 10, "action": "permit", "protocol": "ip", "src": "any", "dst": "any"},
+        {"sequence_number": 10, "action": "deny", "protocol": "ip", "src": "any", "dst": "any"},
+        {"sequence_number": 20, "action": "permit", "protocol": "ip", "src": "any", "dst": "any"},
+        {"sequence_number": 20, "action": "deny", "protocol": "ip", "src": "any", "dst": "any"},
+    ]
+    with pytest.raises(ValidationError) as exc_info:
+        AclModel(**bad_config)
+
+    message = str(exc_info.value)
+    assert "duplicated" in message
+    assert "10" in message
+    assert "20" in message
+
+
+def test_manage_acl_00240() -> None:
+    """
+    # Summary
+
+    Verify entry validation aggregates errors across all entries instead of
+    failing on the first, so multiple distinct problems are reported together.
+
+    ## Test
+
+    - A remark entry missing remark_comment and a permit entry missing
+      protocol/src/dst raise a single ValidationError containing both messages.
+
+    ## Classes and Methods
+
+    - AclModel.validate_entries
+    - AclModel._validate_entry
+    """
+    bad_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    bad_config["entries"] = [
+        {"sequence_number": 10, "action": "remark"},
+        {"sequence_number": 20, "action": "permit"},
+    ]
+    with pytest.raises(ValidationError) as exc_info:
+        AclModel(**bad_config)
+
+    message = str(exc_info.value)
+    assert "remark_comment" in message
+    assert "required for permit/deny" in message
