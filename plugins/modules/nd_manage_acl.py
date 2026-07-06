@@ -213,7 +213,10 @@ notes:
 - The following Cisco ND route-control ACL constructs are B(not) representable, as the
   ND Manage ACL API does not expose equivalent properties, top-level and entry-level
   C(fragments), C(ignore routable), C(statistics per-entry), and C(addrgroup) for IPv4,
-  and C(extension-header) and C(addrgroup) for IPv6. 
+  and C(extension-header) and C(addrgroup) for IPv6.
+  A NaC migration from generated C(dcnm_policy) or freeform ACL templates that relies on these
+  constructs cannot be fully expressed through this module until Nexus Dashboard exposes the
+  corresponding capability.
 """
 
 EXAMPLES = r"""
@@ -303,6 +306,101 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed, or in check mode would change, the fabric configuration.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The existing ACL configuration before the module ran, structured the same as the O(config) parameter.
+  - An empty list when no matching ACL configuration existed.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - name: ACL-IPV4-WEB
+    type: ipv4
+    description: IPv4 web ACL
+    entries:
+    - sequence_number: 10
+      action: permit
+      protocol: tcp
+      src: any
+      dst: 10.0.0.0/24
+      dst_port_action: equal_to
+      dst_port: "80"
+after:
+  description:
+  - The ACL configuration after the module ran, structured the same as the O(config) parameter.
+  - This reflects the module's predicted post-write state (the intended configuration merged into
+    the existing state); it is not re-read from the controller after the write.
+  - In check mode, the configuration that would result had the module run outside of check mode.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - name: ACL-IPV4-WEB
+    type: ipv4
+    description: IPv4 web ACL
+    entries:
+    - sequence_number: 10
+      action: permit
+      protocol: tcp
+      src: any
+      dst: 10.0.0.0/24
+      dst_port_action: equal_to
+      dst_port: "80"
+    - sequence_number: 20
+      action: deny
+      protocol: ip
+      src: any
+      dst: any
+diff:
+  description: The per-ACL difference between C(before) and C(after).
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - name: ACL-IPV4-WEB
+    type: ipv4
+    entries:
+    - sequence_number: 20
+      action: deny
+      protocol: ip
+      src: any
+      dst: any
+proposed:
+  description: The ACL configuration the module proposed to apply, before reconciliation with the existing state.
+  returned: when O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+  - name: ACL-IPV4-WEB
+    type: ipv4
+    entries:
+    - sequence_number: 20
+      action: deny
+      protocol: ip
+      src: any
+      dst: any
+logs:
+  description: Internal diagnostic log messages collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample:
+  - "Querying existing ACL configuration"
+msg:
+  description: A human-readable error message, present only when the module fails.
+  returned: on failure
+  type: str
+  sample: "ACL 'ACL-IPV4-WEB': 'type, entries' are required for state 'merged'."
 """
 
 import logging
