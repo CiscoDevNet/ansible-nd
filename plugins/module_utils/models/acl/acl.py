@@ -291,11 +291,14 @@ class AclModel(NDBaseModel):
         Validate semantic correctness of every entry and enforce unique
         sequence numbers within the ACL.
 
-        All problems are collected and reported together in a single error. 
+        All problems are collected and reported together in a single error.
         The complete set of duplicated sequence numbers is reported,
         not just the first collision.
         """
         entries = self.entries or []
+        if not entries:
+            return self
+
         errors: list[str] = []
         seen_sequence_numbers: set[int] = set()
         duplicate_sequence_numbers: set[int] = set()
