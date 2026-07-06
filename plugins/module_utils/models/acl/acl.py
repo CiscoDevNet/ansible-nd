@@ -285,24 +285,29 @@ class AclModel(NDBaseModel):
                 raise ValueError(f"ACL '{self.name}': '{', '.join(missing)}' {verb} required for state '{state}'.")
         return self
 
-    @model_validator(mode="after")
-    def validate_entries(self) -> "AclModel":
+    @field_validator("entries")
+    @classmethod
+    def validate_entries(cls, entries: "list[AclEntryModel] | None") -> "list[AclEntryModel] | None":
         """
         Validate semantic correctness of every entry and enforce unique
         sequence numbers within the ACL.
+
+        This only inspects the ``entries`` field, so it is a field_validator
+        rather than a model_validator; its errors then aggregate with any other
+        field-level errors in a single ValidationError.
 
         All problems are collected and reported together in a single error.
         The complete set of duplicated sequence numbers is reported,
         not just the first collision.
         """
-        entries = self.entries or []
-        if not entries:
-            return self
+        entry_list = entries or []
+        if not entry_list:
+            return entries
 
         errors: list[str] = []
         seen_sequence_numbers: set[int] = set()
         duplicate_sequence_numbers: set[int] = set()
-        for entry in entries:
+        for entry in entry_list:
             if entry.sequence_number in seen_sequence_numbers:
                 duplicate_sequence_numbers.add(entry.sequence_number)
             seen_sequence_numbers.add(entry.sequence_number)
@@ -311,13 +316,13 @@ class AclModel(NDBaseModel):
             errors.append(f"sequenceNumber values {duplicates} are duplicated. Sequence numbers must be unique within an ACL.")
 
         # Collect every entry's semantic errors instead of stopping at the first.
-        for idx, entry in enumerate(entries):
-            errors.extend(self._validate_entry(idx, entry))
+        for idx, entry in enumerate(entry_list):
+            errors.extend(cls._validate_entry(idx, entry))
 
         if errors:
             raise ValueError("; ".join(errors))
 
-        return self
+        return entries
 
     @staticmethod
     def _validate_entry(idx: int, entry: "AclEntryModel") -> list[str]:
