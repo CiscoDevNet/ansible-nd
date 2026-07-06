@@ -62,20 +62,20 @@ def test_manage_acl_00010() -> None:
 
     ## Test
 
-    - Entry can be created with sequence_number and action only
-    - Optional match/port fields default to None
+    - Entry can be created with the minimal set required for a permit entry
+    - Optional port fields default to None
 
     ## Classes and Methods
 
     - AclEntryModel.__init__()
     """
     with does_not_raise():
-        entry = AclEntryModel(sequence_number=10, action="permit")
+        entry = AclEntryModel(sequence_number=10, action="permit", protocol="ip", src="any", dst="any")
     assert entry.sequence_number == 10
     assert str(entry.action) == "permit"
-    assert entry.protocol is None
-    assert entry.src is None
-    assert entry.dst is None
+    assert str(entry.protocol) == "ip"
+    assert entry.src == "any"
+    assert entry.dst == "any"
     assert entry.src_port_action is None
     assert entry.dst_port_action is None
 
@@ -118,13 +118,16 @@ def test_manage_acl_00030() -> None:
     - AclEntryModel.normalize_port_action
     """
     with does_not_raise():
-        entry = AclEntryModel(sequence_number=10, action="permit", src_port_action="equal_to", src_port=80)
+        entry = AclEntryModel(sequence_number=10, action="permit", protocol="tcp", src="any", dst="any", src_port_action="equal_to", src_port=80)
     assert str(entry.src_port_action) == "equalTo"
 
     with does_not_raise():
         entry = AclEntryModel(
             sequence_number=20,
             action="permit",
+            protocol="tcp",
+            src="any",
+            dst="any",
             dst_port_action="port_range",
             dst_port_range_start=100,
             dst_port_range_end=200,
@@ -147,7 +150,7 @@ def test_manage_acl_00040() -> None:
     - AclEntryModel.normalize_port_action
     """
     with does_not_raise():
-        entry = AclEntryModel(sequence_number=10, action="permit", src_port_action="none")
+        entry = AclEntryModel(sequence_number=10, action="permit", protocol="tcp", src="any", dst="any", src_port_action="none")
     assert entry.src_port_action is None
 
 
@@ -166,7 +169,7 @@ def test_manage_acl_00050() -> None:
     - AclEntryModel.normalize_port_action
     """
     with does_not_raise():
-        entry = AclEntryModel(sequence_number=10, action="permit", src_port_action="equalTo", src_port=443)
+        entry = AclEntryModel(sequence_number=10, action="permit", protocol="tcp", src="any", dst="any", src_port_action="equalTo", src_port=443)
     assert str(entry.src_port_action) == "equalTo"
 
 
