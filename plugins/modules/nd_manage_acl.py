@@ -205,6 +205,15 @@ notes:
   O(config.entries.tcp_option) is only valid when O(config.entries.protocol) is C(tcp).
 - Port operators (O(config.entries.src_port_action) and O(config.entries.dst_port_action))
   are accepted in snake_case and stored/returned in the controller's native form.
+- Feature boundary. This module models the ACL match capability exposed by the Nexus
+  Dashboard Manage ACL API on 4.1.1. Per entry that is O(config.entries.action),
+  O(config.entries.protocol) (with O(config.entries.custom_protocol) for C(custom)),
+  O(config.entries.src) and O(config.entries.dst) addresses, source and destination port
+  operators and ranges, O(config.entries.icmp_option), and O(config.entries.tcp_option).
+- The following Cisco ND route-control ACL constructs are B(not) representable, as the
+  ND Manage ACL API does not expose equivalent properties, top-level and entry-level
+  C(fragments), C(ignore routable), C(statistics per-entry), and C(addrgroup) for IPv4,
+  and C(extension-header) and C(addrgroup) for IPv6. 
 """
 
 EXAMPLES = r"""
