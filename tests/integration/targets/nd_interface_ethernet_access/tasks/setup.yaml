@@ -1,0 +1,47 @@
+---
+# Pre-test cleanup for nd_interface_ethernet_access
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Called from main.yaml before the merged/replaced/overridden/deleted state
+# blocks. Resets the test ethernet interfaces to fabric defaults so each test
+# run starts from a known-clean state. The DEBUG tasks below provide
+# observability for the cleanup result and verify (via a check-mode merge probe)
+# that the cleanup actually emptied the interfaces' before-state on ND.
+
+- name: "SETUP: Remove test ethernet interfaces before state tests"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names: "{{ cleanup_interface_names }}"
+    state: deleted
+  register: setup_cleanup
+  tags: always
+
+- name: "DEBUG: Show cleanup result"
+  ansible.builtin.debug:
+    var: setup_cleanup
+  tags: always
+
+- name: "DEBUG: Re-query to see if interfaces are still present after cleanup"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+        config_data:
+          network_os:
+            policy:
+    state: merged
+  check_mode: true
+  register: debug_requery
+
+- name: "DEBUG: Show re-query result (check before list)"
+  ansible.builtin.debug:
+    msg: "Before count: {{ debug_requery.before | length }}, Eth1/41 in before: {{ debug_requery.before | selectattr('interface_name', 'equalto', 'Ethernet1/41') |
+  list | length }}"

@@ -2,15 +2,19 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
+from collections.abc import Sequence
 from functools import wraps
+from typing import Any, ClassVar, Dict, Generic, Optional, TypeVar
+
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
-from typing import ClassVar, Type, Optional, Generic, TypeVar, List
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
 ModelType = TypeVar("ModelType", bound=NDBaseModel)
 
@@ -36,31 +40,109 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         validate_assignment=True,
         populate_by_name=True,
         arbitrary_types_allowed=True,
+        # pydantic <2.10 defaults protected_namespaces to the whole `model_` prefix and applies the
+        # check even to ClassVar annotations, so `model_class` would raise NameError at class
+        # construction on user hosts running older pydantic 2.x. Pin pydantic >=2.10's narrower
+        # default rather than () so the collision guard still covers genuinely dangerous names.
+        protected_namespaces=("model_validate", "model_dump"),
     )
 
-    model_class: ClassVar[Type[NDBaseModel]] = NDBaseModel
+    model_class: ClassVar[type[NDBaseModel]] = NDBaseModel
     supports_bulk_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = False
 
     # NOTE: if not defined by subclasses, return an error as they are required
-    create_endpoint: Type[NDEndpointBaseModel]
-    update_endpoint: Type[NDEndpointBaseModel]
-    delete_endpoint: Type[NDEndpointBaseModel]
-    query_one_endpoint: Type[NDEndpointBaseModel]
-    query_all_endpoint: Type[NDEndpointBaseModel]
+    create_endpoint: type[NDEndpointBaseModel]
+    update_endpoint: type[NDEndpointBaseModel]
+    delete_endpoint: type[NDEndpointBaseModel]
+    query_one_endpoint: type[NDEndpointBaseModel]
+    query_all_endpoint: type[NDEndpointBaseModel]
 
     # NOTE: Conditionally required
-    create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = None
-    delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = None
+    create_bulk_endpoint: type[NDEndpointBaseModel] | None = None
+    delete_bulk_endpoint: type[NDEndpointBaseModel] | None = None
 
-    # NOTE: Module Field is always required
-    sender: NDModule
+    # REST infrastructure
+    rest_send: RestSend
+    results: Optional[Results] = None
+
+    def _register_api_call(self, path: str, verb: HttpVerbEnum, operation_type: OperationType, payload: Optional[Dict[str, Any]] = None) -> None:
+        """Register the most recent REST call with Results for observability."""
+        if self.results is None:
+            return
+        self.results.action = operation_type.value
+        self.results.operation_type = operation_type
+        self.results.path_current = path
+        self.results.verb_current = verb
+        self.results.payload_current = payload
+        self.results.response_current = self.rest_send.response_current
+        self.results.result_current = self.rest_send.result_current
+        self.results.diff_current = {}
+        # Tag write operations as verbosity 2 (shown at -vv),
+        # read operations as verbosity 3 (shown at -vvv).
+        self.results.verbosity_level_current = 3 if operation_type == OperationType.QUERY else 2
+        self.results.register_api_call()
+
+    def _request(
+        self,
+        path: str,
+        verb: HttpVerbEnum,
+        data: Optional[Dict[str, Any]] = None,
+        not_found_ok: bool = False,
+        operation_type: OperationType = OperationType.QUERY,
+    ) -> ResponseType:
+        """
+        # Summary
+
+        Send a REST request via RestSend and return the response DATA.
+
+        ## Raises
+
+        ### Exception
+
+        - If the request fails (non-success result from the controller).
+        - If `not_found_ok` is False and the controller returns a 404.
+        """
+        self.rest_send.path = path
+        self.rest_send.verb = verb
+        if data is not None:
+            self.rest_send.payload = data
+        self.rest_send.commit()
+
+        # Register with Results before success/error checks so that
+        # both successful and failed calls are captured for troubleshooting.
+        self._register_api_call(path, verb, operation_type, self.rest_send.committed_payload)
+
+        # Check not_found_ok before success because ResponseHandler treats
+        # GET 404 as success=True (found=False).  Without this early return,
+        # a GET 404 would fall through and return the raw 404 DATA body.
+        if not_found_ok and self.rest_send.return_code == 404:
+            return {}
+
+        if not self.rest_send.success:
+            raise Exception(f"Request failed {self.rest_send.error_summary}")
+
+        return self.rest_send.response_current.get("DATA", {})
+
+    def preflight(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Pre-mutation hook invoked by `NDStateMachine` before create/update operations — which are skipped in check
+        mode — so subclasses can validate the proposed set during a dry-run. Base implementation is a no-op;
+        interface orchestrators override to run capability preflight.
+
+        ## Raises
+
+        None
+        """
+        return
 
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.create_endpoint()
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=model_instance.to_payload())
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.CREATE)
         except Exception as e:
             raise Exception(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -68,7 +150,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.update_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=model_instance.to_payload())
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.UPDATE)
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -76,7 +158,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.delete_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, operation_type=OperationType.DELETE)
         except Exception as e:
             raise Exception(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -84,14 +166,14 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.query_one_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: Optional[ModelType] = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.query_all_endpoint()
-            result = self.sender.query_obj(api_endpoint.path)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
@@ -105,9 +187,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         return self
 
     @requires_bulk_support("supports_bulk_create")
-    def create_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
+    def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
         raise NotImplementedError
 
     @requires_bulk_support("supports_bulk_delete")
-    def delete_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
+    def delete_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
         raise NotImplementedError

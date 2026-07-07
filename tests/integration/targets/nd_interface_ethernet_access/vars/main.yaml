@@ -1,0 +1,139 @@
+---
+# Variables for nd_interface_ethernet_access integration tests.
+#
+# Override fabric_name and switch_ip in your inventory or extra-vars
+# to match a real ND 4.2 testbed.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
+test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
+
+# Ethernet interfaces used across tests.
+# Ethernet1/41 through Ethernet1/50 are reserved for these integration tests.
+# These interfaces must exist on the test switch and must NOT be port-channel members.
+
+# --- Base configs ---
+
+ethernet_41:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/41
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 100
+        bpdu_guard: enable
+        cdp: true
+        description: "Ansible integration test Ethernet1/41"
+        speed: auto
+
+ethernet_42_43:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/42
+    - Ethernet1/43
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 200
+        bpdu_guard: enable
+        cdp: true
+        description: "Ansible integration test access ports"
+        speed: auto
+
+ethernet_44:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/44
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 300
+        description: "Ansible integration test Ethernet1/44"
+
+# --- Updated configs for merge/replace tests ---
+
+ethernet_41_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/41
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 150
+        bpdu_guard: disable
+        cdp: false
+        description: "Updated Ethernet1/41 description"
+        speed: auto
+
+ethernet_42_43_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/42
+    - Ethernet1/43
+  config_data:
+    network_os:
+      policy:
+        admin_state: false
+        access_vlan: 250
+        description: "Updated access ports description"
+
+# --- Fan-out test: multiple interfaces sharing one config ---
+
+ethernet_45_46_47:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/45
+    - Ethernet1/46
+    - Ethernet1/47
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 400
+        bpdu_guard: enable
+        cdp: true
+        description: "Fan-out test access ports"
+        mtu: jumbo
+        speed: auto
+
+# --- Split-config test: different configs on the same switch in one task ---
+
+ethernet_split_49:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/49
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 500
+        description: "Split config item A"
+
+ethernet_split_50:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/50
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 600
+        description: "Split config item B"
+
+# --- Cleanup helper: all test interfaces ---
+
+cleanup_interface_names:
+  - Ethernet1/41
+  - Ethernet1/42
+  - Ethernet1/43
+  - Ethernet1/44
+  - Ethernet1/45
+  - Ethernet1/46
+  - Ethernet1/47
+  - Ethernet1/48
+  - Ethernet1/49
+  - Ethernet1/50

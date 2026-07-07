@@ -78,24 +78,13 @@
         }
     },
     "test_rest_send_00300a": {
-        "TEST_NOTES": ["First response in retry sequence - failure"],
-        "RETURN_CODE": 500,
-        "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/test/retry",
-        "MESSAGE": "Internal Server Error",
-        "DATA": {
-            "error": "Temporary error"
-        }
-    },
-    "test_rest_send_00300b": {
-        "TEST_NOTES": ["Second response in retry sequence - success"],
+        "TEST_NOTES": ["GET request in check_mode bypasses simulation and returns real response"],
         "RETURN_CODE": 200,
         "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/test/retry",
+        "REQUEST_PATH": "/api/v1/test/checkmode",
         "MESSAGE": "OK",
         "DATA": {
-            "status": "success",
-            "result": "data after retry"
+            "status": "success"
         }
     },
     "test_rest_send_00400a": {

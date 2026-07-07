@@ -40,6 +40,9 @@ options:
     - C(normal) means the standard output, incl. C(current) dict
     - C(info) adds informational output, incl. C(previous), C(proposed) and C(sent) dicts
     - C(debug) adds debugging output, incl. C(filter_string), C(method), C(response), C(status) and C(url) information
+    - Additionally, Ansible CLI verbosity flags control API call detail in module output.
+    - C(-vv) adds C(api_paths) and C(api_verbs) listing the endpoints called for write operations.
+    - C(-vvv) adds full controller detail including C(api_response), C(api_result), C(api_diff), C(api_metadata), and C(api_payload) for all operations.
     - If the value is not specified in the task, the value of environment variable C(ND_OUTPUT_LEVEL) will be used instead.
     type: str
     choices: [ debug, info, normal ]

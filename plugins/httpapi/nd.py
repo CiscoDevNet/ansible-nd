@@ -33,16 +33,15 @@ options:
     - name: ansible_httpapi_login_domain
 """
 
-import os
-import re
 import json
-import pickle
-import traceback
 import mimetypes
+import os
+import pickle
+import re
 import sys
 import tempfile
-from typing import Optional, Tuple
-from ansible.module_utils.six import PY3
+import traceback
+
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import ConnectionError
 from ansible.plugins.httpapi import HttpApiBase
@@ -503,17 +502,15 @@ class HttpApi(HttpApiBase):
         info.update(dict((k.lower(), v) for k, v in response.info().items()))
 
         # Don't be lossy, append header values for duplicate headers
-        # In Py2 there is nothing that needs done, py2 does this for us
-        if PY3:
-            temp_headers = {}
-            for name, value in response.headers.items():
-                # The same as above, lower case keys to match py2 behavior, and create more consistent results
-                name = name.lower()
-                if name in temp_headers:
-                    temp_headers[name] = ", ".join((temp_headers[name], value))
-                else:
-                    temp_headers[name] = value
-            info.update(temp_headers)
+        temp_headers = {}
+        for name, value in response.headers.items():
+            # Lower case keys to create more consistent results
+            name = name.lower()
+            if name in temp_headers:
+                temp_headers[name] = ", ".join((temp_headers[name], value))
+            else:
+                temp_headers[name] = value
+        info.update(temp_headers)
         return info
 
     def get_remote_file_io_stream(self, path, tmpdir, method="GET"):
