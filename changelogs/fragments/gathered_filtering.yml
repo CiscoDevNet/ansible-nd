@@ -1,0 +1,5 @@
+minor_changes:
+  - Add opt-in gathered-state filtering to the shared state machine, with final local matching and model-specific normalization hooks.
+  - Enable server-side Lucene candidate filtering for gathered loopback interfaces, including switch routing,
+    interface-name filtering, pagination, response deduplication, and final local matching for unsupported fields.
+  - Enable local login-ID filtering for the nd_local_user gathered state.

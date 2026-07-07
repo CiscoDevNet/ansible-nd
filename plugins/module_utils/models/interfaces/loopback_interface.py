@@ -26,6 +26,7 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -130,6 +131,10 @@ class LoopbackInterfaceModel(NDBaseModel):
     identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
 
+    # --- Gathered Filtering Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = True
+
     # --- Serialization Configuration ---
 
     payload_exclude_fields: ClassVar[set[str]] = {"switch_ip"}
@@ -157,6 +162,22 @@ class LoopbackInterfaceModel(NDBaseModel):
             return value.lower()
         return value
 
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """
+        Normalize a partial gathered-state filter.
+
+        Gathered filters are not complete LoopbackInterfaceModel instances, so
+        the normal Pydantic interface_name validator does not run against them.
+        """
+        normalized = deepcopy(filter_item)
+
+        interface_name = normalized.get("interface_name")
+        if isinstance(interface_name, str):
+            normalized["interface_name"] = interface_name.lower()
+
+        return normalized
+
     # --- Argument Spec ---
 
     @classmethod
@@ -175,10 +196,10 @@ class LoopbackInterfaceModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
-                    switch_ip=dict(type="str", required=True),
-                    interface_name=dict(type="str", required=True),
+                    switch_ip=dict(type="str"),
+                    interface_name=dict(type="str"),
                     config_data=dict(
                         type="dict",
                         options=dict(
@@ -206,6 +227,6 @@ class LoopbackInterfaceModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

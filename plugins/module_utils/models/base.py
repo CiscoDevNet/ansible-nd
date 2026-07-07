@@ -57,6 +57,29 @@ class NDBaseModel(BaseModel, ABC):
     identifiers: ClassVar[Optional[List[str]]] = None
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
 
+    # --- Gathered Filtering Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = False
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """
+        Normalize one gathered-state filter item.
+
+        The base implementation makes no changes. Models can override this
+        when filter values require module-specific normalization.
+        """
+        return filter_item
+
+    @classmethod
+    def matches_gathered_filter(
+        cls,
+        criteria: dict,
+        candidate: dict,
+    ) -> bool:
+        """Return whether a gathered candidate matches one filter item."""
+        return issubset(criteria, candidate)
+
     # --- Serialization Configuration ---
 
     exclude_from_diff: ClassVar[Set[str]] = set()

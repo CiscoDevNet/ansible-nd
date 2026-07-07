@@ -28,6 +28,9 @@ the seam the per-method capability tests in `test_base_interface.py` cannot: the
 
 from __future__ import absolute_import, annotations, division, print_function
 
+from copy import deepcopy
+from typing import ClassVar, Literal
+
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
@@ -41,6 +44,8 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import do
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
 from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
+import ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine as state_machine_module
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
 
 class _SpyLoopbackOrchestrator(LoopbackInterfaceOrchestrator):
@@ -464,3 +469,208 @@ def test_nd_state_machine_00180() -> None:
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert "create" not in names
     assert "create_bulk" not in names
+
+
+class _FilterModel(NDBaseModel):
+    """Small opted-in model used to exercise state-machine routing."""
+
+    identifiers: ClassVar[list[str] | None] = ["name"]
+    identifier_strategy: ClassVar[Literal["single"]] = "single"
+    supports_gathered_filtering: ClassVar[bool] = True
+
+    name: str
+    value: int | None = None
+
+    @classmethod
+    def get_argument_spec(cls) -> dict:
+        return {
+            "config": {
+                "type": "list",
+                "elements": "dict",
+                "options": {
+                    "name": {"type": "str"},
+                    "value": {"type": "int"},
+                },
+            }
+        }
+
+
+class _LegacyModel(_FilterModel):
+    """Model that deliberately keeps the pre-filtering state-machine path."""
+
+    supports_gathered_filtering: ClassVar[bool] = False
+
+
+class _FakeOrchestratorBase:
+    """Minimal orchestrator accepted through the instance-injection path."""
+
+    supports_bulk_create = False
+    supports_bulk_delete = False
+    supports_gathered_lucene_filtering = False
+
+    def __init__(self, model_class, response_data):
+        self.model_class = model_class
+        self.response_data = response_data
+        self.prepare_calls = []
+        self.query_calls = []
+        self.results = None
+
+    def query_all(self, **kwargs):
+        self.query_calls.append(deepcopy(kwargs))
+        return deepcopy(self.response_data)
+
+    def prepare_config_data(self, raw_config):
+        self.prepare_calls.append(deepcopy(raw_config))
+        return raw_config
+
+
+class _FakeRestSend:
+    """REST holder; no request is made by these state-machine tests."""
+
+    def __init__(self, params):
+        self.params = params
+        self.sender = None
+        self.response_handler = None
+
+
+class _FakeSender:
+    ansible_module = None
+
+
+class _FakeModule:
+    def __init__(self, state, config):
+        self.params = {
+            "state": state,
+            "config": config,
+            "output_level": "normal",
+        }
+        self.check_mode = False
+        self.no_log_values = set()
+
+
+def _build_state_machine(monkeypatch, model_class, state, config, server_filtering=False):
+    monkeypatch.setattr(state_machine_module, "NDBaseOrchestrator", _FakeOrchestratorBase)
+    monkeypatch.setattr(state_machine_module, "RestSend", _FakeRestSend)
+    monkeypatch.setattr(state_machine_module, "Sender", _FakeSender)
+
+    response_data = [
+        {"name": "wanted", "value": 10},
+        {"name": "other", "value": 20},
+    ]
+    orchestrator = _FakeOrchestratorBase(model_class, response_data)
+    orchestrator.supports_gathered_lucene_filtering = server_filtering
+    machine = NDStateMachine(
+        module=_FakeModule(state=state, config=config),
+        model_orchestrator=orchestrator,
+    )
+    return machine, orchestrator
+
+
+def test_gathered_filtering_filters_existing_and_keeps_filters_out_of_proposed(monkeypatch):
+    machine, orchestrator = _build_state_machine(
+        monkeypatch,
+        model_class=_FilterModel,
+        state="gathered",
+        config=[{"name": "wanted"}],
+    )
+
+    assert machine.before.to_ansible_config() == [{"name": "wanted", "value": 10}]
+    assert machine.proposed.to_ansible_config() == []
+    assert orchestrator.prepare_calls == [[]]
+    assert orchestrator.query_calls == [{}]
+    assert machine.output.format()["gathered"] == [{"name": "wanted", "value": 10}]
+
+
+def test_opted_in_model_preserves_write_state_config_flow(monkeypatch):
+    machine, orchestrator = _build_state_machine(
+        monkeypatch,
+        model_class=_FilterModel,
+        state="merged",
+        config=[{"name": "wanted", "value": 10}],
+    )
+
+    assert machine.before.to_ansible_config() == [
+        {"name": "wanted", "value": 10},
+        {"name": "other", "value": 20},
+    ]
+    assert machine.proposed.to_ansible_config() == [{"name": "wanted", "value": 10}]
+    assert orchestrator.prepare_calls == [[{"name": "wanted", "value": 10}]]
+    assert orchestrator.query_calls == [{}]
+
+
+def test_model_without_opt_in_preserves_legacy_gathered_flow(monkeypatch):
+    machine, orchestrator = _build_state_machine(
+        monkeypatch,
+        model_class=_LegacyModel,
+        state="gathered",
+        config=[{"name": "wanted"}],
+    )
+
+    assert machine.before.to_ansible_config() == [
+        {"name": "wanted", "value": 10},
+        {"name": "other", "value": 20},
+    ]
+    assert machine.proposed.to_ansible_config() == [{"name": "wanted"}]
+    assert orchestrator.prepare_calls == [[{"name": "wanted"}]]
+    assert orchestrator.query_calls == [{}]
+
+
+def test_gathered_filters_are_forwarded_when_model_and_orchestrator_opt_in(monkeypatch):
+    config = [{"name": "wanted"}]
+    machine, orchestrator = _build_state_machine(
+        monkeypatch,
+        model_class=_FilterModel,
+        state="gathered",
+        config=config,
+        server_filtering=True,
+    )
+
+    assert orchestrator.query_calls == [{"gathered_filters": config}]
+    # Server-side filtering remains candidate reduction; local matching is
+    # still authoritative and keeps criteria out of proposed configuration.
+    assert machine.before.to_ansible_config() == [{"name": "wanted", "value": 10}]
+    assert machine.proposed.to_ansible_config() == []
+
+
+def test_empty_gathered_config_is_forwarded_explicitly(monkeypatch):
+    machine, orchestrator = _build_state_machine(
+        monkeypatch,
+        model_class=_FilterModel,
+        state="gathered",
+        config=[],
+        server_filtering=True,
+    )
+
+    assert orchestrator.query_calls == [{"gathered_filters": []}]
+    assert machine.before.to_ansible_config() == [
+        {"name": "wanted", "value": 10},
+        {"name": "other", "value": 20},
+    ]
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "deleted"])
+def test_write_states_never_receive_gathered_filters(monkeypatch, state):
+    machine, orchestrator = _build_state_machine(
+        monkeypatch,
+        model_class=_FilterModel,
+        state=state,
+        config=[{"name": "wanted", "value": 10}],
+        server_filtering=True,
+    )
+
+    assert machine.state == state
+    assert orchestrator.query_calls == [{}]
+
+
+def test_legacy_model_does_not_forward_filters_even_when_orchestrator_opts_in(monkeypatch):
+    machine, orchestrator = _build_state_machine(
+        monkeypatch,
+        model_class=_LegacyModel,
+        state="gathered",
+        config=[{"name": "wanted"}],
+        server_filtering=True,
+    )
+
+    assert machine.state == "gathered"
+    assert orchestrator.query_calls == [{}]
+
