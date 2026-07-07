@@ -11,10 +11,10 @@ ansible_httpapi_use_proxy=False
 ansible_httpapi_login_domain=local
 ansible_command_timeout=120
 ansible_connect_timeout=60
-ansible_user=admin
-ansible_password=idgeR09!
-nd_test_fabric_name=VXLAN_Fabric
-nd_test_switch_ip=10.122.84.59
-nd_test_switch_id=982YGMKUY2B
+ansible_user=CHANGE_ME
+ansible_password=CHANGE_ME
+nd_test_fabric_name=CHANGE_ME
+nd_test_switch_ip=192.0.2.11
+nd_test_switch_id=CHANGE_ME
 
 
