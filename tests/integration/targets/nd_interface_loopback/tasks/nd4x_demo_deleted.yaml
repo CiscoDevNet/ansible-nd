@@ -1,0 +1,53 @@
+---
+- name: Run standardized nd_interface_loopback deleted tests
+  block:
+    - name: "DELETED SETUP: Create loopback100"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_100 }}"
+        state: merged
+
+    - name: "DELETED: Delete loopback100 using standard runner"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+        expected:
+          check_mode_changed: true
+          apply_changed: true
+          idempotency: true
+          failed: false
+        nd_queries:
+          - name: Validate loopback100 absent from ND API
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/loopback100"
+            method: get
+            expected_status: 404
+            expected_failed: true
+        idempotency_retries: 6
+        idempotency_delay: 10
+      register: deleted_loopback_100
+
+    - name: "DELETED VERIFY: Verify loopback100 absent"
+      ansible.builtin.assert:
+        that:
+          - deleted_loopback_100.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback100')
+            | list
+            | length == 0
+
+  always:
+    - name: "DELETED CLEANUP: Ensure loopback100 absent"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+        state: deleted

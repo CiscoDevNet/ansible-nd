@@ -1,0 +1,76 @@
+---
+# Demo overridden state test using the shared ND 4.x action plugin pattern.
+
+- name: Run standardized nd_interface_loopback overridden tests
+  block:
+    - name: "OVERRIDDEN SETUP: Create loopback100 and loopback101"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_100 }}"
+          - "{{ loopback_101 }}"
+        state: merged
+
+    - name: "OVERRIDDEN: Override loopbacks using standard runner"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_100_updated }}"
+        expected:
+          check_mode_changed: true
+          apply_changed: true
+          idempotency: true
+          failed: false
+        nd_queries:
+          - name: Validate loopback100 updated after overridden
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/loopback100"
+            method: get
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: "loopback100"
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.100.2"
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: "Updated loopback100 description"
+        idempotency_retries: 6
+        idempotency_delay: 10
+      register: overridden_loopbacks
+
+    - name: "OVERRIDDEN VERIFY: Verify loopback100 updated"
+      vars:
+        lb100_after: >-
+          {{
+            overridden_loopbacks.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback100')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - lb100_after.config_data.network_os.policy.ip == "10.100.100.2"
+          - lb100_after.config_data.network_os.policy.description == "Updated loopback100 description"
+          - lb100_after.config_data.network_os.policy.route_map_tag == "54321"
+
+    - name: "OVERRIDDEN VERIFY: Verify loopback101 removed"
+      ansible.builtin.assert:
+        that:
+          - overridden_loopbacks.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback101')
+            | list
+            | length == 0
+
+  always:
+    - name: "OVERRIDDEN CLEANUP: Remove loopback100 and loopback101"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback101
+        state: deleted
