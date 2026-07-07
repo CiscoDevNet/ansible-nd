@@ -107,10 +107,13 @@ class ActionModule(ActionBase):
                     retries=idempotency_retries,
                     delay=idempotency_delay,
                 )
+
+            if nd_queries and not bool(first_run_result.get("failed", False)):
                 nd_query_results = self._run_nd_queries(
                     nd_queries=nd_queries,
                     task_vars=task_vars,
-         )
+                )
+                
         finally:
             self._task.check_mode = original_check_mode
 
@@ -152,11 +155,15 @@ class ActionModule(ActionBase):
             name = query.get("name")
             path = query.get("path")
             method = query.get("method", "get")
+            expected_status = query.get("expected_status")
+            expected_failed = bool(query.get("expected_failed", False))
+            
 
             if not path:
                 raise AnsibleActionFail("Each nd_queries entry must include path")
 
             rendered_path = self._templar.template(path)
+
 
             query_result = self._execute_module(
                 module_name="cisco.nd.nd_rest",
@@ -167,13 +174,50 @@ class ActionModule(ActionBase):
                 task_vars=task_vars,
             )
 
-            self._assert_nd_query_expectations(query, query_result)
+            query_label = name or rendered_path
+            actual_failed = bool(query_result.get("failed", False))
+            actual_status = query_result.get("status")
+
+
+            if expected_status is not None:
+                if actual_status is None:
+                    raise AnsibleActionFail(
+                        "ND query %s expected status %s but the result did not contain a status"
+                        % (query_label, expected_status)
+                    )
+
+                try:
+                    status_matches = int(actual_status) == int(expected_status)
+                except (TypeError, ValueError):
+                    raise AnsibleActionFail(
+                        "ND query %s returned invalid status %s"
+                        % (query_label, actual_status)
+                    )
+
+                if not status_matches:
+                    raise AnsibleActionFail(
+                        "ND query %s expected status %s but got %s"
+                        % (query_label, expected_status, actual_status)
+                    )
+
+            
+
+            if actual_failed != expected_failed:
+                raise AnsibleActionFail(
+                    "ND query %s expected failed=%s but got failed=%s"
+                    % (query_label, expected_failed, actual_failed)
+                )
+
+            if not expected_failed:
+                self._assert_nd_query_expectations(query, query_result)
 
             results.append(
                 {
                     "name": name,
                     "path": rendered_path,
                     "method": method,
+                    "status": actual_status,
+                    "failed": actual_failed,
                     "result": query_result,
                 }
             )
