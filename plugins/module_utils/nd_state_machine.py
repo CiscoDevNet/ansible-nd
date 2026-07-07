@@ -11,6 +11,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
     NDStateMachineError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import filter_gathered_response
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
     NDConfigCollection,
@@ -106,7 +107,33 @@ class NDStateMachine:
 
         # Initialize collections
         try:
-            response_data = self.model_orchestrator.query_all()
+            raw_config = config if config is not None else (self.module.params.get("config") or [])
+            gathered_filtering_enabled = self.state == "gathered" and getattr(
+                self.model_class,
+                "supports_gathered_filtering",
+                False,
+            )
+            lucene_candidate_filtering_enabled = gathered_filtering_enabled and getattr(
+                self.model_orchestrator,
+                "supports_gathered_lucene_filtering",
+                False,
+            )
+            query_kwargs = {}
+            if lucene_candidate_filtering_enabled:
+                query_kwargs["gathered_filters"] = raw_config
+
+            response_data = self.model_orchestrator.query_all(**query_kwargs)
+
+            # Always retain the generic final filter. The server query only
+            # reduces candidate resources.
+            if gathered_filtering_enabled:
+                response_data = filter_gathered_response(
+                    response_data=response_data,
+                    filters=raw_config,
+                    model_class=self.model_class,
+                    normalize_filter=self.model_class.normalize_gathered_filter,
+                )
+
             # State of configuration objects in ND before change execution
             self.before = NDConfigCollection.from_api_response(response_data=response_data, model_class=self.model_class)
             # Opaque authentication settings are discovered only in the
@@ -142,9 +169,13 @@ class NDStateMachine:
             # passes its prepared copy via ``config=``. Running it here as well would
             # double-transform non-idempotent orchestrators (e.g. nd_vrf/nd_network),
             # reverting user-supplied fields to their hardcoded defaults.
-            raw_config = config if config is not None else (self.module.params.get("config") or [])
+            #
+            # For opted-in gathered filtering, config contains query criteria,
+            # not complete desired resources. Keep those criteria out of the
+            # proposed collection and therefore out of write-state processing.
+            proposed_config = [] if gathered_filtering_enabled else raw_config
             self.proposed = NDConfigCollection.from_ansible_config(
-                data=raw_config,
+                data=proposed_config,
                 model_class=self.model_class,
                 context={"state": self.state},
             )
