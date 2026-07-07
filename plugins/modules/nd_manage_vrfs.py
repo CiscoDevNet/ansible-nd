@@ -795,10 +795,14 @@ def main():
         strategy = resolver.resolve()
 
         # Run the workflow coordinator for the resolved strategy
-        coordinator = VrfWorkflowCoordinator(
-            module=module,
-            strategy=strategy,
-        )
+        coordinator_args = {
+            "module": module,
+            "strategy": strategy,
+        }
+        resolver_trace = getattr(resolver, "workflow_trace", None)
+        if resolver_trace:
+            coordinator_args["initial_workflow_trace"] = resolver_trace
+        coordinator = VrfWorkflowCoordinator(**coordinator_args)
         result = coordinator.run()
 
         module.exit_json(**result)

@@ -571,6 +571,8 @@ def test_vrf_workflow_coordinator_00011_child_exception_returns_structured_failu
     assert child["msg"] == "child route failed"
     assert child["exception"] == "RuntimeError"
     assert child["proposed"] == [{"vrf_name": "ansible-msd-vrf"}]
+    assert child["workflow_trace"][-1]["event"] == "child_task_error"
+    assert child["workflow_trace"][-1]["exception"] == "RuntimeError"
 
 
 def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks():

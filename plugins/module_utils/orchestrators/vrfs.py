@@ -39,7 +39,7 @@ import copy
 import json
 import time
 
-from typing import Any, ClassVar
+from typing import Any, Callable, ClassVar
 from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -102,6 +102,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     # Strategy is injected at construction time by nd_manage_vrfs.py / VrfFabricResolver.
     strategy: BaseVrfStrategy | None = None
+    trace_hook: Callable[..., None] | None = None
     delete_retry_attempts: ClassVar[int] = 3
     delete_retry_delay: ClassVar[int] = 30
     scoped_query_threshold: ClassVar[int] = 5
@@ -418,6 +419,69 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         for attr, val in extra_fields.items():
             setattr(ep, attr, val)
         return ep
+
+    def _trace(self, event: str, **details: Any) -> None:
+        if self.trace_hook is not None:
+            self.trace_hook(event, **details)
+
+    def _request(
+        self,
+        path: str,
+        verb,
+        data: dict[str, Any] | None = None,
+        not_found_ok: bool = False,
+        operation_type: OperationType = OperationType.QUERY,
+    ) -> ResponseType:
+        self._trace(
+            "api_request_start",
+            path=path,
+            verb=getattr(verb, "value", str(verb)),
+            operation_type=operation_type.value,
+            payload=data,
+            not_found_ok=not_found_ok,
+        )
+        try:
+            response = super()._request(
+                path=path,
+                verb=verb,
+                data=data,
+                not_found_ok=not_found_ok,
+                operation_type=operation_type,
+            )
+        except Exception as exc:
+            self._trace(
+                "api_request_error",
+                path=path,
+                verb=getattr(verb, "value", str(verb)),
+                operation_type=operation_type.value,
+                payload=data,
+                error=repr(exc),
+            )
+            raise
+        self._trace(
+            "api_request_end",
+            path=path,
+            verb=getattr(verb, "value", str(verb)),
+            operation_type=operation_type.value,
+            response_summary=self._response_summary(response),
+        )
+        return response
+
+    @staticmethod
+    def _response_summary(response: Any) -> dict[str, Any]:
+        if isinstance(response, dict):
+            summary: dict[str, Any] = {"type": "dict", "keys": sorted(response.keys())}
+            for key in ("vrfs", "items", "attachments", "results"):
+                value = response.get(key)
+                if isinstance(value, list):
+                    summary[f"{key}_count"] = len(value)
+            metadata = response.get("metadata") or response.get("meta")
+            if isinstance(metadata, dict):
+                summary["metadata"] = metadata
+            return summary
+        if isinstance(response, list):
+            return {"type": "list", "count": len(response)}
+        return {"type": type(response).__name__}
 
     # ── Query ─────────────────────────────────────────────────────
 

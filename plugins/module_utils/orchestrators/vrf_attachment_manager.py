@@ -57,6 +57,14 @@ class VrfAttachmentManager:
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
 
+    def _trace(self, event: str, **details: Any) -> None:
+        trace = getattr(self.coordinator, "_trace", None)
+        if trace is not None:
+            try:
+                trace(event, **details)
+            except AttributeError:
+                pass
+
     @staticmethod
     def _attachments_query_endpoint_cls(strategy: BaseVrfStrategy) -> type:
         if strategy.is_multicluster and strategy.is_parent:
@@ -81,18 +89,24 @@ class VrfAttachmentManager:
         """Attach or detach VRFs according to state and phase."""
         state = module_args.get("state", "merged")
         config = module_args.get("config") or []
+        self._trace("vrf_attachment_phase_start", phase=phase, state=state, config_count=len(config), current_vrf_names=current_vrf_names)
 
         if not config and state != "overridden":
+            self._trace("vrf_attachment_phase_skip", phase=phase, reason="empty_config")
             return {}
         if phase == "pre" and state not in ("deleted", "replaced", "overridden"):
+            self._trace("vrf_attachment_phase_skip", phase=phase, reason="state_not_pre_detach")
             return {}
         if phase == "post" and state not in ("merged", "replaced", "overridden"):
+            self._trace("vrf_attachment_phase_skip", phase=phase, reason="state_not_post_attach")
             return {}
         if current_vrf_names == []:
+            self._trace("vrf_attachment_phase_skip", phase=phase, reason="no_current_vrfs")
             return {}
 
         desired = desired if desired is not None else self.coordinator._desired_attachment_map(module_args, strategy)
         if phase == "post" and not desired:
+            self._trace("vrf_attachment_phase_skip", phase=phase, reason="no_desired_attachments")
             return {}
 
         vrf_names = configured_vrf_names(config)
@@ -106,9 +120,17 @@ class VrfAttachmentManager:
         if current is None:
             attachment_details = self.coordinator._current_attachment_details(module_args, strategy, query_vrf_names)
             current = self.coordinator._attachment_map_from_details(attachment_details)
+            self._trace(
+                "vrf_attachment_current_loaded",
+                phase=phase,
+                queried_vrf_names=query_vrf_names,
+                attachment_count=len(attachment_details or []),
+                current_count=len(current),
+            )
 
         if desired:
             desired = self.coordinator._expand_desired_attachments_with_vpc_peers(desired, attachment_details or current.values())
+            self._trace("vrf_attachment_desired_expanded", phase=phase, desired_count=len(desired))
 
         if phase == "pre":
             payloads = self.coordinator._planned_detach_payloads(state, config, current, desired)
@@ -116,6 +138,7 @@ class VrfAttachmentManager:
             payloads = self.coordinator._planned_attach_payloads(current, desired)
 
         if not payloads:
+            self._trace("vrf_attachment_phase_noop", phase=phase, desired_count=len(desired or {}), current_count=len(current or {}))
             return {"current": current} if phase == "pre" else {}
 
         deploy_targets: dict[str, set[str]] = {}
@@ -131,6 +154,7 @@ class VrfAttachmentManager:
             deploy_targets,
             OperationType.DELETE if phase == "pre" else OperationType.CREATE,
         )
+        self._trace("vrf_attachment_phase_end", phase=phase, payload_count=len(payloads), deploy_target_count=len(deploy_targets))
         trace["current"] = current
         trace["payloads"] = payloads
         trace["desired"] = desired
@@ -160,9 +184,11 @@ class VrfAttachmentManager:
     ) -> dict[str, Any]:
         """Detach all current attachments for deleted VRFs, independent of config."""
         vrf_names = vrf_names if vrf_names is not None else configured_vrf_names(module_args.get("config") or [])
+        self._trace("vrf_deleted_attachment_phase_start", vrf_names=vrf_names)
         attachments = attachment_details
         if attachments is None:
             attachments = self.coordinator._current_attachment_details_ignore_missing(module_args, strategy, vrf_names or None)
+        self._trace("vrf_deleted_attachment_current_loaded", vrf_names=vrf_names, attachment_count=len(attachments or []))
 
         payloads: list[dict[str, Any]] = []
         deploy_targets: dict[str, set[str]] = {}
@@ -185,8 +211,10 @@ class VrfAttachmentManager:
                 seen_payloads.add(key)
 
         if not payloads:
+            self._trace("vrf_deleted_attachment_phase_noop", deploy_target_count=len(deploy_targets))
             return {"deploy_targets": deploy_targets}
 
+        self._trace("vrf_deleted_attachment_phase_post", payload_count=len(payloads), deploy_target_count=len(deploy_targets))
         return self.coordinator._post_vrf_attachments(
             module_args,
             strategy,
@@ -316,8 +344,10 @@ class VrfAttachmentManager:
                     wanted_ips.add(ip_address)
 
         if not wanted_ips:
+            self._trace("vrf_attachment_switch_resolve_end", requested_count=0, resolved_count=0)
             return {}
 
+        self._trace("vrf_attachment_switch_resolve_start", requested_count=len(wanted_ips), fabric_name=strategy.fabric_name)
         orchestrator, results = self.coordinator._new_vrf_orchestrator(module_args, strategy)
         endpoint = orchestrator._make_endpoint(EpManageSwitchesListGet)
         data = orchestrator._request(
@@ -344,7 +374,9 @@ class VrfAttachmentManager:
 
         missing = sorted(wanted_ips.difference(resolved))
         if missing:
+            self._trace("vrf_attachment_switch_resolve_failed", requested_count=len(wanted_ips), resolved_count=len(resolved), missing=missing)
             self.coordinator.module.fail_json(msg=("Unable to resolve attach.ip_address values to switchId " f"on fabric '{strategy.fabric_name}': {missing}"))
+        self._trace("vrf_attachment_switch_resolve_end", requested_count=len(wanted_ips), resolved_count=len(resolved))
         return resolved
 
     @staticmethod
@@ -597,7 +629,14 @@ class VrfAttachmentManager:
         operation_type: OperationType,
     ) -> dict[str, Any]:
         """Send attach/detach payload and return mergeable API trace."""
+        self._trace(
+            "vrf_attachment_post_start",
+            operation_type=operation_type.value,
+            payload_count=len(payloads),
+            deploy_target_count=len(deploy_targets),
+        )
         if getattr(getattr(self.coordinator, "module", None), "check_mode", False):
+            self._trace("vrf_attachment_post_check_mode", payload_count=len(payloads), deploy_target_count=len(deploy_targets))
             return {
                 "changed": True,
                 "failed": False,
@@ -615,7 +654,9 @@ class VrfAttachmentManager:
             operation_type=operation_type,
         )
         self._raise_on_attachment_failures(response)
-        return self.coordinator._finalize_api_trace(results, deploy_targets)
+        trace = self.coordinator._finalize_api_trace(results, deploy_targets)
+        self._trace("vrf_attachment_post_end", operation_type=operation_type.value, changed=trace.get("changed"), failed=trace.get("failed"))
+        return trace
 
     def _raise_on_attachment_failures(self, response: Any) -> None:
         """Fail immediately when a 207 attachment response contains failed rows."""
@@ -813,6 +854,7 @@ class VrfAttachmentManager:
         deploy_payload: dict[str, Any],
     ) -> dict[str, Any]:
         """Deploy pending VRF attachment changes once."""
+        self._trace("vrf_attachment_deploy_start", deploy_payload=deploy_payload)
         orchestrator, results = self.coordinator._new_vrf_orchestrator(module_args, strategy)
         endpoint = orchestrator._make_endpoint(strategy.vrf_actions_deploy_post_cls())
         orchestrator._request(
@@ -821,4 +863,6 @@ class VrfAttachmentManager:
             data=deploy_payload,
             operation_type=OperationType.UPDATE,
         )
-        return self.coordinator._finalize_api_trace(results)
+        trace = self.coordinator._finalize_api_trace(results)
+        self._trace("vrf_attachment_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
+        return trace
