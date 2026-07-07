@@ -394,5 +394,3 @@ $RECYCLE.BIN/
 cisco-nd-*.tar.gz
 
 
-# Local integration inventory containing credentials
-/tests/integration/inventory.networking
