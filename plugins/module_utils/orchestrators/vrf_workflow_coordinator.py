@@ -26,6 +26,7 @@ from ansible.module_utils.basic import AnsibleModule
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import VrfConfigModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrfs import NDVrfOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachment_manager import (
     VrfAttachmentManager,
@@ -251,7 +252,7 @@ class VrfWorkflowCoordinator:
         self._trace("child_workflow_start", state=state, fabric_name=fabric_name, fabric_type=fabric_type)
 
         if state == "gathered":
-            module_args["config"] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
+            module_args["config"] = self._parse_config(module_args.get("config") or [], VrfConfigModel, state)
             self._trace("child_config_parsed", parsed_count=len(module_args["config"]))
             result = self._run_state_machine(module_args)
             result.setdefault("fabric_type", fabric_type)
@@ -361,10 +362,7 @@ class VrfWorkflowCoordinator:
                     break
 
         if not parent_result.get("failed", False) and not any(result.get("failed", False) for result in child_results):
-            deploy_payloads = parent_result.pop("_deferred_deploy_payloads", [])
-            deploy_payload = parent_result.pop("_deferred_deploy_payload", None)
-            if deploy_payload:
-                deploy_payloads.append(deploy_payload)
+            deploy_payloads = self._collect_deferred_deploy_payloads(parent_result, child_results)
             self._trace("parent_deferred_deploys_start", deploy_payload_count=len(deploy_payloads))
             for deploy_payload in deploy_payloads:
                 if deploy_payload:
@@ -1119,6 +1117,26 @@ class VrfWorkflowCoordinator:
         if child_trace:
             result.setdefault("workflow_trace", list(child_trace))
         return result
+
+    @staticmethod
+    def _collect_deferred_deploy_payloads(parent_result: dict[str, Any], child_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Pop and de-duplicate deferred deploy payloads from parent and child results."""
+        payloads: list[dict[str, Any]] = []
+        for result in [parent_result, *child_results]:
+            payloads.extend(result.pop("_deferred_deploy_payloads", []) or [])
+            payload = result.pop("_deferred_deploy_payload", None)
+            if payload:
+                payloads.append(payload)
+
+        unique_payloads: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for payload in payloads:
+            key = repr(payload)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_payloads.append(payload)
+        return unique_payloads
 
     # ── Result aggregation ────────────────────────────────────────
 

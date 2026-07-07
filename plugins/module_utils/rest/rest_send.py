@@ -136,8 +136,6 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self.saved_check_mode: Optional[bool] = None
 
         self.check_mode = self.params.get("check_mode", False)
-        if isinstance(self.params.get("timeout"), int):
-            self.timeout = self.params["timeout"]
 
         msg = "ENTERED RestSend(): "
         msg += f"check_mode: {self.check_mode}"
