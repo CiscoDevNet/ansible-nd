@@ -1,0 +1,132 @@
+---
+# Gathered-state tests run after the initial merged-state creation. At this
+# point ansible_local_user and ansible_local_user_2 have deterministic values.
+
+- name: "GATHERED: Read all local users"
+  cisco.nd.nd_local_user:
+    output_level: "{{ nd_info.output_level }}"
+    state: gathered
+  register: nm_gathered_all_local_users
+
+- name: "GATHERED: Verify read-only output and password secrecy"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_all_local_users is not changed
+      - nm_gathered_all_local_users.gathered is defined
+      - nm_gathered_all_local_users.gathered | type_debug == "list"
+      - nm_gathered_all_local_users.gathered | selectattr('login_id', 'equalto', 'ansible_local_user') | list | length == 1
+      - nm_gathered_all_local_users.gathered | selectattr('login_id', 'equalto', 'ansible_local_user_2') | list | length == 1
+      - nm_gathered_all_local_users.gathered | selectattr('user_password', 'defined') | list | length == 0
+      - nm_gathered_all_local_users.before is not defined
+      - nm_gathered_all_local_users.after is not defined
+      - nm_gathered_all_local_users.diff is not defined
+      - nm_gathered_all_local_users.proposed is not defined
+
+- name: "GATHERED: Filter by exact login ID"
+  cisco.nd.nd_local_user:
+    output_level: "{{ nd_info.output_level }}"
+    state: gathered
+    config:
+      - login_id: ansible_local_user
+  register: nm_gathered_exact_local_user
+
+- name: "GATHERED: Verify exact login-ID filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_exact_local_user is not changed
+      - nm_gathered_exact_local_user.gathered | length == 1
+      - nm_gathered_exact_local_user.gathered.0.login_id == "ansible_local_user"
+      - nm_gathered_exact_local_user.gathered.0.email == "ansibleuser@example.com"
+      - nm_gathered_exact_local_user.gathered.0.first_name == "Ansible first name"
+      - nm_gathered_exact_local_user.gathered.0.user_password is not defined
+
+- name: "GATHERED: Reuse gathered output as config in check mode"
+  cisco.nd.nd_local_user:
+    output_level: "{{ nd_info.output_level }}"
+    state: merged
+    config: "{{ nm_gathered_exact_local_user.gathered }}"
+  check_mode: true
+  register: cm_reuse_gathered_local_user
+
+- name: "GATHERED: Verify gathered output round-trips as config"
+  ansible.builtin.assert:
+    that:
+      - cm_reuse_gathered_local_user is not changed
+      - cm_reuse_gathered_local_user.proposed | length == 1
+      - cm_reuse_gathered_local_user.proposed.0.login_id == "ansible_local_user"
+      - cm_reuse_gathered_local_user.proposed.0.user_password is not defined
+
+- name: "GATHERED: Filter by multiple login IDs"
+  cisco.nd.nd_local_user:
+    output_level: "{{ nd_info.output_level }}"
+    state: gathered
+    config:
+      - login_id: ansible_local_user
+      - login_id: ansible_local_user_2
+  register: nm_gathered_or_local_users
+
+- name: "GATHERED: Verify separate login-ID filters use OR semantics"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_or_local_users is not changed
+      - nm_gathered_or_local_users.gathered | length == 2
+      - nm_gathered_or_local_users.gathered | map(attribute='login_id') | sort | list == ['ansible_local_user', 'ansible_local_user_2']
+
+- name: "GATHERED: Filter with different login-ID case"
+  cisco.nd.nd_local_user:
+    output_level: "{{ nd_info.output_level }}"
+    state: gathered
+    config:
+      - login_id: ANSIBLE_LOCAL_USER
+  register: nm_gathered_case_sensitive_local_user
+
+- name: "GATHERED: Verify login-ID filtering is case-sensitive"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_case_sensitive_local_user is not changed
+      - nm_gathered_case_sensitive_local_user.gathered == []
+
+- name: "GATHERED: Filter with no matching login ID"
+  cisco.nd.nd_local_user:
+    output_level: "{{ nd_info.output_level }}"
+    state: gathered
+    config:
+      - login_id: ansible-user-that-does-not-exist
+  register: nm_gathered_no_match_local_user
+
+- name: "GATHERED: Verify no-match filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_no_match_local_user is not changed
+      - nm_gathered_no_match_local_user.gathered == []
+
+- name: "GATHERED: Reject a non-login-ID filter"
+  cisco.nd.nd_local_user:
+    output_level: "{{ nd_info.output_level }}"
+    state: gathered
+    config:
+      - email: ansibleuser@example.com
+  register: nm_gathered_unsupported_filter
+  ignore_errors: true
+
+- name: "GATHERED: Verify unsupported-filter rejection"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_unsupported_filter is failed
+      - "'Only login_id can be used as a gathered-state filter' in nm_gathered_unsupported_filter.msg"
+      - "'email' in nm_gathered_unsupported_filter.msg"
+
+- name: "GATHERED: Reject an empty filter item"
+  cisco.nd.nd_local_user:
+    output_level: "{{ nd_info.output_level }}"
+    state: gathered
+    config:
+      - {}
+  register: nm_gathered_empty_filter
+  ignore_errors: true
+
+- name: "GATHERED: Verify empty-filter rejection"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_filter is failed
+      - "'must contain at least one filtering criterion' in nm_gathered_empty_filter.msg"

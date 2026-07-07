@@ -50,6 +50,13 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     model_class: ClassVar[type[NDBaseModel]] = NDBaseModel
     supports_bulk_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = False
+    
+    # Opt-in. Existing orchestrators do not receive gathered filters.
+    supports_gathered_lucene_filtering: ClassVar[bool] = False
+
+    # bulk_payload_key is the JSON wrapper key the bulk endpoint expects,
+    # e.g. "links" for /api/v1/manage/links POST.
+    bulk_payload_key: ClassVar[str] = "items"
 
     # NOTE: if not defined by subclasses, return an error as they are required
     create_endpoint: type[NDEndpointBaseModel]

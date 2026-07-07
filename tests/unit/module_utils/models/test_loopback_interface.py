@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from typing import Any
 
 import pytest  # pylint: disable=unused-import
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
     Csr1kvLoopbackPolicyModel,
     CsrLoopbackPolicyModel,
@@ -1679,7 +1680,7 @@ def test_loopback_interface_00720():
 
     ## Test
 
-    - state choices: ["merged", "replaced", "overridden", "deleted"]
+    - state choices: ["merged", "replaced", "overridden", "deleted", "gathered"]
     - state default: "merged"
 
     ## Classes and Methods
@@ -1688,7 +1689,7 @@ def test_loopback_interface_00720():
     """
     spec = LoopbackInterfaceModel.get_argument_spec()
     state_spec = spec["state"]
-    assert state_spec["choices"] == ["merged", "replaced", "overridden", "deleted"]
+    assert state_spec["choices"] == ["merged", "replaced", "overridden", "deleted", "gathered"]
     assert state_spec["default"] == "merged"
 
 
@@ -2586,6 +2587,7 @@ def test_xe_from_response_tolerates_injected_policy_key() -> None:
     assert isinstance(instance.config_data.network_os.policy, XeLoopbackPolicyModel)
     with pytest.raises(ValidationError):
         result = XeLoopbackPolicyModel(policyType="iosXeLoopback", ndInjectedKey="x")  # pylint: disable=unused-variable
+    assert "policy_type" not in policy_options
 
 
 def test_loopback_interface_00740():
@@ -2777,3 +2779,26 @@ def test_reverse_diff_defaults_apply_through_xe_interface_union() -> None:
         }
     )
     assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+def test_loopback_interface_00740():
+    """
+    Verify config is optional so state=gathered can run without input.
+    """
+    spec = LoopbackInterfaceModel.get_argument_spec()
+
+    assert spec["config"].get("required", False) is False
+
+
+def test_loopback_interface_00750():
+    """Verify gathered filters may omit either loopback identifier."""
+    config_options = LoopbackInterfaceModel.get_argument_spec()["config"]["options"]
+
+    assert config_options["switch_ip"].get("required", False) is False
+    assert config_options["interface_name"].get("required", False) is False
+
+
+def test_loopback_interface_00760():
+    """Verify only loopback opts into generic gathered filtering."""
+    assert NDBaseModel.supports_gathered_filtering is False
+    assert LoopbackInterfaceModel.supports_gathered_filtering is True
