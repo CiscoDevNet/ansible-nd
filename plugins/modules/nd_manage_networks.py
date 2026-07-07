@@ -119,6 +119,7 @@ options:
           interfaces:
             description: Interface attachment entries.
             type: list
+            required: true
             elements: dict
             suboptions:
               mode:

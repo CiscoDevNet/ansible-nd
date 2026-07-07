@@ -19,7 +19,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     MappingType,
-    NetworkAttachmentMode,
     NetworkType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.validators import (

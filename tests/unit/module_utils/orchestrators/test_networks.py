@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
