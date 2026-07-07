@@ -519,10 +519,14 @@ def test_mcfg_parent_workflow_validates_but_skips_child_network_crud():
 
 
 def test_child_task_exception_returns_structured_network_failure():
+    class Module:
+        params = {"output_level": "debug"}
+        _verbosity = 3
+
     class ChildStrategy:
         fabric_type = "multicluster_child"
 
-    coordinator = NetworkWorkflowCoordinator(module=object(), strategy=_mcfg_parent_orchestrator().strategy)
+    coordinator = NetworkWorkflowCoordinator(module=Module(), strategy=_mcfg_parent_orchestrator().strategy)
 
     def raise_child(*_args, **_kwargs):
         raise RuntimeError("child network route failed")
@@ -554,6 +558,8 @@ def test_child_task_exception_returns_structured_network_failure():
     assert child["msg"] == "child network route failed"
     assert child["exception"] == "RuntimeError"
     assert child["proposed"] == [{"network_name": "BLUE_NET"}]
+    assert child["workflow_trace"][-1]["event"] == "child_task_error"
+    assert child["workflow_trace"][-1]["exception"] == "RuntimeError"
 
 
 def test_argument_spec_uses_manage_json_defaults():

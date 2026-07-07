@@ -396,6 +396,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 path=path,
                 verb=getattr(verb, "value", str(verb)),
                 operation_type=operation_type.value,
+                payload=data,
                 error=repr(exc),
             )
             raise

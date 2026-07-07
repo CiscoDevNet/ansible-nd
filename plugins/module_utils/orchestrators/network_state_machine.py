@@ -380,12 +380,16 @@ class NetworkStateMachine:
             self._trace("delete_manage_state_end", changed=result.get("changed"), failed=result.get("failed"))
             return result
 
+        self._trace("delete_dependency_check_start", network_count=len(target_network_names))
         self.coordinator._ensure_networks_have_no_networks(
             module_args,
             strategy,
             target_network_names,
         )
+        self._trace("delete_dependency_check_end", network_count=len(target_network_names))
+        self._trace("delete_detach_phase_start", network_count=len(target_network_names))
         detach_trace = self.coordinator._apply_deleted_attachment_phase(module_args, strategy, target_network_names)
+        self._trace("delete_detach_phase_end", changed=detach_trace.get("changed"), payload_count=len(detach_trace.get("payloads", [])))
         traces = self._deploy_detach_traces(
             api_args=module_args,
             wait_args=module_args,
@@ -395,7 +399,9 @@ class NetworkStateMachine:
             wait_network_names=target_network_names,
         )
 
+        self._trace("delete_manage_state_start", network_count=len(config))
         result = self.coordinator._run_state_machine(module_args, strategy=strategy)
+        self._trace("delete_manage_state_end", changed=result.get("changed"), failed=result.get("failed"))
         self._prepend_traces(result, traces)
         return result
 
@@ -417,8 +423,12 @@ class NetworkStateMachine:
                 target_args = dict(module_args)
                 target_args["config"] = [{"network_name": network_name} for network_name in target_network_names]
 
+                self._trace("delete_dependency_check_start", network_count=len(target_network_names))
                 self.coordinator._ensure_networks_have_no_networks(target_args, strategy, target_network_names)
+                self._trace("delete_dependency_check_end", network_count=len(target_network_names))
+                self._trace("delete_detach_phase_start", network_count=len(target_network_names))
                 detach_trace = self.coordinator._apply_deleted_attachment_phase(target_args, strategy, target_network_names)
+                self._trace("delete_detach_phase_end", changed=detach_trace.get("changed"), payload_count=len(detach_trace.get("payloads", [])))
                 traces = self._deploy_detach_traces(
                     api_args=target_args,
                     wait_args=module_args,
@@ -461,6 +471,7 @@ class NetworkStateMachine:
             config,
             delete_deploy_targets,
         )
+        self._trace("delete_deploy_payloads_built", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if self._check_mode():
             if deploy_payloads:
                 traces.append(
@@ -473,6 +484,7 @@ class NetworkStateMachine:
             return traces
 
         for deploy_payload in deploy_payloads:
+            self._trace("delete_deploy_start", deploy_payload=deploy_payload)
             traces.append(
                 self.coordinator._deploy_network_attachments(
                     api_args,
@@ -480,10 +492,13 @@ class NetworkStateMachine:
                     deploy_payload,
                 )
             )
+            self._trace("delete_deploy_end", deploy_payload=deploy_payload)
 
         if target_network_names:
+            self._trace("delete_wait_ready_start", network_names=target_network_names)
             self.coordinator._wait_for_network_attachments_delete_ready(wait_args, strategy, target_network_names)
             self.coordinator._wait_for_networks_delete_ready(wait_args, strategy, target_network_names)
+            self._trace("delete_wait_ready_end", network_names=target_network_names)
         return traces
 
     def _prepend_traces(self, result: dict[str, Any], traces: list[dict[str, Any]]) -> None:

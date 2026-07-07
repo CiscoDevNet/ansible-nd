@@ -60,6 +60,14 @@ class NetworkAttachmentManager:
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
 
+    def _trace(self, event: str, **details: Any) -> None:
+        trace = getattr(self.coordinator, "_trace", None)
+        if trace is not None:
+            try:
+                trace(event, **details)
+            except AttributeError:
+                pass
+
     @staticmethod
     def _attachments_query_endpoint_cls(strategy: BaseNetworkStrategy) -> type:
         if strategy.is_multicluster and strategy.is_parent:
@@ -89,17 +97,23 @@ class NetworkAttachmentManager:
     ) -> dict[str, Any]:
         state = module_args.get("state", "merged")
         config = module_args.get("config") or []
+        self._trace("network_attachment_phase_start", phase=phase, state=state, config_count=len(config), current_network_names=current_network_names)
         if not config and state != "overridden":
+            self._trace("network_attachment_phase_skip", phase=phase, reason="empty_config")
             return {}
         if phase == "pre" and state not in ("deleted", "replaced", "overridden"):
+            self._trace("network_attachment_phase_skip", phase=phase, reason="state_not_pre_detach")
             return {}
         if phase == "post" and state not in ("merged", "replaced", "overridden"):
+            self._trace("network_attachment_phase_skip", phase=phase, reason="state_not_post_attach")
             return {}
         if current_network_names == []:
+            self._trace("network_attachment_phase_skip", phase=phase, reason="no_current_networks")
             return {}
 
         desired = desired if desired is not None else self.desired_attachment_map(module_args, strategy)
         if phase == "post" and not desired:
+            self._trace("network_attachment_phase_skip", phase=phase, reason="no_desired_attachments")
             return {}
 
         query_names = current_network_names
@@ -107,9 +121,11 @@ class NetworkAttachmentManager:
             query_names = None if state == "overridden" else configured_network_names(config)
         if current is None:
             current = self.current_attachment_map(module_args, strategy, query_names)
+            self._trace("network_attachment_current_loaded", phase=phase, queried_network_names=query_names, current_count=len(current))
 
         payloads = self.planned_detach_payloads(state, config, current, desired) if phase == "pre" else self.planned_attach_payloads(current, desired)
         if not payloads:
+            self._trace("network_attachment_phase_noop", phase=phase, desired_count=len(desired or {}), current_count=len(current or {}))
             return {"current": current} if phase == "pre" else {}
 
         deploy_enabled = deploy_enabled_by_network(config)
@@ -122,6 +138,7 @@ class NetworkAttachmentManager:
         trace = self.post_network_attachments(
             module_args, strategy, payloads, deploy_targets, OperationType.DELETE if phase == "pre" else OperationType.CREATE
         )
+        self._trace("network_attachment_phase_end", phase=phase, payload_count=len(payloads), deploy_target_count=len(deploy_targets))
         trace["current"] = current
         trace["payloads"] = payloads
         return trace
@@ -134,11 +151,14 @@ class NetworkAttachmentManager:
         attachment_details: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
         network_names = network_names if network_names is not None else configured_network_names(module_args.get("config") or [])
+        self._trace("network_deleted_attachment_phase_start", network_names=network_names)
         if network_names == [] and attachment_details is None:
+            self._trace("network_deleted_attachment_phase_skip", reason="empty_targets")
             return {"deploy_targets": {}}
         attachments = attachment_details
         if attachments is None:
             attachments = self.current_attachment_details_ignore_missing(module_args, strategy, network_names or None)
+        self._trace("network_deleted_attachment_current_loaded", network_names=network_names, attachment_count=len(attachments or []))
 
         payloads: list[dict[str, Any]] = []
         deploy_targets: dict[str, set[str]] = {}
@@ -157,7 +177,9 @@ class NetworkAttachmentManager:
                 seen.add(key)
 
         if not payloads:
+            self._trace("network_deleted_attachment_phase_noop", deploy_target_count=len(deploy_targets))
             return {"deploy_targets": deploy_targets}
+        self._trace("network_deleted_attachment_phase_post", payload_count=len(payloads), deploy_target_count=len(deploy_targets))
         return self.post_network_attachments(module_args, strategy, payloads, deploy_targets, OperationType.DELETE)
 
     def desired_attachment_map(self, module_args: dict, strategy: BaseNetworkStrategy) -> dict[tuple[str, str], dict[str, Any]]:
@@ -191,7 +213,9 @@ class NetworkAttachmentManager:
             if attachment.get("ip_address") or attachment.get("ipAddress")
         }
         if not wanted_ips:
+            self._trace("network_attachment_switch_resolve_end", requested_count=0, resolved_count=0)
             return {}
+        self._trace("network_attachment_switch_resolve_start", requested_count=len(wanted_ips), fabric_name=strategy.fabric_name)
         orchestrator, _results = self.coordinator._new_network_orchestrator(module_args, strategy)
         endpoint = orchestrator._make_endpoint(EpManageSwitchesListGet)
         data = orchestrator._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True, operation_type=OperationType.QUERY)
@@ -204,7 +228,9 @@ class NetworkAttachmentManager:
                 resolved[ip_address] = switch_id
         missing = sorted(wanted_ips - set(resolved))
         if missing:
+            self._trace("network_attachment_switch_resolve_failed", requested_count=len(wanted_ips), resolved_count=len(resolved), missing=missing)
             self.coordinator.module.fail_json(msg=f"Could not resolve switchId for network attachment IP(s): {missing}")
+        self._trace("network_attachment_switch_resolve_end", requested_count=len(wanted_ips), resolved_count=len(resolved))
         return resolved
 
     @staticmethod
@@ -484,7 +510,14 @@ class NetworkAttachmentManager:
         deploy_targets: dict[str, set[str]],
         operation_type: OperationType,
     ) -> dict[str, Any]:
+        self._trace(
+            "network_attachment_post_start",
+            operation_type=operation_type.value,
+            payload_count=len(payloads),
+            deploy_target_count=len(deploy_targets),
+        )
         if getattr(getattr(self.coordinator, "module", None), "check_mode", False):
+            self._trace("network_attachment_post_check_mode", payload_count=len(payloads), deploy_target_count=len(deploy_targets))
             return {
                 "changed": True,
                 "failed": False,
@@ -504,13 +537,17 @@ class NetworkAttachmentManager:
             operation_type=operation_type,
         )
         self._raise_on_failed_results(response, "Network attachment failed")
-        return self.coordinator._finalize_api_trace(results, deploy_targets)
+        trace = self.coordinator._finalize_api_trace(results, deploy_targets)
+        self._trace("network_attachment_post_end", operation_type=operation_type.value, changed=trace.get("changed"), failed=trace.get("failed"))
+        return trace
 
     def validate_attachment_interfaces(self, orchestrator: Any, strategy: BaseNetworkStrategy, payloads: list[dict[str, Any]]) -> None:
         """Ask ND to validate attachment interfaces before mutation."""
         validation_payloads = [self._validation_payload(payload) for payload in payloads if "interfaces" in payload]
         if not validation_payloads:
+            self._trace("network_attachment_validate_skip", reason="no_interfaces")
             return
+        self._trace("network_attachment_validate_start", payload_count=len(validation_payloads))
         request = NetworkAttachmentValidateInterfacesPayloadModel(
             attachments=[NetworkAttachmentValidateInterfaceModel(**payload) for payload in validation_payloads]
         )
@@ -522,6 +559,7 @@ class NetworkAttachmentManager:
             operation_type=OperationType.QUERY,
         )
         self._raise_on_failed_results(response, "Network attachment interface validation failed")
+        self._trace("network_attachment_validate_end", payload_count=len(validation_payloads))
 
     @staticmethod
     def _prepare_attachment_payloads(strategy: BaseNetworkStrategy, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -660,6 +698,7 @@ class NetworkAttachmentManager:
         return self.build_deploy_payloads(config, deploy_targets)
 
     def deploy_network_attachments(self, module_args: dict, strategy: BaseNetworkStrategy, deploy_payload: dict[str, Any]) -> dict[str, Any]:
+        self._trace("network_attachment_deploy_start", deploy_payload=deploy_payload)
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
         data = deploy_payload
         if strategy.is_multicluster and strategy.is_parent and deploy_payload.get("switchIds"):
@@ -673,7 +712,9 @@ class NetworkAttachmentManager:
             data=data,
             operation_type=OperationType.UPDATE,
         )
-        return self.coordinator._finalize_api_trace(results)
+        trace = self.coordinator._finalize_api_trace(results)
+        self._trace("network_attachment_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
+        return trace
 
     def wait_for_attachments_delete_ready(
         self,

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import time
+
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
@@ -108,12 +110,37 @@ class FabricResolverBase:
     def __init__(self, nd_module: Any, fabric_name: str):
         self._nd = nd_module
         self.fabric_name = fabric_name
+        self._workflow_trace: list[dict[str, Any]] = []
+        self._trace_started_at = time.monotonic()
+
+    @property
+    def workflow_trace(self) -> list[dict[str, Any]]:
+        """Return resolver trace entries for the workflow coordinator."""
+        return list(self._workflow_trace)
+
+    def _trace(self, event: str, **details: Any) -> None:
+        entry = {
+            "sequence": len(self._workflow_trace) + 1,
+            "elapsed_ms": int((time.monotonic() - self._trace_started_at) * 1000),
+            "event": event,
+        }
+        entry.update(details)
+        self._workflow_trace.append(entry)
 
     def resolve(self) -> Any:
         """Resolve and instantiate the strategy for ``fabric_name``."""
+        self._trace("fabric_resolver_start", fabric_name=self.fabric_name, resource_name=self.resource_name)
         fabric_type, fabric_data = self._resolve_fabric_type()
+        self._trace("fabric_resolver_type_resolved", fabric_type=fabric_type, fabric_name=self.fabric_name)
         fabric_data = self._enrich_with_manage_fabric_details(fabric_data)
-        return self._build_strategy(fabric_type, fabric_data)
+        strategy = self._build_strategy(fabric_type, fabric_data)
+        self._trace(
+            "fabric_resolver_end",
+            fabric_name=self.fabric_name,
+            fabric_type=getattr(strategy, "fabric_type", fabric_type),
+            strategy=strategy.__class__.__name__,
+        )
+        return strategy
 
     def _fetch_federated_fabric_associations(self, fabric_details: dict[str, Any] | None = None) -> Any:
         """
@@ -131,14 +158,18 @@ class FabricResolverBase:
 
         endpoint = self.resource_get_cls(fabric_name=self.fabric_name)
         endpoint.endpoint_params.max = 1
+        self._trace("fabric_resolver_onemanage_resource_probe_start", path=endpoint.path, method=endpoint.verb.value)
         response = self._request_onemanage_probe(endpoint.path, endpoint.verb.value)
         if not response:
+            self._trace("fabric_resolver_onemanage_resource_probe_end", found=False)
             return self._NO_FEDERATION_MANAGER
 
         data = _response_data(response)
         if isinstance(data, str):
+            self._trace("fabric_resolver_onemanage_resource_probe_end", found=False, response_type="str")
             return self._NO_FEDERATION_MANAGER
 
+        self._trace("fabric_resolver_onemanage_resource_probe_end", found=True)
         return {
             self.fabric_name: {
                 "fabricName": self.fabric_name,
@@ -157,7 +188,8 @@ class FabricResolverBase:
             info = connection.send_request(method, path)
             if hasattr(self._nd, "httpapi_logs") and hasattr(connection, "pop_messages"):
                 self._nd.httpapi_logs.extend(connection.pop_messages())
-        except Exception:
+        except Exception as exc:
+            self._trace("fabric_resolver_onemanage_probe_error", path=path, method=method, error=repr(exc))
             return {}
 
         status = info.get("status", -1) if isinstance(info, dict) else -1
@@ -176,12 +208,14 @@ class FabricResolverBase:
     def _fetch_fabric_associations(self) -> dict[str, Any]:
         """GET MSD fabric associations and index them by fabric name."""
         path = "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/fabrics/msd/fabric-associations"
+        self._trace("fabric_resolver_msd_associations_start", path=path)
         response = self._nd.request(
             path,
             method="GET",
             ignore_not_found_error=True,
         )
         if not response:
+            self._trace("fabric_resolver_msd_associations_end", association_count=0)
             return {}
 
         data = _response_data(response)
@@ -207,35 +241,51 @@ class FabricResolverBase:
                     fabric_associations.setdefault(fabric_parent, {})
                     fabric_associations[fabric_parent].setdefault("members", []).append(fabric_data)
 
+        self._trace("fabric_resolver_msd_associations_end", association_count=len(fabric_associations))
         return fabric_associations
 
     def _fetch_manage_fabric_details(self, fabric_name: str, cluster_name: str | None = None) -> dict[str, Any]:
         """GET ND Manage fabric details for the target fabric."""
         endpoint = EpManageFabricsGet(fabric_name=fabric_name)
         endpoint.endpoint_params.cluster_name = cluster_name
+        self._trace("fabric_resolver_manage_fabric_start", fabric_name=fabric_name, cluster_name=cluster_name, path=endpoint.path)
         response = self._nd.request(
             endpoint.path,
             method=endpoint.verb.value,
             ignore_not_found_error=True,
         )
         data = _response_data(response)
-        return data if isinstance(data, dict) else {}
+        result = data if isinstance(data, dict) else {}
+        self._trace(
+            "fabric_resolver_manage_fabric_end",
+            fabric_name=fabric_name,
+            found=bool(result),
+            category=result.get("category"),
+            fabric_type=result.get("fabricType") or result.get("type"),
+        )
+        return result
 
     def _probe_onemanage_fabric_members(self, fabric_name: str) -> list[dict[str, Any]]:
         """Probe OneManage parent members without failing the resolver."""
         endpoint = EpOneManageFabricsMembersGet(fabric_name=fabric_name)
+        self._trace("fabric_resolver_onemanage_members_probe_start", fabric_name=fabric_name, path=endpoint.path)
         response = self._request_onemanage_probe(endpoint.path, endpoint.verb.value)
-        return self._normalize_onemanage_fabric_members(response)
+        members = self._normalize_onemanage_fabric_members(response)
+        self._trace("fabric_resolver_onemanage_members_probe_end", fabric_name=fabric_name, member_count=len(members))
+        return members
 
     def _fetch_onemanage_fabric_members(self, fabric_name: str) -> list[dict[str, Any]]:
         """GET OneManage member fabrics for a multicluster parent fabric."""
         endpoint = EpOneManageFabricsMembersGet(fabric_name=fabric_name)
+        self._trace("fabric_resolver_onemanage_members_fetch_start", fabric_name=fabric_name, path=endpoint.path)
         response = self._nd.request(
             endpoint.path,
             method=endpoint.verb.value,
             ignore_not_found_error=True,
         )
-        return self._normalize_onemanage_fabric_members(response)
+        members = self._normalize_onemanage_fabric_members(response)
+        self._trace("fabric_resolver_onemanage_members_fetch_end", fabric_name=fabric_name, member_count=len(members))
+        return members
 
     def _normalize_onemanage_fabric_members(self, response: Any) -> list[dict[str, Any]]:
         """Normalize OneManage members response shapes into member dicts."""
@@ -273,7 +323,9 @@ class FabricResolverBase:
                     resolved = dict(msd_fabric_data)
                     resolved.update(member)
                     resolved["fabricParent"] = parent_fabric
+                    self._trace("fabric_resolver_member_type_resolved", fabric_name=self.fabric_name, fabric_type="multicluster_child")
                     return "multicluster_child", resolved
+        self._trace("fabric_resolver_member_type_resolved", fabric_name=self.fabric_name, fabric_type="multisite_child")
         return "multisite_child", msd_fabric_data
 
     def _enrich_with_manage_fabric_details(self, fabric_data: dict) -> dict:
@@ -349,15 +401,20 @@ class FabricResolverBase:
         common = dict(fabric_name=self.fabric_name, fabric_data=fabric_data)
 
         if fabric_type == "multicluster_parent" and self.multicluster_parent_strategy_cls is not None:
+            self._trace("fabric_resolver_strategy_build", fabric_type=fabric_type, strategy=self.multicluster_parent_strategy_cls.__name__)
             return self.multicluster_parent_strategy_cls(**common)
         if fabric_type == "multisite_parent" and self.multisite_parent_strategy_cls is not None:
+            self._trace("fabric_resolver_strategy_build", fabric_type=fabric_type, strategy=self.multisite_parent_strategy_cls.__name__)
             return self.multisite_parent_strategy_cls(**common)
         if fabric_type == "multicluster_child" and self.child_strategy_cls is not None:
+            self._trace("fabric_resolver_strategy_build", fabric_type=fabric_type, strategy=self.child_strategy_cls.__name__)
             return self.child_strategy_cls(cluster_name=fabric_data.get("clusterName"), **common)
         if fabric_type == "multisite_child" and self.child_strategy_cls is not None:
+            self._trace("fabric_resolver_strategy_build", fabric_type=fabric_type, strategy=self.child_strategy_cls.__name__)
             return self.child_strategy_cls(**common)
         if self.standalone_strategy_cls is None:
             raise ValueError("standalone_strategy_cls is not configured")
+        self._trace("fabric_resolver_strategy_build", fabric_type=fabric_type, strategy=self.standalone_strategy_cls.__name__)
         return self.standalone_strategy_cls(**common)
 
     @classmethod

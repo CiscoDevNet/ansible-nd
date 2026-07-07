@@ -18,8 +18,6 @@ directly. For parent fabrics it:
 from __future__ import annotations
 
 import copy
-import json
-import os
 import time
 
 from typing import Any, Optional, Union
@@ -72,12 +70,14 @@ class NetworkWorkflowCoordinator:
         self,
         module: AnsibleModule,
         strategy: BaseNetworkStrategy,
+        initial_workflow_trace: Optional[list[dict[str, Any]]] = None,
     ):
         self.module = module
         self.strategy = strategy
-        self._workflow_trace: list[dict[str, Any]] = []
         self._trace_started_at = time.monotonic()
-        self._workflow_trace_file: str | None = None
+        self._workflow_trace: list[dict[str, Any]] = []
+        if initial_workflow_trace:
+            self._workflow_trace.extend(dict(entry) for entry in initial_workflow_trace)
 
     @property
     def attachments(self) -> NetworkAttachmentManager:
@@ -134,17 +134,8 @@ class NetworkWorkflowCoordinator:
         params = getattr(self.module, "params", {}) or {}
         return params.get("output_level") == "debug" or verbosity >= 3
 
-    def _trace_file_enabled(self) -> bool:
-        params = getattr(self.module, "params", {}) or {}
-        return params.get("output_level") == "debug"
-
-    def _trace_file_path(self) -> str:
-        if self._workflow_trace_file is None:
-            self._workflow_trace_file = f"/private/tmp/nd_manage_networks_trace_{os.getpid()}.jsonl"
-        return self._workflow_trace_file
-
     def _trace(self, event: str, **details: Any) -> None:
-        if not (self._trace_enabled() or self._trace_file_enabled()):
+        if not self._trace_enabled():
             return
         entry = {
             "sequence": len(self._workflow_trace) + 1,
@@ -153,15 +144,10 @@ class NetworkWorkflowCoordinator:
         }
         entry.update(details)
         self._workflow_trace.append(entry)
-        if self._trace_file_enabled():
-            with open(self._trace_file_path(), "a", encoding="utf-8") as trace_file:
-                trace_file.write(json.dumps(entry, default=str, sort_keys=True) + "\n")
 
     def _attach_workflow_trace(self, result: dict[str, Any]) -> dict[str, Any]:
         if self._trace_enabled():
             result["workflow_trace"] = list(self._workflow_trace)
-        if self._workflow_trace_file:
-            result["workflow_trace_file"] = self._workflow_trace_file
         return result
 
     @staticmethod
@@ -1062,9 +1048,17 @@ class NetworkWorkflowCoordinator:
         """
         module_args = child_task["module_args"]
         child_strategy = child_task["strategy"]
+        trace_start = len(self._workflow_trace)
         try:
             result = self._run_state_machine(module_args, strategy=child_strategy)
         except Exception as exc:
+            self._trace(
+                "child_task_error",
+                child_fabric=child_task.get("fabric"),
+                error=repr(exc),
+                exception=type(exc).__name__,
+            )
+            child_trace = self._workflow_trace[trace_start:]
             return {
                 "changed": False,
                 "failed": True,
@@ -1072,8 +1066,12 @@ class NetworkWorkflowCoordinator:
                 "exception": type(exc).__name__,
                 "fabric_type": getattr(child_strategy, "fabric_type", "unknown_child"),
                 "proposed": copy.deepcopy(module_args.get("config") or []),
+                "workflow_trace": list(child_trace),
             }
         result.setdefault("fabric_type", child_strategy.fabric_type)
+        child_trace = self._workflow_trace[trace_start:]
+        if child_trace:
+            result.setdefault("workflow_trace", list(child_trace))
         return result
 
     # ── Result aggregation ────────────────────────────────────────
