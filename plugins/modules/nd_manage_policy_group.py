@@ -427,7 +427,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spe
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_policy_group import (
     PolicyGroupOrchestrator,
 )
@@ -959,6 +958,26 @@ def _looks_like_ipv4(value: str) -> bool:
     return all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
 
 
+class _FabricInventoryRestClient:
+    """Small adapter for ``FabricSwitchInventory.from_fabric``.
+
+    ``FabricSwitchInventory`` expects the subset of ``NDModule`` that exposes
+    ``module``, ``rest_send``, and ``request(path, verb)``.  Policy-group
+    switch IP resolution only needs that small surface, so keep the adapter
+    local instead of widening the shared inventory helper.
+    """
+
+    def __init__(self, module, rest_send) -> None:
+        self.module = module
+        self.rest_send = rest_send
+
+    def request(self, *, path, verb):
+        self.rest_send.path = path
+        self.rest_send.verb = verb
+        self.rest_send.commit()
+        return self.rest_send.response_current.get("DATA", {})
+
+
 def _resolve_switch_ips_in_config(module, log, config, fabric_name):
     """Replace IPv4 entries in every ``config[].switch_ids`` with serial numbers.
 
@@ -989,12 +1008,25 @@ def _resolve_switch_ips_in_config(module, log, config, fabric_name):
         "Resolving switch IPv4 addresses to serial numbers for fabric '%s'",
         fabric_name,
     )
-    nd = NDModule(module)
-    rest_send = nd.get_rest_send()
+    sender = Sender()
+    sender.ansible_module = module
+    rest_send = RestSend(
+        {
+            "check_mode": module.check_mode,
+            "state": module.params.get("state"),
+        }
+    )
+    rest_send.sender = sender
+    rest_send.response_handler = ResponseHandler()
     rest_send.save_settings()
     rest_send.check_mode = False
     try:
-        inventory = FabricSwitchInventory.from_fabric(nd, fabric_name, log, SwitchDataModel)
+        inventory = FabricSwitchInventory.from_fabric(
+            _FabricInventoryRestClient(module, rest_send),
+            fabric_name,
+            log,
+            SwitchDataModel,
+        )
     finally:
         rest_send.restore_settings()
 

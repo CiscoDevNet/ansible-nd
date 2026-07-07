@@ -34,6 +34,7 @@ from typing import Any
 import pytest
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_policy_group
 from ansible_collections.cisco.nd.plugins.modules.nd_manage_policy_group import (
+    _FabricInventoryRestClient,
     _handle_gathered_state,
     _looks_like_ipv4,
     _pending_cleanup_candidates,
@@ -848,6 +849,13 @@ class _FakeRestSend:
     def __init__(self) -> None:
         self.check_mode = True
         self.events: list[str] = []
+        self.sender = None
+        self.response_handler = None
+        self.path = None
+        self.verb = None
+        self.commit_count = 0
+        self.response_current = {"DATA": {"switches": []}, "RETURN_CODE": 200}
+        self.inventory_clients: list[Any] = []
 
     def save_settings(self) -> None:
         self.events.append("save")
@@ -855,31 +863,59 @@ class _FakeRestSend:
     def restore_settings(self) -> None:
         self.events.append("restore")
 
-
-class _FakeNDModule:
-    """Stand-in for ``NDModule`` returning a stub ``rest_send``."""
-
-    def __init__(self) -> None:
-        self.rest_send = _FakeRestSend()
-
-    def get_rest_send(self) -> _FakeRestSend:
-        return self.rest_send
+    def commit(self) -> None:
+        self.commit_count += 1
 
 
-def _install_inventory_stubs(monkeypatch: pytest.MonkeyPatch, ip_map: dict[str, _FakeSwitch]) -> _FakeNDModule:
-    """Patch ``NDModule`` and ``FabricSwitchInventory.from_fabric`` so
+def _install_inventory_stubs(monkeypatch: pytest.MonkeyPatch, ip_map: dict[str, _FakeSwitch]) -> _FakeRestSend:
+    """Patch ``RestSend`` and ``FabricSwitchInventory.from_fabric`` so
     ``_resolve_switch_ips_in_config`` runs without touching the network.
-    Returns the ``_FakeNDModule`` instance used for the call so tests
+    Returns the ``_FakeRestSend`` instance used for the call so tests
     can assert on ``check_mode`` / save / restore behaviour."""
-    fake_nd = _FakeNDModule()
-    monkeypatch.setattr(nd_manage_policy_group, "NDModule", lambda _module: fake_nd)
+    fake_rest_send = _FakeRestSend()
+    monkeypatch.setattr(nd_manage_policy_group, "RestSend", lambda _params: fake_rest_send)
     inventory = _FakeInventory(ip_map)
+
+    def _from_fabric(cls, client, fabric, log, model_class):
+        fake_rest_send.inventory_clients.append(client)
+        assert client.rest_send is fake_rest_send
+        assert callable(client.request)
+        assert client.rest_send.check_mode is False
+        return inventory
+
     monkeypatch.setattr(
         nd_manage_policy_group.FabricSwitchInventory,
         "from_fabric",
-        classmethod(lambda cls, nd, fabric, log, model_class: inventory),
+        classmethod(_from_fabric),
     )
-    return fake_nd
+    return fake_rest_send
+
+
+def test_nd_policy_group_module_00390() -> None:
+    """
+    # Summary
+
+    The local inventory adapter exposes the small ``NDModule``-like
+    surface that ``FabricSwitchInventory.from_fabric`` expects while
+    using an already-created ``RestSend`` instance under the hood.
+
+    ## Classes and Methods
+
+    - ``_FabricInventoryRestClient.request``
+    """
+    rest_send = _FakeRestSend()
+    rest_send.response_current = {"DATA": {"switches": [{"switchId": "FDO_AAA"}]}, "RETURN_CODE": 200}
+    module = FakeModule()
+    client = _FabricInventoryRestClient(module, rest_send)
+
+    result = client.request(path="/api/v1/manage/fabrics/fab/switches", verb="GET")
+
+    assert client.module is module
+    assert client.rest_send is rest_send
+    assert rest_send.path == "/api/v1/manage/fabrics/fab/switches"
+    assert rest_send.verb == "GET"
+    assert rest_send.commit_count == 1
+    assert result == {"switches": [{"switchId": "FDO_AAA"}]}
 
 
 def test_nd_policy_group_module_00400() -> None:
@@ -887,7 +923,7 @@ def test_nd_policy_group_module_00400() -> None:
     # Summary
 
     Empty config -> the helper returns immediately without touching
-    ``NDModule`` or the inventory.
+    ``RestSend`` or the inventory.
 
     ## Classes and Methods
 
@@ -908,21 +944,21 @@ def test_nd_policy_group_module_00410(monkeypatch: pytest.MonkeyPatch) -> None:
     # Summary
 
     A config containing only serial numbers -> the helper short-circuits
-    on the ``has_ip`` check; no ``NDModule`` is instantiated.
+    on the ``has_ip`` check; no ``RestSend`` is instantiated.
 
     ## Test
 
-    - ``NDModule`` is replaced with a sentinel that raises if called.
+    - ``RestSend`` is replaced with a sentinel that raises if called.
 
     ## Classes and Methods
 
     - ``_resolve_switch_ips_in_config``
     """
 
-    def _boom(_module: object) -> None:
-        raise AssertionError("NDModule should not be instantiated for serial-only configs")
+    def _boom(_params: object) -> None:
+        raise AssertionError("RestSend should not be instantiated for serial-only configs")
 
-    monkeypatch.setattr(nd_manage_policy_group, "NDModule", _boom)
+    monkeypatch.setattr(nd_manage_policy_group, "RestSend", _boom)
 
     config = [{"switch_ids": ["FDO111", "FDO222"]}]
     module = FakeModule()
@@ -1069,7 +1105,7 @@ def test_nd_policy_group_module_00460(monkeypatch: pytest.MonkeyPatch) -> None:
 
     - ``_resolve_switch_ips_in_config``
     """
-    fake_nd = _install_inventory_stubs(monkeypatch, {"10.0.0.1": _FakeSwitch("FDO_AAA")})
+    fake_rest_send = _install_inventory_stubs(monkeypatch, {"10.0.0.1": _FakeSwitch("FDO_AAA")})
 
     config = [{"switch_ids": ["10.0.0.1"]}]
     module = FakeModule(check_mode=True)
@@ -1078,7 +1114,8 @@ def test_nd_policy_group_module_00460(monkeypatch: pytest.MonkeyPatch) -> None:
     _resolve_switch_ips_in_config(module, log, config, fabric_name="fab")
 
     # save/restore bracket the inventory fetch
-    assert fake_nd.rest_send.events == ["save", "restore"]
+    assert fake_rest_send.events == ["save", "restore"]
+    assert len(fake_rest_send.inventory_clients) == 1
 
 
 # =============================================================================
