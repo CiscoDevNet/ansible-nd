@@ -13,16 +13,18 @@ version_added: "1.6.0"
 short_description: Manage local users on Cisco Nexus Dashboard
 description:
 - Manage local users on Cisco Nexus Dashboard (ND).
-- It supports creating, updating, and deleting local users.
+- It supports creating, updating, deleting, gathering, and filtering local users.
 author:
 - Gaspard Micol (@gmicol)
 options:
   config:
     description:
     - The list of the local users to configure.
+    - When O(state=gathered), O(config) may be omitted to return all local users or contain O(config.login_id) to filter the results.
+      Other configuration options are not supported as gathered-state filters.
     type: list
     elements: dict
-    required: True
+    required: false
     suboptions:
       email:
         description:
@@ -32,8 +34,10 @@ options:
         description:
         - The login ID of the local user.
         - The O(config.login_id) must be defined when creating, updating or deleting a local user.
+        - Required for local-user resources in write states.
+        - Optional as a filtering criterion when O(state=gathered).
         type: str
-        required: true
+        required: false
       first_name:
         description:
         - The first name of the local user.
@@ -100,9 +104,11 @@ options:
       The resources on ND will be modified to exactly match the configuration.
       Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
     - Use O(state=deleted) to remove the resources specified in the configuration from the Cisco Nexus Dashboard.
+    - Use O(state=gathered) to return local users matching O(config).
+      When O(config) is omitted, all local users are returned.
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -166,6 +172,19 @@ EXAMPLES = r"""
     config:
       - login_id: local_user
     state: deleted
+
+- name: Gather all local users
+  cisco.nd.nd_local_user:
+    state: gathered
+  register: gathered_local_users
+
+- name: Gather a local user by login ID
+  cisco.nd.nd_local_user:
+    state: gathered
+    config:
+      - login_id: local_user
+  register: gathered_local_user
+
 """
 
 RETURN = r"""
@@ -186,8 +205,16 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
+
+    nd_state_machine = None
 
     try:
         # Initialize StateMachine
@@ -203,7 +230,8 @@ def main():
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except Exception as e:
-        module.fail_json(msg=f"Module execution failed: {str(e)}", **nd_state_machine.output.format())
+        output = nd_state_machine.output.format() if nd_state_machine else {}
+        module.fail_json(msg=f"Module execution failed: {str(e)}", **output)
 
 
 if __name__ == "__main__":
