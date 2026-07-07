@@ -334,4 +334,13 @@ class FabricBaseModel(NDBaseModel):
                 "elements": "dict",
                 "options": config_options,
             },
+            config_actions={
+                "type": "dict",
+                "required": False,
+                "options": {
+                    "save": {"type": "bool", "default": False},
+                    "deploy": {"type": "bool", "default": False},
+                    "type": {"type": "str", "default": "switch", "choices": ["switch", "global"]},
+                },
+            },
         )

@@ -135,7 +135,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     dns_vrf_collection: list[str] = Field(
         alias="dnsVrfCollection",
         description="DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server",
-        default_factory=lambda: ["string"],
+        default_factory=list,
     )
 
     # Domain

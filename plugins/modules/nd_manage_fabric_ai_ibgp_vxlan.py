@@ -38,11 +38,6 @@ options:
         - The O(config.fabric_name) must be defined when creating, updating or deleting a fabric.
         type: str
         required: true
-      category:
-        description:
-        - The resource category.
-        type: str
-        default: fabric
       location:
         description:
         - The geographic location of the fabric.
@@ -135,7 +130,7 @@ options:
             choices: [ ospf, isis ]
           target_subnet_mask:
             description:
-            - The target subnet mask for intra-fabric links (24-31).
+            - The target subnet mask for intra-fabric links (30-31).
             type: int
             default: 30
           ipv6_link_local:
@@ -1570,6 +1565,33 @@ options:
     type: str
     default: merged
     choices: [ merged, replaced, overridden, deleted ]
+  config_actions:
+    description:
+    - Controls save and deploy behavior after fabric configuration is updated.
+    - Save writes pending configuration to the controller.
+    - Deploy pushes the saved configuration to switches.
+    - Skipped automatically when O(state=deleted) or when no changes are made.
+    type: dict
+    suboptions:
+      save:
+        description:
+        - Whether to save fabric configuration after changes.
+        type: bool
+        default: false
+      deploy:
+        description:
+        - Whether to deploy fabric configuration to switches after saving.
+        - Requires O(config_actions.save=true) when enabled.
+        type: bool
+        default: false
+      type:
+        description:
+        - Scope of the deploy operation.
+        - C(switch) deploys only to affected switches.
+        - C(global) deploys to all switches in the fabric.
+        type: str
+        default: switch
+        choices: [ switch, global ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -1587,7 +1609,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: ai_ibgp_fabric_1
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1634,7 +1655,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: ai_ibgp_fabric_1
-        category: fabric
         management:
           bgp_asn: "65002"
           site_id: "65002"
@@ -1761,6 +1781,27 @@ def main():
 
         # Manage state
         nd_state_machine.manage_state()
+
+        # Execute config save/deploy actions via orchestrator mixin
+        config_actions = module.params.get("config_actions") or {}
+        save = config_actions.get("save", False)
+        deploy = config_actions.get("deploy", False)
+        deploy_type = config_actions.get("type", "global")
+        state = module.params.get("state", "merged")
+
+        if state != "deleted" and len(nd_state_machine.sent) > 0:
+            fabric_names = []
+            for item in nd_state_machine.sent:
+                name = item.get_identifier_value()
+                if name and name not in fabric_names:
+                    fabric_names.append(name)
+            if fabric_names:
+                nd_state_machine.model_orchestrator.execute_config_actions(
+                    fabric_names=fabric_names,
+                    save=save,
+                    deploy=deploy,
+                    deploy_type=deploy_type,
+                )
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))

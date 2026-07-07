@@ -36,11 +36,6 @@ options:
         - The O(config.fabric_name) must be defined when creating, updating or deleting a fabric.
         type: str
         required: true
-      category:
-        description:
-        - The resource category.
-        type: str
-        default: fabric
       location:
         description:
         - The geographic location of the fabric.
@@ -374,7 +369,7 @@ options:
             default: false
           target_subnet_mask:
             description:
-            - Mask for underlay subnet IP range (24-31).
+            - Mask for underlay subnet IP range (30-31).
             type: int
             default: 30
           anycast_gateway_mac:
@@ -1361,6 +1356,33 @@ options:
     type: str
     default: merged
     choices: [ merged, replaced, overridden, deleted ]
+  config_actions:
+    description:
+    - Controls save and deploy behavior after fabric configuration is updated.
+    - Save writes pending configuration to the controller.
+    - Deploy pushes the saved configuration to switches.
+    - Skipped automatically when O(state=deleted) or when no changes are made.
+    type: dict
+    suboptions:
+      save:
+        description:
+        - Whether to save fabric configuration after changes.
+        type: bool
+        default: false
+      deploy:
+        description:
+        - Whether to deploy fabric configuration to switches after saving.
+        - Requires O(config_actions.save=true) when enabled.
+        type: bool
+        default: false
+      type:
+        description:
+        - Scope of the deploy operation.
+        - C(switch) deploys only to affected switches.
+        - C(global) deploys to all switches in the fabric.
+        type: str
+        default: switch
+        choices: [ switch, global ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -1459,7 +1481,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_ebgp_fabric_static
-        category: fabric
         management:
           bgp_asn: "65001"
           bgp_asn_auto_allocation: false
@@ -1484,7 +1505,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_ebgp_fabric
-        category: fabric
         management:
           bgp_asn_range: "65100-65199"
           anycast_gateway_mac: "2020.0000.00bb"
@@ -1496,7 +1516,6 @@ EXAMPLES = r"""
     state: replaced
     config:
       - fabric_name: my_ebgp_fabric
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1548,7 +1567,6 @@ EXAMPLES = r"""
     state: replaced
     config:
       - fabric_name: my_ebgp_fabric
-        category: fabric
         management:
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
@@ -1561,7 +1579,6 @@ EXAMPLES = r"""
     state: overridden
     config:
       - fabric_name: fabric_east
-        category: fabric
         location:
           latitude: 40.7128
           longitude: -74.0060
@@ -1587,7 +1604,6 @@ EXAMPLES = r"""
           network_vlan_range: "2300-2999"
           vrf_vlan_range: "2000-2299"
       - fabric_name: fabric_west
-        category: fabric
         location:
           latitude: 34.0522
           longitude: -118.2437
@@ -1734,6 +1750,27 @@ def main():
 
         # Manage state
         nd_state_machine.manage_state()
+
+        # Execute config save/deploy actions via orchestrator mixin
+        config_actions = module.params.get("config_actions") or {}
+        save = config_actions.get("save", False)
+        deploy = config_actions.get("deploy", False)
+        deploy_type = config_actions.get("type", "global")
+        state = module.params.get("state", "merged")
+
+        if state != "deleted" and len(nd_state_machine.sent) > 0:
+            fabric_names = []
+            for item in nd_state_machine.sent:
+                name = item.get_identifier_value()
+                if name and name not in fabric_names:
+                    fabric_names.append(name)
+            if fabric_names:
+                nd_state_machine.model_orchestrator.execute_config_actions(
+                    fabric_names=fabric_names,
+                    save=save,
+                    deploy=deploy,
+                    deploy_type=deploy_type,
+                )
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))

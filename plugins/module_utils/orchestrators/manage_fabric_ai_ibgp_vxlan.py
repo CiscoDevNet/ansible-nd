@@ -10,6 +10,7 @@ __metaclass__ = type
 
 from typing import Type
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions_mixin import ConfigActionsMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ibgp_vxlan import FabricAiIbgpVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -23,7 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 
 
-class ManageAiIbgpVxlanFabricOrchestrator(NDBaseOrchestrator):
+class ManageAiIbgpVxlanFabricOrchestrator(ConfigActionsMixin, NDBaseOrchestrator):
     model_class: Type[NDBaseModel] = FabricAiIbgpVxlanModel
 
     create_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsPost

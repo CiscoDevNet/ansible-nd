@@ -81,7 +81,7 @@ def nd_argument_spec():
         username=dict(type="str", fallback=(env_fallback, ["ND_USERNAME", "ANSIBLE_NET_USERNAME"])),
         password=dict(type="str", required=False, no_log=True, fallback=(env_fallback, ["ND_PASSWORD", "ANSIBLE_NET_PASSWORD"])),
         output_level=dict(type="str", default="normal", choices=["debug", "info", "normal"], fallback=(env_fallback, ["ND_OUTPUT_LEVEL"])),
-        timeout=dict(type="int", default=30, fallback=(env_fallback, ["ND_TIMEOUT"])),
+        timeout=dict(type="int", fallback=(env_fallback, ["ND_TIMEOUT"])),
         use_proxy=dict(type="bool", fallback=(env_fallback, ["ND_USE_PROXY"])),
         use_ssl=dict(type="bool", fallback=(env_fallback, ["ND_USE_SSL"])),
         validate_certs=dict(type="bool", fallback=(env_fallback, ["ND_VALIDATE_CERTS"])),

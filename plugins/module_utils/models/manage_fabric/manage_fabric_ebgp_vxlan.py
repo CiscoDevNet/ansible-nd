@@ -258,7 +258,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     # Advanced Features
     anycast_gateway_mac: str = Field(alias="anycastGatewayMac", description="Shared anycast gateway MAC address for all VTEPs", default="2020.0000.00aa")
-    target_subnet_mask: int = Field(alias="targetSubnetMask", description="Mask for underlay subnet IP range", ge=24, le=31, default=30)
+    target_subnet_mask: int = Field(alias="targetSubnetMask", description="Mask for underlay subnet IP range", ge=30, le=31, default=30)
     fabric_mtu: int = Field(alias="fabricMtu", description="Intra Fabric Interface MTU. Must be an even number", ge=1500, le=9216, default=9216)
     l2_host_interface_mtu: int = Field(
         alias="l2HostInterfaceMtu", description="Layer 2 host interface MTU. Must be an even number", ge=1500, le=9216, default=9216
@@ -454,29 +454,29 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     # DNS / NTP / Syslog Collections
     ntp_server_collection: list[str] = Field(
-        default_factory=lambda: ["string"], alias="ntpServerCollection", description="List of NTP server IPv4/IPv6 addresses and/or hostnames"
+        default_factory=list, alias="ntpServerCollection", description="List of NTP server IPv4/IPv6 addresses and/or hostnames"
     )
     ntp_server_vrf_collection: list[str] = Field(
-        default_factory=lambda: ["string"],
+        default_factory=list,
         alias="ntpServerVrfCollection",
         description=("NTP Server VRFs. One VRF for all NTP servers or a list of VRFs, one per NTP server"),
     )
     dns_collection: list[str] = Field(default_factory=list, alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses")
     dns_vrf_collection: list[str] = Field(
-        default_factory=lambda: ["string"],
+        default_factory=list,
         alias="dnsVrfCollection",
         description=("DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server"),
     )
     syslog_server_collection: list[str] = Field(
-        default_factory=lambda: ["string"], alias="syslogServerCollection", description="List of Syslog server IPv4/IPv6 addresses and/or hostnames"
+        default_factory=list, alias="syslogServerCollection", description="List of Syslog server IPv4/IPv6 addresses and/or hostnames"
     )
     syslog_server_vrf_collection: list[str] = Field(
-        default_factory=lambda: ["string"],
+        default_factory=list,
         alias="syslogServerVrfCollection",
         description=("Syslog Server VRFs. One VRF for all Syslog servers or a list of VRFs, one per Syslog server"),
     )
     syslog_severity_collection: list[int] = Field(
-        default_factory=lambda: [7], alias="syslogSeverityCollection", description="List of Syslog severity values, one per Syslog server"
+        default_factory=list, alias="syslogSeverityCollection", description="List of Syslog severity values, one per Syslog server"
     )
 
     # Extra Config / Pre-Interface Config / AAA / Banner
