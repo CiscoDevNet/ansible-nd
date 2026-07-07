@@ -1390,8 +1390,6 @@ notes:
 - This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only eBGP VXLAN fabric type (C(vxlanEbgp)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
-- The O(config.management.bgp_asn) field is optional when O(config.management.bgp_asn_auto_allocation) is C(true).
-- The O(config.management.bgp_asn) field is required when O(config.management.bgp_asn_auto_allocation) is C(false).
 - O(config.management.site_id) defaults to the value of O(config.management.bgp_asn) if not provided.
 - The default O(config.management.vpc_peer_keep_alive_option) for eBGP fabrics is C(management), unlike iBGP fabrics.
 """
