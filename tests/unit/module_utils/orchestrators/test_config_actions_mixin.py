@@ -211,9 +211,11 @@ class TestConfigSave:
 
         - ConfigActionsMixin.config_save()
         """
-        rest_send = _make_rest_send([
-            _success_response(data={"status": "Config save is completed"}),
-        ])
+        rest_send = _make_rest_send(
+            [
+                _success_response(data={"status": "Config save is completed"}),
+            ]
+        )
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -240,9 +242,11 @@ class TestConfigSave:
         - ConfigActionsMixin.config_save()
         - NDBaseOrchestrator._register_api_call()
         """
-        rest_send = _make_rest_send([
-            _success_response(data={"status": "Config save is completed"}),
-        ])
+        rest_send = _make_rest_send(
+            [
+                _success_response(data={"status": "Config save is completed"}),
+            ]
+        )
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -278,9 +282,11 @@ class TestConfigDeployGlobal:
         - ConfigActionsMixin.config_deploy()
         - ConfigActionsMixin._deploy_global()
         """
-        rest_send = _make_rest_send([
-            _success_response(data={"status": "Configuration deployment completed"}),
-        ])
+        rest_send = _make_rest_send(
+            [
+                _success_response(data={"status": "Configuration deployment completed"}),
+            ]
+        )
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -306,9 +312,11 @@ class TestConfigDeployGlobal:
 
         - ConfigActionsMixin._deploy_global()
         """
-        rest_send = _make_rest_send([
-            _success_response(data={"status": "Configuration deployment completed"}),
-        ])
+        rest_send = _make_rest_send(
+            [
+                _success_response(data={"status": "Configuration deployment completed"}),
+            ]
+        )
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -367,10 +375,12 @@ class TestConfigDeploySwitch:
             ]
         }
 
-        rest_send = _make_rest_send([
-            _success_response(data=switches_response, method="GET"),
-            _success_response(data=deploy_response),
-        ])
+        rest_send = _make_rest_send(
+            [
+                _success_response(data=switches_response, method="GET"),
+                _success_response(data=deploy_response),
+            ]
+        )
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -419,9 +429,11 @@ class TestConfigDeploySwitch:
             ]
         }
 
-        rest_send = _make_rest_send([
-            _success_response(data=switches_response, method="GET"),
-        ])
+        rest_send = _make_rest_send(
+            [
+                _success_response(data=switches_response, method="GET"),
+            ]
+        )
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -449,9 +461,11 @@ class TestConfigDeploySwitch:
         - ConfigActionsMixin._deploy_switches()
         - ConfigActionsMixin._get_switches_needing_deploy()
         """
-        rest_send = _make_rest_send([
-            _success_response(data={"switches": []}, method="GET"),
-        ])
+        rest_send = _make_rest_send(
+            [
+                _success_response(data={"switches": []}, method="GET"),
+            ]
+        )
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -521,16 +535,18 @@ class TestExecuteConfigActions:
         - ConfigActionsMixin.config_save()
         - ConfigActionsMixin.config_deploy()
         """
-        rest_send = _make_rest_send([
-            # Fabric 1: save
-            _success_response(data={"status": "Config save is completed"}),
-            # Fabric 1: deploy
-            _success_response(data={"status": "Configuration deployment completed"}),
-            # Fabric 2: save
-            _success_response(data={"status": "Config save is completed"}),
-            # Fabric 2: deploy
-            _success_response(data={"status": "Configuration deployment completed"}),
-        ])
+        rest_send = _make_rest_send(
+            [
+                # Fabric 1: save
+                _success_response(data={"status": "Config save is completed"}),
+                # Fabric 1: deploy
+                _success_response(data={"status": "Configuration deployment completed"}),
+                # Fabric 2: save
+                _success_response(data={"status": "Config save is completed"}),
+                # Fabric 2: deploy
+                _success_response(data={"status": "Configuration deployment completed"}),
+            ]
+        )
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -560,10 +576,12 @@ class TestExecuteConfigActions:
         - ConfigActionsMixin.execute_config_actions()
         - ConfigActionsMixin.config_save()
         """
-        rest_send = _make_rest_send([
-            _success_response(data={"status": "Config save is completed"}),
-            _success_response(data={"status": "Config save is completed"}),
-        ])
+        rest_send = _make_rest_send(
+            [
+                _success_response(data={"status": "Config save is completed"}),
+                _success_response(data={"status": "Config save is completed"}),
+            ]
+        )
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -660,14 +678,16 @@ class TestExecuteConfigActions:
             ]
         }
 
-        rest_send = _make_rest_send([
-            # save
-            _success_response(data={"status": "Config save is completed"}),
-            # query switches
-            _success_response(data=switches_response, method="GET"),
-            # switch deploy
-            _success_response(data={"switchIds": [{"switchId": "FOC111AAA", "status": "success"}]}),
-        ])
+        rest_send = _make_rest_send(
+            [
+                # save
+                _success_response(data={"status": "Config save is completed"}),
+                # query switches
+                _success_response(data=switches_response, method="GET"),
+                # switch deploy
+                _success_response(data={"switchIds": [{"switchId": "FOC111AAA", "status": "success"}]}),
+            ]
+        )
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
