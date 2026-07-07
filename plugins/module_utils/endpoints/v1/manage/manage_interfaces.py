@@ -44,7 +44,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     OffsetMixin,
     SwitchSerialNumberMixin,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    CompositeQueryParams,
+    EndpointQueryParams,
+    LuceneQueryParams,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
@@ -56,6 +60,9 @@ class ManageInterfacesListEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin
 
     These match the query parameters exposed by
     ``/fabrics/{fabricName}/switches/{switchId}/interfaces`` in manage.json.
+    ``filter``, ``max``, ``offset``, and ``sort`` remain available here for
+    backward compatibility. New filtering callers should use
+    ``EpManageInterfacesListGet.lucene_params`` for URL-encoded Lucene values.
     """
 
     sort: str | None = Field(default=None, min_length=1, description="Sort field and direction")
@@ -192,10 +199,38 @@ class EpManageInterfacesListGet(_EpManageInterfacesBase):
         default_factory=ManageInterfacesListEndpointParams,
         description="Endpoint-specific query parameters",
     )
+    lucene_params: LuceneQueryParams = Field(
+        default_factory=LuceneQueryParams,
+        description="Lucene filtering, pagination, and sorting parameters",
+    )
 
     def _query_string(self) -> str:
-        """Return list endpoint query string."""
-        return self.endpoint_params.to_query_string()
+        """Return endpoint-specific and Lucene query parameters."""
+        legacy_lucene_values = {
+            "filter": self.endpoint_params.filter,
+            "max": self.endpoint_params.max,
+            "offset": self.endpoint_params.offset,
+            "sort": self.endpoint_params.sort,
+        }
+
+        legacy_lucene_is_set = any(
+            value is not None
+            for value in legacy_lucene_values.values()
+        )
+
+        if legacy_lucene_is_set and not self.lucene_params.is_empty():
+            raise ValueError(
+                "Set Lucene options using either "
+                "'endpoint_params.filter/max/offset/sort' or "
+                "'lucene_params', but not both."
+            )
+
+        query_params = CompositeQueryParams().add(self.endpoint_params)
+
+        if not legacy_lucene_is_set:
+            query_params.add(self.lucene_params)
+
+        return query_params.to_query_string()
 
     @property
     def verb(self) -> HttpVerbEnum:
