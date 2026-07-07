@@ -95,6 +95,18 @@ class FabricConfigDeployEndpointParams(EndpointQueryParams):
     incl_all_msd_switches: bool | None = Field(default=None, description="Include all MSD fabric switches")
 
 
+class FabricsTicketEndpointParams(FabricsEndpointParams):
+    """
+    Endpoint-specific query parameters for fabric membership mutation endpoints.
+    """
+
+    ticket_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Change control ticket ID",
+    )
+
+
 class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for ND Manage Fabrics endpoints.
@@ -639,3 +651,79 @@ class EpManageFabricsDeploymentFreezeGet(_EpManageFabricsBase):
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.GET
+
+
+class EpManageFabricsMembersGet(_EpManageFabricsBase):
+    """GET /api/v1/manage/fabrics/{fabric_name}/members."""
+
+    class_name: Literal["EpManageFabricsMembersGet"] = Field(
+        default="EpManageFabricsMembersGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    _path_suffix: ClassVar[Optional[str]] = "members"
+
+    endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.GET
+
+
+class EpManageFabricsMemberCandidatesGet(_EpManageFabricsBase):
+    """GET /api/v1/manage/fabrics/{fabric_name}/memberCandidates."""
+
+    class_name: Literal["EpManageFabricsMemberCandidatesGet"] = Field(
+        default="EpManageFabricsMemberCandidatesGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    _path_suffix: ClassVar[Optional[str]] = "memberCandidates"
+
+    endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.GET
+
+
+class EpManageFabricsMembersAddPost(_EpManageFabricsBase):
+    """POST /api/v1/manage/fabrics/{fabric_name}/actions/addMembers."""
+
+    class_name: Literal["EpManageFabricsMembersAddPost"] = Field(
+        default="EpManageFabricsMembersAddPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    _path_suffix: ClassVar[Optional[str]] = "actions/addMembers"
+
+    endpoint_params: FabricsTicketEndpointParams = Field(default_factory=FabricsTicketEndpointParams, description="Endpoint-specific query parameters")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.POST
+
+
+class EpManageFabricsMembersRemovePost(_EpManageFabricsBase):
+    """POST /api/v1/manage/fabrics/{fabric_name}/actions/removeMembers."""
+
+    class_name: Literal["EpManageFabricsMembersRemovePost"] = Field(
+        default="EpManageFabricsMembersRemovePost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    _path_suffix: ClassVar[Optional[str]] = "actions/removeMembers"
+
+    endpoint_params: FabricsTicketEndpointParams = Field(default_factory=FabricsTicketEndpointParams, description="Endpoint-specific query parameters")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.POST

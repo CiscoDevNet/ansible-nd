@@ -1,0 +1,18 @@
+---
+- name: Discover ND Network Test Cases
+  ansible.builtin.find:
+    paths: "{{ role_path }}/tests/{{ nd_network_test_topology }}"
+    patterns: "{{ testcase }}.yaml"
+    recurse: true
+  delegate_to: localhost
+  register: nd_network_testcases
+
+- name: Build List of ND Network Test Items
+  ansible.builtin.set_fact:
+    nd_network_test_items: "{{ nd_network_testcases.files | map(attribute='path') | list }}"
+
+- name: Run ND Network Test Cases
+  ansible.builtin.include_tasks: "{{ nd_network_test_case_to_run }}"
+  with_items: "{{ nd_network_test_items }}"
+  loop_control:
+    loop_var: nd_network_test_case_to_run
