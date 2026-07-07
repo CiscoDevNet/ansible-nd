@@ -54,6 +54,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     # TODO: Remove this compatibility bridge when PR #525 unifies execution.
     supports_mutation_outcomes: ClassVar[bool] = False
 
+    # Opt-in. Existing orchestrators do not receive gathered filters.
+    supports_gathered_lucene_filtering: ClassVar[bool] = False
+
     # bulk_payload_key is the JSON wrapper key the bulk endpoint expects,
     # e.g. "links" for /api/v1/manage/links POST.
     bulk_payload_key: ClassVar[str] = "items"
