@@ -115,9 +115,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             return {}
 
         if not self.rest_send.success:
-            response = self.rest_send.response_current
-            detail = response.get("error") or response.get("DATA") or response
-            raise Exception(f"Request failed {self.rest_send.error_summary}: {detail}")
+            raise Exception(f"Request failed {self.rest_send.error_summary}")
 
         return self.rest_send.response_current.get("DATA", {})
 

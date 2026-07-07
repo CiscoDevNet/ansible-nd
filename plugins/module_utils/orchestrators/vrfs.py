@@ -448,6 +448,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 not_found_ok=not_found_ok,
                 operation_type=operation_type,
             )
+            self._raise_on_failed_results(response)
         except Exception as exc:
             self._trace(
                 "api_request_error",
@@ -466,6 +467,27 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             response_summary=self._response_summary(response),
         )
         return response
+
+    @staticmethod
+    def _raise_on_failed_results(response: Any) -> None:
+        """Raise for VRF action responses whose per-item result failed."""
+        if not isinstance(response, dict):
+            return
+        results = response.get("results")
+        if not isinstance(results, list):
+            return
+        failed: list[str] = []
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status", "") or "").strip().lower()
+            if status not in ("failed", "failure", "error"):
+                continue
+            name = item.get("vrfName") or item.get("name") or "item"
+            message = item.get("message") or "operation failed"
+            failed.append(f"{name}: {message}")
+        if failed:
+            raise Exception("ND Error: " + "; ".join(failed))
 
     @staticmethod
     def _response_summary(response: Any) -> dict[str, Any]:
