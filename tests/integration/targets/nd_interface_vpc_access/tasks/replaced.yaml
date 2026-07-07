@@ -1,0 +1,41 @@
+---
+# Replaced state tests for nd_interface_vpc_access
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# vpc100 was created in merged.yaml. Replace its config (change VLAN, add a peer1 member)
+# and verify the change is reflected.
+
+- name: "REPLACED: Update vpc100 policy (check mode)"
+  cisco.nd.nd_interface_vpc_access: &replace_vpc
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_access_updated }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced
+
+- name: "REPLACED: Update vpc100 policy (normal mode)"
+  cisco.nd.nd_interface_vpc_access: *replace_vpc
+  register: nm_replaced
+
+- name: "REPLACED: Verify replace produced a change"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced is changed
+      - nm_replaced is changed
+
+- name: "REPLACED IDEMPOTENT: Pause for convergence"
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: "REPLACED IDEMPOTENT: Re-apply (normal mode)"
+  cisco.nd.nd_interface_vpc_access: *replace_vpc
+  register: nm_replaced_idem
+
+- name: "REPLACED IDEMPOTENT: Verify no change on re-apply"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_idem is not changed

@@ -6,6 +6,7 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 from typing import Any, Callable
+
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -33,7 +34,6 @@ class NDStateMachine:
         # REST infrastructure
         sender = Sender()
         sender.ansible_module = self.module
-
         rest_send_params = dict(self.module.params)
         rest_send_params["check_mode"] = self.module.check_mode
         self.rest_send = RestSend(rest_send_params)
@@ -74,8 +74,13 @@ class NDStateMachine:
             self.existing = self.before.copy()
             # Ongoing collection of configuration objects that were changed
             self.sent = NDConfigCollection(model_class=self.model_class)
-            # Collection of configuration objects given by user
-            self.proposed = NDConfigCollection.from_ansible_config(data=self.module.params.get("config", []), model_class=self.model_class)
+            # Collection of configuration objects given by user.
+            # ``context={"state": ...}`` is threaded into pydantic validation so models can apply
+            # state-aware validation (e.g. require certain fields for write states while accepting
+            # identifier-only items for ``deleted``). Models that do not read the context ignore it.
+            self.proposed = NDConfigCollection.from_ansible_config(
+                data=self.module.params.get("config", []), model_class=self.model_class, context={"state": self.state}
+            )
 
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
 
@@ -88,12 +93,17 @@ class NDStateMachine:
         Manage state according to desired configuration.
         """
         if self.state in ["merged", "replaced", "overridden"]:
+            # Capability preflight runs here -- before _manage_create_update_state, whose mutations are
+            # skipped in check mode -- so dry-runs surface incapable switches (PR #275 / issue #273).
+            self.model_orchestrator.preflight(list(self.proposed))
             self._manage_create_update_state()
 
             if self.state == "overridden":
                 self._manage_override_deletions()
 
         elif self.state == "deleted":
+            # Capability preflight intentionally NOT run for deletes: removing configuration does not
+            # depend on a switch's capability to host the interface type (PR #275 scope decision).
             self._manage_delete_state()
 
         else:

@@ -18,6 +18,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
 
 
+class AclNameMixin(BaseModel):
+    """Mixin for endpoints that require acl_name parameter."""
+
+    acl_name: str | None = Field(default=None, min_length=1, max_length=115, description="ACL name")
+
+
 class ClusterNameMixin(BaseModel):
     """Mixin for endpoints that require cluster_name parameter."""
 

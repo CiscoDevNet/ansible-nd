@@ -1,0 +1,43 @@
+---
+# Overridden state tests for nd_interface_subinterface_unmanaged
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# At this point Eth.20, Eth.21, Eth.22, PC.25, and Eth.29 exist on the fabric.
+# Override reduces the set to only what is specified; any unmanaged subinterface
+# managed by this module that is not in the config is removed (fabric-wide scope).
+
+- name: "OVERRIDDEN: Reduce to only Eth.20 and PC.25"
+  cisco.nd.nd_interface_subinterface_unmanaged: &override_eth_20_pc_25
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ subif_eth_20 }}"
+      - "{{ subif_pc_25 }}"
+    state: overridden
+  register: nm_overridden_reduce
+
+- name: "OVERRIDDEN: Verify reduce changed and removed entries are gone"
+  vars:
+    eth_21_name: "{{ ethernet_parent }}.21"
+    eth_22_name: "{{ ethernet_parent }}.22"
+    eth_29_name: "{{ ethernet_parent }}.29"
+    eth_21_after: "{{ nm_overridden_reduce.after | selectattr('interface_name', 'equalto', eth_21_name) | list }}"
+    eth_22_after: "{{ nm_overridden_reduce.after | selectattr('interface_name', 'equalto', eth_22_name) | list }}"
+    eth_29_after: "{{ nm_overridden_reduce.after | selectattr('interface_name', 'equalto', eth_29_name) | list }}"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_reduce is changed
+      - eth_21_after | length == 0
+      - eth_22_after | length == 0
+      - eth_29_after | length == 0
+
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply"
+  cisco.nd.nd_interface_subinterface_unmanaged: *override_eth_20_pc_25
+  register: nm_overridden_idem
+
+- name: "OVERRIDDEN IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_idem is not changed
