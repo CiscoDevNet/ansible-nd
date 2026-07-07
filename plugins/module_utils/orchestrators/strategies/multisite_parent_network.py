@@ -58,13 +58,13 @@ class MultisiteParentNetworkStrategy(StandaloneNetworkStrategy):
         """
         Build module_args for executing nd_manage_networks against a Multisite child fabric.
 
-        The child task runs as a standalone operation (no further child splitting).
-        deploy is forced to False — the parent handles deployment.
+        The child task runs as a child-scoped definition update (no further child
+        splitting). Attachment and deployment intent remain on the parent task,
+        and the coordinator deploys parent-collected attachment work once after
+        child definition updates complete.
         nd_version is NOT passed; it is an internal detail not exposed to modules.
         """
         child_configs = copy.deepcopy(network_configs)
-        for cfg in child_configs:
-            cfg["deploy"] = False
 
         # Translate 'overridden' to 'replaced' for child fabric compatibility
         child_state = "replaced" if state == "overridden" else state

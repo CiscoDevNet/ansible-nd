@@ -41,6 +41,48 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
 
+class _Module:
+    def __init__(self, params):
+        self.params = params
+        self.check_mode = False
+        self._verbosity = 3
+
+    def fail_json(self, **kwargs):
+        raise AssertionError(kwargs)
+
+
+class _ParentStrategy:
+    config_model_cls = NetworkParentConfigModel
+    fabric_data = {"members": [{"fabricName": "child1"}]}
+    fabric_name = "msd_p"
+
+    @property
+    def fabric_type(self):
+        return "multisite_parent"
+
+    @property
+    def is_child(self):
+        return False
+
+    @property
+    def is_parent(self):
+        return True
+
+    @property
+    def is_multicluster(self):
+        return False
+
+    def child_fabric_members(self):
+        return ["child1"]
+
+    def build_child_task_args(self, child_fabric_name, network_configs, state):
+        return {
+            "fabric_name": child_fabric_name,
+            "state": state,
+            "config": network_configs,
+        }
+
+
 def _orchestrator():
     strategy = StandaloneNetworkStrategy(
         fabric_name="fab1",
@@ -181,6 +223,101 @@ def test_child_task_inherits_parent_network_name_and_layer_context():
 def test_child_network_config_without_fabric_options_does_not_require_child_task():
     assert NetworkWorkflowCoordinator._has_child_network_options({"fabric_name": "child1"}) is False
     assert NetworkWorkflowCoordinator._has_child_network_options({"fabric_name": "child1", "enable_ir": False}) is True
+
+
+def test_network_workflow_coordinator_parent_deploy_deferred_after_child_tasks():
+    """
+    Verify parent attach/deploy fields stay on the parent task, are stripped
+    from child tasks, and parent deploy runs after child processing.
+    """
+    module_args = {
+        "fabric_name": "msd_p",
+        "state": "merged",
+        "output_level": "debug",
+        "config": [
+            {
+                "network_name": "ansible-msd-net",
+                "network_id": 30101,
+                "vlan_id": 2301,
+                "is_l2only": False,
+                "vrf_name": "ansible-msd-vrf",
+                "deploy": True,
+                "attach": [
+                    {
+                        "ip_address": "192.168.1.224",
+                        "interfaces": [{"interface_range": "Ethernet1/1", "mode": "trunk"}],
+                    }
+                ],
+                "child_fabric_config": [
+                    {
+                        "fabric_name": "child1",
+                        "enable_ir": False,
+                    }
+                ],
+            }
+        ],
+    }
+    coordinator = NetworkWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_ParentStrategy(),
+    )
+    call_order = []
+
+    def run_parent(args, defer_deploy=False):
+        call_order.append("parent")
+        parent_network = args["config"][0]
+        assert defer_deploy is True
+        assert parent_network["attach"][0]["ip_address"] == "192.168.1.224"
+        assert parent_network["attach"][0]["interfaces"][0]["interface_range"] == "Ethernet1/1"
+        assert parent_network["attach"][0]["interfaces"][0]["mode"] == "trunk"
+        assert parent_network["deploy"] is True
+        assert "child_fabric_config" not in parent_network
+        return {
+            "changed": True,
+            "output_level": "debug",
+            "before": [],
+            "after": [],
+            "diff": [],
+            "_deferred_deploy_payload": {
+                "networkNames": ["ansible-msd-net"],
+                "switchIds": ["SERIAL1"],
+            },
+        }
+
+    def run_child(child_task):
+        call_order.append("child")
+        child_network = child_task["module_args"]["config"][0]
+        assert "attach" not in child_network
+        assert "deploy" not in child_network
+        assert "deploy_type" not in child_network
+        assert child_network["network_name"] == "ansible-msd-net"
+        assert child_network["enable_ir"] is False
+        return {
+            "changed": False,
+            "output_level": "debug",
+            "before": [],
+            "after": [],
+            "diff": [],
+            "fabric_type": "multisite_child",
+        }
+
+    def deploy_parent(_args, _strategy, payload):
+        call_order.append("deploy")
+        assert payload == {
+            "networkNames": ["ansible-msd-net"],
+            "switchIds": ["SERIAL1"],
+        }
+        return {}
+
+    object.__setattr__(coordinator, "_run_state_machine_with_attachments", run_parent)
+    object.__setattr__(coordinator, "_run_child_task", run_child)
+    object.__setattr__(coordinator, "_deploy_network_attachments", deploy_parent)
+
+    result = coordinator._handle_parent_workflow(dict(module_args), "multisite_parent")
+
+    assert call_order == ["parent", "child", "deploy"]
+    assert result["changed"] is True
+    assert result["fabric_type"] == "multisite_parent"
 
 
 def test_child_network_update_payload_is_limited_to_fabric_instance_data():
@@ -505,7 +642,7 @@ def test_mcfg_parent_workflow_validates_but_skips_child_network_crud():
                 {
                     "network_name": "BLUE_NET",
                     "is_l2only": True,
-                    "child_fabric_config": [{"fabric_name": "child1", "enable_ir": False}],
+                    "child_fabric_config": [{"fabric_name": "child1"}],
                 }
             ],
         },
