@@ -201,6 +201,37 @@ def test_vrf_attachment_query_chunks_large_vrf_name_sets():
     assert coordinator.queried_chunks == [["vrf-0", "vrf-1"], ["vrf-2", "vrf-3"], ["vrf-4"]]
 
 
+def test_vrf_attachment_query_missing_fallback_uses_unscoped_read():
+    class Coordinator:
+        def __init__(self):
+            self.queried_names = []
+
+        def _current_attachment_details(self, _module_args, _strategy, vrf_names):
+            self.queried_names.append(vrf_names)
+            if vrf_names == ["BLUE", "RED"]:
+                raise Exception("VRF(s) not found in fabric")
+            return [
+                {"vrfName": "BLUE", "switchId": "SW1"},
+                {"vrfName": "GREEN", "switchId": "SW2"},
+            ]
+
+        @staticmethod
+        def _is_vrf_not_found_error(error):
+            return VrfAttachmentManager.is_vrf_not_found_error(error)
+
+    coordinator = Coordinator()
+    manager = VrfAttachmentManager(coordinator=coordinator)
+
+    result = manager.current_attachment_details_ignore_missing(
+        {},
+        _StandaloneStrategy(),
+        ["BLUE", "RED"],
+    )
+
+    assert result == [{"vrfName": "BLUE", "switchId": "SW1"}]
+    assert coordinator.queried_names == [["BLUE", "RED"], None]
+
+
 def test_vrf_attachment_query_walks_paginated_results():
     strategy = _StandaloneStrategy()
     responses = [
@@ -2136,3 +2167,49 @@ def test_vrf_workflow_coordinator_00090_delete_precheck_blocks_network_reference
 
     assert "Cannot delete VRF" in str(exc.value)
     assert "ansible-net-a" in str(exc.value)
+
+
+def test_vrf_workflow_coordinator_delete_dependency_check_batches_network_query():
+    """
+    # Summary
+
+    Verify network dependency checks issue one filtered query for all target
+    VRFs instead of one GET per VRF.
+    """
+    module_args = {
+        "fabric_name": "msd_p",
+        "state": "deleted",
+        "output_level": "debug",
+        "config": [],
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_ParentStrategy(),
+    )
+    vrf_names = [f"ansible-vrf-{idx}" for idx in range(50)]
+    calls = []
+
+    def query(_module_args, _strategy, queried_vrf_names, use_filter):
+        calls.append((list(queried_vrf_names), use_filter))
+        return [
+            {
+                "vrfName": "ansible-vrf-17",
+                "networkName": "ansible-net-17",
+            }
+        ]
+
+    object.__setattr__(coordinator, "_query_networks_for_vrfs", query)
+
+    networks = coordinator._current_networks_for_vrfs(
+        module_args,
+        _ParentStrategy(),
+        vrf_names,
+    )
+
+    assert calls == [(vrf_names, True)]
+    assert networks == [
+        {
+            "vrfName": "ansible-vrf-17",
+            "networkName": "ansible-net-17",
+        }
+    ]

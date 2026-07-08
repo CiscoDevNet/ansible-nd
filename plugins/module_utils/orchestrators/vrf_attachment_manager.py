@@ -555,14 +555,8 @@ class VrfAttachmentManager:
         if not vrf_names or len(vrf_names) <= 1:
             return []
 
-        attachments: list[dict[str, Any]] = []
-        for vrf_name in vrf_names:
-            try:
-                attachments.extend(self.coordinator._current_attachment_details(module_args, strategy, [vrf_name]))
-            except Exception as exc:
-                if not self.coordinator._is_vrf_not_found_error(exc):
-                    raise
-        return attachments
+        all_attachments = self.coordinator._current_attachment_details(module_args, strategy, None)
+        return self.filter_attachment_details_by_vrf(all_attachments, vrf_names)
 
     @staticmethod
     def is_vrf_not_found_error(error: Exception) -> bool:

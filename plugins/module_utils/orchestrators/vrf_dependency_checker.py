@@ -80,9 +80,7 @@ class VrfDependencyChecker:
         """Gather networks referencing the requested VRFs."""
         vrf_name_set = set(vrf_names)
         try:
-            networks = []
-            for vrf_name in vrf_names:
-                networks.extend(self.coordinator._query_networks_for_vrfs(module_args, strategy, [vrf_name], use_filter=True))
+            networks = self.coordinator._query_networks_for_vrfs(module_args, strategy, vrf_names, use_filter=True)
         except Exception:
             networks = self.coordinator._query_networks_for_vrfs(module_args, strategy, vrf_names, use_filter=False)
         return [network for network in networks if (network.get("vrfName") or network.get("vrf_name")) in vrf_name_set]
