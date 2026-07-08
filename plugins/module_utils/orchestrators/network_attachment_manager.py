@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 
-from typing import Any, Optional, Union
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_network_attachments import (
@@ -91,9 +91,9 @@ class NetworkAttachmentManager:
         module_args: dict,
         strategy: BaseNetworkStrategy,
         phase: str,
-        desired: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
-        current_network_names: Optional[list[str]] = None,
-        current: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
+        desired: dict[tuple[str, str], dict[str, Any]] | None = None,
+        current_network_names: list[str] | None = None,
+        current: dict[tuple[str, str], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         state = module_args.get("state", "merged")
         config = module_args.get("config") or []
@@ -147,8 +147,8 @@ class NetworkAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
-        network_names: Optional[list[str]] = None,
-        attachment_details: Optional[list[dict[str, Any]]] = None,
+        network_names: list[str] | None = None,
+        attachment_details: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         network_names = network_names if network_names is not None else configured_network_names(module_args.get("config") or [])
         self._trace("network_deleted_attachment_phase_start", network_names=network_names)
@@ -260,7 +260,7 @@ class NetworkAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
-        network_names: Optional[list[str]] = None,
+        network_names: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         attachments: list[dict[str, Any]] = []
         offset = 0
@@ -281,7 +281,7 @@ class NetworkAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
-        network_names: Optional[list[str]],
+        network_names: list[str] | None,
         offset: int,
     ) -> Any:
         orchestrator, _results = self.coordinator._new_network_orchestrator(module_args, strategy)
@@ -336,7 +336,7 @@ class NetworkAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
-        network_names: Optional[list[str]] = None,
+        network_names: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         if network_names and len(network_names) > self.wait_chunk_size:
             attachments: list[dict[str, Any]] = []
@@ -353,14 +353,8 @@ class NetworkAttachmentManager:
         if not network_names or len(network_names) <= 1:
             return []
 
-        attachments: list[dict[str, Any]] = []
-        for network_name in network_names:
-            try:
-                attachments.extend(self.current_attachment_details(module_args, strategy, [network_name]))
-            except Exception as exc:
-                if not self._attachment_query_missing_network(exc):
-                    raise
-        return attachments
+        all_attachments = self.current_attachment_details(module_args, strategy, None)
+        return self.filter_attachment_details_by_network(all_attachments, network_names)
 
     @staticmethod
     def _attachment_query_missing_network(error: Exception) -> bool:
@@ -371,14 +365,14 @@ class NetworkAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
-        network_names: Optional[list[str]] = None,
+        network_names: list[str] | None = None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         return self.attachment_map_from_details(self.current_attachment_details(module_args, strategy, network_names), network_names)
 
     @staticmethod
     def attachment_map_from_details(
         attachments: list[dict[str, Any]],
-        network_names: Optional[Union[list[str], set[str]]] = None,
+        network_names: list[str] | set[str] | None = None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         filter_set = set(network_names or [])
         result: dict[tuple[str, str], dict[str, Any]] = {}
@@ -720,7 +714,7 @@ class NetworkAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
-        network_names: Optional[list[str]] = None,
+        network_names: list[str] | None = None,
     ) -> None:
         pending = set(network_names if network_names is not None else configured_network_names(module_args.get("config") or []))
         if not pending:
@@ -763,7 +757,7 @@ class NetworkAttachmentManager:
             msg=f"Timed out waiting for network attachments to become deletable on fabric '{strategy.fabric_name}': {last_blockers}"
         )
 
-    def wait_for_networks_delete_ready(self, module_args: dict, strategy: BaseNetworkStrategy, network_names: Optional[list[str]] = None) -> None:
+    def wait_for_networks_delete_ready(self, module_args: dict, strategy: BaseNetworkStrategy, network_names: list[str] | None = None) -> None:
         pending = set(network_names if network_names is not None else configured_network_names(module_args.get("config") or []))
         if not pending:
             return
@@ -817,7 +811,7 @@ class NetworkAttachmentManager:
         return attachments
 
     @staticmethod
-    def filter_attachment_details_by_network(attachments: list[dict[str, Any]], network_names: Union[list[str], set[str]]) -> list[dict[str, Any]]:
+    def filter_attachment_details_by_network(attachments: list[dict[str, Any]], network_names: list[str] | set[str]) -> list[dict[str, Any]]:
         names = set(network_names)
         return [attachment for attachment in attachments if attachment.get("networkName") in names]
 

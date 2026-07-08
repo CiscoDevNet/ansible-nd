@@ -39,21 +39,9 @@ def test_nd_manage_networks_requires_pydantic_immediately_after_module_creation(
         def fail_json(self, **kwargs):
             raise AssertionError(f"fail_json called unexpectedly: {kwargs}")
 
-    class FakeNDModule:
-        def __init__(self, module):
-            events.append(("NDModule", module))
-
-    class FakeResolver:
-        def __init__(self, nd_module, fabric_name):
-            events.append(("NetworkFabricResolver", nd_module, fabric_name))
-
-        def resolve(self):
-            events.append(("resolve",))
-            return object()
-
     class FakeCoordinator:
-        def __init__(self, module, strategy):
-            events.append(("NetworkWorkflowCoordinator", module, strategy))
+        def __init__(self, module):
+            events.append(("NetworkWorkflowCoordinator", module))
 
         def run(self):
             events.append(("run",))
@@ -64,17 +52,12 @@ def test_nd_manage_networks_requires_pydantic_immediately_after_module_creation(
 
     with patch.object(nd_manage_networks, "AnsibleModule", FakeAnsibleModule), patch.object(
         nd_manage_networks, "require_pydantic", fake_require_pydantic
-    ), patch.object(nd_manage_networks, "NDModule", FakeNDModule), patch.object(nd_manage_networks, "NetworkFabricResolver", FakeResolver), patch.object(
-        nd_manage_networks, "NetworkWorkflowCoordinator", FakeCoordinator
-    ):
+    ), patch.object(nd_manage_networks, "NetworkWorkflowCoordinator", FakeCoordinator):
         nd_manage_networks.main()
 
     assert [event[0] for event in events] == [
         "AnsibleModule",
         "require_pydantic",
-        "NDModule",
-        "NetworkFabricResolver",
-        "resolve",
         "NetworkWorkflowCoordinator",
         "run",
         "exit_json",
