@@ -56,9 +56,16 @@
 - name: Assert
   ansible.builtin.assert:
     that:
-      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+      - 'result.failed | default(false) == false'
 
-- block:
+- name: Assert API response codes
+  ansible.builtin.assert:
+    that:
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+  when: result.api_response is defined
+
+- name: Run resource manager gathered tests
+  block:
     ##############################################
     ##                MERGE                     ##
     ##############################################
@@ -127,16 +134,31 @@
           - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == 8'
           - '(result["diff"][0]["deleted"] | length) == 0'
+          - 'result.failed | default(false) == false'
+
+    - name: ASSERT - Check API result details
+      ansible.builtin.assert:
+        that:
           - '(result["api_response"] | length) == 1'
           - 'result["api_result"][0]["success"] == true'
           - '(result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
           - '(result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
+      when: result.api_response is defined
+
+    - name: Assert output fields when API response is absent
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+          - '(result["after"] | length) == 7' # This is 7 as we are creating 2 diff resources for entity loopback_dev but while returning we are combining like while creating we are passing in single config
+      when: result.api_response is not defined
+
 
     - name: ASSERT - Check condition
       ansible.builtin.assert:
         that:
           - 'item["RETURN_CODE"] == 200'
       loop: '{{ result.api_response | default([]) }}'
+      when: result.api_response is defined
 
     ##############################################
     ##               GATHERED                      ##
@@ -437,19 +459,40 @@
     - name: ASSERT - Check condition
       ansible.builtin.assert:
         that:
+          - 'result.failed | default(false) == false'
           - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == 0'
           - '(result["diff"][0]["deleted"] | length) == 8'
           - '(result["diff"][0]["gathered"] | length) == 0'
+      when: it_context is not defined
+
+    - name: ASSERT - Check API result details
+      ansible.builtin.assert:
+        that:
           - '(result["api_response"] | length) == 1'
           - 'result["api_result"][0]["success"] == true'
           - '(result["api_diff"][0]["deleted"] | length) == (result["diff"][0]["deleted"] | length)'
           - '(result["api_payload"][0]["resourceIds"] | length) == (result["diff"][0]["deleted"] | length)'
-      when: it_context is not defined
+      when:
+        - it_context is not defined
+        - result.api_response is defined
+
+    - name: ASSERT - Check output fields when API response is absent
+      ansible.builtin.assert:
+        that:
+          - 'result["output_level"] == "normal"'
+          - '(result["before"] | length) == 7' # This is 7 as we are creating 2 diff resources for entity loopback_dev but while returning we are combining like while creating we are passing in single config
+          - 'result["after"] == []'
+          - 'result.changed == true'
+      when:
+        - it_context is not defined
+        - result.api_response is not defined
 
     - name: ASSERT - Check condition
       ansible.builtin.assert:
         that:
           - 'item["RETURN_CODE"] == 200'
       loop: '{{ result.api_response | default([]) }}'
-      when: it_context is not defined
+      when:
+        - it_context is not defined
+        - result.api_response is defined

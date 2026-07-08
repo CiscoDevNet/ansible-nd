@@ -322,18 +322,18 @@ changed:
   type: bool
 diff:
   description: Tracking of merged and deleted resources.
-  returned: when state is not gathered
+  returned: when state is not gathered and verbosity is C(-v) or C(-vv)
   type: list
   elements: dict
   sample: [{"merged": [], "deleted": [], "gathered": [], "debugs": []}]
 api_paths:
-  description: API request paths included when Ansible verbosity is C(-vvv) or higher.
-  returned: when verbosity is C(-vvv) or higher
+  description: API request paths included when Ansible verbosity is C(-vv) or higher.
+  returned: when verbosity is C(-vv) or higher
   type: list
   elements: str
 api_verbs:
-  description: API request methods included when Ansible verbosity is C(-vvv) or higher.
-  returned: when verbosity is C(-vvv) or higher
+  description: API request methods included when Ansible verbosity is C(-vv) or higher.
+  returned: when verbosity is C(-vv) or higher
   type: list
   elements: str
 api_response:
