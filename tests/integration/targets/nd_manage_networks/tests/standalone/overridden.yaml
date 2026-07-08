@@ -1,0 +1,153 @@
+---
+- name: Test Entry Point - [nd_manage_networks - overridden]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Overridden Tests - [nd_manage_networks]                +"
+      - "----------------------------------------------------------------"
+  tags: overridden
+
+- name: Overridden - Build Standalone Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_standalone_fabric }}"
+    target_network_names:
+      - ansible-nd-net-over-keep
+      - ansible-nd-net-over-remove
+    target_network_delete_config:
+      - network_name: ansible-nd-net-over-keep
+        is_l2only: true
+      - network_name: ansible-nd-net-over-remove
+        is_l2only: true
+    nd_network_overridden_seed:
+      - network_name: ansible-nd-net-over-keep
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 8 }}"
+        vlan_id: "{{ nd_network_base_vlan + 8 }}"
+        vlan_name: ansible_nd_net_over_keep_seed
+        enable_ir: false
+        deploy: false
+      - network_name: ansible-nd-net-over-remove
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 9 }}"
+        vlan_id: "{{ nd_network_base_vlan + 9 }}"
+        vlan_name: ansible_nd_net_over_remove_seed
+        enable_ir: false
+        deploy: false
+    nd_network_overridden_config:
+      - network_name: ansible-nd-net-over-keep
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 8 }}"
+        vlan_id: "{{ nd_network_base_vlan + 8 }}"
+        vlan_name: ans_nd_net_over_keep_upd
+        rt_auto: true
+        enable_ir: false
+        deploy: false
+  delegate_to: localhost
+  tags: overridden
+
+- name: Overridden - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_overridden | bool
+  tags: overridden
+
+- name: Overridden - Prepare Seed Configuration
+  vars:
+    file: standalone_over_seed
+    network_conf: "{{ nd_network_overridden_seed }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_overridden | bool
+  tags: overridden
+
+- name: Overridden - Prepare Override Configuration
+  vars:
+    file: standalone_over
+    network_conf: "{{ nd_network_overridden_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC1 - Seed Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_standalone_over_seed_conf }}"
+  register: overridden_seed_result
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC2 - Override Networks
+  cisco.nd.nd_manage_networks: &override_conf
+    fabric_name: "{{ target_fabric }}"
+    state: overridden
+    config: "{{ nd_network_standalone_over_conf }}"
+    output_level: debug
+  register: override_result
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC2 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - override_result.changed == true
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC2 - Gather Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_overridden_seed }}"
+  register: gathered_result
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC2 - Validate Remaining Network
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ gathered_result }}"
+    test_data: "{{ nd_network_standalone_over_conf }}"
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC2 - Validate Removed Network
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ gathered_result }}"
+    test_data:
+      - network_name: ansible-nd-net-over-remove
+    present: false
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC3 - Idempotence
+  cisco.nd.nd_manage_networks: *override_conf
+  register: override_idempotent
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - override_idempotent.changed == false
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_overridden | bool
+  tags: overridden

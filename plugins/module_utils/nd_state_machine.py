@@ -34,7 +34,6 @@ class NDStateMachine:
         # REST infrastructure
         sender = Sender()
         sender.ansible_module = self.module
-
         rest_send_params = dict(self.module.params)
         rest_send_params["check_mode"] = self.module.check_mode
         self.rest_send = RestSend(rest_send_params)
@@ -75,8 +74,13 @@ class NDStateMachine:
             self.existing = self.before.copy()
             # Ongoing collection of configuration objects that were changed
             self.sent = NDConfigCollection(model_class=self.model_class)
-            # Collection of configuration objects given by user
-            self.proposed = NDConfigCollection.from_ansible_config(data=self.module.params.get("config", []), model_class=self.model_class)
+            # Collection of configuration objects given by user.
+            # ``context={"state": ...}`` is threaded into pydantic validation so models can apply
+            # state-aware validation (e.g. require certain fields for write states while accepting
+            # identifier-only items for ``deleted``). Models that do not read the context ignore it.
+            self.proposed = NDConfigCollection.from_ansible_config(
+                data=self.module.params.get("config", []), model_class=self.model_class, context={"state": self.state}
+            )
 
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
 
