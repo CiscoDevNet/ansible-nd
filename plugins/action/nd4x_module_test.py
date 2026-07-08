@@ -9,11 +9,17 @@ __metaclass__ = type
 
 import json
 import time
-from jsonpath_ng import parse
+
+
+try:
+    from jsonpath_ng import parse
+
+    HAS_JSONPATH_NG_PARSE = True
+except ImportError:
+    HAS_JSONPATH_NG_PARSE = False
 
 from ansible.errors import AnsibleActionFail
 from ansible.plugins.action import ActionBase
-
 
 
 class ActionModule(ActionBase):
@@ -57,7 +63,7 @@ class ActionModule(ActionBase):
 
         if not isinstance(expected, dict):
             raise AnsibleActionFail("Argument expected must be a dictionary")
-        
+
         if not isinstance(nd_queries, list):
             raise AnsibleActionFail("Argument nd_queries must be a list")
 
@@ -113,7 +119,7 @@ class ActionModule(ActionBase):
                     nd_queries=nd_queries,
                     task_vars=task_vars,
                 )
-                
+
         finally:
             self._task.check_mode = original_check_mode
 
@@ -144,7 +150,7 @@ class ActionModule(ActionBase):
             module_args=module_args,
             task_vars=task_vars,
         )
-    
+
     def _run_nd_queries(self, nd_queries, task_vars):
         results = []
 
@@ -157,13 +163,11 @@ class ActionModule(ActionBase):
             method = query.get("method", "get")
             expected_status = query.get("expected_status")
             expected_failed = bool(query.get("expected_failed", False))
-            
 
             if not path:
                 raise AnsibleActionFail("Each nd_queries entry must include path")
 
             rendered_path = self._templar.template(path)
-
 
             query_result = self._execute_module(
                 module_name="cisco.nd.nd_rest",
@@ -177,7 +181,6 @@ class ActionModule(ActionBase):
             query_label = name or rendered_path
             actual_failed = bool(query_result.get("failed", False))
             actual_status = query_result.get("status")
-
 
             if expected_status is not None:
                 if actual_status is None:
@@ -199,9 +202,6 @@ class ActionModule(ActionBase):
                         "ND query %s expected status %s but got %s"
                         % (query_label, expected_status, actual_status)
                     )
-
-            
-
             if actual_failed != expected_failed:
                 raise AnsibleActionFail(
                     "ND query %s expected failed=%s but got failed=%s"
@@ -223,7 +223,7 @@ class ActionModule(ActionBase):
             )
 
         return results
-    
+
     def _assert_nd_query_expectations(self, query, query_result):
         expectations = query.get("expect", [])
 
@@ -266,11 +266,15 @@ class ActionModule(ActionBase):
                     )
 
     def _jsonpath_values(self, data, expression):
+        if not HAS_JSONPATH_NG_PARSE:
+            raise AnsibleActionFail(
+                "Cannot use JSONPath validation because the jsonpath-ng "
+                "Python library is not available"
+            )
         try:
             jsonpath_expression = parse(expression)
         except Exception as exc:
             raise AnsibleActionFail("Invalid JSONPath expression %s: %s" % (expression, exc))
-
         return [match.value for match in jsonpath_expression.find(data)]
 
     def _has_unexpected_failure(self, module_result, expected):
