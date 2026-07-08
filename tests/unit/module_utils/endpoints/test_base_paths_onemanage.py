@@ -65,6 +65,7 @@ def test_base_paths_onemanage_00120():
         result = BasePath.manage_fabrics("MCFG_FAB", "vrfs")
     assert result == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/vrfs"
 
+
 def test_base_paths_onemanage_00130():
     """
     # Summary
