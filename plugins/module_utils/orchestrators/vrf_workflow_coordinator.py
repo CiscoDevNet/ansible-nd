@@ -5,14 +5,15 @@
 """
 VrfWorkflowCoordinator — Parent / child VRF workflow orchestration.
 
-The coordinator is constructed inside nd_manage_vrfs.py after the strategy is
-resolved. For standalone and child fabrics it runs the state machine
-directly. For parent fabrics it:
-  1. Parses and validates the requested VRF config.
-  2. Splits child_fabric_config into per-child in-process tasks.
-  3. Runs the parent task via the VRF state machine.
-  4. Runs each child task with the child's resolved strategy.
-  5. Deploys deferred parent attachment changes, then aggregates results.
+The coordinator is constructed inside nd_manage_vrfs.py and resolves the target
+fabric strategy through the Gen-3 REST runtime. For standalone and child fabrics
+it runs the state machine directly. For parent fabrics it:
+  1. Resolves fabric topology and selects the strategy.
+  2. Parses and validates the requested VRF config.
+  3. Splits child_fabric_config into per-child in-process tasks.
+  4. Runs the parent task via the VRF state machine.
+  5. Runs each child task with the child's resolved strategy.
+  6. Deploys deferred parent attachment changes, then aggregates results.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from __future__ import annotations
 import copy
 import time
 
-from typing import Any, Optional, Union
+from typing import Any
 
 from ansible.module_utils.basic import AnsibleModule
 
@@ -70,8 +71,8 @@ class VrfWorkflowCoordinator:
     def __init__(
         self,
         module: AnsibleModule,
-        strategy: BaseVrfStrategy,
-        initial_workflow_trace: Optional[list[dict[str, Any]]] = None,
+        strategy: BaseVrfStrategy | None = None,
+        initial_workflow_trace: list[dict[str, Any]] | None = None,
     ):
         self.module = module
         self.strategy = strategy
@@ -79,6 +80,11 @@ class VrfWorkflowCoordinator:
         self._workflow_trace: list[dict[str, Any]] = []
         if initial_workflow_trace:
             self._workflow_trace.extend(dict(entry) for entry in initial_workflow_trace)
+
+    @property
+    def workflow_trace(self) -> list[dict[str, Any]]:
+        """Return workflow trace entries collected by the coordinator."""
+        return list(self._workflow_trace)
 
     @property
     def attachments(self) -> VrfAttachmentManager:
@@ -103,17 +109,19 @@ class VrfWorkflowCoordinator:
         Returns a result dict suitable for module.exit_json(**result).
         """
         module_args: dict = dict(self.module.params)
-        self._trace(
-            "workflow_start",
-            fabric_name=module_args.get("fabric_name"),
-            state=module_args.get("state"),
-            config_count=len(module_args.get("config") or []),
-            strategy=self.strategy.__class__.__name__,
-            fabric_type=self.strategy.fabric_type,
-            check_mode=self.module.check_mode,
-        )
         try:
             self._normalize_module_args(module_args)
+            if self.strategy is None:
+                self.strategy = self._resolve_strategy(module_args)
+            self._trace(
+                "workflow_start",
+                fabric_name=module_args.get("fabric_name"),
+                state=module_args.get("state"),
+                config_count=len(module_args.get("config") or []),
+                strategy=self.strategy.__class__.__name__,
+                fabric_type=self.strategy.fabric_type,
+                check_mode=self.module.check_mode,
+            )
             fabric_type: str = self.strategy.fabric_type
             self._validate_topology_argument_scope(module_args, fabric_type)
 
@@ -129,6 +137,41 @@ class VrfWorkflowCoordinator:
 
         self._trace("workflow_end", changed=result.get("changed"), failed=result.get("failed"))
         return self._attach_workflow_trace(result)
+
+    def _new_rest_send(
+        self,
+        params: dict[str, Any] | None = None,
+        check_mode: bool | None = None,
+        timeout: int | None = None,
+        send_interval: int | None = None,
+    ) -> RestSend:
+        """Build the Gen-3 REST runtime used by resolver and orchestrators."""
+        sender = Sender()
+        sender.ansible_module = self.module
+
+        rest_send_params = dict(params if params is not None else self.module.params)
+        rest_send_params["check_mode"] = self.module.check_mode if check_mode is None else check_mode
+        rest_send = RestSend(rest_send_params)
+        rest_send.sender = sender
+        rest_send.response_handler = ResponseHandler()
+        if timeout is not None:
+            rest_send.timeout = timeout
+        if send_interval is not None:
+            rest_send.send_interval = send_interval
+        return rest_send
+
+    def _resolve_strategy(self, module_args: dict) -> BaseVrfStrategy:
+        """Resolve fabric topology using the same Gen-3 REST runtime as the workflow."""
+        rest_send = self._new_rest_send(params=module_args, check_mode=False, timeout=1, send_interval=1)
+        resolver = VrfFabricResolver(
+            rest_send=rest_send,
+            fabric_name=module_args["fabric_name"],
+        )
+        strategy = resolver.resolve()
+        resolver_trace = getattr(resolver, "workflow_trace", None)
+        if resolver_trace:
+            self._workflow_trace.extend(dict(entry) for entry in resolver_trace)
+        return strategy
 
     def _trace_enabled(self) -> bool:
         verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
@@ -505,7 +548,7 @@ class VrfWorkflowCoordinator:
 
     # ── State machine runner ──────────────────────────────────────
 
-    def _run_state_machine(self, module_args: dict, strategy: Optional[BaseVrfStrategy] = None) -> dict[str, Any]:
+    def _run_state_machine(self, module_args: dict, strategy: BaseVrfStrategy | None = None) -> dict[str, Any]:
         """
         Run NDStateMachine for the given module_args and return the result dict.
 
@@ -538,7 +581,7 @@ class VrfWorkflowCoordinator:
             self._vrf_state_machine_instance = VrfStateMachine(self)
         return self._vrf_state_machine_instance
 
-    def _new_state_machine(self, module_args: dict, strategy: Optional[BaseVrfStrategy] = None) -> tuple[NDStateMachine, Any, Any]:
+    def _new_state_machine(self, module_args: dict, strategy: BaseVrfStrategy | None = None) -> tuple[NDStateMachine, Any, Any]:
         """
         Build a VRF state machine after applying VRF config transformation.
 
@@ -555,13 +598,8 @@ class VrfWorkflowCoordinator:
             self.module.params["config"] = module_args.get("config") or []
             self.module.params["state"] = state
 
-            sender = Sender()
-            sender.ansible_module = self.module
             rest_send_params = dict(self.module.params)
-            rest_send_params["check_mode"] = self.module.check_mode
-            rest_send = RestSend(rest_send_params)
-            rest_send.sender = sender
-            rest_send.response_handler = ResponseHandler()
+            rest_send = self._new_rest_send(rest_send_params)
 
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
@@ -606,7 +644,7 @@ class VrfWorkflowCoordinator:
     def _run_state_machine_with_attachments(
         self,
         module_args: dict,
-        strategy: Optional[BaseVrfStrategy] = None,
+        strategy: BaseVrfStrategy | None = None,
         defer_deploy: bool = False,
     ) -> dict[str, Any]:
         """
@@ -692,13 +730,8 @@ class VrfWorkflowCoordinator:
             self.module.params["config"] = module_args.get("config") or []
             self.module.params["state"] = module_args.get("state", "merged")
 
-            sender = Sender()
-            sender.ansible_module = self.module
             rest_send_params = dict(self.module.params)
-            rest_send_params["check_mode"] = self.module.check_mode
-            rest_send = RestSend(rest_send_params)
-            rest_send.sender = sender
-            rest_send.response_handler = ResponseHandler()
+            rest_send = self._new_rest_send(rest_send_params)
 
             results = Results()
             orchestrator = NDVrfOrchestrator(
@@ -715,7 +748,7 @@ class VrfWorkflowCoordinator:
     def _finalize_api_trace(
         self,
         results: Results,
-        deploy_targets: Optional[dict[str, set[str]]] = None,
+        deploy_targets: dict[str, set[str]] | None = None,
     ) -> dict[str, Any]:
         """Convert collected API calls into a compact mergeable structure."""
         results.build_final_result()
@@ -788,9 +821,9 @@ class VrfWorkflowCoordinator:
         module_args: dict,
         strategy: BaseVrfStrategy,
         phase: str,
-        desired: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
-        current_vrf_names: Optional[list[str]] = None,
-        current: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
+        desired: dict[tuple[str, str], dict[str, Any]] | None = None,
+        current_vrf_names: list[str] | None = None,
+        current: dict[tuple[str, str], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Attach or detach VRFs according to state and phase."""
         return self.attachments.apply_phase(module_args, strategy, phase, desired, current_vrf_names, current)
@@ -814,8 +847,8 @@ class VrfWorkflowCoordinator:
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
-        vrf_names: Optional[list[str]] = None,
-        attachment_details: Optional[list[dict[str, Any]]] = None,
+        vrf_names: list[str] | None = None,
+        attachment_details: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
         Detach all current attachments for deleted VRFs, independent of config.
@@ -829,7 +862,7 @@ class VrfWorkflowCoordinator:
     def _filter_attachment_details_by_vrf(
         self,
         attachments: list[dict[str, Any]],
-        vrf_names: Union[list[str], set[str]],
+        vrf_names: list[str] | set[str],
     ) -> list[dict[str, Any]]:
         """Return attachment rows for the requested VRF names."""
         return self.attachments.filter_attachment_details_by_vrf(attachments, vrf_names)
@@ -879,7 +912,7 @@ class VrfWorkflowCoordinator:
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
-        vrf_names: Optional[list[str]],
+        vrf_names: list[str] | None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Gathered ND and key attached VRF attachments by (vrfName, switchId)."""
         return self.attachments.current_attachment_map(module_args, strategy, vrf_names)
@@ -887,7 +920,7 @@ class VrfWorkflowCoordinator:
     def _attachment_map_from_details(
         self,
         attachments: list[dict[str, Any]],
-        vrf_names: Optional[Union[list[str], set[str]]] = None,
+        vrf_names: list[str] | set[str] | None = None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Key attached VRF attachment rows by (vrfName, switchId)."""
         return self.attachments.attachment_map_from_details(attachments, vrf_names)
@@ -896,7 +929,7 @@ class VrfWorkflowCoordinator:
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
-        vrf_names: Optional[list[str]],
+        vrf_names: list[str] | None,
     ) -> list[dict[str, Any]]:
         """Gathered all attachment details, including pending detach entries."""
         return self.attachments.current_attachment_details(module_args, strategy, vrf_names)
@@ -905,7 +938,7 @@ class VrfWorkflowCoordinator:
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
-        vrf_names: Optional[list[str]],
+        vrf_names: list[str] | None,
     ) -> list[dict[str, Any]]:
         """Gathered attachment details while treating absent deleted VRFs as empty."""
         return self.attachments.current_attachment_details_ignore_missing(module_args, strategy, vrf_names)
@@ -1003,8 +1036,8 @@ class VrfWorkflowCoordinator:
     def _record_deploy_target(
         self,
         deploy_targets: dict[str, set[str]],
-        vrf_name: Optional[str],
-        switch_id: Optional[str],
+        vrf_name: str | None,
+        switch_id: str | None,
     ) -> None:
         """Record one VRF/switch pair for a later VRF deployment request."""
         self.attachments.record_deploy_target(deploy_targets, vrf_name, switch_id)
@@ -1056,7 +1089,7 @@ class VrfWorkflowCoordinator:
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
-        vrf_names: Optional[list[str]] = None,
+        vrf_names: list[str] | None = None,
     ) -> None:
         """Wait until configured VRFs are absent or in notApplicable state."""
         if self.module.check_mode:

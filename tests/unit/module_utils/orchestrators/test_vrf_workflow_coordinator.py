@@ -13,7 +13,9 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
+from unittest.mock import patch
 
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators import vrf_workflow_coordinator as coordinator_mod
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator import (
     VrfWorkflowCoordinator,
 )
@@ -33,13 +35,45 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argumen
 
 
 class _Module:
-    def __init__(self, params):
+    def __init__(self, params, check_mode=False):
         self.params = params
-        self.check_mode = False
+        self.check_mode = check_mode
         self._verbosity = 3
 
     def fail_json(self, **kwargs):
         raise AssertionError(kwargs)
+
+
+class _AttachmentCoordinator:
+    @staticmethod
+    def _attachment_matches(existing, desired):
+        return VrfAttachmentManager.attachment_matches(existing, desired)
+
+
+def test_vrf_workflow_coordinator_resolves_strategy_with_gen3_restsend():
+    events = []
+    module = _Module({"fabric_name": "fab1", "state": "gathered", "config": []}, check_mode=True)
+
+    class FakeResolver:
+        def __init__(self, rest_send, fabric_name):
+            events.append(("VrfFabricResolver", rest_send, fabric_name))
+            self.workflow_trace = [{"event": "fabric_resolver_start"}]
+
+        def resolve(self):
+            events.append(("resolve",))
+            return _StandaloneStrategy()
+
+    with patch.object(coordinator_mod, "VrfFabricResolver", FakeResolver):
+        coordinator = VrfWorkflowCoordinator(module=module)
+        strategy = coordinator._resolve_strategy(dict(module.params))
+
+    resolver_rest_send = events[0][1]
+    assert strategy.fabric_type == "standalone"
+    assert resolver_rest_send.params["check_mode"] is False
+    assert resolver_rest_send.timeout == 1
+    assert resolver_rest_send.send_interval == 1
+    assert events == [("VrfFabricResolver", resolver_rest_send, "fab1"), ("resolve",)]
+    assert coordinator.workflow_trace[0]["event"] == "fabric_resolver_start"
 
 
 class _ParentStrategy:
@@ -378,6 +412,168 @@ def test_vrf_workflow_coordinator_000038_attachment_match_treats_missing_extra_c
     }
 
     assert VrfAttachmentManager.attachment_matches(existing, desired) is True
+
+
+def test_vrf_workflow_coordinator_attachment_match_detects_vlan_id_change():
+    """
+    # Summary
+
+    Verify VRF attachment idempotency treats vlanId as attachment intent.
+    """
+    existing = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+        "vlanId": 2001,
+        "extraConfig": "",
+    }
+    desired = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+        "vlanId": 2002,
+    }
+
+    assert VrfAttachmentManager.attachment_matches(existing, desired) is False
+
+
+def test_vrf_workflow_coordinator_planned_attach_payloads_includes_vlan_only_change():
+    """
+    # Summary
+
+    Verify a changed vlanId schedules a new attachment payload.
+    """
+    manager = VrfAttachmentManager(_AttachmentCoordinator())
+    current = {
+        ("ansible-vrf", "FDO123"): {
+            "vrfName": "ansible-vrf",
+            "switchId": "FDO123",
+            "attach": True,
+            "vlanId": 2001,
+            "extraConfig": "",
+        }
+    }
+    desired = {
+        ("ansible-vrf", "FDO123"): {
+            "vrfName": "ansible-vrf",
+            "switchId": "FDO123",
+            "attach": True,
+            "vlanId": 2002,
+        }
+    }
+
+    assert manager.planned_attach_payloads(current, desired) == [desired[("ansible-vrf", "FDO123")]]
+
+
+def test_vrf_workflow_coordinator_attachment_match_ignores_auto_vlan_when_vlan_unset():
+    """
+    # Summary
+
+    Verify omitted vlan_id keeps ND auto-allocated VLAN idempotency.
+    """
+    existing = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+        "vlanId": 2301,
+    }
+    desired = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+    }
+
+    assert VrfAttachmentManager.attachment_matches(existing, desired) is True
+
+
+def test_vrf_workflow_coordinator_attachment_match_detects_l3vni_without_vlan_transition():
+    """
+    # Summary
+
+    Verify l3vni_wo_vlan intent treats an existing attachment VLAN as drift.
+    """
+    existing = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+        "vlanId": 2301,
+    }
+    desired = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+        VrfAttachmentManager.clear_vlan_id_intent_key: True,
+    }
+
+    assert VrfAttachmentManager.attachment_matches(existing, desired) is False
+
+
+def test_vrf_workflow_coordinator_attachment_match_compares_extra_config_only_when_supplied():
+    """
+    # Summary
+
+    Verify omitted freeform_config is not treated as an implicit clear.
+    """
+    existing = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+        "extraConfig": "interface loopback10\n description keep",
+    }
+    omitted = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+    }
+    explicit_clear = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+        "extraConfig": "",
+    }
+
+    assert VrfAttachmentManager.attachment_matches(existing, omitted) is True
+    assert VrfAttachmentManager.attachment_matches(existing, explicit_clear) is False
+
+
+def test_vrf_workflow_coordinator_attachment_match_compares_instance_values_only_when_supplied():
+    """
+    # Summary
+
+    Verify omitted attachment_options is not treated as an implicit clear.
+    """
+    existing = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+        "instanceValues": {
+            "dpuSecure": True,
+            "loopbackId": 10,
+        },
+    }
+    omitted = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+    }
+    explicit_clear = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+        "instanceValues": {},
+    }
+    explicit_subset = {
+        "vrfName": "ansible-vrf",
+        "switchId": "FDO123",
+        "attach": True,
+        "instanceValues": {
+            "dpuSecure": True,
+        },
+    }
+
+    assert VrfAttachmentManager.attachment_matches(existing, omitted) is True
+    assert VrfAttachmentManager.attachment_matches(existing, explicit_clear) is False
+    assert VrfAttachmentManager.attachment_matches(existing, explicit_subset) is True
 
 
 def test_vrf_workflow_coordinator_00004_child_write_ignores_null_parser_defaults():
@@ -1303,7 +1499,6 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
     def deploy(_args, _strategy, payload):
         call_order.append("deploy")
         assert payload == {
-            "switchIds": ["SERIAL1"],
             "vrfNames": ["ansible-delete-vrf"],
         }
         return {}
@@ -1360,6 +1555,68 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
         "post_attach",
     ]
     assert result["changed"] is True
+
+
+def test_vrf_workflow_coordinator_overridden_omitted_delete_keeps_switch_scope_on_standalone():
+    """
+    # Summary
+
+    Verify the parent-scope overridden-delete fix does not change standalone
+    omitted VRF deletes, which still use switch-level deploy by default.
+    """
+    module_args = {
+        "fabric_name": "nacfab",
+        "state": "overridden",
+        "output_level": "debug",
+        "config": [],
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_StandaloneStrategy(),
+    )
+
+    deploy_payloads = []
+
+    def detach(_args, _strategy, vrf_names=None, attachment_details=None):
+        assert vrf_names == ["ansible-delete-vrf"]
+        assert attachment_details == [
+            {
+                "vrfName": "ansible-delete-vrf",
+                "switchId": "SERIAL1",
+                "attach": True,
+            }
+        ]
+        return {"deploy_targets": {"ansible-delete-vrf": {"SERIAL1"}}}
+
+    def deploy(_args, _strategy, payload):
+        deploy_payloads.append(payload)
+        return {}
+
+    object.__setattr__(coordinator, "_ensure_vrfs_have_no_networks", lambda *_args, **_kwargs: None)
+    object.__setattr__(coordinator, "_apply_deleted_attachment_phase", detach)
+    object.__setattr__(coordinator, "_deploy_vrf_attachments", deploy)
+    object.__setattr__(coordinator, "_wait_for_vrfs_delete_ready", lambda *_args, **_kwargs: None)
+
+    traces = coordinator._vrf_state_machine()._prepare_overridden_deletions(
+        module_args,
+        _StandaloneStrategy(),
+        ["ansible-delete-vrf"],
+        [
+            {
+                "vrfName": "ansible-delete-vrf",
+                "switchId": "SERIAL1",
+                "attach": True,
+            }
+        ],
+    )
+
+    assert deploy_payloads == [
+        {
+            "switchIds": ["SERIAL1"],
+            "vrfNames": ["ansible-delete-vrf"],
+        }
+    ]
+    assert traces == [{"deploy_targets": {"ansible-delete-vrf": {"SERIAL1"}}}, {}]
 
 
 def test_vrf_workflow_coordinator_check_mode_deleted_skips_deploy_and_wait():
@@ -1575,6 +1832,83 @@ def test_vrf_workflow_coordinator_attachment_payload_includes_vrf_vlan_id():
         "switchId": "SERIAL1",
         "vlanId": 3701,
         "attach": True,
+    }
+
+
+def test_vrf_workflow_coordinator_l3vni_without_vlan_attachment_intent_omits_api_vlan_id():
+    """Verify l3vni_wo_vlan marks VLAN-clear intent without sending vlanId to ND."""
+
+    class Coordinator:
+        @staticmethod
+        def _resolve_switch_ids(_module_args, _strategy, _config):
+            return {"10.1.1.11": "SERIAL1"}
+
+        @staticmethod
+        def _attachment_instance_values(_attachment):
+            return {}
+
+    manager = VrfAttachmentManager(Coordinator())
+    module_args = {
+        "config": [
+            {
+                "vrf_name": "ansible-vrf",
+                "l3vni_wo_vlan": True,
+                "attach": [{"ip_address": "10.1.1.11"}],
+            }
+        ]
+    }
+
+    desired = manager.desired_attachment_map(module_args, _StandaloneStrategy())
+
+    assert desired[("ansible-vrf", "SERIAL1")] == {
+        "vrfName": "ansible-vrf",
+        "switchId": "SERIAL1",
+        "attach": True,
+        VrfAttachmentManager.clear_vlan_id_intent_key: True,
+    }
+    assert manager.api_attachment_payloads([desired[("ansible-vrf", "SERIAL1")]]) == [
+        {
+            "vrfName": "ansible-vrf",
+            "switchId": "SERIAL1",
+            "attach": True,
+        }
+    ]
+
+
+def test_vrf_workflow_coordinator_explicit_empty_attachment_options_is_preserved():
+    """Verify attachment_options: {} is explicit intent, unlike omitted attachment_options."""
+
+    class Coordinator:
+        @staticmethod
+        def _resolve_switch_ids(_module_args, _strategy, _config):
+            return {"10.1.1.11": "SERIAL1"}
+
+        @staticmethod
+        def _attachment_instance_values(attachment):
+            return VrfAttachmentManager.attachment_instance_values(attachment)
+
+    manager = VrfAttachmentManager(Coordinator())
+    module_args = {
+        "config": [
+            {
+                "vrf_name": "ansible-vrf",
+                "attach": [
+                    {
+                        "ip_address": "10.1.1.11",
+                        "attachment_options": {},
+                    }
+                ],
+            }
+        ]
+    }
+
+    desired = manager.desired_attachment_map(module_args, _StandaloneStrategy())
+
+    assert desired[("ansible-vrf", "SERIAL1")] == {
+        "vrfName": "ansible-vrf",
+        "switchId": "SERIAL1",
+        "attach": True,
+        "instanceValues": {},
     }
 
 

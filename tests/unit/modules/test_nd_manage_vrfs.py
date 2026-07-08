@@ -39,21 +39,9 @@ def test_nd_manage_vrfs_requires_pydantic_immediately_after_module_creation():
         def fail_json(self, **kwargs):
             raise AssertionError(f"fail_json called unexpectedly: {kwargs}")
 
-    class FakeNDModule:
-        def __init__(self, module):
-            events.append(("NDModule", module))
-
-    class FakeResolver:
-        def __init__(self, nd_module, fabric_name):
-            events.append(("VrfFabricResolver", nd_module, fabric_name))
-
-        def resolve(self):
-            events.append(("resolve",))
-            return object()
-
     class FakeCoordinator:
-        def __init__(self, module, strategy):
-            events.append(("VrfWorkflowCoordinator", module, strategy))
+        def __init__(self, module):
+            events.append(("VrfWorkflowCoordinator", module))
 
         def run(self):
             events.append(("run",))
@@ -64,17 +52,12 @@ def test_nd_manage_vrfs_requires_pydantic_immediately_after_module_creation():
 
     with patch.object(nd_manage_vrfs, "AnsibleModule", FakeAnsibleModule), patch.object(
         nd_manage_vrfs, "require_pydantic", fake_require_pydantic
-    ), patch.object(nd_manage_vrfs, "NDModule", FakeNDModule), patch.object(nd_manage_vrfs, "VrfFabricResolver", FakeResolver), patch.object(
-        nd_manage_vrfs, "VrfWorkflowCoordinator", FakeCoordinator
-    ):
+    ), patch.object(nd_manage_vrfs, "VrfWorkflowCoordinator", FakeCoordinator):
         nd_manage_vrfs.main()
 
     assert [event[0] for event in events] == [
         "AnsibleModule",
         "require_pydantic",
-        "NDModule",
-        "VrfFabricResolver",
-        "resolve",
         "VrfWorkflowCoordinator",
         "run",
         "exit_json",

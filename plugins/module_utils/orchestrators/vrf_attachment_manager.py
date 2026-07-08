@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 
-from typing import Any, Optional, Union
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_attachments import (
@@ -50,6 +50,7 @@ class VrfAttachmentManager:
     this manager keeps attachment semantics out of the topology workflow.
     """
 
+    clear_vlan_id_intent_key = "_clearVlanId"
     delete_wait_delay = 5
     delete_wait_chunk_size = 30
     attachment_query_page_size = 10000
@@ -82,9 +83,9 @@ class VrfAttachmentManager:
         module_args: dict,
         strategy: BaseVrfStrategy,
         phase: str,
-        desired: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
-        current_vrf_names: Optional[list[str]] = None,
-        current: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
+        desired: dict[tuple[str, str], dict[str, Any]] | None = None,
+        current_vrf_names: list[str] | None = None,
+        current: dict[tuple[str, str], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Attach or detach VRFs according to state and phase."""
         state = module_args.get("state", "merged")
@@ -179,8 +180,8 @@ class VrfAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
-        vrf_names: Optional[list[str]] = None,
-        attachment_details: Optional[list[dict[str, Any]]] = None,
+        vrf_names: list[str] | None = None,
+        attachment_details: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Detach all current attachments for deleted VRFs, independent of config."""
         vrf_names = vrf_names if vrf_names is not None else configured_vrf_names(module_args.get("config") or [])
@@ -226,7 +227,7 @@ class VrfAttachmentManager:
     @staticmethod
     def filter_attachment_details_by_vrf(
         attachments: list[dict[str, Any]],
-        vrf_names: Union[list[str], set[str]],
+        vrf_names: list[str] | set[str],
     ) -> list[dict[str, Any]]:
         """Return attachment rows for the requested VRF names."""
         vrf_name_set = set(vrf_names)
@@ -280,11 +281,14 @@ class VrfAttachmentManager:
                     "switchId": switch_id,
                     "attach": True,
                 }
-                vlan_id = vrf.get("vlan_id") or vrf.get("vlanId")
-                if vlan_id is not None:
-                    payload["vlanId"] = vlan_id
+                if vrf.get("l3vni_wo_vlan") or vrf.get("l3VniWithoutVlan") or vrf.get("l3_vni_without_vlan"):
+                    payload[self.clear_vlan_id_intent_key] = True
+                else:
+                    vlan_id = vrf.get("vlan_id") or vrf.get("vlanId")
+                    if vlan_id is not None:
+                        payload["vlanId"] = vlan_id
                 instance_values = self.coordinator._attachment_instance_values(attachment)
-                if instance_values:
+                if attachment.get("attachment_options") is not None:
                     payload["instanceValues"] = instance_values
                 freeform_config = attachment.get("freeform_config")
                 if freeform_config is not None:
@@ -423,7 +427,7 @@ class VrfAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
-        vrf_names: Optional[list[str]],
+        vrf_names: list[str] | None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Gather ND attachments and key attached rows by (vrfName, switchId)."""
         return self.coordinator._attachment_map_from_details(self.coordinator._current_attachment_details(module_args, strategy, vrf_names))
@@ -431,7 +435,7 @@ class VrfAttachmentManager:
     @staticmethod
     def attachment_map_from_details(
         attachments: list[dict[str, Any]],
-        vrf_names: Optional[Union[list[str], set[str]]] = None,
+        vrf_names: list[str] | set[str] | None = None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Key attached VRF attachment rows by (vrfName, switchId)."""
         vrf_name_set = set(vrf_names) if vrf_names is not None else None
@@ -451,7 +455,7 @@ class VrfAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
-        vrf_names: Optional[list[str]],
+        vrf_names: list[str] | None,
     ) -> list[dict[str, Any]]:
         """Gather all attachment details, including pending detach entries."""
         attachments: list[dict[str, Any]] = []
@@ -473,7 +477,7 @@ class VrfAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
-        vrf_names: Optional[list[str]],
+        vrf_names: list[str] | None,
         offset: int,
     ) -> Any:
         """Query one page of attachment details."""
@@ -533,7 +537,7 @@ class VrfAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
-        vrf_names: Optional[list[str]],
+        vrf_names: list[str] | None,
     ) -> list[dict[str, Any]]:
         """Gather attachment details while treating absent deleted VRFs as empty."""
         if vrf_names and len(vrf_names) > self.delete_wait_chunk_size:
@@ -607,18 +611,29 @@ class VrfAttachmentManager:
         """Return True when existing attachment satisfies desired fields."""
         if existing.get("attach") is not True:
             return False
-        existing_extra_config = existing.get("extraConfig") or ""
-        desired_extra_config = desired.get("extraConfig") or ""
-        if existing_extra_config != desired_extra_config:
-            return False
-        desired_instance = desired.get("instanceValues") or {}
-        if not desired_instance:
-            return True
-        existing_instance = existing.get("instanceValues") or {}
-        for key, value in desired_instance.items():
-            if existing_instance.get(key) != value:
+        if desired.get(VrfAttachmentManager.clear_vlan_id_intent_key):
+            if existing.get("vlanId") is not None:
                 return False
+        elif "vlanId" in desired and existing.get("vlanId") != desired.get("vlanId"):
+            return False
+        if "extraConfig" in desired:
+            existing_extra_config = existing.get("extraConfig") or ""
+            desired_extra_config = desired.get("extraConfig") or ""
+            if existing_extra_config != desired_extra_config:
+                return False
+        if "instanceValues" in desired:
+            desired_instance = desired.get("instanceValues") or {}
+            existing_instance = existing.get("instanceValues") or {}
+            if not desired_instance:
+                return not existing_instance
+            for key, value in desired_instance.items():
+                if existing_instance.get(key) != value:
+                    return False
         return True
+
+    def api_attachment_payloads(self, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Strip internal attachment intent markers before API submission."""
+        return [{key: value for key, value in payload.items() if key != self.clear_vlan_id_intent_key} for payload in payloads]
 
     def post_vrf_attachments(
         self,
@@ -635,16 +650,17 @@ class VrfAttachmentManager:
             payload_count=len(payloads),
             deploy_target_count=len(deploy_targets),
         )
+        api_payloads = self.api_attachment_payloads(payloads)
         if getattr(getattr(self.coordinator, "module", None), "check_mode", False):
             self._trace("vrf_attachment_post_check_mode", payload_count=len(payloads), deploy_target_count=len(deploy_targets))
             return {
                 "changed": True,
                 "failed": False,
                 "deploy_targets": deploy_targets,
-                "payloads": payloads,
-                "check_mode_attachment_payloads": payloads,
+                "payloads": api_payloads,
+                "check_mode_attachment_payloads": api_payloads,
             }
-        request = VrfAttachDetachRequestModel(attachments=[VrfAttachmentModel(**payload) for payload in payloads])
+        request = VrfAttachDetachRequestModel(attachments=[VrfAttachmentModel(**payload) for payload in api_payloads])
         orchestrator, results = self.coordinator._new_vrf_orchestrator(module_args, strategy)
         endpoint = orchestrator._make_endpoint(self._attachments_post_endpoint_cls(strategy))
         response = orchestrator._request(
@@ -684,8 +700,8 @@ class VrfAttachmentManager:
     @staticmethod
     def record_deploy_target(
         deploy_targets: dict[str, set[str]],
-        vrf_name: Optional[str],
-        switch_id: Optional[str],
+        vrf_name: str | None,
+        switch_id: str | None,
     ) -> None:
         """Record one VRF/switch pair for a later VRF deployment request."""
         if not vrf_name or not switch_id:
@@ -806,7 +822,7 @@ class VrfAttachmentManager:
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
-        vrf_names: Optional[list[str]] = None,
+        vrf_names: list[str] | None = None,
     ) -> None:
         """Wait until configured VRFs are absent or in notApplicable state."""
         pending_vrf_names = set(vrf_names if vrf_names is not None else configured_vrf_names(module_args.get("config") or []))

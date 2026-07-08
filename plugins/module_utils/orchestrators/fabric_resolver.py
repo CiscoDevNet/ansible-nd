@@ -7,6 +7,7 @@ import time
 
 from typing import Any
 
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
     EpManageFabricsGet,
     EpManageFabricsListGet,
@@ -37,7 +38,7 @@ def _nd_onemanage_proxy(_version_str: str) -> str:
 
 
 def _response_data(response: Any) -> Any:
-    """Return the data payload from direct NDModule or wrapped RestSend responses."""
+    """Return the data payload from direct dict or wrapped RestSend responses."""
     if isinstance(response, dict) and "DATA" in response:
         return response.get("DATA")
     return response
@@ -154,11 +155,12 @@ class FabricResolverBase:
     multicluster_parent_strategy_cls: type[Any] | None = None
     child_strategy_cls: type[Any] | None = None
 
-    def __init__(self, nd_module: Any, fabric_name: str):
-        self._nd = nd_module
+    def __init__(self, fabric_name: str, rest_send: Any):
+        self._rest_send = rest_send
         self.fabric_name = fabric_name
         self._workflow_trace: list[dict[str, Any]] = []
         self._trace_started_at = time.monotonic()
+        self._manage_fabric_details_cache: dict[tuple[str, str | None], dict[str, Any]] = {}
 
     @property
     def workflow_trace(self) -> list[dict[str, Any]]:
@@ -173,6 +175,22 @@ class FabricResolverBase:
         }
         entry.update(details)
         self._workflow_trace.append(entry)
+
+    def _request(self, path: str, method: str = "GET", ignore_not_found_error: bool = False) -> Any:
+        """Send a resolver request through RestSend."""
+        self._rest_send.path = path
+        self._rest_send.verb = HttpVerbEnum(method.upper())
+        self._rest_send.commit()
+
+        if ignore_not_found_error and self._rest_send.return_code == 404:
+            return {}
+        if not self._rest_send.success:
+            raise Exception(f"Request failed {self._rest_send.error_summary}")
+        return self._rest_send.response_current
+
+    def _controller_version(self) -> str:
+        """Return the controller version when provided by the request runtime."""
+        return getattr(self._rest_send, "version", "") or ""
 
     def resolve(self) -> Any:
         """Resolve and instantiate the strategy for ``fabric_name``."""
@@ -233,51 +251,42 @@ class FabricResolverBase:
 
     def _request_onemanage_probe(self, path: str, method: str) -> Any:
         """Call a OneManage probe without letting HTTP errors abort detection."""
-        connection = getattr(self._nd, "connection", None)
-        if connection is None:
-            try:
-                response = self._nd.request(path, method=method, ignore_not_found_error=True)
-            except Exception as exc:
-                self._trace("fabric_resolver_onemanage_probe_error", path=path, method=method, error=repr(exc))
-                return {}
-            if _is_error_response(response):
-                self._trace("fabric_resolver_onemanage_probe_error_response", path=path, method=method, message=_response_message(_response_data(response)))
-                return {}
-            return response
-
         try:
-            info = connection.send_request(method, path)
-            if hasattr(self._nd, "httpapi_logs") and hasattr(connection, "pop_messages"):
-                self._nd.httpapi_logs.extend(connection.pop_messages())
+            response = self._request(path, method=method, ignore_not_found_error=True)
         except Exception as exc:
             self._trace("fabric_resolver_onemanage_probe_error", path=path, method=method, error=repr(exc))
             return {}
-
-        status = info.get("status", -1) if isinstance(info, dict) else -1
-        body = info.get("body") if isinstance(info, dict) else None
-        if status in (200, 201, 202, 204):
-            return body
-        if status == 404:
+        if _is_error_response(response):
+            self._trace("fabric_resolver_onemanage_probe_error_response", path=path, method=method, message=_response_message(_response_data(response)))
             return {}
-        if status >= 400:
-            message = _response_message(body)
-            if message in _FEDERATION_MANAGER_NOT_FOUND_ERRORS or "this API is allowed only for remote user" in message:
-                return {}
-            return {}
-        return body
+        return response
 
     def _fetch_manage_fabric_details(self, fabric_name: str, cluster_name: str | None = None) -> dict[str, Any]:
         """GET ND Manage fabric details for the target fabric."""
+        cache_key = (fabric_name, cluster_name)
+        if cache_key in self._manage_fabric_details_cache:
+            cached = self._manage_fabric_details_cache[cache_key]
+            self._trace(
+                "fabric_resolver_manage_fabric_cache_hit",
+                fabric_name=fabric_name,
+                cluster_name=cluster_name,
+                found=bool(cached),
+                category=cached.get("category"),
+                fabric_type=cached.get("fabricType") or cached.get("type"),
+            )
+            return dict(cached)
+
         endpoint = EpManageFabricsGet(fabric_name=fabric_name)
         endpoint.endpoint_params.cluster_name = cluster_name
         self._trace("fabric_resolver_manage_fabric_start", fabric_name=fabric_name, cluster_name=cluster_name, path=endpoint.path)
-        response = self._nd.request(
+        response = self._request(
             endpoint.path,
             method=endpoint.verb.value,
             ignore_not_found_error=True,
         )
         data = _response_data(response)
         result = data if isinstance(data, dict) else {}
+        self._manage_fabric_details_cache[cache_key] = dict(result)
         self._trace(
             "fabric_resolver_manage_fabric_end",
             fabric_name=fabric_name,
@@ -292,7 +301,7 @@ class FabricResolverBase:
         endpoint = EpManageFabricsMembersGet(fabric_name=fabric_name)
         endpoint.endpoint_params.cluster_name = cluster_name
         self._trace("fabric_resolver_manage_members_fetch_start", fabric_name=fabric_name, cluster_name=cluster_name, path=endpoint.path)
-        response = self._nd.request(
+        response = self._request(
             endpoint.path,
             method=endpoint.verb.value,
             ignore_not_found_error=True,
@@ -309,7 +318,7 @@ class FabricResolverBase:
         endpoint.endpoint_params.category = "fabricGroup"
         endpoint.endpoint_params.max = 10000
         self._trace("fabric_resolver_manage_fabric_groups_start", path=endpoint.path)
-        response = self._nd.request(
+        response = self._request(
             endpoint.path,
             method=endpoint.verb.value,
             ignore_not_found_error=True,
@@ -333,7 +342,7 @@ class FabricResolverBase:
         """GET OneManage member fabrics for a multicluster parent fabric."""
         endpoint = EpOneManageFabricsMembersGet(fabric_name=fabric_name)
         self._trace("fabric_resolver_onemanage_members_fetch_start", fabric_name=fabric_name, path=endpoint.path)
-        response = self._nd.request(
+        response = self._request(
             endpoint.path,
             method=endpoint.verb.value,
             ignore_not_found_error=True,
@@ -391,7 +400,7 @@ class FabricResolverBase:
         if details:
             enriched["manageFabricDetails"] = details
         if enriched.get("fabricType") == "MFD":
-            enriched["onemanageProxyPath"] = _nd_onemanage_proxy(self._nd.version or "")
+            enriched["onemanageProxyPath"] = _nd_onemanage_proxy(self._controller_version())
             members = enriched.get("members")
             if not members:
                 try:

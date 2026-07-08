@@ -20,7 +20,7 @@ coordinator helpers instead of changing the shared state-machine contract.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
     BaseVrfStrategy,
@@ -49,7 +49,7 @@ class VrfStateMachine:
         """Return True when the owning Ansible module is running in check mode."""
         return bool(getattr(getattr(self.coordinator, "module", None), "check_mode", False))
 
-    def run_basic(self, module_args: dict, strategy: Optional[BaseVrfStrategy] = None) -> dict[str, Any]:
+    def run_basic(self, module_args: dict, strategy: BaseVrfStrategy | None = None) -> dict[str, Any]:
         """
         Run only the generic NDStateMachine-backed VRF CRUD/gathered flow.
         """
@@ -68,7 +68,7 @@ class VrfStateMachine:
     def run(
         self,
         module_args: dict,
-        strategy: Optional[BaseVrfStrategy] = None,
+        strategy: BaseVrfStrategy | None = None,
         defer_deploy: bool = False,
     ) -> dict[str, Any]:
         """
@@ -230,7 +230,7 @@ class VrfStateMachine:
         self,
         pre_attach: dict[str, Any],
         empty_when_absent: bool = False,
-    ) -> Optional[dict[tuple[str, str], dict[str, Any]]]:
+    ) -> dict[tuple[str, str], dict[str, Any]] | None:
         """Return cached attachments after applying pre-detach payloads."""
         current = pre_attach.get("current")
         if current is None:
@@ -299,7 +299,7 @@ class VrfStateMachine:
         module_args: dict,
         strategy: BaseVrfStrategy,
         omitted_vrf_names: list[str],
-        current_attachment_details: Optional[list[dict[str, Any]]] = None,
+        current_attachment_details: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Detach/deploy omitted VRFs before overridden deletes them."""
         if not omitted_vrf_names:
@@ -324,7 +324,7 @@ class VrfStateMachine:
             api_args=module_args,
             wait_args=module_args,
             strategy=strategy,
-            config=module_args.get("config") or [],
+            config=[self._delete_all_generated_config(vrf_name, strategy) for vrf_name in omitted_vrf_names],
             detach_trace=detach_trace,
             wait_vrf_names=omitted_vrf_names,
         )
@@ -445,7 +445,7 @@ class VrfStateMachine:
         strategy: BaseVrfStrategy,
         config: list[dict],
         detach_trace: dict[str, Any],
-        wait_vrf_names: Optional[list[str]] = None,
+        wait_vrf_names: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return detach trace plus deploy traces, waiting when deploy occurs."""
         traces = [detach_trace] if detach_trace else []
