@@ -20,7 +20,7 @@ coordinator helpers instead of changing the shared state-machine contract.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_network import (
     BaseNetworkStrategy,
@@ -49,7 +49,7 @@ class NetworkStateMachine:
         """Return True when the owning Ansible module is running in check mode."""
         return bool(getattr(getattr(self.coordinator, "module", None), "check_mode", False))
 
-    def run_basic(self, module_args: dict, strategy: Optional[BaseNetworkStrategy] = None) -> dict[str, Any]:
+    def run_basic(self, module_args: dict, strategy: BaseNetworkStrategy | None = None) -> dict[str, Any]:
         """
         Run only the generic NDStateMachine-backed Network CRUD/gathered flow.
         """
@@ -68,7 +68,7 @@ class NetworkStateMachine:
     def run(
         self,
         module_args: dict,
-        strategy: Optional[BaseNetworkStrategy] = None,
+        strategy: BaseNetworkStrategy | None = None,
         defer_deploy: bool = False,
     ) -> dict[str, Any]:
         """
@@ -222,7 +222,7 @@ class NetworkStateMachine:
         self,
         pre_attach: dict[str, Any],
         empty_when_absent: bool = False,
-    ) -> Optional[dict[tuple[str, str], dict[str, Any]]]:
+    ) -> dict[tuple[str, str], dict[str, Any]] | None:
         """Return cached attachments after applying pre-detach payloads."""
         current = pre_attach.get("current")
         if current is None:
@@ -320,7 +320,7 @@ class NetworkStateMachine:
         module_args: dict,
         strategy: BaseNetworkStrategy,
         omitted_network_names: list[str],
-        current_attachment_details: Optional[list[dict[str, Any]]] = None,
+        current_attachment_details: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Detach/deploy omitted Networks before overridden deletes them."""
         if not omitted_network_names:
@@ -453,7 +453,7 @@ class NetworkStateMachine:
         strategy: BaseNetworkStrategy,
         config: list[dict],
         detach_trace: dict[str, Any],
-        wait_network_names: Optional[list[str]] = None,
+        wait_network_names: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return detach trace plus delete undeploy traces, then wait for readiness."""
         traces = [detach_trace] if detach_trace else []
