@@ -1,0 +1,362 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+
+- name: "DELETED - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: deleted
+
+- block:
+
+    ##############################################
+    ##     SETUP - Create policies to delete    ##
+    ##############################################
+
+    - name: "DELETED SETUP - Create policies on switch1"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "Timezone CET"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+
+          - name: clock_summertime
+            create_additional_policy: false
+            description: "Summertime CEST"
+            priority: 102
+            template_inputs:
+              SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
+
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "System vlan long-name"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+
+          - name: feature_enable
+            create_additional_policy: false
+            description: "Enable BFD feature"
+            priority: 112
+            template_inputs:
+              featureName: bfd
+
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "BFD timers"
+            priority: 115
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "as-format asdot"
+            priority: 120
+            template_inputs:
+              CONF: "as-format asdot"
+
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+
+      register: setup_result
+      tags: deleted
+
+    - name: "DELETED SETUP - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - setup_result.changed == true
+      tags: deleted
+
+    ##############################################
+    ##         DELETE TEST CASES                 ##
+    ##############################################
+
+    # TC-1: Delete a single policy by template name
+    - name: "DELETED TC1 - Delete clock_timezone policy with deploy"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC1 - Verify deletion"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    # TC-2: Repeat delete triggers blind pending-cleanup switch deploy
+    - name: "DELETED TC2 - Delete clock_timezone again triggers cleanup deploy"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC2 - Verify cleanup deploy attempted"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    # TC-3: Delete multiple policies by template name in one task
+    - name: "DELETED TC3 - Delete multiple policies"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: clock_summertime
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC3 - Verify multiple deletions"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    # TC-4: Verify switch1 is clean via gathered
+    - name: "DELETED TC4 - Gather policies on switch1 after delete"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - name: clock_summertime
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: gathered_result
+      tags: deleted
+
+    - name: "DELETED TC4 - Verify switch1 has no test policies"
+      ansible.builtin.assert:
+        that:
+          - (gathered_result.gathered | default([])) | length == 0
+      tags: deleted
+
+    ##############################################
+    ## TC5 - normal template pending cleanup     ##
+    ##############################################
+
+    # Normal templates can leave the original policy ID staged as
+    # markDeleted=true after deploy=false. The follow-up deploy=true run sees
+    # no active record and performs a blind switch deploy without issuing
+    # markDelete again.
+    - name: "DELETED TC5 SETUP - Create a policy for markDelete test"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "Timezone for markDelete test"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: setup_result
+      tags: deleted
+
+    - name: "DELETED TC5 SETUP - Gather markDelete test policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+            description: "Timezone for markDelete test"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc5_gathered_result
+      tags: deleted
+
+    - name: "DELETED TC5 SETUP - Capture markDelete test policy ID"
+      ansible.builtin.set_fact:
+        tc5_markdelete_policy_id: "{{ tc5_gathered_result.gathered[0].policy_id }}"
+      tags: deleted
+
+    - name: "DELETED TC5 - Delete with deploy=false (markDelete only)"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: false
+        config:
+          - name: "{{ tc5_markdelete_policy_id }}"
+            description: "Timezone for markDelete test"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC5 - Verify markDelete happened"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    - name: "DELETED TC5B - Blind deploy pending cleanup by policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ tc5_markdelete_policy_id }}"
+            description: "Timezone for markDelete test"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC5B - Verify pending cleanup deploy changed"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    ##############################################
+    ## TC5C - switch_freeform pending cleanup    ##
+    ##############################################
+
+    # switch_freeform deploy=false can leave running config or a generated
+    # cleanup artifact outside the active policy view. The cleanup run uses
+    # the requested switch as a blind deploy target without proving the child
+    # by source first.
+    - name: "DELETED TC5C SETUP - Create switch_freeform policy for source cleanup"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "Source cleanup switch freeform"
+            priority: 125
+            template_inputs:
+              CONF: |
+                line console
+                  exec-timeout 5
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: setup_result
+      tags: deleted
+
+    - name: "DELETED TC5C SETUP - Gather switch_freeform source cleanup policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "Source cleanup switch freeform"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc5c_gathered_result
+      tags: deleted
+
+    - name: "DELETED TC5C SETUP - Capture switch_freeform source cleanup policy ID"
+      ansible.builtin.set_fact:
+        tc5c_source_cleanup_policy_id: "{{ tc5c_gathered_result.gathered[0].policy_id }}"
+      tags: deleted
+
+    - name: "DELETED TC5C - Delete switch_freeform with deploy=false"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: false
+        config:
+          - name: "{{ tc5c_source_cleanup_policy_id }}"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC5C - Verify deploy=false switch_freeform delete changed"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    - name: "DELETED TC5D - Blind deploy switch_freeform pending cleanup by original policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ tc5c_source_cleanup_policy_id }}"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC5D - Verify blind pending cleanup deploy changed"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    # TC-6: Delete using use_description_as_key
+    - name: "DELETED TC6 SETUP - Create policy with unique description"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        use_description_as_key: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "Delete me by description"
+            priority: 300
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      tags: deleted
+
+    - name: "DELETED TC6 - Delete by description"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        use_description_as_key: true
+        config:
+          - description: "Delete me by description"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC6 - Verify delete by description"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+  always:
+    - name: "DELETED - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: deleted

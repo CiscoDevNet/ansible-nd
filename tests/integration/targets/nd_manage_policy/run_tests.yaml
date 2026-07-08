@@ -1,0 +1,21 @@
+---
+# Runner playbook for nd_policy integration tests.
+#
+# Usage:
+#   ansible-playbook -i tests/integration/inventory.networking \
+#     tests/integration/targets/nd_policy/run_tests.yaml \
+#     -e testcase=merged \
+#     -e @tests/integration/integration_config.yml
+#
+# To override fabric/switch at runtime:
+#   ansible-playbook -i tests/integration/inventory.networking \
+#     tests/integration/targets/nd_policy/run_tests.yaml \
+#     -e testcase=merged \
+#     -e fabric_name=my_fabric \
+#     -e switch_serial_1=FDO12345678
+
+- name: ND Policy Integration Tests
+  hosts: nd
+  gather_facts: false
+  roles:
+    - role: "{{ playbook_dir }}"

@@ -1,0 +1,3891 @@
+# Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""
+ND Policy Resource Module.
+
+Provides all business logic for switch policy management on ND:
+    - Policy CRUD (create, read, update, delete)
+    - Idempotency diff calculation for merged, deleted states
+    - Deploy orchestration (pushConfig for create/update, switchActions/deploy for delete)
+    - Conditional delete flow:
+      deploy=true  → markDelete → optional direct-DELETE fallback → switchActions/deploy
+      deploy=false → markDelete only for standard templates; optional direct-DELETE
+                     fallback for PYTHON content-type failures. Running config
+                     remains on the switch until the next deploy.
+
+The module file ``nd_manage_policy.py`` contains only DOCUMENTATION, argument_spec,
+and a thin ``main()`` that instantiates this class and calls ``manage_state()``.
+
+Models (from ``models.nd_manage_policies``):
+    - ``PolicyCreate``      - single policy create payload
+    - ``PolicyCreateBulk``  - bulk policy create wrapper
+    - ``PolicyUpdate``      - policy update payload (extends PolicyCreate)
+    - ``PolicyIds``         - list of policy IDs for actions
+"""
+
+from __future__ import annotations
+
+import copy
+import logging
+from typing import Any, ClassVar
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ValidationError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.template_validation import (
+    fetch_template_params as _shared_fetch_template_params,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.template_validation import (
+    strip_system_injected_keys as _shared_strip_system_injected_keys,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.template_validation import (
+    validate_template_inputs as _shared_validate_template_inputs,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.constants import (
+    SYSTEM_INJECTED_TEMPLATE_KEYS,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policies import (
+    EpManagePoliciesDelete,
+    EpManagePoliciesGet,
+    EpManagePoliciesPost,
+    EpManagePoliciesPut,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policy_actions import (
+    EpManagePolicyActionsMarkDeletePost,
+    EpManagePolicyActionsPushConfigPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
+    EpManageSwitchActionsDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
+    EpManageFabricsSwitchesGet,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import (
+    HttpVerbEnum,
+    OperationType,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
+    FabricSwitchInventory,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import (
+    PlaybookPolicyConfig,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_actions import (
+    PolicyIds,
+    SwitchIds,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_base import (
+    PolicyCreate,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_crud import (
+    PolicyCreateBulk,
+    PolicyUpdate,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_gathered import (
+    PolicyGathered,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.switch_data_models import (
+    SwitchDataModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
+    NDModule,
+    NDModuleError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+
+# pylint: disable=logging-fstring-interpolation
+
+
+# pylint: disable=logging-fstring-interpolation,logging-not-lazy,f-string-without-interpolation,unnecessary-comprehension,implicit-str-concat
+
+
+# =============================================================================
+# Module-level helpers (stateless, used by NDPolicyModule)
+# =============================================================================
+#
+# Note: the IPv4 / IPv4-subnet / MAC regex patterns and the
+# fetch-with-cache + schema-validation logic live in
+# ``plugins/module_utils/common/template_validation.py`` and are consumed
+# via the thin wrappers ``_fetch_template_params``,
+# ``_validate_template_inputs`` and ``_clean_template_inputs`` on
+# ``NDPolicyModule`` below.  The instance-method surface (signatures,
+# return values, log lines, and ``self._template_params_cache``) is
+# what the unit tests in
+# ``tests/unit/module_utils/test_nd_policy_resources_module.py`` exercise.
+
+
+def _looks_like_ipv4(value) -> bool:
+    """Return True if *value* is a dotted-quad IPv4 address.
+
+    Used as the gate for fabric-inventory resolution: switch identifiers that
+    look like an IPv4 address are translated to ``switchId`` (serial number)
+    via :class:`FabricSwitchInventory`; everything else is assumed to already
+    be a serial number and passed through untouched.
+
+    Args:
+        value: Switch identifier string to inspect.
+
+    Returns:
+        True if *value* is a dotted-quad IPv4 address, False otherwise.
+    """
+    if not value:
+        return False
+    parts = str(value).strip().split(".")
+    if len(parts) != 4:
+        return False
+    return all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+
+
+class NDPolicyModule:
+    """Specialized module for switch policy lifecycle management.
+
+    Provides policy-specific operations on top of NDModule:
+        - Query and match existing policies (switchId-only Lucene narrowing,
+          templateName/source/markDeleted filtered in code)
+        - Idempotent diff calculation across 16 merged / 16 deleted cases
+        - Create, update, delete_and_create actions
+        - Bulk deploy via pushConfig (create/update) or switchActions/deploy (delete)
+        - Conditional delete flow:
+          deploy=true  → markDelete → optional direct-DELETE fallback → switchActions/deploy
+          deploy=false → markDelete only for standard templates; optional direct-DELETE
+                         fallback for PYTHON content-type failures. Running config
+                         remains on the switch until the next deploy.
+
+    Schema models (from ``models.nd_manage_policies``):
+        - ``PolicyCreate``      - single policy create request body
+        - ``PolicyCreateBulk``  - bulk create wrapper
+        - ``PolicyUpdate``      - update request body (extends PolicyCreate)
+        - ``PolicyIds``         - list of policy IDs for bulk actions
+    """
+
+    # =========================================================================
+    # Initialization & Lifecycle
+    # =========================================================================
+
+    def __init__(
+        self,
+        nd: NDModule,
+        results: Results,
+        logger: logging.Logger | None = None,
+    ):
+        """Initialize the Policy Resource Module.
+
+        Args:
+            nd:      NDModule instance (wraps the Ansible module and REST client).
+            results: Results aggregation instance for task output.
+            logger:  Optional logger; defaults to ``nd.NDPolicyModule``.
+
+        Returns:
+            None.
+        """
+        self.log = logger or logging.getLogger("nd.NDPolicyModule")
+        self.nd = nd
+        self.module = nd.module
+        self.results = results
+
+        # Module parameters
+        self.fabric_name = self.module.params.get("fabric_name")
+        self.config = self.module.params.get("config")
+        self.state = self.module.params.get("state")
+        self.use_description_as_key = self.module.params.get("use_description_as_key")
+        self.deploy = self.module.params.get("deploy")
+        self.ticket_id = self.module.params.get("ticket_id")
+        self.cluster_name = self.module.params.get("cluster_name")
+        self.check_mode = self.module.check_mode
+
+        if not self.config:
+            if self.state != "gathered":
+                raise NDModuleError(msg=f"'config' element is mandatory for state '{self.state}'.")
+            # For gathered without config, initialise to empty list so
+            # downstream code can iterate safely.
+            self.config = []
+
+        # Template parameter cache used by _validate_template_inputs().
+        # Keyed by templateName; populated lazily by _fetch_template_params().
+        self._template_params_cache: dict[str, list[dict]] = {}
+
+        # Before/after snapshot lists — populated during _execute_* methods.
+        # Merged into exit_json output so the caller sees what changed.
+        self._before: list[dict] = []
+        self._after: list[dict] = []
+        self._proposed: list[dict] = []
+        self._gathered: list[dict] = []
+
+        # Accumulator for ND "warning"-status messages surfaced from 207
+        # Multi-Status responses (markDelete, pushConfig, bulk create).
+        # ND uses status="warning" for non-fatal partial outcomes (e.g.,
+        # "already in markDeleted state", "deployment skipped — already in
+        # sync"). These do NOT count toward task failure but are surfaced
+        # to the user via module.warn() and the top-level ``warnings_nd``
+        # key in exit_json so the operator can audit ND-side state.
+        self._warnings: list[str] = []
+
+        # Sticky stash for the path/verb/payload of the most recent (or
+        # would-be) HTTP request.  _record_call() is invoked by the _api_*
+        # helpers (and check-mode would-be sites) immediately before the
+        # request is built; _register_result() reads this stash and stamps
+        # Results.{path,verb,payload}_current so the final output's
+        # ``path`` / ``payload`` arrays are populated alongside ``response``.
+        # The stash is intentionally NOT auto-cleared after stamping so a
+        # single bulk POST can be associated with multiple per-entry result
+        # rows.  Synthetic register sites (no preceding API call) call
+        # _clear_call() to avoid inheriting stale values.
+        self._call_path: str | None = None
+        self._call_verb: HttpVerbEnum | None = None
+        self._call_payload: dict | None = None
+
+        # Lazily-populated fabric switch inventory (shared by
+        # resolve_switch_identifiers and _get_fabric_switches so a single
+        # GET /fabrics/{name}/switches serves the whole module run).
+        self._inventory: FabricSwitchInventory | None = None
+
+        # Policy cache populated by _prefetch_all_policies() at the start of
+        # _handle_merged_state / _handle_deleted_state / _handle_gathered_state.
+        # When populated, _build_have() filters from this cache (O(1) in-memory
+        # lookups) instead of making per-entry HTTP GETs.  None means cache is
+        # not yet loaded (any call to _build_have() in that state is a bug).
+        self._policies_cache: list[dict] | None = None
+        self._policies_by_id_cache: dict[str, dict] = {}
+        self._policies_by_switch_cache: dict[str, list[dict]] = {}
+        # Composite (switchId, templateName) index for O(1) Case B/C lookups.
+        self._policies_by_switch_template_cache: dict[tuple[str, str], list[dict]] = {}
+
+        # NDOutput wrapper used by exit_module() to assemble the standard
+        # collection-wide output shape (changed/failed/before/after/diff/
+        # proposed/output_level + verbosity-gated api_* keys).  See
+        # exit_module() for the per-state kwargs forwarded into
+        # NDOutput.format_with_verbosity().
+        self.output: NDOutput = NDOutput(output_level=self.module.params.get("output_level", "normal") or "normal")
+
+        self.log.info(f"Initialized NDPolicyModule for fabric: {self.fabric_name}, state: {self.state}")
+
+    def exit_module(self) -> None:
+        """Build final result via :class:`NDOutput` and exit.
+
+        Produces the standard collection-wide output shape
+        (``output_level`` / ``changed`` / ``before`` / ``after`` /
+        ``diff`` with verbosity-gated ``api_*`` keys) by delegating
+        to :meth:`NDOutput.format_with_verbosity`.
+
+        Output shape contract:
+
+        - ``changed`` is derived from :attr:`Results.changed` (same
+          semantics as the previous ``exit_json``).
+        - ``before`` / ``after`` are the policy snapshot lists this
+          module already maintains in ``self._before`` / ``self._after``.
+        - ``diff`` defaults to ``[]`` at all verbosities; the per-API-call
+          diff list moves to ``api_diff`` and is only surfaced at
+          ``-vvv`` via NDOutput's verbosity gating.
+        - ``gathered`` is added only when populated, matching the
+          previous "omit when empty" semantics so playbooks that read
+          ``result.gathered | length`` keep their shape.
+        - ``proposed`` is only attached at ``output_level``
+          ``info`` / ``debug``.
+        - ``warnings_nd`` is surfaced via ``module.warn()`` plus a
+          de-duplicated top-level key whenever any ND-side warnings
+          were captured.
+
+        Failure is decided by ``True in self.results.failed`` exactly
+        as before — we still route to ``module.fail_json`` so the
+        Ansible task is reported as failed.
+
+        Returns:
+            None.
+        """
+        verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
+        output_level = self.module.params.get("output_level", "normal") or "normal"
+
+        # Always-on keys.  ``changed`` is taken from Results so that the
+        # per-task ``_determine_if_changed()`` logic continues to drive
+        # the top-level value (same behaviour as the previous exit_json).
+        # We deliberately do NOT pass ``diff=`` — NDOutput.format()
+        # defaults it to [] and the per-call list is exposed via
+        # ``api_diff`` at -vvv.
+        kwargs: dict = {
+            "changed": True in self.results.changed,
+            "before": self._before,
+            "after": self._after,
+        }
+
+        # Attach gathered output only when gathered state produced
+        # results, mirroring the previous "omit when empty" semantics.
+        if self._gathered:
+            kwargs["gathered"] = self._gathered
+
+        # Only expose proposed at info/debug output levels (matches the
+        # previous gating; NDOutput's own gating for proposed only fires
+        # when assign() is used with an NDConfigCollection, so we gate
+        # here too to keep parity with the kwargs-based code path).
+        if output_level in ("debug", "info"):
+            kwargs["proposed"] = self._proposed
+
+        # Surface ND-side warnings (status="warning" entries from 207
+        # responses) to the operator. Each message is emitted as an
+        # Ansible-visible warning (yellow ``[WARNING]:`` line in the
+        # CLI) and also attached to the result under ``warnings_nd`` so
+        # downstream tasks using ``register:`` can react programmatically.
+        if self._warnings:
+            # De-duplicate while preserving order so identical warnings
+            # from a bulk response are not shown N times.
+            seen: set = set()
+            unique_warnings: list = []
+            for w in self._warnings:
+                if w not in seen:
+                    seen.add(w)
+                    unique_warnings.append(w)
+            for w in unique_warnings:
+                try:
+                    self.module.warn(w)
+                except Exception:  # pragma: no cover — defensive only
+                    pass
+            kwargs["warnings_nd"] = unique_warnings
+
+        final = self.output.format_with_verbosity(verbosity, self.results, **kwargs)
+
+        if True in self.results.failed:
+            self.module.fail_json(
+                msg="Policy operation failed. See task results for details.",
+                **final,
+            )
+        self.module.exit_json(**final)
+
+    def exit_json(self) -> None:
+        """Backward-compatible alias for :meth:`exit_module`.
+
+        Kept so existing call sites (``main()``, tests, any external
+        code that imports ``NDPolicyModule``) continue to work without
+        modification.  New code should call :meth:`exit_module` directly.
+
+        Returns:
+            None.
+        """
+        self.exit_module()
+
+    # =========================================================================
+    # Config Translation & Switch Resolution
+    # =========================================================================
+
+    @staticmethod
+    def translate_config(config, use_description_as_key):
+        """Translate the playbook config into a flat list of per-switch policy dicts.
+
+        The playbook config uses a two-level structure:
+            - Global policy entries: dicts with ``name``, ``description``, etc.
+            - A switch entry: a dict with ``switch`` key containing a list of
+              switch dicts, each with ``serial_number`` and optional ``policies``.
+
+        This function:
+            1. Separates global policy entries from the switch entry (non-destructive).
+            2. Collects per-switch overrides keyed by ``(template_name, switch_sn)``.
+            3. For each (global_policy, switch) pair, emits either the override
+               (when ``use_description_as_key=false`` and a same-name override exists)
+               or the global.  When ``use_description_as_key=true``, both are emitted.
+            4. Appends per-switch-only policies (overrides whose template name
+               doesn't appear in any global).
+            5. Returns a flat list where each dict has a ``switch`` key with a
+               single serial number string.
+
+        The input ``config`` list is **not** mutated.
+
+        Args:
+            config: The raw config list from the playbook.
+            use_description_as_key: Whether descriptions are used as unique keys.
+
+        Returns:
+            Flat list of policy dicts, each with a ``switch`` (serial number) key.
+        """
+        if not config:
+            return []
+
+        # Detect gathered output format: every named entry already has its own
+        # embedded switch list. Flatten directly — no global/switch separation needed.
+        #
+        # Three shapes are recognised:
+        #   Shape 1 (two-level): policy entries (no `switch`) plus a
+        #     single switch entry (no `name`, has `switch: [...]`).
+        #   Shape 2 (gathered output): every named entry
+        #     carries its own embedded `switch: [...]` list.
+        #   Shape 3 (mixed): a forbidden combination of Shape 1 and Shape 2
+        #     in the same config list. In the two-level path, gathered output
+        #     entries would be silently misinterpreted as the global switch
+        #     entry, dropping their policy fields on the floor — so we reject
+        #     this combination explicitly.
+        has_gathered_output_shape = False
+        two_level_named_entries: list = []  # named entries WITHOUT embedded switch
+        for entry in config:
+            name = entry.get("name")
+            sw = entry.get("switch")
+            if name and isinstance(sw, list):
+                has_gathered_output_shape = True
+            elif name:
+                two_level_named_entries.append(name)
+
+        all_gathered_output_shape = not two_level_named_entries
+
+        if has_gathered_output_shape and not all_gathered_output_shape:
+            raise NDModuleError(
+                msg=(
+                    "Invalid config shape: cannot mix gathered output shape "
+                    "entries (named entries with an embedded `switch:` list) "
+                    "with two-level shape policy entries (named entries with no `switch:` "
+                    "key) in the same `config` list. "
+                    f"Offending two-level entries: {two_level_named_entries}. "
+                    "Either (a) feed the gathered output back unchanged for "
+                    "round-trip use, or (b) remove the embedded `switch:` "
+                    "lists from the gathered output entries and add a single "
+                    "top-level `- switch: [...]` entry listing all target "
+                    "switches (two-level shape)."
+                )
+            )
+
+        if has_gathered_output_shape and all_gathered_output_shape:
+            result = []
+            for entry in config:
+                flat = copy.deepcopy(entry)
+                sw_list = flat.get("switch", [])
+                if isinstance(sw_list, list) and sw_list:
+                    sn = sw_list[0].get("serial_number") or sw_list[0].get("ip", "")
+                    flat["switch"] = sn
+                # Gathered output contains both ``name`` (template name)
+                # and ``policy_id`` (e.g. ``POLICY-28440``).  When
+                # ``policy_id`` is present, promote it to ``name`` so
+                # that merged state updates the existing policy in-place
+                # by ID.  The template name is preserved alongside for
+                # readability.
+                #
+                # If the user wants to create FRESH copies (new IDs)
+                # instead of updating, they simply remove the
+                # ``policy_id`` lines from the gathered output before
+                # feeding it back — ``name`` will remain as the template
+                # name and trigger a create.
+                policy_id = flat.pop("policy_id", None)
+                if policy_id:
+                    flat["name"] = policy_id
+                result.append(flat)
+            return result
+
+        # ── Step 1: Separate globals from the switch entry ──────────────
+        global_policies = []
+        switch_entry = None
+        for entry in config:
+            if isinstance(entry.get("switch"), list):
+                switch_entry = entry
+            else:
+                global_policies.append(entry)
+
+        # No switch entry → nothing to target
+        if switch_entry is None:
+            return config
+
+        switches = switch_entry["switch"]
+        if not switches:
+            # Empty switch list with no policy entries is a true no-op.
+            # With one or more policy entries it is a user error — fail
+            # loudly instead of silently dropping the request.
+            if global_policies:
+                offending = [p.get("name") or "<unnamed>" for p in global_policies]
+                raise NDModuleError(
+                    msg=(
+                        f"config has {len(global_policies)} policy entry(ies) "
+                        f"({offending}) but the 'switch:' list is empty. "
+                        "Provide at least one switch (serial_number or ip) to "
+                        "target, or remove the policy entries to make this a no-op."
+                    )
+                )
+            return []
+
+        # ── Step 2: Extract switch serial numbers and per-switch overrides ──
+        #
+        # overrides_by_switch: {sn: [policy_dict, ...]}
+        # override_names:      {sn: {template_name, ...}}  (for fast lookup)
+        switch_serials = []
+        overrides_by_switch = {}
+        override_names = {}
+
+        for sw in switches:
+            sn = sw.get("serial_number") or sw.get("ip", "")
+            switch_serials.append(sn)
+
+            if sw.get("policies"):
+                overrides_by_switch[sn] = sw["policies"]
+                override_names[sn] = {p.get("name") for p in sw["policies"]}
+            else:
+                overrides_by_switch[sn] = []
+                override_names[sn] = set()
+
+        # ── Step 3: No globals and no overrides → bare switch entries ───
+        if not global_policies and not any(overrides_by_switch.values()):
+            return [{"switch": sn} for sn in switch_serials]
+
+        # ── Step 4: Build the flat result in one pass ───────────────────
+        result = []
+        global_names = {g.get("name") for g in global_policies}
+
+        for sn in switch_serials:
+            sn_override_names = override_names.get(sn, set())
+            sn_overrides = overrides_by_switch.get(sn, [])
+
+            # 4a: Emit global policies for this switch.
+            #     When use_description_as_key=false, skip globals whose template
+            #     name is overridden for this switch.
+            for g in global_policies:
+                gname = g.get("name")
+                if not use_description_as_key and gname in sn_override_names:
+                    # Overridden for this switch — skip the global
+                    continue
+                entry = copy.deepcopy(g)
+                entry["switch"] = sn
+                # ``policy_id`` auto-promotion is intentionally scoped to the
+                # gathered output shape (handled above). In the two-level shape,
+                # a single ``policy_id`` fanning
+                # across N switches has no coherent meaning, so we silently
+                # drop it here.  This also strips the ``policy_id: None``
+                # placeholder that ``PlaybookPolicyConfig.model_dump`` emits
+                # for entries that omit the field.
+                entry.pop("policy_id", None)
+                result.append(entry)
+
+            # 4b: Emit per-switch overrides for this switch.
+            #     When use_description_as_key=false, only overrides whose name
+            #     matches a global were "replacements" (handled above by
+            #     skipping the global).  Overrides with names NOT in
+            #     globals are "extras" — always emitted.
+            #     When use_description_as_key=true, all overrides are emitted
+            #     (globals were already emitted above, both coexist).
+            for ovr in sn_overrides:
+                entry = copy.deepcopy(ovr)
+                entry["switch"] = sn
+                # Same reasoning as 4a — per-switch overrides also drop
+                # any stray ``policy_id`` because the two-level shape never
+                # honors it.
+                entry.pop("policy_id", None)
+                result.append(entry)
+
+        return result
+
+    def resolve_switch_identifiers(self, config):
+        """Resolve switch management IP inputs to serial numbers.
+
+        The user's arg-spec field is ``serial_number`` with alias ``ip``.
+        After ``translate_config()`` the value lives in ``entry["switch"]``
+        as a plain string.
+
+        Resolution logic:
+            1. If the value does NOT look like an IPv4 address it is
+               assumed to be a serial number already → pass through.
+            2. Otherwise the fabric switch inventory is consulted via
+               :class:`FabricSwitchInventory` to map ``fabricManagementIp``
+               → ``switchId`` (serial number).
+            3. If resolution fails, raise ``NDModuleError`` with a clear
+               message.
+
+        Args:
+            config: Flat config list from ``translate_config()``.
+
+        Returns:
+            The config list with all switch identifiers resolved to serials.
+        """
+        if config is None:
+            return []
+
+        # Cheap gate — skip the fabric inventory GET when no identifier looks
+        # like an IPv4 address (i.e. every entry is already a serial number).
+        needs_any = False
+        for entry in config:
+            sv = entry.get("switch")
+            if isinstance(sv, list):
+                for se in sv:
+                    val = se.get("serial_number") or se.get("ip") or ""
+                    if _looks_like_ipv4(val):
+                        needs_any = True
+                        break
+            elif isinstance(sv, str) and _looks_like_ipv4(sv):
+                needs_any = True
+            if needs_any:
+                break
+
+        if not needs_any:
+            return config
+
+        inventory = self._get_inventory()
+        ip_map = inventory.by_ip()
+
+        def _resolve(identifier):
+            if identifier is None:
+                return None
+            value = str(identifier).strip()
+            if not value:
+                return value
+            sw = ip_map.get(value)
+            return sw.switch_id if sw is not None else None
+
+        for entry in config:
+            switch_value = entry.get("switch")
+
+            if isinstance(switch_value, list):
+                for switch_entry in switch_value:
+                    original = switch_entry.get("serial_number") or switch_entry.get("ip")
+                    if not _looks_like_ipv4(original):
+                        continue
+                    resolved = _resolve(original)
+                    if resolved is None:
+                        raise NDModuleError(
+                            msg=(
+                                f"Unable to resolve switch IP '{original}' to a serial number "
+                                f"in fabric '{self.fabric_name}'. Provide a valid switch serial number "
+                                "or management IP from the fabric inventory."
+                            )
+                        )
+                    switch_entry["serial_number"] = resolved
+                    if "ip" in switch_entry:
+                        switch_entry["ip"] = resolved
+            elif isinstance(switch_value, str):
+                if not _looks_like_ipv4(switch_value):
+                    continue
+                resolved = _resolve(switch_value)
+                if resolved is None:
+                    raise NDModuleError(
+                        msg=(
+                            f"Unable to resolve switch IP '{switch_value}' to a serial number "
+                            f"in fabric '{self.fabric_name}'. Provide a valid switch serial number "
+                            "or management IP from the fabric inventory."
+                        )
+                    )
+                entry["switch"] = resolved
+
+        return config
+
+    def _get_inventory(self) -> FabricSwitchInventory:
+        """Fetch (once) and cache the fabric switch inventory.
+
+        Delegates to :meth:`FabricSwitchInventory.from_fabric` which performs
+        the ``GET /fabrics/{name}/switches`` call and parses results into
+        typed ``SwitchDataModel`` instances.  Uses RestSend save/restore so
+        the GET always hits the controller even in Ansible check mode.
+
+        The result is memoised on ``self._inventory`` so multiple callers
+        share a single API round-trip per module run.
+
+        Returns:
+            Populated :class:`FabricSwitchInventory` instance.
+        """
+        if self._inventory is not None:
+            return self._inventory
+
+        # Stamp the path/verb stash so any synthetic register that follows
+        # an empty switch list still reflects the inventory GET.
+        ep = EpManageFabricsSwitchesGet()
+        ep.fabric_name = self.fabric_name
+        self._record_call(ep, None)
+
+        rest_send = self.nd.get_rest_send()
+        rest_send.save_settings()
+        rest_send.check_mode = False
+        try:
+            self._inventory = FabricSwitchInventory.from_fabric(self.nd, self.fabric_name, self.log, SwitchDataModel)
+        finally:
+            rest_send.restore_settings()
+        return self._inventory
+
+    def validate_translated_config(self, translated_config):
+        """Validate the translated (flat) config before handing it to manage_state.
+
+        Checks performed:
+            - Every entry must have a ``switch`` serial number.
+
+        Note:
+            Field-level validation (name required, priority range, description
+            length, etc.) is handled by ``PlaybookPolicyConfig`` Pydantic
+            models before translation.  This method only checks post-
+            translation invariants.
+
+        Args:
+            translated_config: Flat config list from ``translate_config()``.
+
+        Returns:
+            None.
+
+        Raises:
+            NDModuleError: If any entry is missing a switch serial number.
+        """
+        for idx, entry in enumerate(translated_config):
+            if not entry.get("switch"):
+                raise NDModuleError(msg=f"config[{idx}]: every policy entry must have a switch serial number after translation.")
+
+    @staticmethod
+    def _mark_description_provided(normalized_entry: dict, raw_entry: dict) -> dict:
+        """Carry whether ``description`` was explicitly present in user input."""
+        normalized_entry["_description_provided"] = "description" in raw_entry
+
+        raw_switches = raw_entry.get("switch") or []
+        normalized_switches = normalized_entry.get("switch") or []
+        if isinstance(raw_switches, list) and isinstance(normalized_switches, list):
+            for raw_switch, normalized_switch in zip(raw_switches, normalized_switches):
+                raw_policies = raw_switch.get("policies") or [] if isinstance(raw_switch, dict) else []
+                normalized_policies = normalized_switch.get("policies") or [] if isinstance(normalized_switch, dict) else []
+                if isinstance(raw_policies, list) and isinstance(normalized_policies, list):
+                    for raw_policy, normalized_policy in zip(raw_policies, normalized_policies):
+                        if isinstance(raw_policy, dict) and isinstance(normalized_policy, dict):
+                            normalized_policy["_description_provided"] = "description" in raw_policy
+
+        return normalized_entry
+
+    @staticmethod
+    def _strip_internal_config_fields(config: object) -> object:
+        """Return config without module-internal marker keys."""
+        if isinstance(config, dict):
+            return {key: NDPolicyModule._strip_internal_config_fields(value) for key, value in config.items() if not key.startswith("_")}
+        if isinstance(config, list):
+            return [NDPolicyModule._strip_internal_config_fields(item) for item in config]
+        return config
+
+    # =========================================================================
+    # Public API - State Management
+    # =========================================================================
+
+    def validate_and_prepare_config(self) -> None:
+        """Validate, normalize, resolve, and flatten the playbook config.
+
+        Full pipeline executed before state dispatch:
+            1. **Pydantic validation** — each ``config[]`` entry is validated
+               against ``PlaybookPolicyConfig``.  It applies playbook-boundary
+               defaults such as ``description=""``, carries whether
+               ``description`` was explicitly provided, and preserves an omitted
+               ``priority`` as ``None`` so create/update logic can decide whether
+               to materialize the create default or preserve the existing value.
+            2. **Resolve switch identifiers** — management IPv4 addresses →
+               serial numbers via a fabric inventory API call.
+            3. **Translate config** — flatten the two-level (globals + switch
+               entry) structure into one dict per (policy, switch).
+            4. **Validate translated config** — ensure every entry has a switch.
+
+        After this method, ``self.config`` contains the flat, validated,
+        ready-to-process list with internal markers preserved.
+        ``module.params["config"]`` mirrors the flat list without internal
+        marker keys so invocation output stays within the public schema.
+
+        Returns:
+            None.
+        """
+        self.log.info("Validating and preparing config")
+
+        # Step 1: Pydantic validation + normalization
+        validation_context = {
+            "state": self.state,
+            "use_description_as_key": self.use_description_as_key,
+        }
+        normalized_config = []
+        for idx, entry in enumerate(self.config):
+            try:
+                validated = PlaybookPolicyConfig.model_validate(entry, context=validation_context)
+                normalized_entry = validated.model_dump(by_alias=False, exclude_none=False)
+                normalized_config.append(self._mark_description_provided(normalized_entry, entry))
+            except ValidationError as ve:
+                raise NDModuleError(msg=f"Input validation failed for config[{idx}]: {ve}") from ve
+            except ValueError as ve:
+                raise NDModuleError(msg=f"Input validation failed for config[{idx}]: {ve}") from ve
+        self.config = normalized_config
+        self.module.params["config"] = self._strip_internal_config_fields(normalized_config)
+
+        # Step 2: Resolve switch management IPs → serial numbers
+        resolved_config = self.resolve_switch_identifiers(
+            copy.deepcopy(self.config),
+        )
+
+        # Step 3: Flatten multi-switch config into one entry per (policy, switch)
+        translated_config = self.translate_config(
+            resolved_config,
+            self.use_description_as_key,
+        )
+
+        # Step 4: Validate translated config
+        self.validate_translated_config(translated_config)
+
+        # Update config references
+        self.config = translated_config
+        self.module.params["config"] = self._strip_internal_config_fields(translated_config)
+
+    def manage_state(self) -> None:
+        """Main entry point for state management.
+
+        Validates, normalizes, and prepares the config, then dispatches
+        to the appropriate handler:
+            - **merged**  - create / update / skip policies
+            - **deleted** - deploy=true: markDelete → optional direct-DELETE fallback
+                            → switchActions/deploy
+                          - deploy=false: markDelete only for standard templates;
+                            optional direct-DELETE fallback for PYTHON content-type
+                            failures. Running config remains on the switch until
+                            the next deploy.
+
+        Upfront schema, switch-resolution, and cross-entry validation failures
+        abort before any controller mutation is sent. Later per-entry validation
+        or controller failures are recorded per result row; valid entries in the
+        same task may already have been processed.
+
+        Returns:
+            None.
+        """
+        self.log.info(f"Managing state: {self.state}")
+
+        # Gathered state: skip the full config pipeline when config is empty
+        if self.state == "gathered":
+            if self.config:
+                # With config: validate & prepare, then gather matching policies
+                self.validate_and_prepare_config()
+            self._handle_gathered_state()
+            return
+
+        # Full config pipeline: pydantic → resolve → translate → validate
+        self.validate_and_prepare_config()
+
+        # Upfront cross-entry validation — hard-fail before any API mutations
+        self._validate_config()
+
+        if self.state == "merged":
+            self._handle_merged_state()
+        elif self.state == "deleted":
+            self._handle_deleted_state()
+        else:
+            raise NDModuleError(msg=f"Unsupported state: {self.state}")
+
+    # =========================================================================
+    # Upfront Validation
+    # =========================================================================
+
+    def _validate_config(self) -> None:
+        """Validate cross-entry invariants before any API calls are made.
+
+        When ``use_description_as_key=true``, the ``description + switch``
+        combination must be unique across all config entries within
+        the playbook.  Duplicate pairs would lead to ambiguous matching
+        at the controller and are rejected.
+
+        Note:
+            Per-entry checks (name required, description non-empty,
+            priority range, max-length, etc.) are handled by
+            ``PlaybookPolicyConfig`` Pydantic validation in
+            ``validate_and_prepare_config()``.  In particular, the
+            ``use_description_as_key=true`` + empty-description rule is
+            enforced by ``PlaybookPolicyConfig.validate_state_requirements``
+            (see ``models/manage_policies/config_models.py``), which
+            raises a ``ValueError`` for any template-name entry without
+            a description in merged/deleted states.  This method only
+            validates cross-entry constraints that Pydantic cannot
+            enforce because it sees one entry at a time.
+
+        Returns:
+            None.
+        """
+        if not self.use_description_as_key:
+            return
+
+        self.log.debug("ENTER: _validate_config() [use_description_as_key=true]")
+
+        desc_switch_counts: dict[str, int] = {}
+
+        for idx, entry in enumerate(self.config):
+            name = entry.get("name", "")
+            switch = entry.get("switch", "")
+            description = entry.get("description", "")
+
+            # Skip validation for policy-ID lookups (direct by ID) and
+            # switch-only entries (no name → "all policies on switch").
+            if name and self._is_policy_id(name):
+                continue
+            if not name:
+                continue
+
+            # Cross-entry uniqueness: description + switch must be unique.
+            # Empty descriptions for template-name entries are already
+            # rejected upstream by PlaybookPolicyConfig Pydantic validation
+            # (config_models.validate_state_requirements), so reaching this
+            # point with an empty description means name is a policy ID
+            # (skipped above) or the entry is switch-only.
+            if description:
+                key = f"{description}|{switch}"
+                desc_switch_counts[key] = desc_switch_counts.get(key, 0) + 1
+
+        # Report all duplicates at once
+        duplicates = [f"description='{k.split('|')[0]}', switch='{k.split('|')[1]}'" for k, count in desc_switch_counts.items() if count > 1]
+        if duplicates:
+            raise NDModuleError(
+                msg=(
+                    "Duplicate description+switch combinations found in the "
+                    "playbook config (use_description_as_key=true requires each "
+                    "description to be unique per switch): " + "; ".join(duplicates)
+                )
+            )
+
+        self.log.debug("EXIT: _validate_config() — all checks passed")
+
+    # =========================================================================
+    # State Handlers
+    # =========================================================================
+
+    def _handle_merged_state(self) -> None:
+        """Handle state=merged: create, update, or skip policies.
+
+        Returns:
+            None.
+        """
+        self.log.debug("ENTER: _handle_merged_state()")
+        self.log.info("Handling merged state")
+        self.log.debug(f"Config entries: {len(self.config)}")
+
+        # Phase 0: Prefetch all fabric policies in a single GET call.
+        # Subsequent _build_have() calls will use the in-memory cache
+        # instead of making per-entry HTTP GETs.
+        self._prefetch_all_policies(config_entries=self.config)
+
+        # Phase 1: Build want and have for each config entry
+        diff_results = []
+        for config_entry in self.config:
+            want = self._build_want(config_entry, state="merged")
+
+            # Phase 1a: Validate templateInputs against template schema
+            template_name = want.get("templateName")
+            template_inputs = want.get("templateInputs") or {}
+            if template_name and not self._is_policy_id(template_name):
+                validation_errors = self._validate_template_inputs(template_name, template_inputs)
+                if validation_errors:
+                    error_msg = f"Template input validation failed for '{template_name}': " + "; ".join(validation_errors)
+                    self.log.error(error_msg)
+                    diff_results.append(
+                        {
+                            "action": "fail",
+                            "want": want,
+                            "have": None,
+                            "diff": None,
+                            "policy_id": None,
+                            "error_msg": error_msg,
+                        }
+                    )
+                    continue
+
+            have_list, error_msg = self._build_have(want)
+
+            if error_msg:
+                self.log.error(f"Build have failed: {error_msg}")
+                diff_results.append(
+                    {
+                        "action": "fail",
+                        "want": want,
+                        "have": None,
+                        "diff": None,
+                        "policy_id": None,
+                        "error_msg": error_msg,
+                    }
+                )
+                continue
+
+            # Phase 2: Compute diff
+            diff_entry = self._get_diff_merged_single(want, have_list)
+            self.log.debug(f"Diff result for {want.get('templateName', want.get('policyId', 'unknown'))}: " f"action={diff_entry['action']}")
+            diff_results.append(diff_entry)
+
+        self.log.info(f"Computed {len(diff_results)} diff results")
+
+        # Phase 3: Execute actions
+        policy_ids_to_deploy = self._execute_merged(diff_results)
+
+        # Phase 4: Deploy if requested
+        if self.deploy and policy_ids_to_deploy:
+            # Determine if any actual changes occurred (create/update)
+            # vs only no-diff deploys.  No-diff deploys should not mark changed.
+            has_actual_changes = any(dr.get("action") not in ("skip", None) for dr in diff_results)
+            self.log.info(f"Deploying {len(policy_ids_to_deploy)} policies (has_actual_changes={has_actual_changes})")
+            deploy_success = self._deploy_policies(policy_ids_to_deploy, changed=has_actual_changes)
+            if not deploy_success:
+                self.log.error(
+                    "pushConfig failed for one or more policies after "
+                    "create/update. Policies exist on the controller but "
+                    "have not been deployed to the switch."
+                )
+                self._register_result(
+                    action="policy_deploy_failed",
+                    operation_type=OperationType.UPDATE,
+                    return_code=-1,
+                    message=(
+                        "pushConfig failed for one or more policies. "
+                        "Policies were created/updated on the controller but "
+                        "not deployed to the switch. Fix device connectivity "
+                        "and re-run with deploy=true."
+                    ),
+                    success=False,
+                    found=True,
+                    diff={
+                        "action": "deploy_failed",
+                        "policy_ids": policy_ids_to_deploy,
+                        "reason": "pushConfig per-policy failure",
+                    },
+                )
+        elif not self.deploy:
+            self.log.info("Deploy not requested, skipping pushConfig")
+
+        self.log.debug("EXIT: _handle_merged_state()")
+
+    def _handle_deleted_state(self) -> None:
+        """Handle state=deleted: remove policies from ND.
+
+        Returns:
+            None.
+        """
+        self.log.debug("ENTER: _handle_deleted_state()")
+        self.log.info("Handling deleted state")
+        self.log.debug(f"Config entries: {len(self.config)}")
+
+        # Phase 0: Prefetch all fabric policies in a single GET call.
+        self._prefetch_all_policies(config_entries=self.config)
+
+        # Phase 1: Build want and have for each config entry
+        diff_results = []
+        for config_entry in self.config:
+            want = self._build_want(config_entry, state="deleted")
+            have_list, error_msg = self._build_have(want)
+
+            if error_msg:
+                self.log.error(f"Build have failed: {error_msg}")
+                diff_results.append(
+                    {
+                        "action": "fail",
+                        "want": want,
+                        "policies": [],
+                        "policy_ids": [],
+                        "match_count": 0,
+                        "warning": None,
+                        "error_msg": error_msg,
+                    }
+                )
+                continue
+
+            # Phase 2: Compute delete result
+            diff_entry = self._get_diff_deleted_single(want, have_list)
+            # Capture the GET stash from _build_have so Phase 3 can stamp
+            # skip/fail rows with the actual lookup path/verb (payload=None).
+            diff_entry["query_path"] = self._call_path
+            diff_entry["query_verb"] = self._call_verb
+            self.log.debug(f"Delete diff for {want.get('templateName', want.get('policyId', 'switch-only'))}: " f"action={diff_entry['action']}")
+            diff_results.append(diff_entry)
+
+        # Phase 3: Execute delete actions
+        self.log.info(f"Computed {len(diff_results)} delete results")
+        self._execute_deleted(diff_results)
+        self.log.debug("EXIT: _handle_deleted_state()")
+
+    # =========================================================================
+    # Gathered State
+    # =========================================================================
+
+    def _handle_gathered_state(self) -> None:
+        """Handle state=gathered: export existing policies as playbook-ready config.
+
+        Two modes:
+            - **With config** — ``self.config`` is non-empty. For each config
+              entry, look up matching policies and
+              convert each match into a playbook-compatible config dict.
+            - **Without config** — ``self.config`` is empty. Fetch *all*
+              policies on the fabric and convert them.
+
+        The converted output is stored in ``self._gathered`` and surfaced
+        in the module return under the ``gathered`` key.
+
+        Returns:
+            None.
+        """
+        self.log.debug("ENTER: _handle_gathered_state()")
+        self.log.info("Handling gathered state")
+
+        # Phase 0: Prefetch all (or narrowed) fabric policies in one GET.
+        # Subsequent _build_have() / per-switch iteration uses the
+        # in-memory cache instead of N per-entry/per-switch HTTP GETs.
+        self._prefetch_all_policies(config_entries=self.config if self.config else None)
+
+        policies: list[dict] = []
+
+        if self.config:
+            # --- With config: query matching policies per entry ---
+            self.log.info(f"Gathered with config: {len(self.config)} entries")
+            for config_entry in self.config:
+                want = self._build_want(config_entry, state="gathered")
+                have_list, error_msg = self._build_have(want)
+
+                if error_msg:
+                    self.log.warning(f"Gathered: build_have error: {error_msg}")
+                    # Keep the GET stash from _build_have so the failed
+                    # lookup path/verb is reflected on the result row.
+                    self._register_result(
+                        action="policy_gathered",
+                        state="gathered",
+                        operation_type=OperationType.QUERY,
+                        return_code=-1,
+                        message=error_msg,
+                        success=False,
+                        found=False,
+                        diff={"action": "fail", "want": want, "error": error_msg},
+                    )
+                    continue
+
+                policies.extend(have_list)
+        else:
+            # --- Without config: fetch every policy on every switch ---
+            self.log.info("Gathered without config: fetching all fabric switches")
+            switches = self._get_fabric_switches()
+            if not switches:
+                self.log.warning("No switches found in fabric")
+                # Keep the GET stash from _get_inventory so the
+                # "no switches" row carries the actual lookup path/verb.
+                self._register_result(
+                    action="policy_gathered",
+                    state="gathered",
+                    operation_type=OperationType.QUERY,
+                    return_code=200,
+                    message="No switches found in fabric",
+                    success=True,
+                    found=False,
+                    diff={"action": "not_found"},
+                )
+                self.log.debug("EXIT: _handle_gathered_state()")
+                return
+
+            # Use the prefetched cache instead of one GET per switch.
+            # Cache already excludes markDeleted and source!="" entries.
+            for switch_sn in switches:
+                switch_policies = self._policies_by_switch_cache.get(switch_sn, [])
+                self.log.info(f"Found {len(switch_policies)} policies on switch {switch_sn}")
+                policies.extend(switch_policies)
+
+        if not policies:
+            self.log.info("Gathered: no policies found")
+            # Keep the most recent GET stash (from _build_have or the
+            # prefetch call) so the row reflects a real lookup that
+            # returned empty.
+            self._register_result(
+                action="policy_gathered",
+                state="gathered",
+                operation_type=OperationType.QUERY,
+                return_code=200,
+                message="No policies found",
+                success=True,
+                found=False,
+                diff={"action": "not_found", "match_count": 0},
+            )
+            self.log.debug("EXIT: _handle_gathered_state()")
+            return
+
+        # De-duplicate by policyId using NDConfigCollection.
+        # PolicyGathered uses policyId as its single identifier, so
+        # adding a policy with a duplicate policyId is silently skipped.
+        gathered_collection = NDConfigCollection(model_class=PolicyGathered)
+        skipped = 0
+        for pol in policies:
+            pid = pol.get("policyId")
+            if not pid:
+                self.log.warning("Skipping policy without policyId in gathered results")
+                skipped += 1
+                continue
+            try:
+                model = PolicyGathered.from_api_policy(pol)
+            except Exception as exc:
+                self.log.warning(f"Failed to parse policy {pid} for gathered output: {exc}")
+                skipped += 1
+                continue
+            # NDConfigCollection.add() raises ValueError on duplicate key;
+            # use get() first to skip duplicates gracefully.
+            if gathered_collection.get(pid) is not None:
+                self.log.debug(f"Gathered: skipping duplicate policy {pid}")
+                skipped += 1
+                continue
+            gathered_collection.add(model)
+
+        self.log.info(f"Gathered {len(gathered_collection)} unique policies " f"(from {len(policies)} total, {skipped} skipped)")
+
+        # Convert each policy to playbook-ready config, applying
+        # _clean_template_inputs to strip ND-injected keys.
+        for model in gathered_collection:
+            config_entry = model.to_gathered_config()
+            # Clean template inputs using the template parameter API
+            template_name = config_entry.get("name", "")
+            raw_inputs = config_entry.get("template_inputs") or {}
+            if template_name and raw_inputs:
+                config_entry["template_inputs"] = self._clean_template_inputs(template_name, raw_inputs)
+            self._gathered.append(config_entry)
+
+        # Keep the most recent GET stash so the success row carries the
+        # last lookup path/verb (no payload for GETs).
+        self._register_result(
+            action="policy_gathered",
+            state="gathered",
+            operation_type=OperationType.QUERY,
+            return_code=200,
+            message=f"Gathered {len(self._gathered)} policies",
+            data=self._gathered,
+            success=True,
+            found=True,
+            diff={"action": "gathered", "match_count": len(self._gathered)},
+        )
+
+        self.log.debug("EXIT: _handle_gathered_state()")
+
+    def _get_fabric_switches(self) -> list[str]:
+        """Fetch all switch serial numbers in the current fabric.
+
+        Delegates to :meth:`_get_inventory` and projects the typed
+        ``SwitchDataModel`` instances down to their serial-number strings.
+
+        Returns:
+            List of serial number strings.
+        """
+        self.log.debug("ENTER: _get_fabric_switches()")
+
+        try:
+            inventory = self._get_inventory()
+        except Exception as exc:
+            self.log.warning(f"Failed to fetch fabric switches: {exc}")
+            return []
+
+        switches = [sw.switch_id for sw in inventory.switches if sw.switch_id]
+
+        self.log.info(f"Found {len(switches)} switches in fabric '{self.fabric_name}'")
+        self.log.debug(f"EXIT: _get_fabric_switches() -> {switches}")
+        return switches
+
+    def _clean_template_inputs(self, template_name: str, raw_inputs: dict[str, Any]) -> dict[str, Any]:
+        """Remove system-injected keys from template inputs.
+
+        Delegates to
+        :func:`common.template_validation.strip_system_injected_keys`.  The
+        method signature, return shape (a fresh dict with
+        ``SYSTEM_INJECTED_TEMPLATE_KEYS`` removed) and ENTER / EXIT /
+        stripped-keys debug-log lines define the canonical
+        ``gathered -> merged`` round-trip pre-step.
+
+        Args:
+            template_name: Template name (for logging context).
+            raw_inputs:    Raw ``templateInputs`` dict from the controller.
+
+        Returns:
+            Cleaned dict with system-injected keys removed.  ``raw_inputs``
+            is not mutated.
+        """
+        return _shared_strip_system_injected_keys(
+            template_name,
+            raw_inputs,
+            SYSTEM_INJECTED_TEMPLATE_KEYS,
+            logger=self.log,
+        )
+
+    # =========================================================================
+    # Helpers: Classification & Filtering
+    # =========================================================================
+
+    # Internal control flags carried on `want` dicts that are NOT real
+    # policy attributes on the controller.  Stripped before any user-facing
+    # projection (after, diff.after, _after).
+    _INTERNAL_WANT_KEYS: ClassVar[frozenset] = frozenset({"create_additional_policy"})
+
+    @classmethod
+    def _strip_internal(cls, d: dict | None) -> dict:
+        """Return a shallow copy of *d* with internal control keys removed.
+
+        Internal keys (e.g. ``create_additional_policy``) are carried on the
+        ``want`` dict so the diff classifier can read them, but they must not
+        leak into ``after`` / ``diff.after`` / ``gathered`` outputs because
+        they are not real attributes of the policy on the controller.
+        """
+        if not d:
+            return {} if d is None else dict(d)
+        return {k: v for k, v in d.items() if k not in cls._INTERNAL_WANT_KEYS}
+
+    @staticmethod
+    def _is_policy_id(name: str) -> bool:
+        """Return True if name looks like a policy ID (starts with POLICY-).
+
+        Args:
+            name: Policy name or ID string to check.
+
+        Returns:
+            True if the name starts with ``POLICY-``, False otherwise.
+        """
+        return name.upper().startswith("POLICY-")
+
+    @classmethod
+    def _escape_lucene_value(cls, value: str) -> str:
+        """Escape a value for safe inclusion in a Lucene filter term.
+
+        ND's Lucene implementation does **not** support double-quoted
+        phrase syntax (e.g. ``description:"hello world"`` returns zero
+        results).  Instead, individual special characters are escaped
+        with a backslash while spaces are left unescaped so that the
+        Lucene tokenizer can match on individual words.  Callers that
+        need exact-match semantics must post-filter the results.
+
+        Args:
+            value: Raw string value.
+
+        Returns:
+            Lucene-safe string with special chars backslash-escaped.
+        """
+        s = str(value)
+        if not s:
+            return s
+        # Escape individual Lucene special characters with backslash.
+        # Spaces are intentionally left unescaped — ND performs
+        # tokenized (word-level) matching on spaces.
+        chars_to_escape = set(r'+-!(){}[]^"~*?:\/')
+        out: list = []
+        for ch in s:
+            if ch in chars_to_escape:
+                out.append(f"\\{ch}")
+            else:
+                out.append(ch)
+        return "".join(out)
+
+    @classmethod
+    def _build_lucene_filter(cls, **kwargs: Any) -> str:
+        """Build a Lucene filter string from keyword arguments.
+
+        Values containing Lucene special characters are automatically escaped
+        so that descriptions like ``"policy: enable"`` do not break the query
+        syntax. Spaces are intentionally left unescaped because ND's Lucene
+        endpoint tokenizes them; callers that need exact matching post-filter
+        the returned rows.
+
+        Example::
+
+            _build_lucene_filter(switchId="FDO123", templateName="feature_enable")
+            # Returns: "switchId:FDO123 AND templateName:feature_enable"
+
+            _build_lucene_filter(description="policy: enable (v2)")
+            # Returns: 'description:policy\\: enable \\(v2\\)'
+
+        Args:
+            **kwargs: Key-value pairs to include in the Lucene filter.
+                None values are skipped.
+
+        Returns:
+            Lucene filter string with terms joined by ``AND``.
+        """
+        parts = []
+        for key, value in kwargs.items():
+            if value is not None:
+                parts.append(f"{key}:{cls._escape_lucene_value(str(value))}")
+        return " AND ".join(parts)
+
+    @staticmethod
+    def _policies_differ(want: dict, have: dict) -> dict:
+        """Compare want vs have policy to determine if an update is needed.
+
+        Fields compared:
+            - description, only when the desired state carries it
+            - priority, only when the user provided it
+            - templateInputs (only keys the user specified, with str() normalization.
+              The controller injects extra keys like FABRIC_NAME that we must ignore.)
+
+        Fields NOT compared (identity/read-only):
+            - policyId, switchId, templateName, source
+            - entityType, entityName, createTimestamp, updateTimestamp
+            - generatedConfig, markDeleted
+
+        Args:
+            want: Desired policy state dict.
+            have: Existing policy dict from the controller.
+
+        Returns:
+            Dict with changed fields, or empty dict if identical.
+        """
+        diff = {}
+
+        # Compare description only when the desired state explicitly carries it.
+        # Policy-ID updates can omit description to preserve the existing value.
+        if "description" in want:
+            want_desc = want.get("description", "") or ""
+            have_desc = have.get("description", "") or ""
+            if want_desc != have_desc:
+                diff["description"] = {"want": want_desc, "have": have_desc}
+
+        # Compare priority only when the user provided it.  An omitted priority
+        # means "preserve existing priority" for updates; create payloads still
+        # default to 500 at the API boundary.
+        if want.get("priority") is not None:
+            want_priority = want["priority"]
+            have_priority = have.get("priority", 500)
+            if want_priority != have_priority:
+                diff["priority"] = {"want": want_priority, "have": have_priority}
+
+        # Compare templateInputs — only check keys the user specified.
+        # The controller injects additional keys (e.g., FABRIC_NAME) that
+        # the user didn't provide. We must ignore those to avoid false diffs.
+        want_inputs = want.get("templateInputs") or {}
+        have_inputs = have.get("templateInputs") or {}
+        input_diff = {}
+        for key in want_inputs:
+            # Normalize both sides for comparison:
+            #   - str(...)   : Python int 100 → "100" vs ND string "100"
+            #                  Python bool True → "True" vs ND string "True"
+            #                  (ND echoes booleans capitalised, matching Python repr.)
+            #   - .strip()   : drop trailing whitespace/newlines from multiline
+            #                  template inputs (e.g., CONF blocks).
+            # Case is PRESERVED — switch_freeform / PYTHON-template content is
+            # case-sensitive (NX-OS commands, descriptions, hostnames), so a
+            # lower-case fold would hide genuine drift.
+            want_val = str(want_inputs[key]).strip()
+            have_val = str(have_inputs.get(key, "")).strip()
+            if want_val != have_val:
+                input_diff[key] = {
+                    "want": want_inputs[key],
+                    "have": have_inputs.get(key),
+                }
+        if input_diff:
+            diff["templateInputs"] = input_diff
+
+        return diff
+
+    @staticmethod
+    def _want_with_create_defaults(want: dict) -> dict:
+        """Return a copy of want with create-only defaults materialized."""
+        out = dict(want)
+        if out.get("priority") is None:
+            out["priority"] = 500
+        return out
+
+    @staticmethod
+    def _priority_for_update(want: dict, have: dict) -> int:
+        """Resolve priority for PUT without resetting omitted priority to default."""
+        if want.get("priority") is not None:
+            return want["priority"]
+        return have.get("priority") or 500
+
+    # =========================================================================
+    # API Query Helpers
+    # =========================================================================
+
+    def _prefetch_all_policies(self, config_entries: list[dict] | None = None) -> None:
+        """Fetch fabric policies in a single GET call and build lookup indexes.
+
+        Drastically reduces API call count for bulk operations:
+            - Before: N config entries -> N GET calls in _build_have
+            - After:  N config entries -> 1 GET call upfront, all lookups in memory
+
+        When ``config_entries`` is provided and every entry resolves to a
+        ``(switchId, templateName)`` pair (i.e. no policy-id-only and no
+        switch-only entries), the GET is narrowed with a Lucene
+        ``switchId:VALUE`` or ``switchId:(S1 OR S2 ...)`` filter to shrink
+        the response body.  In all other cases the fetch is unfiltered (1 GET,
+        full list) to guarantee that subsequent in-memory lookups find
+        every policy the caller may ask for — preserving the exact
+        semantics of the per-entry slow path.
+
+        Populates four caches:
+            - self._policies_cache:                    full list of valid policies
+            - self._policies_by_id_cache:              {policyId: policy}
+            - self._policies_by_switch_cache:          {switchId: [policies]}
+            - self._policies_by_switch_template_cache: {(switchId, templateName): [policies]}
+
+        After fetching, filters in Python code to exclude internal sub-policies
+        (``source != ""``) and ``markDeleted`` policies. Positive source equality
+        works on the controller, but the active-view semantics needed here
+        require empty/negative-source and markDeleted filtering, so the module
+        applies those filters locally.
+        """
+        lucene_filter = self._build_prefetch_filter(config_entries)
+        if lucene_filter:
+            self.log.info(f"Prefetching policies with narrowed filter ({lucene_filter[:120]}...)")
+        else:
+            self.log.info("Prefetching all fabric policies (single unfiltered GET)")
+
+        raw = self._query_policies_raw(lucene_filter=lucene_filter)
+
+        self._policies_cache = []
+        excluded = 0
+        for p in raw:
+            if p.get("source", "") != "":
+                excluded += 1
+                continue
+            if p.get("markDeleted", False):
+                excluded += 1
+                continue
+            self._policies_cache.append(p)
+
+        # Build O(1) lookup indexes
+        self._policies_by_id_cache = {}
+        self._policies_by_switch_cache = {}
+        self._policies_by_switch_template_cache = {}
+        for p in self._policies_cache:
+            pid = p.get("policyId")
+            if pid:
+                self._policies_by_id_cache[pid] = p
+            sw = p.get("switchId") or p.get("serialNumber")
+            if sw:
+                self._policies_by_switch_cache.setdefault(sw, []).append(p)
+                tn = p.get("templateName")
+                if tn:
+                    self._policies_by_switch_template_cache.setdefault((sw, tn), []).append(p)
+
+        self.log.info(
+            f"Policy cache populated: {len(self._policies_cache)} active policies "
+            f"({excluded} excluded as internal/markDeleted) across "
+            f"{len(self._policies_by_switch_cache)} switches, "
+            f"{len(self._policies_by_switch_template_cache)} (switch,template) groups"
+        )
+
+    def _build_prefetch_filter(self, config_entries: list[dict] | None) -> str | None:
+        """Build a narrowed Lucene filter for prefetch, or None if not safe.
+
+        Returns one of:
+
+        - ``switchId:VALUE`` when exactly one unique switch is referenced
+          (the form the previous per-switch ``_query_policies`` loop used,
+          empirically reliable on the supported controller build).
+        - ``switchId:(S1 OR S2 OR ...)`` when 2+ unique switches are referenced.
+        - ``None`` when **any** entry lacks ``switch`` or references a policy id
+          by ``name``.  Caller must then fetch unfiltered to preserve correctness
+          for policy-id and switch-less entries.
+
+        Note: only ``switchId`` is used in the Lucene filter.
+        ``templateName`` filtering via Lucene is unreliable on the supported
+        controller build — conjunctions that include ``templateName`` silently
+        return zero results even when matching policies exist.  Similarly,
+        ``source != ""`` cannot be expressed as a server-side filter (only
+        positive equality on ``source`` works, and negation is rejected).
+        Both are applied as client-side post-filters on the prefetched list.
+
+        # TODO(4.2.1): Track ND API support for richer policy Lucene filters so
+        #   this prefetch can narrow on the server instead of client-side
+        #   post-filtering.  Needed forms are source-empty filtering and
+        #   filtering on both templateName and switchId with multiple values.
+        """
+        if not config_entries:
+            return None
+
+        switches: set[str] = set()
+        for entry in config_entries:
+            switch = entry.get("switch")
+            name = entry.get("name")
+            # Any entry that can't be expressed via switchId narrowing
+            # disqualifies the narrowed query -- we must fetch the full set.
+            if not switch or not name or self._is_policy_id(name):
+                return None
+            switches.add(switch)
+
+        if not switches:
+            return None
+
+        # Single-switch: use the plain ``switchId:VALUE`` form.  Empirical
+        # testing against ND showed the single-element group-disjunction
+        # form ``switchId:(VALUE)`` silently returns zero results on the
+        # supported controller build, while the plain form works.
+        if len(switches) == 1:
+            return f"switchId:{self._escape_lucene_value(next(iter(switches)))}"
+
+        switch_group = " OR ".join(self._escape_lucene_value(sw) for sw in sorted(switches))
+        return f"switchId:({switch_group})"
+
+    def _query_policies_raw(self, lucene_filter: str | None = None) -> list[dict]:
+        """Query policies from the controller using GET /policies.
+
+        Returns **all** matching policies including ``markDeleted`` and
+        internal (``source != ""``) entries.  The controller supports
+        positive equality filters such as ``source:POLICY-123`` but not
+        negation such as ``source != ""``; callers still apply the final
+        source/markDeleted checks in Python.
+
+        Args:
+            lucene_filter: Optional Lucene filter string.
+
+        Returns:
+            List of policy dicts from the response.
+        """
+        self.log.debug(f"Querying policies (raw) with filter: {lucene_filter}")
+
+        ep = EpManagePoliciesGet()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if lucene_filter:
+            ep.lucene_params.filter = lucene_filter
+        # set max to retrieve all matching policies.
+        # Default page size is 10 which causes missed matches.
+        ep.lucene_params.max = 10000
+
+        self._record_call(ep, None)
+        data = self.nd.request(ep.path, ep.verb)
+        if isinstance(data, dict):
+            policies = data.get("policies", [])
+            self.log.debug(f"Raw query returned {len(policies)} policies")
+            return policies
+        self.log.debug("Query returned non-dict response, returning empty list")
+        return []
+
+    # =========================================================================
+    # Core: Build want / have
+    # =========================================================================
+
+    def _build_want(self, config_entry: dict, state: str = "merged") -> dict:
+        """Translate a single user config entry to the API-compatible want dict.
+
+        For merged state, ``name`` is required and payload fields are included
+        when they should be sent to the controller. Policy-ID updates omit
+        ``description`` when the user omitted it so the existing description is
+        preserved.
+        For gathered/deleted state, ``name`` is optional — when omitted, only
+        ``switchId`` is set, which means "return all policies on this switch".
+
+        Args:
+            config_entry: Single dict from the user's config list.
+            state: Module state ("merged", "gathered", or "deleted").
+
+        Returns:
+            Dict with camelCase keys matching the API schema.
+        """
+        self.log.debug(f"Building want for state={state}, name={config_entry.get('name')}")
+
+        want = {
+            "switchId": config_entry["switch"],
+        }
+
+        name = config_entry.get("name")
+
+        if name and self._is_policy_id(name):
+            want["policyId"] = name
+        elif name:
+            want["templateName"] = name
+
+        # Per-entry create_additional_policy flag (carried on want dict)
+        want["create_additional_policy"] = config_entry.get("create_additional_policy", True)
+
+        # For merged state, include all payload fields
+        if state == "merged":
+            want["entityType"] = "switch"
+            want["entityName"] = "SWITCH"
+            if "policyId" not in want or config_entry.get("_description_provided", False):
+                want["description"] = config_entry.get("description", "")
+            if config_entry.get("priority") is not None:
+                want["priority"] = config_entry["priority"]
+            want["templateInputs"] = config_entry.get("template_inputs") or {}
+        else:
+            # For gathered/deleted state, only include description if provided
+            description = config_entry.get("description", "")
+            if description:
+                want["description"] = description
+
+        self.log.debug(f"Built want: {want}")
+        return want
+
+    # =========================================================================
+    # Template Input Validation
+    # =========================================================================
+    #
+    # Both methods below delegate to the shared helper at
+    # ``plugins/module_utils/common/template_validation.py``.  The instance
+    # wrappers exist (rather than calling the helper directly from every
+    # site) for three reasons:
+    #
+    # 1. The instance-method surface
+    #    (``module._fetch_template_params(name)``,
+    #    ``module._validate_template_inputs(name, inputs)``) is exercised
+    #    by 33 unit-test references in
+    #    ``tests/unit/module_utils/test_nd_policy_resources_module.py``
+    #    which seed ``module._template_params_cache[name] = params``
+    #    directly and then invoke
+    #    ``module._validate_template_inputs(name, inputs)``.  The wrappers
+    #    keep these signatures stable.
+    #
+    # 2. ``_fetch_template_params`` records the would-be HTTP call onto
+    #    the instance via ``self._record_call(ep, None)`` so the audit
+    #    trail (``Results.{path,verb}_current`` for the diff output) is
+    #    populated on every fetch.  The shared helper accepts a
+    #    ``record_call_fn`` callback so that instance method can be threaded
+    #    through without polluting the helper's signature for non-policy
+    #    consumers (e.g. the policy-group orchestrator).
+    #
+    # 3. ``self.log`` is the per-instance ``ListLogger`` /
+    #    ``logging.Logger`` on which ENTER / EXIT / cache-hit / WARNING
+    #    lines are emitted.  Passing it as the helper's ``logger`` kwarg
+    #    routes every line through the module's structured-log instance.
+
+    def _fetch_template_params(self, template_name: str) -> list[dict]:
+        """Fetch and cache parameter definitions for a config template.
+
+        Delegates to
+        :func:`common.template_validation.fetch_template_params`.  The
+        helper performs the cached
+        ``GET /api/v1/manage/configTemplates/{templateName}/parameters``
+        call using ``self.nd.request`` and stores the result on the
+        instance-owned ``self._template_params_cache`` dict so subsequent
+        callers (and the seed-the-cache unit tests) read from a single
+        canonical cache.
+
+        Args:
+            template_name: The ND template name (e.g., ``switch_freeform``).
+
+        Returns:
+            List of parameter dicts, each with at minimum ``name``,
+            ``parameterType``, ``optional``, and ``defaultValue`` keys.
+            Returns an empty list if the template has no parameters or the
+            API call fails (graceful degradation: cache the empty result so
+            we do not re-hit a flaky controller).
+        """
+        return _shared_fetch_template_params(
+            template_name,
+            request_fn=self.nd.request,
+            cache=self._template_params_cache,
+            record_call_fn=self._record_call,
+            logger=self.log,
+        )
+
+    def _validate_template_inputs(self, template_name: str, template_inputs: dict[str, Any]) -> list[str]:
+        """Validate user-provided templateInputs against the template schema.
+
+        Delegates to
+        :func:`common.template_validation.validate_template_inputs`.  The
+        contract (3 checks: unknown keys, missing required, per-type soft
+        validation; empty / whitespace values skip type validation;
+        ``parameterType`` matched case-insensitively; ``IsInternal`` params
+        accepted silently) is shared with the policy-group consumer because
+        both invoke the same helper.
+
+        Args:
+            template_name:   Template name for fetching parameter definitions.
+            template_inputs: User-provided ``templateInputs`` dict.
+
+        Returns:
+            List of validation error message strings.  Empty list means all
+            inputs are valid.
+        """
+        params = self._fetch_template_params(template_name)
+        return _shared_validate_template_inputs(
+            template_name,
+            template_inputs,
+            params,
+            logger=self.log,
+        )
+
+    def _build_have(self, want: dict) -> tuple[list[dict], str | None]:
+        """Query existing policies matching the want, in-memory against the cache.
+
+        Dispatches to :meth:`_build_have_from_cache`:
+            - Case A: Policy ID given -> O(1) policyId index lookup
+            - Case B: use_description_as_key=false, templateName given -> O(1) (switchId, templateName) index
+            - Case C: use_description_as_key=true,  templateName given -> O(1) (switchId, templateName) index + exact description post-filter
+            - Case D: Switch-only (no templateName or policyId) -> O(1) switchId index
+
+        :meth:`_prefetch_all_policies` **must** be called by every state
+        handler before this method is invoked.  A missing prefetch is a
+        programming error -- we fail loudly here rather than silently
+        falling back to N per-entry HTTP GETs (which is the perf
+        regression the cache was introduced to prevent).
+
+        Note on intentional behavioural differences vs. the previous
+        per-id ``GET /policies/{policyId}`` endpoint:
+            - Internal ND sub-policies (``source != ""``) are excluded
+              in Python code after the bulk GET.  Positive
+              ``source:<policyId>`` lookup works for pending-delete cleanup,
+              but the active-view exclusion is a ``source == ""`` /
+              ``source missing`` test that is not expressed in the list API
+              filter.
+            - ``markDeleted`` policies are excluded in Python code after
+              the bulk GET (the API does not support filtering on
+              ``markDeleted``).
+            - Policy-id lookups are bounded by the prefetch's bulk-list
+              page size (``max=10000``).  The same cap applied to the
+              slow path's switch/template queries, so this is not a
+              regression.  Fabrics with >10K policies require
+              pagination in :meth:`_prefetch_all_policies`.
+
+        Args:
+            want: Want dict produced by ``_build_want``.
+
+        Returns:
+            Tuple of (have_list, error_msg).
+        """
+        if self._policies_cache is None:
+            raise RuntimeError("_build_have() called before _prefetch_all_policies(); " "every state handler must prefetch the policy cache first.")
+        return self._build_have_from_cache(want)
+
+    def _build_have_from_cache(self, want: dict) -> tuple[list[dict], str | None]:
+        """Cache-backed equivalent of _build_have -- pure in-memory filtering.
+
+        Used when ``self._policies_cache`` has been populated by
+        :meth:`_prefetch_all_policies`.  Performs no HTTP calls.
+
+        Args:
+            want: Want dict produced by ``_build_want``.
+
+        Returns:
+            Tuple of (have_list, error_msg).
+        """
+        # Case A: Policy ID given directly -- O(1) hash lookup
+        if "policyId" in want:
+            policy = self._policies_by_id_cache.get(want["policyId"])
+            if policy:
+                self.log.debug(f"[cache] Case A: Policy {want['policyId']} found")
+                return [policy], None
+            self.log.debug(f"[cache] Case A: Policy {want['policyId']} not found")
+            return [], None
+
+        # All other cases need switch-scoped list
+        switch_id = want.get("switchId")
+        switch_policies = self._policies_by_switch_cache.get(switch_id, [])
+
+        # Case D: Switch-only -- return all policies on switch
+        if "templateName" not in want:
+            self.log.debug(f"[cache] Case D: {len(switch_policies)} policies on switch {switch_id}")
+            return list(switch_policies), None
+
+        template_name = want["templateName"]
+
+        # Case B: use_description_as_key=false, filter by templateName.
+        # O(1) composite-index lookup instead of linear scan of switch_policies.
+        if not self.use_description_as_key:
+            matches = list(self._policies_by_switch_template_cache.get((switch_id, template_name), []))
+
+            want_desc = want.get("description", "")
+            if want_desc:
+                pre = len(matches)
+                matches = [p for p in matches if (p.get("description", "") or "") == want_desc]
+                self.log.debug(f"[cache] Case B: post-filter by description: {len(matches)}/{pre}")
+
+            self.log.debug(f"[cache] Case B: matched {len(matches)} policies")
+            return matches, None
+
+        # Case C: use_description_as_key=true, filter by exact description on the switch.
+        #
+        # When use_description_as_key=true, *description* is the identity within a
+        # (switch, fabric) scope — NOT (switch, templateName).  We therefore
+        # scan all policies on the switch and match by description, ignoring
+        # templateName at lookup time.  The downstream classifier
+        # (_get_diff_merged_single) compares want.templateName against
+        # have.templateName to decide between:
+        #   - Case 13/14: same template → SKIP or UPDATE in place
+        #   - Case 15:    different template → DELETE old + CREATE new
+        #   - Case 16:    multiple matches  → fail (ambiguous duplicates)
+        #
+        # Using the (switch, templateName) composite index here would
+        # silently hide Case 15 and the cross-template variant of Case 16
+        # because any policy under a different template would be invisible
+        # to the lookup.
+        #
+        # Performance: O(N) over policies on the switch (typically a few
+        # hundred at most).  For workloads where this becomes a hotspot
+        # we can introduce a (switch, description) index in _prefetch_all_policies.
+        want_desc = want.get("description", "") or ""
+        if not want_desc:
+            return (
+                [],
+                "description is required when use_description_as_key=true and name is a template name",
+            )
+
+        switch_policies_all = self._policies_by_switch_cache.get(switch_id, [])
+        matches = [p for p in switch_policies_all if (p.get("description", "") or "") == want_desc]
+        self.log.debug(f"[cache] Case C: matched {len(matches)} policies (by description, " f"any template) on switch {switch_id}")
+        return matches, None
+
+    # =========================================================================
+    # Diff: Merged State (16 cases)
+    # =========================================================================
+
+    def _get_diff_merged_single(self, want: dict, have_list: list[dict]) -> dict:
+        """Compute the diff and determine the action for a single config entry.
+
+        Args:
+            want: Desired policy state dict.
+            have_list: Matching policies from the controller.
+
+        Returns:
+            Dict with keys: action, want, have, diff, policy_id, error_msg.
+        """
+        result = {
+            "action": None,
+            "want": want,
+            "have": None,
+            "diff": None,
+            "policy_id": None,
+            "error_msg": None,
+        }
+
+        match_count = len(have_list)
+
+        # =================================================================
+        # CASES 1-6: Template name given, use_description_as_key=false
+        #
+        # Template names are not unique — multiple policies can share the
+        # same template.  Therefore, existing policies are never updated
+        # in-place when identified by template name alone.  A new policy
+        # is always created.  To update a specific policy, the user must
+        # provide its policy ID.
+        # create_additional_policy controls whether an identical (no-diff)
+        # policy is duplicated.
+        # =================================================================
+        create_additional = want.get("create_additional_policy", True)
+
+        if not self.use_description_as_key and "templateName" in want:
+            if match_count == 0:
+                # Case 1: No match → CREATE
+                result["action"] = "create"
+                return result
+
+            if match_count == 1:
+                have = have_list[0]
+                diff = self._policies_differ(want, have)
+                result["have"] = have
+                result["policy_id"] = have.get("policyId")
+
+                if not diff:
+                    if create_additional:
+                        # Case 2a: Exact match, create_additional=true → CREATE duplicate
+                        result["action"] = "create"
+                        return result
+                    # Case 2b: Exact match, create_additional=false → SKIP
+                    result["action"] = "skip"
+                    return result
+
+                # Case 3/4: Diff exists — template name cannot uniquely
+                # identify a policy, so always CREATE a new one.
+                result["action"] = "create"
+                result["diff"] = diff
+                return result
+
+            # match_count >= 2
+            if create_additional:
+                # Case 5: Multiple matches, create_additional=true → CREATE another
+                result["action"] = "create"
+                return result
+
+            # Case 6: Multiple matches, create_additional=false → SKIP
+            result["action"] = "skip"
+            return result
+
+        # =================================================================
+        # CASES 7-11: Policy ID given
+        # =================================================================
+        if "policyId" in want:
+            if match_count == 0:
+                # Case 7: Policy ID not found → FAIL
+                #
+                # When the user supplies an explicit policy ID, they are
+                # asserting that this exact policy exists and should be
+                # updated. If it doesn't exist, the user's intent cannot
+                # be satisfied (we cannot create a policy with a caller-
+                # specified ID — ND assigns IDs). Reporting "skip/success"
+                # here would silently mask typos and out-of-band deletions,
+                # so we hard-fail instead.
+                result["action"] = "fail"
+                result["error_msg"] = (
+                    f"Policy {want['policyId']} not found on switch "
+                    f"{want.get('switchId')}. Cannot update a non-existent "
+                    "policy by ID — policy IDs are assigned by ND and "
+                    "cannot be created by the caller. Verify the policy ID, "
+                    "or use a template name to create a new policy."
+                )
+                return result
+
+            have = have_list[0]
+            diff = self._policies_differ(want, have)
+            result["have"] = have
+            result["policy_id"] = have.get("policyId")
+
+            # Carry forward templateName from existing policy for update payload
+            if "templateName" not in want and "templateName" in have:
+                want["templateName"] = have["templateName"]
+
+            if not diff:
+                # Case 8: Match, no diff → SKIP. A policy ID is an exact
+                # existing-resource target and never turns into a create.
+                result["action"] = "skip"
+                return result
+
+            # Case 9/10: Match, has diff → UPDATE (policy ID uniquely
+            # identifies the policy, so in-place update is safe)
+            result["action"] = "update"
+            result["diff"] = diff
+            return result
+
+        # =================================================================
+        # CASES 12-16: use_description_as_key=true
+        # =================================================================
+        if self.use_description_as_key:
+            if match_count == 0:
+                # Case 12: No match → CREATE
+                result["action"] = "create"
+                return result
+
+            if match_count == 1:
+                have = have_list[0]
+                result["have"] = have
+                result["policy_id"] = have.get("policyId")
+
+                # Check if template matches
+                templates_match = want.get("templateName") == have.get("templateName")
+
+                if templates_match:
+                    diff = self._policies_differ(want, have)
+                    if not diff:
+                        # Case 13: Same template, no diff → SKIP
+                        result["action"] = "skip"
+                        return result
+
+                    # Case 14: Same template, fields differ → UPDATE
+                    result["action"] = "update"
+                    result["diff"] = diff
+                    return result
+
+                # Case 15: Different template → DELETE old + CREATE new
+                result["action"] = "delete_and_create"
+                result["diff"] = {
+                    "templateName": {
+                        "want": want.get("templateName"),
+                        "have": have.get("templateName"),
+                    }
+                }
+                return result
+
+            # Case 16: Multiple matches → hard FAIL (ambiguous)
+            # Abort the entire task atomically — no partial changes.
+            raise NDModuleError(
+                msg=(
+                    f"Multiple policies ({match_count}) found with description "
+                    f"'{want.get('description')}' on switch {want.get('switchId')}. "
+                    "Cannot determine which policy to update when "
+                    "use_description_as_key=true. Remove the duplicate policies from "
+                    "the controller or use a policy ID directly."
+                )
+            )
+
+        # Should not reach here
+        result["action"] = "fail"
+        result["error_msg"] = "Unable to determine action for policy config."
+        return result
+
+    # =========================================================================
+    # Execute: Merged State
+    # =========================================================================
+
+    def _execute_merged(self, diff_results: list[dict]) -> list[str]:
+        """Execute the computed actions for all config entries using bulk APIs.
+
+        Instead of making one API call per entry, this method collects all
+        create/update/delete_and_create entries into batches and executes
+        them with minimal API calls:
+
+            1. Register skip/fail results immediately (no API call).
+            2. Collect ``delete_and_create`` removals → single bulk remove.
+            3. Collect all creates (``create`` + ``delete_and_create``) →
+               single bulk POST via ``_api_bulk_create_policies``.
+            4. Execute updates individually (PUT has no bulk API).
+
+        Args:
+            diff_results: list of diff result dicts from _get_diff_merged_single.
+
+        Returns:
+            List of policy IDs to deploy (if deploy=true).
+        """
+        self.log.debug("ENTER: _execute_merged()")
+        self.log.debug(f"Processing {len(diff_results)} diff entries")
+        policy_ids_to_deploy = []
+
+        # Batches for bulk execution
+        # Each item is (diff_entry_index, diff_entry) to preserve ordering
+        create_batch: list[dict] = []
+        update_batch: list[dict] = []
+        delete_and_create_batch: list[dict] = []
+
+        # ── Phase 1: Classify entries, register skip/fail immediately ───
+        for diff_entry in diff_results:
+            action = diff_entry["action"]
+            want = diff_entry["want"]
+            have = diff_entry["have"]
+            error_msg = diff_entry["error_msg"]
+
+            self.log.info(f"Classifying action={action} for " f"{want.get('templateName', want.get('policyId', 'unknown'))}")
+
+            if action == "fail":
+                self._proposed.append(want)
+                self._clear_call()
+                self._register_result(
+                    action="policy_merged",
+                    operation_type=OperationType.QUERY,
+                    return_code=-1,
+                    message=error_msg,
+                    success=False,
+                    found=False,
+                    diff={"action": action, "want": want, "error": error_msg},
+                )
+                continue
+
+            if action == "skip":
+                self._proposed.append(want)
+                if have:
+                    self._before.append(have)
+                    self._after.append(have)
+                    # Even when no diff, if deploy=true we still deploy the
+                    # existing policy to ensure it's pushed to the switch.
+                    if self.deploy:
+                        existing_pid = have.get("policyId")
+                        if existing_pid:
+                            policy_ids_to_deploy.append(existing_pid)
+                            self.log.info(f"No diff but deploy=true: will deploy existing policy {existing_pid}")
+                diff_payload = {"action": action, "want": want}
+                if error_msg:
+                    diff_payload["warning"] = error_msg
+                self._clear_call()
+                self._register_result(
+                    action="policy_merged",
+                    operation_type=OperationType.QUERY,
+                    return_code=200,
+                    message="No changes needed",
+                    data=have or {},
+                    success=True,
+                    found=have is not None,
+                    diff=diff_payload,
+                )
+                continue
+
+            if action == "create":
+                create_batch.append(diff_entry)
+                continue
+
+            if action == "update":
+                update_batch.append(diff_entry)
+                continue
+
+            if action == "delete_and_create":
+                delete_and_create_batch.append(diff_entry)
+                continue
+
+        self.log.info(f"Batch summary: create={len(create_batch)}, " f"update={len(update_batch)}, " f"delete_and_create={len(delete_and_create_batch)}")
+
+        # ── Phase 2: Check mode — register all as would-be changes ──────
+        if self.check_mode:
+            for diff_entry in create_batch:
+                want = diff_entry["want"]
+                create_after = self._want_with_create_defaults(want)
+                self._proposed.append(want)
+                self._after.append(self._strip_internal(create_after))
+                self._record_call(
+                    self._wouldbe_create_ep(),
+                    {"policies": [self._strip_internal(create_after)]},
+                )
+                self._register_result(
+                    action="policy_create",
+                    operation_type=OperationType.CREATE,
+                    return_code=200,
+                    message="OK (check_mode)",
+                    success=True,
+                    found=False,
+                    diff={"action": "create", "want": want, "diff": diff_entry["diff"]},
+                )
+
+            for diff_entry in update_batch:
+                want, have = diff_entry["want"], diff_entry["have"]
+                self._proposed.append(want)
+                self._before.append(have)
+                after_proj = self._strip_internal({**have, **want})
+                self._after.append(after_proj)
+                self._record_call(self._wouldbe_update_ep(diff_entry["policy_id"]), after_proj)
+                self._register_result(
+                    action="policy_update",
+                    operation_type=OperationType.UPDATE,
+                    return_code=200,
+                    message="OK (check_mode)",
+                    success=True,
+                    found=True,
+                    diff={
+                        "action": "update",
+                        "before": have,
+                        "after": after_proj,
+                        "want": want,
+                        "have": have,
+                        "diff": diff_entry["diff"],
+                        "policy_id": diff_entry["policy_id"],
+                    },
+                )
+
+            for diff_entry in delete_and_create_batch:
+                want, have = diff_entry["want"], diff_entry["have"]
+                create_after = self._want_with_create_defaults(want)
+                self._proposed.append(want)
+                self._before.append(have)
+                after_proj = self._strip_internal(create_after)
+                self._after.append(after_proj)
+                self._record_call(self._wouldbe_create_ep(), {"policies": [after_proj]})
+                self._register_result(
+                    action="policy_replace",
+                    operation_type=OperationType.UPDATE,
+                    return_code=200,
+                    message="OK (check_mode)",
+                    success=True,
+                    found=True,
+                    diff={
+                        "action": "delete_and_create",
+                        "before": have,
+                        "after": after_proj,
+                        "want": want,
+                        "have": have,
+                        "diff": diff_entry["diff"],
+                        "delete_policy_id": diff_entry["policy_id"],
+                    },
+                )
+
+            self.log.info("Check mode: all batches registered")
+            self.log.debug("EXIT: _execute_merged()")
+            return policy_ids_to_deploy
+
+        # ── Phase 3: Execute delete_and_create removals ─────────────────
+        #
+        # We must fully remove old policies BEFORE creating replacements.
+        # If the old policy's config isn't removed from the switch first,
+        # the old template's config lines will remain on the device even
+        # after the new template is deployed (different templates produce
+        # different config — the new one won't negate the old one).
+        #
+        # The full markDelete → direct-DELETE fallback → switch-deploy
+        # flow is shared with ``_execute_deleted`` Phase B and lives in
+        # ``_delete_policies_with_fallback``.  Result rows are SUPPRESSED
+        # here because Phase 4 below emits the combined ``policy_replace``
+        # rows for these entries.
+        #
+        # If any removal fails, we must NOT create a replacement for that
+        # entry — otherwise we'd create a duplicate.
+        remove_failed_ids: set = set()
+        if delete_and_create_batch:
+            remove_ids = [d["policy_id"] for d in delete_and_create_batch if d["policy_id"]]
+            if remove_ids:
+                self.log.info(f"Phase 3: Removing {len(remove_ids)} old policies " f"for delete_and_create: {remove_ids}")
+
+                # Build policy→switch map for switchActions/deploy
+                dac_switch_map: dict[str, str] = {}
+                for d in delete_and_create_batch:
+                    pid = d.get("policy_id", "")
+                    have = d.get("have") or {}
+                    sw = have.get("switchId", d.get("want", {}).get("switchId", ""))
+                    if pid and sw:
+                        dac_switch_map[pid] = sw
+
+                delete_result = self._delete_policies_with_fallback(
+                    remove_ids,
+                    policy_switch_map=dac_switch_map,
+                    context_label="markDelete (delete_and_create)",
+                    register_results=False,
+                )
+                remove_failed_ids.update(delete_result["remove_failed_ids"])
+
+        # ── Phase 4: Bulk create ────────────────────────────────────────
+        #
+        # We issue SEPARATE bulk create calls for pure creates vs
+        # delete_and_create replacements.  This is important because:
+        #
+        #   - Pure creates are safe to fail: no data loss, user re-runs.
+        #   - DAC replacements have already deleted the old policy in
+        #     Phase 3.  If the create fails, the policy is ORPHANED
+        #     (old one gone, new one not created).  Keeping them in a
+        #     separate call prevents a pure-create failure from causing
+        #     a bulk 4xx/5xx that takes down DAC entries with it.
+        #
+        # Within each batch, per-policy 207 failures are handled
+        # individually — a single policy failure does not affect others
+        # in the same batch.
+        #
+        # NOTE: The orphan risk for DAC entries is inherent — ND has
+        # no atomic "replace policy" API.  Re-running the playbook
+        # will re-create the policy (it will be seen as
+        # "not found" → create).
+
+        # Filter out DAC entries whose old policy failed to be removed
+        eligible_dac = []
+        for d in delete_and_create_batch:
+            if d["policy_id"] in remove_failed_ids:
+                want = d["want"]
+                self._proposed.append(want)
+                if d.get("have"):
+                    self._before.append(d["have"])
+                self._clear_call()
+                self._register_result(
+                    action="policy_replace",
+                    operation_type=OperationType.UPDATE,
+                    return_code=207,
+                    message=(f"Cannot replace policy: removal of old policy " f"{d['policy_id']} failed. Skipping create to " f"avoid duplicates."),
+                    success=False,
+                    found=True,
+                    diff={
+                        "action": "replace_failed",
+                        "want": want,
+                        "have": d.get("have"),
+                        "error": f"Old policy {d['policy_id']} removal failed",
+                        "failed_policy_id": d["policy_id"],
+                    },
+                )
+            else:
+                eligible_dac.append(d)
+
+        for batch_label, batch_entries in [
+            ("create", create_batch),
+            ("replace", eligible_dac),
+        ]:
+            if not batch_entries:
+                continue
+
+            want_list = [d["want"] for d in batch_entries]
+            self.log.info(f"Bulk creating {len(want_list)} policies " f"(batch={batch_label})")
+
+            try:
+                created_ids = self._api_bulk_create_policies(want_list)
+            except NDModuleError as bulk_err:
+                self.log.error(f"Bulk {batch_label} failed entirely: {bulk_err.msg}")
+                for diff_entry in batch_entries:
+                    want = diff_entry["want"]
+                    action_label = "policy_replace" if diff_entry["action"] == "delete_and_create" else "policy_create"
+                    self._proposed.append(want)
+                    if diff_entry.get("have"):
+                        self._before.append(diff_entry["have"])
+                    self._register_result(
+                        action=action_label,
+                        operation_type=OperationType.CREATE,
+                        return_code=bulk_err.status or -1,
+                        message=bulk_err.msg,
+                        data=bulk_err.response_payload or {},
+                        success=False,
+                        found=False,
+                        diff={
+                            "action": "fail",
+                            "want": want,
+                            "error": bulk_err.msg,
+                        },
+                    )
+                continue  # Skip per-entry registration for this batch
+
+            # Register per-entry results from bulk response
+            for idx, diff_entry in enumerate(batch_entries):
+                want = diff_entry["want"]
+                have = diff_entry.get("have")
+                field_diff = diff_entry["diff"]
+                is_replace = diff_entry["action"] == "delete_and_create"
+
+                entry_result = created_ids[idx] if idx < len(created_ids) else {"policy_id": None, "nd_error": "No response entry from ND"}
+                created_id = entry_result["policy_id"]
+                nd_error = entry_result["nd_error"]
+                per_policy_error = None
+
+                # created_id is None when per-policy response had status!=success
+                if created_id is None:
+                    per_policy_error = f"Policy creation failed for " f"{want.get('templateName')} on " f"{want.get('switchId')}: {nd_error}"
+
+                self._proposed.append(want)
+                if have:
+                    self._before.append(have)
+
+                if per_policy_error:
+                    action_label = "policy_replace" if is_replace else "policy_create"
+                    self._register_result(
+                        action=action_label,
+                        operation_type=OperationType.CREATE,
+                        return_code=207,
+                        message=per_policy_error,
+                        success=False,
+                        found=False,
+                        diff={
+                            "action": "fail",
+                            "want": want,
+                            "error": per_policy_error,
+                        },
+                    )
+                    continue
+
+                policy_ids_to_deploy.append(created_id)
+                after_proj = self._strip_internal({**self._want_with_create_defaults(want), "policyId": created_id})
+                self._after.append(after_proj)
+
+                if is_replace:
+                    self._register_result(
+                        action="policy_replace",
+                        operation_type=OperationType.UPDATE,
+                        return_code=200,
+                        message="OK",
+                        success=True,
+                        found=True,
+                        diff={
+                            "action": "delete_and_create",
+                            "before": have,
+                            "after": after_proj,
+                            "want": want,
+                            "have": have,
+                            "diff": field_diff,
+                            "deleted_policy_id": diff_entry["policy_id"],
+                            "created_policy_id": created_id,
+                        },
+                    )
+                else:
+                    self._register_result(
+                        action="policy_create",
+                        operation_type=OperationType.CREATE,
+                        return_code=200,
+                        message="OK",
+                        success=True,
+                        found=False,
+                        diff={
+                            "action": "create",
+                            "before": None,
+                            "after": after_proj,
+                            "want": want,
+                            "diff": field_diff,
+                            "created_policy_id": created_id,
+                        },
+                    )
+
+        # ── Phase 5: Execute updates (PUT has no bulk API) ──────────────
+        for diff_entry in update_batch:
+            want = diff_entry["want"]
+            have = diff_entry["have"]
+            policy_id = diff_entry["policy_id"]
+            field_diff = diff_entry["diff"]
+
+            self._proposed.append(want)
+            self._before.append(have)
+
+            try:
+                self._api_update_policy(want, have, policy_id)
+            except NDModuleError as update_err:
+                self.log.error(f"Update failed for {policy_id}: {update_err.msg}")
+                self._register_result(
+                    action="policy_update",
+                    operation_type=OperationType.UPDATE,
+                    return_code=update_err.status or -1,
+                    message=update_err.msg,
+                    data=update_err.response_payload or {},
+                    success=False,
+                    found=True,
+                    diff={
+                        "action": "update_failed",
+                        "want": want,
+                        "have": have,
+                        "diff": field_diff,
+                        "policy_id": policy_id,
+                        "error": update_err.msg,
+                    },
+                )
+                continue
+
+            policy_ids_to_deploy.append(policy_id)
+
+            after_merged = self._strip_internal({**have, **want, "policyId": policy_id})
+            self._after.append(after_merged)
+
+            self._register_result(
+                action="policy_update",
+                operation_type=OperationType.UPDATE,
+                return_code=200,
+                message="OK",
+                success=True,
+                found=True,
+                diff={
+                    "action": "update",
+                    "before": have,
+                    "after": after_merged,
+                    "want": want,
+                    "have": have,
+                    "diff": field_diff,
+                    "policy_id": policy_id,
+                },
+            )
+
+        self.log.info(f"Merged execute complete: {len(policy_ids_to_deploy)} policies to deploy")
+        self.log.debug("EXIT: _execute_merged()")
+        return policy_ids_to_deploy
+
+    # =========================================================================
+    # Diff: Deleted State (16 cases)
+    # =========================================================================
+
+    def _get_diff_deleted_single(self, want: dict, have_list: list[dict]) -> dict:
+        """Compute the delete result for a single config entry.
+
+        Args:
+            want: Desired delete filter dict.
+            have_list: Matching policies from the controller.
+
+        Returns:
+            Dict with keys: action, want, policies, policy_ids, match_count,
+            warning, error_msg.
+        """
+        policy_ids = [p.get("policyId") for p in have_list if p.get("policyId")]
+        result = {
+            "action": None,
+            "want": want,
+            "policies": have_list,
+            "policy_ids": policy_ids,
+            "match_count": len(have_list),
+            "warning": None,
+            "error_msg": None,
+        }
+
+        match_count = len(have_list)
+
+        # D-7, D-8: Policy ID given
+        if "policyId" in want:
+            if match_count == 0:
+                result["action"] = "skip"
+            else:
+                result["action"] = "delete"
+            return result
+
+        # D-13 to D-16: Switch-only (no name given)
+        if "templateName" not in want:
+            if self.use_description_as_key and want.get("description"):
+                want_desc = want["description"]
+                filtered = [p for p in have_list if (p.get("description") or "") == want_desc]
+                policy_ids = [p.get("policyId") for p in filtered if p.get("policyId")]
+                result["policies"] = filtered
+                result["policy_ids"] = policy_ids
+                result["match_count"] = len(filtered)
+                if len(filtered) == 0:
+                    result["action"] = "skip"
+                elif len(filtered) == 1:
+                    result["action"] = "delete"
+                else:
+                    raise NDModuleError(
+                        msg=(
+                            f"Multiple policies ({len(filtered)}) found with description "
+                            f"'{want_desc}' on switch {want.get('switchId')}. "
+                            "Descriptions must be unique per switch when "
+                            "use_description_as_key=true. Remove the duplicate policies from "
+                            "the controller manually."
+                        )
+                    )
+                return result
+
+            if match_count == 0:
+                result["action"] = "skip"
+            else:
+                result["action"] = "delete_all"
+            return result
+
+        # D-1 to D-6: Template name given, use_description_as_key=false
+        if not self.use_description_as_key:
+            if match_count == 0:
+                result["action"] = "skip"
+            elif match_count == 1:
+                result["action"] = "delete"
+            else:
+                result["action"] = "delete_all"
+            return result
+
+        # D-9 to D-12: Template name given, use_description_as_key=true
+        if self.use_description_as_key:
+            # Note: description-empty is already caught by Pydantic
+            # (state=deleted) and _build_have Case C upstream.
+            want_desc = want.get("description", "")
+
+            if match_count == 0:
+                result["action"] = "skip"
+                return result
+
+            if match_count == 1:
+                result["action"] = "delete"
+                return result
+
+            # D-12: Multiple matches → hard FAIL (ambiguous)
+            # Abort the entire task atomically — do not silently delete
+            # multiple policies when descriptions should be unique.
+            raise NDModuleError(
+                msg=(
+                    f"Multiple policies ({match_count}) found with description "
+                    f"'{want_desc}' on switch {want.get('switchId')}. "
+                    "Descriptions must be unique per switch when "
+                    "use_description_as_key=true. Remove the duplicate policies from "
+                    "the controller or use a policy ID directly."
+                )
+            )
+
+        # Should not reach here
+        result["action"] = "skip"
+        return result
+
+    # =========================================================================
+    # Execute: Deleted State
+    # =========================================================================
+
+    def _execute_deleted(self, diff_results: list[dict]) -> None:
+        """Execute the computed actions for all deleted config entries.
+
+        Collects all policy IDs to delete across all config entries, then
+        performs bulk API calls.  The module tries ``markDelete`` first for all
+        policies.  Policies whose markDelete response fails with the controller
+        error ``"content type PYTHON"`` are retried with direct DELETE; other
+        markDelete failures are reported without retry.
+
+            - deploy=true:  markDelete → optional direct-DELETE fallback
+                            → switchActions/deploy
+            - deploy=false: markDelete only                              (1-step;
+                            policy left in markDeleted state on controller,
+                            running config remains on switch until next deploy)
+            - PYTHON-type failures: direct DELETE fallback
+              (+ switchActions/deploy when deploy=true)
+
+        Args:
+            diff_results: list of diff result dicts from ``_get_diff_deleted_single``.
+
+        Returns:
+            None.
+        """
+        self.log.debug("ENTER: _execute_deleted()")
+        self.log.debug(f"Processing {len(diff_results)} delete entries")
+
+        # Phase A: Register per-entry results and collect all policy IDs
+        all_policy_ids_to_delete = []
+        all_switch_ids = []
+        # Map policy ID → templateName for clearer direct-DELETE fallback
+        # messages after markDelete reports a PYTHON content-type failure.
+        policy_template_map: dict[str, str] = {}
+        # Map policy ID → switchId so the consolidated switch deploy can cover
+        # markDeleted policies, direct-DELETE fallbacks, and blind cleanup targets.
+        policy_switch_map: dict[str, str] = {}
+        # Entries skipped by the active-policy cache may already be pending
+        # deletion (markDeleted/source child artifacts are intentionally
+        # filtered out of the cache).  Under deploy=true, we avoid extra
+        # controller validation GETs and blind-deploy the requested switch.
+        blind_pending_switch_ids: set[str] = set()
+        blind_pending_wants: list[dict] = []
+
+        for diff_entry in diff_results:
+            action = diff_entry["action"]
+            want = diff_entry["want"]
+            policies = diff_entry["policies"]
+            policy_ids = diff_entry["policy_ids"]
+            match_count = diff_entry["match_count"]
+            warning = diff_entry["warning"]
+            error_msg = diff_entry["error_msg"]
+
+            self.log.debug(f"Delete action={action} for " f"{want.get('templateName', want.get('policyId', 'switch-only'))}, " f"policy_ids={policy_ids}")
+
+            # --- FAIL ---
+            if action == "fail":
+                self.log.warning(f"Delete failed: {error_msg}")
+                self._proposed.append(want)
+                # Restore the GET path/verb captured in Phase 1 so the row
+                # reflects the actual lookup that surfaced this failure.
+                self._clear_call()
+                self._call_path = diff_entry.get("query_path")
+                self._call_verb = diff_entry.get("query_verb")
+                self._register_result(
+                    action="policy_deleted",
+                    state="deleted",
+                    operation_type=OperationType.QUERY,
+                    return_code=-1,
+                    message=error_msg,
+                    success=False,
+                    found=False,
+                    diff={"action": action, "want": want, "error": error_msg},
+                )
+                continue
+
+            # --- SKIP ---
+            if action == "skip":
+                self.log.info(f"Policy not found for deletion: " f"{want.get('templateName', want.get('policyId', 'switch-only'))}")
+                self._proposed.append(want)
+
+                if self.deploy and want.get("switchId"):
+                    switch_id = want["switchId"]
+                    self.log.info(
+                        "Policy not found in active cache; scheduling blind delete cleanup deploy for switch %s.",
+                        switch_id,
+                    )
+                    blind_pending_switch_ids.add(switch_id)
+                    blind_pending_wants.append(want)
+                    continue
+
+                # Restore the GET path/verb captured in Phase 1 so the
+                # "already absent" row shows the actual lookup we made.
+                self._clear_call()
+                self._call_path = diff_entry.get("query_path")
+                self._call_verb = diff_entry.get("query_verb")
+                self._register_result(
+                    action="policy_deleted",
+                    state="deleted",
+                    operation_type=OperationType.QUERY,
+                    return_code=200,
+                    message="Policy not found — already absent",
+                    success=True,
+                    found=False,
+                    diff={
+                        "action": action,
+                        "want": want,
+                        "before": None,
+                        "after": None,
+                    },
+                )
+                continue
+
+            # --- DELETE / DELETE_ALL ---
+            if action in ("delete", "delete_all"):
+                self.log.info(f"Collecting {len(policy_ids)} policy(ies) for deletion: {policy_ids}")
+                self._proposed.append(want)
+                self._before.extend(policies)  # what existed before deletion
+                all_policy_ids_to_delete.extend(policy_ids)
+
+                # Track templateName and switchId per policy
+                for p in policies:
+                    pid = p.get("policyId", "")
+                    tname = p.get("templateName", "")
+                    sw = p.get("switchId", "")
+                    if pid:
+                        policy_template_map[pid] = tname
+                        if sw:
+                            policy_switch_map[pid] = sw
+
+                # Collect switch IDs for result tracking
+                for p in policies:
+                    sw = p.get("switchId", "")
+                    if sw and sw not in all_switch_ids:
+                        all_switch_ids.append(sw)
+
+                if self.check_mode:
+                    self.log.info(f"Check mode: would delete {len(policy_ids)} policy(ies)")
+                    diff_payload = {
+                        "action": action,
+                        "want": want,
+                        "before": policies,
+                        "after": None,
+                        "policy_ids": policy_ids,
+                        "match_count": match_count,
+                    }
+                    if warning:
+                        diff_payload["warning"] = warning
+                    self._record_call(self._wouldbe_mark_delete_ep(), {"policyIds": policy_ids})
+                    self._register_result(
+                        action="policy_deleted",
+                        state="deleted",
+                        operation_type=OperationType.DELETE,
+                        return_code=200,
+                        message="OK (check_mode)",
+                        success=True,
+                        found=True,
+                        diff=diff_payload,
+                    )
+                    continue
+
+                # Real mode: do NOT register a per-entry intent row here. The
+                # bulk markDelete in Phase B emits a single authoritative row
+                # (with the deduplicated policyIds and the real path/payload);
+                # an extra per-entry row would just duplicate that information.
+                continue
+
+        # Phase B: Execute bulk API calls (skip if check_mode or nothing to delete)
+        if self.check_mode:
+            self.log.info("Skipping bulk delete: " f"{'check_mode' if self.check_mode else 'no policies to delete'}")
+            if blind_pending_switch_ids:
+                self._deploy_blind_pending_delete_switches(
+                    blind_pending_switch_ids,
+                    blind_pending_wants=blind_pending_wants,
+                )
+            self.log.debug("EXIT: _execute_deleted()")
+            return
+
+        if not all_policy_ids_to_delete and blind_pending_switch_ids:
+            self._deploy_blind_pending_delete_switches(
+                blind_pending_switch_ids,
+                blind_pending_wants=blind_pending_wants,
+            )
+            self.log.debug("EXIT: _execute_deleted()")
+            return
+
+        if not all_policy_ids_to_delete:
+            self.log.info("Skipping bulk delete: no policies to delete")
+            self.log.debug("EXIT: _execute_deleted()")
+            return
+
+        # Deduplicate policy IDs (same policy could match multiple config entries)
+        unique_policy_ids = list(dict.fromkeys(all_policy_ids_to_delete))
+        self.log.info(f"Total policies to delete: {len(unique_policy_ids)} " f"(deduplicated from {len(all_policy_ids_to_delete)})")
+
+        # Dispatch the shared markDelete → direct-DELETE fallback → switch-deploy
+        # fallback flow.  See ``_delete_policies_with_fallback`` for the
+        # full strategy (also used by ``_execute_merged`` Phase 3).
+        # ``register_results=True`` because here we DO want per-step
+        # result rows (policy_mark_delete, policy_switch_deploy,
+        # policy_direct_delete) in the task output.
+        self._delete_policies_with_fallback(
+            unique_policy_ids,
+            policy_switch_map=policy_switch_map,
+            policy_template_map=policy_template_map,
+            context_label="markDelete",
+            register_results=True,
+            extra_deploy_switch_ids=blind_pending_switch_ids,
+            extra_deploy_wants=blind_pending_wants,
+        )
+
+        self.log.debug("EXIT: _execute_deleted()")
+
+    # =========================================================================
+    # Deploy: pushConfig
+    # =========================================================================
+
+    def _deploy_policies(
+        self,
+        policy_ids: list[str],
+        state: str = "merged",
+        changed: bool = True,
+    ) -> bool:
+        """Deploy policies by calling pushConfig.
+
+        Inspects the 207 Multi-Status response body for per-policy
+        failures (e.g., device connectivity issues).  If any policy
+        has ``status: "failed"``, the deploy is considered failed.
+
+        Args:
+            policy_ids: list of policy IDs to deploy.
+            state: Module state for result reporting.
+            changed: Whether to report this deploy as a change.
+                Set to False when deploying already-in-sync policies
+                (no-diff deploy) to preserve idempotence.
+
+        Returns:
+            True if all policies deployed successfully, False if any failed.
+        """
+        if not policy_ids:
+            self.log.debug("No policy IDs to deploy, skipping")
+            return True
+
+        self.log.info(f"Deploying {len(policy_ids)} policies via pushConfig")
+
+        self.results.action = "policy_deploy"
+        self.results.state = state
+        self.results.check_mode = self.check_mode
+        self.results.operation_type = OperationType.UPDATE
+
+        # Build the pushConfig endpoint + payload up front so both check-mode
+        # (would-be) and real branches can stamp Results.{path,verb,payload}_current.
+        push_body = PolicyIds(policy_ids=policy_ids)
+        push_payload = push_body.to_request_dict()
+
+        ep = EpManagePolicyActionsPushConfigPost()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        # NOTE: pushConfig does NOT accept ticketId per ND API specification
+
+        if self.check_mode:
+            self.log.info(f"Check mode: would deploy {len(policy_ids)} policies")
+            self.results.response_current = {
+                "RETURN_CODE": 200,
+                "MESSAGE": "OK (check_mode)",
+                "DATA": {},
+            }
+            self.results.result_current = {"success": True, "found": True}
+            self.results.diff_current = {
+                "action": "deploy",
+                "policy_ids": policy_ids,
+            }
+            self.results.path_current = ep.path
+            self.results.verb_current = ep.verb
+            self.results.payload_current = push_payload
+            # Write operation — expose api_path/api_verb at -vv (matches
+            # plugins/module_utils/orchestrators/base.py lines 75-77).
+            self.results.verbosity_level_current = 2
+            self.results.register_api_call()
+            return True
+
+        self._record_call(ep, push_payload)
+        data = self.nd.request(ep.path, ep.verb, push_payload)
+
+        # Inspect 207 body for per-policy success/warning/failure.
+        # Warnings (e.g., "already in sync", "deployment skipped") are
+        # NOT treated as failures — they are surfaced separately via
+        # self._warnings so the operator sees them without the task
+        # being marked failed.
+        succeeded_policies, warning_policies, failed_policies = self._inspect_207_policies(data)
+
+        # Warn if ND returned no per-policy detail at all.
+        # NOTE(4.2.1): ND currently returns an empty body on some pushConfig
+        # success paths.  Treat as success for now; re-evaluate once the API
+        # guarantees a per-policy result list on every response.
+        if not succeeded_policies and not warning_policies and not failed_policies and policy_ids:
+            self.log.warning(f"pushConfig returned no per-policy results for " f"{len(policy_ids)} policy IDs — treating as success " "(ambiguous response)")
+
+        # Collect warnings for surfacing in exit_json.
+        for p in warning_policies:
+            pid = p.get("policyId", "?")
+            msg = p.get("message", "")
+            wmsg = f"pushConfig: ND warning for {pid}: {msg}"
+            self.log.warning(wmsg)
+            self._warnings.append(wmsg)
+
+        deploy_success = len(failed_policies) == 0
+
+        if failed_policies:
+            failed_msgs = [f"{p.get('policyId', '?')}: {p.get('message', 'unknown error')}" for p in failed_policies]
+            self.log.error(f"pushConfig failed for {len(failed_policies)} policy(ies): " + "; ".join(failed_msgs))
+
+        self.results.response_current = self.nd.rest_send.response_current
+        self.results.result_current = {
+            "success": deploy_success,
+            "found": True,
+            "changed": deploy_success and changed,
+        }
+        self.results.diff_current = {
+            "action": "deploy",
+            "policy_ids": policy_ids,
+            "deploy_success": deploy_success,
+            "failed_policies": [p.get("policyId") for p in failed_policies],
+            "warning_policies": [p.get("policyId") for p in warning_policies],
+        }
+        self._apply_stashed_call()
+        # Write operation — expose api_path/api_verb at -vv.
+        self.results.verbosity_level_current = 2
+        self.results.register_api_call()
+        return deploy_success
+
+    # =========================================================================
+    # 207 Multi-Status Response Inspection
+    # =========================================================================
+
+    @staticmethod
+    def _inspect_207_policies(
+        data: Any,
+        key: str = "policies",
+    ) -> tuple[list[dict], list[dict], list[dict]]:
+        """Inspect a 207 Multi-Status response for per-item success/warning/failure.
+
+        ND returns HTTP 207 for most bulk policy actions (create,
+        markDelete, pushConfig, remove).  The response body contains
+        a list of per-item results under a top-level key (``policies``),
+        each with a required ``status`` field (``"success"``,
+        ``"warning"``, or ``"failed"``) and an optional ``message``
+        field.
+
+        The per-item schema is ``policyBaseGeneralResponse``::
+
+            {
+                "status": "success" | "warning" | "failed",  # REQUIRED
+                "message": "...",                              # optional
+                "policyId": "POLICY-...",                      # optional
+                "entityName": "SWITCH",                        # optional
+                "entityType": "switch",                        # optional
+                "templateName": "...",                         # optional
+                "switchId": "FDO..."                           # optional
+            }
+
+        Classification rules:
+            - ``status == "success"``  → succeeded bucket.
+            - ``status == "warning"``  → warnings bucket. Non-fatal
+              partial outcomes (e.g., "policy already in markDeleted
+              state", "deployment skipped — already in sync"). The
+              caller must NOT count these toward task failure, but
+              SHOULD surface them to the operator (see
+              :attr:`NDPolicyModule._warnings`).
+            - Anything else (``"failed"``, ``"error"``, unknown values,
+              missing status) → failed bucket. Defensive: an unknown
+              future value is treated as failure rather than silently
+              passing.
+
+        Comparison is **case-insensitive**: ``"WARNING"`` is treated
+        identically to ``"warning"``.
+
+        If the response body is empty (``{}``) or does not contain
+        the expected key, all three returned lists will be empty.  The
+        caller should treat this as an ambiguous result (ND did
+        not report per-item status) and decide accordingly.
+
+        Args:
+            data: Response DATA dict from ND (or None/non-dict).
+            key: Top-level key holding the items list.
+                 ``"policies"`` for policy action endpoints.
+
+        Returns:
+            Tuple of (succeeded, warnings, failed) lists of per-item dicts.
+        """
+        if not isinstance(data, dict):
+            return [], [], []
+        items = data.get(key, [])
+        if not isinstance(items, list):
+            return [], [], []
+        succeeded: list = []
+        warnings: list = []
+        failed: list = []
+        for item in items:
+            status = str(item.get("status", "")).lower()
+            if status == "success":
+                succeeded.append(item)
+            elif status == "warning":
+                warnings.append(item)
+            else:
+                # "failed", "error", unknown values, or missing status.
+                failed.append(item)
+        return succeeded, warnings, failed
+
+    # =========================================================================
+    # API Helpers (low-level CRUD)
+    # =========================================================================
+
+    def _api_bulk_create_policies(self, want_list: list[dict]) -> list[dict]:
+        """Create multiple policies via a single bulk POST.
+
+        Builds one ``PolicyCreateBulk`` containing all entries and sends
+        a single POST request.  The controller returns a per-policy
+        response in the same order as the request.
+
+        Args:
+            want_list: list of want dicts, each with all policy fields.
+
+        Returns:
+            List of dicts (same length as want_list), each with::
+
+                {
+                    "policy_id": str or None,   # created ID, None on failure
+                    "nd_error": str or None,  # ND error message on failure
+                }
+
+        Raises:
+            NDModuleError: If the entire API call fails (e.g., network error).
+                Per-policy failures within a 207 response are returned
+                with ``policy_id=None`` and do NOT raise.
+        """
+        if not want_list:
+            return []
+
+        self.log.info(f"Bulk creating {len(want_list)} policies")
+
+        policy_models = []
+        for want in want_list:
+            policy_models.append(
+                PolicyCreate(
+                    switch_id=want["switchId"],
+                    template_name=want["templateName"],
+                    entity_type="switch",
+                    entity_name="SWITCH",
+                    description=want.get("description", ""),
+                    priority=self._want_with_create_defaults(want)["priority"],
+                    source=want.get("source", ""),
+                    template_inputs=want.get("templateInputs"),
+                )
+            )
+
+        bulk = PolicyCreateBulk(policies=policy_models)
+        payload = bulk.to_request_dict()
+
+        self.log.info(f"Bulk create payload templateInputs: " f"{[{k: v for k, v in (w.get('templateInputs') or {}).items()} for w in want_list]}")
+
+        ep = EpManagePoliciesPost()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if self.ticket_id:
+            ep.endpoint_params.ticket_id = self.ticket_id
+
+        self._record_call(ep, payload)
+        data = self.nd.request(ep.path, ep.verb, payload)
+
+        # Parse per-policy results from the 207 response.
+        # The controller returns policies in the same order as sent.
+        created_policies = data.get("policies", []) if isinstance(data, dict) else []
+        results: list[dict] = []
+
+        for idx, want in enumerate(want_list):
+            if idx < len(created_policies):
+                entry = created_policies[idx]
+                entry_status = str(entry.get("status", "")).lower()
+                nd_msg = entry.get("message", "")
+                pid = entry.get("policyId")
+                if entry_status == "warning":
+                    # Non-fatal: ND created/recognised the policy but flagged
+                    # something noteworthy (e.g., "already exists, reused").
+                    # Treat as success but surface the message via _warnings.
+                    wmsg = (
+                        f"Bulk create: ND warning for "
+                        f"template={want.get('templateName')}, "
+                        f"switch={want.get('switchId')}, "
+                        f"policy_id={pid}: {nd_msg}"
+                    )
+                    self.log.warning(wmsg)
+                    self._warnings.append(wmsg)
+                    results.append({"policy_id": pid, "nd_error": None})
+                elif entry_status != "success":
+                    nd_msg = nd_msg or "Policy creation failed"
+                    self.log.error(
+                        f"Bulk create: policy {idx} failed "
+                        f"(status={entry.get('status')!r}) — "
+                        f"template={want.get('templateName')}, "
+                        f"switch={want.get('switchId')}: {nd_msg}"
+                    )
+                    results.append({"policy_id": None, "nd_error": nd_msg})
+                else:
+                    self.log.info(f"Bulk create: policy {idx} created — {pid}")
+                    results.append({"policy_id": pid, "nd_error": None})
+            else:
+                self.log.warning(f"Bulk create: no response entry for policy {idx}")
+                results.append({"policy_id": None, "nd_error": "No response entry from ND"})
+
+        self.log.info(
+            f"Bulk create complete: " f"{sum(1 for r in results if r['policy_id'])} succeeded, " f"{sum(1 for r in results if r['policy_id'] is None)} failed"
+        )
+        return results
+
+    def _api_update_policy(self, want: dict, have: dict, policy_id: str) -> None:
+        """Update an existing policy via PUT.
+
+        For templateInputs, merge user-specified keys on top of the
+        controller's existing values.  This prevents accidentally
+        wiping template inputs when the user only wants to change
+        description or priority.
+
+        .. note:: Silent-drop risk
+           ND silently drops unknown or misnamed body keys and still
+           returns 200.  This method does NOT perform a verifying GET
+           round-trip after the PUT, so a successful return only means
+           the controller accepted the request — not that every field
+           persisted.  Callers relying on correctness should use
+           ``state: gathered`` post-apply for end-to-end verification.
+
+        Args:
+            want: The want dict with desired policy fields.
+            have: The existing policy dict from the controller.
+            policy_id: The policy ID to update.
+
+        Returns:
+            None.
+        """
+        self.log.info(f"Updating policy: {policy_id}")
+        merged_inputs = dict(have.get("templateInputs") or {})
+        for k, v in (want.get("templateInputs") or {}).items():
+            merged_inputs[k] = v
+        self.log.debug(f"Merged templateInputs: {len(merged_inputs)} keys")
+        self.log.info(f"Update payload templateInputs for {policy_id}: {merged_inputs}")
+        description = want["description"] if "description" in want else have.get("description", "")
+
+        update_model = PolicyUpdate(
+            switch_id=want["switchId"],
+            template_name=want.get("templateName", have.get("templateName")),
+            entity_type="switch",
+            entity_name="SWITCH",
+            description=description,
+            priority=self._priority_for_update(want, have),
+            source=want.get("source", have.get("source", "")),
+            template_inputs=merged_inputs,
+        )
+        payload = update_model.to_request_dict()
+
+        ep = EpManagePoliciesPut()
+        ep.fabric_name = self.fabric_name
+        ep.policy_id = policy_id
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if self.ticket_id:
+            ep.endpoint_params.ticket_id = self.ticket_id
+
+        self._record_call(ep, payload)
+        self.nd.request(ep.path, ep.verb, payload)
+
+    def _api_mark_delete(self, policy_ids: list[str]) -> dict:
+        """Mark policies for deletion via POST /policyActions/markDelete.
+
+        ND returns HTTP 207 Multi-Status with per-policy results.
+        Policies with content type PYTHON (e.g. ``switch_freeform``,
+        ``Ext_VRF_Lite_SVI``) will fail with::
+
+            "Policies with content type PYTHON or without generated
+             config can't be mark deleted."
+
+        The caller must inspect the returned dict for per-policy
+        failures and fall back to direct DELETE for those.
+
+        Args:
+            policy_ids: list of policy IDs to mark-delete.
+
+        Returns:
+            Response DATA dict from ND.  Typically contains a
+            ``policies`` list with per-policy ``status`` and
+            ``message`` fields.
+        """
+        self.log.info(f"Marking {len(policy_ids)} policies for deletion: {policy_ids}")
+        body = PolicyIds(policy_ids=policy_ids)
+
+        ep = EpManagePolicyActionsMarkDeletePost()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if self.ticket_id:
+            ep.endpoint_params.ticket_id = self.ticket_id
+
+        mark_payload = body.to_request_dict()
+        self._record_call(ep, mark_payload)
+        data = self.nd.request(ep.path, ep.verb, mark_payload)
+        return data if isinstance(data, dict) else {}
+
+    def _api_delete_policy(self, policy_id: str) -> None:
+        """Delete a single policy via DELETE /policies/{policyId}.
+
+        Used as a fallback for PYTHON content-type policies that cannot
+        go through the markDelete flow.
+
+        Args:
+            policy_id: Policy ID to delete (e.g., "POLICY-12345").
+
+        Returns:
+            None.
+        """
+        self.log.info(f"Deleting individual policy: {policy_id}")
+
+        ep = EpManagePoliciesDelete()
+        ep.fabric_name = self.fabric_name
+        ep.policy_id = policy_id
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if self.ticket_id:
+            ep.endpoint_params.ticket_id = self.ticket_id
+
+        self._record_call(ep, None)
+        self.nd.request(ep.path, ep.verb)
+
+    def _api_deploy_switches(self, switch_ids: list[str]) -> dict:
+        """Deploy fabric config to specific switches.
+
+        Used after direct DELETE of PYTHON content-type policies to push
+        the config removal to the actual devices.  Unlike ``pushConfig``
+        (which operates on policy IDs), this endpoint operates on switch
+        serial numbers.
+
+        API: ``POST /fabrics/{fabricName}/switchActions/deploy``
+
+        Args:
+            switch_ids: list of switch serial numbers to deploy to.
+
+        Returns:
+            Response DATA dict from ND.  Typically contains a ``status``
+            field like ``"Configuration deployment completed for [...]"``.
+        """
+        self.log.info(f"Deploying config to {len(switch_ids)} switch(es): {switch_ids}")
+        body = SwitchIds(switch_ids=switch_ids)
+
+        ep = EpManageSwitchActionsDeployPost()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+
+        deploy_payload = body.to_request_dict()
+        self._record_call(ep, deploy_payload)
+        data = self.nd.request(ep.path, ep.verb, deploy_payload)
+        return data if isinstance(data, dict) else {}
+
+    def _deploy_blind_pending_delete_switches(
+        self,
+        switch_ids: set[str] | list[str],
+        *,
+        blind_pending_wants: list[dict] | None = None,
+    ) -> None:
+        """Blind-deploy switches for active-cache misses under delete+deploy.
+
+        The active policy cache intentionally hides ``markDeleted`` records and
+        generated ``source`` artifacts.  When a requested delete target is not
+        present in that cache, ``state=deleted`` + ``deploy=true`` treats the
+        entry as a possible already-staged deletion and performs a switch-level
+        deploy without issuing additional validation GETs.
+        """
+        unique_switch_ids = sorted({sid for sid in switch_ids if sid})
+        if not unique_switch_ids:
+            return
+
+        payload = SwitchIds(switch_ids=unique_switch_ids).to_request_dict()
+        if self.check_mode:
+            self._record_call(self._wouldbe_switch_deploy_ep(), payload)
+            deploy_data: dict = {}
+            message = "OK (check_mode)"
+        else:
+            deploy_data = self._api_deploy_switches(unique_switch_ids)
+            self._log_deploy_status(deploy_data, "blind pending delete cleanup")
+            message = f"Blind-deployed pending delete cleanup to {len(unique_switch_ids)} " "switch(es) for policy target(s) absent from the active cache"
+
+        self._register_result(
+            action="policy_pending_delete_deploy",
+            state="deleted",
+            operation_type=OperationType.DELETE,
+            return_code=200,
+            message=message,
+            success=True,
+            found=False,
+            data=deploy_data,
+            diff={
+                "action": "blind_pending_delete_switch_deploy",
+                "switch_ids": unique_switch_ids,
+                "wants": blind_pending_wants or [],
+                "validation": "skipped_active_cache_miss",
+            },
+        )
+
+    # =========================================================================
+    # Shared delete helpers (used by _execute_merged Phase 3 and _execute_deleted Phase B)
+    # =========================================================================
+
+    def _parse_mark_delete_response(
+        self,
+        mark_delete_data: Any,
+        requested_ids: list[str],
+        *,
+        context_label: str,
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Classify a markDelete 207 response into success / python-fallback / other-fail.
+
+        Centralises the per-entry classification logic that was previously
+        duplicated between ``_execute_merged`` Phase 3 (``delete_and_create``
+        removals) and ``_execute_deleted`` Phase B.
+
+        Behaviour preserved from the duplicated implementations:
+
+        - **Non-dict response** → log warning, treat ALL ``requested_ids``
+          as succeeded (returns ``(list(requested_ids), [], [])``).  This
+          matches ND's known behaviour of occasionally returning a non-dict
+          body on success.
+        - **Empty ``policies`` list in the dict** → log warning, treat ALL
+          ``requested_ids`` as succeeded.  Same rationale.
+        - **status == ``"warning"``** → emit a warning message via
+          ``self.log.warning`` and ``self._warnings``, but DO NOT add the
+          policy to any failure bucket.  Warning entries are soft-successes
+          (the policy is in the desired ND state).
+        - **status == ``"success"``** → succeeded bucket (implicitly: not in
+          ``failed_ids`` set).
+        - **Other non-success status** with message containing
+          ``"content type PYTHON"`` → ``mark_failed_python`` bucket
+          (caller should retry these via direct DELETE).
+        - **Other non-success status** otherwise → ``mark_failed_other``
+          bucket (terminal failure).
+
+        ``mark_succeeded`` is derived as ``[pid for pid in requested_ids
+        if pid not in failed_ids]`` so request order is preserved.
+
+        Args:
+            mark_delete_data: Raw response DATA from ``_api_mark_delete``
+                (may be ``None``, a non-dict, an empty dict, or a dict
+                with a ``policies`` list).
+            requested_ids: The exact list of policy IDs that was sent.
+                Used to derive ``mark_succeeded`` and for the
+                ambiguous-response fallback.
+            context_label: Short label included in the warning-message
+                prefix so each caller's warnings are distinguishable
+                (e.g. ``"markDelete"`` vs.
+                ``"markDelete (delete_and_create)"``).
+
+        Returns:
+            Tuple of ``(mark_succeeded, mark_failed_python,
+            mark_failed_other)``.
+        """
+        mark_failed_python: list[str] = []
+        mark_failed_other: list[str] = []
+
+        if not isinstance(mark_delete_data, dict):
+            self.log.warning("markDelete returned non-dict response — " "treating all as succeeded")
+            return list(requested_ids), mark_failed_python, mark_failed_other
+
+        policies_response = mark_delete_data.get("policies", [])
+
+        if not policies_response and requested_ids:
+            self.log.warning(
+                "markDelete returned empty 'policies' list for " f"{len(requested_ids)} policy IDs — " "treating all as succeeded (ambiguous response)"
+            )
+            return list(requested_ids), mark_failed_python, mark_failed_other
+
+        failed_ids: set = set()
+        for p in policies_response:
+            pid = p.get("policyId", "")
+            status = str(p.get("status", "")).lower()
+            msg = p.get("message", "")
+            if status == "warning":
+                # Non-fatal: treat as success (pid stays out of
+                # failed_ids set) and surface for operator audit.
+                wmsg = f"{context_label}: ND warning for {pid}: {msg}"
+                self.log.warning(wmsg)
+                self._warnings.append(wmsg)
+            elif status != "success":
+                failed_ids.add(pid)
+                if "content type PYTHON" in msg:
+                    mark_failed_python.append(pid)
+                    self.log.info(f"markDelete failed for {pid} (PYTHON content type) " "— will retry via direct DELETE")
+                else:
+                    mark_failed_other.append(pid)
+                    self.log.error(f"markDelete failed for {pid} " f"(status={p.get('status')!r}): {msg}")
+
+        mark_succeeded = [pid for pid in requested_ids if pid not in failed_ids]
+        return mark_succeeded, mark_failed_python, mark_failed_other
+
+    def _direct_delete_policies(
+        self,
+        python_pids: list[str],
+    ) -> tuple[list[str], list[str]]:
+        """Direct-DELETE the given policy IDs one by one (PYTHON-type fallback).
+
+        Centralises the per-policy ``_api_delete_policy`` loop that was
+        previously duplicated between ``_execute_merged`` Phase 3 and
+        ``_execute_deleted`` Phase B.  Each call is wrapped in a broad
+        ``except`` so a single bad ID does not abort the rest of the
+        batch — exceptions are logged and the offending ID is reported
+        back to the caller, which decides how to react (skip create vs.
+        register a failure row).
+
+        Args:
+            python_pids: Policy IDs that failed ``markDelete`` with
+                ``"content type PYTHON"`` and must be removed via the
+                direct ``DELETE /policies/{policyId}`` endpoint.
+
+        Returns:
+            Tuple of ``(deleted_direct, failed_direct)``.
+        """
+        deleted_direct: list[str] = []
+        failed_direct: list[str] = []
+        for pid in python_pids:
+            try:
+                self._api_delete_policy(pid)
+                deleted_direct.append(pid)
+            except Exception as exc:  # noqa: BLE001
+                self.log.error(
+                    "Direct DELETE also failed for %s (%s: %s)",
+                    pid,
+                    type(exc).__name__,
+                    exc,
+                )
+                failed_direct.append(pid)
+        return deleted_direct, failed_direct
+
+    def _log_deploy_status(self, deploy_data: Any, context_label: str) -> None:
+        """Inspect a ``switchActions/deploy`` response body and log appropriately.
+
+        Centralises the response-shape handling that was previously inlined
+        at every deploy call site:
+
+        - ``dict`` with non-empty ``status`` → log at INFO.
+        - ``dict`` with no ``status`` field → log at WARNING (suspicious).
+        - empty / non-dict body → log at WARNING (ND occasionally returns
+          ``{}`` on success for this endpoint).
+
+        Args:
+            deploy_data: Whatever ``_api_deploy_switches`` returned.
+            context_label: Short prefix included in the log line so
+                call sites are distinguishable.
+
+        Returns:
+            None.
+        """
+        if isinstance(deploy_data, dict) and deploy_data:
+            status_str = deploy_data.get("status", "")
+            if status_str:
+                self.log.info(f"{context_label}: switchActions/deploy status: {status_str}")
+            else:
+                self.log.warning(f"{context_label}: switchActions/deploy returned non-empty body " f"but no 'status' field: {deploy_data}")
+        else:
+            self.log.warning(f"{context_label}: switchActions/deploy returned empty body — " "treating as success (ND commonly returns {} for this endpoint)")
+
+    def _delete_policies_with_fallback(
+        self,
+        policy_ids: list[str],
+        *,
+        policy_switch_map: dict[str, str],
+        policy_template_map: dict[str, str] | None = None,
+        context_label: str,
+        register_results: bool = True,
+        extra_deploy_switch_ids: set[str] | list[str] | None = None,
+        extra_deploy_wants: list[dict] | None = None,
+    ) -> dict:
+        """Run the markDelete → direct-DELETE fallback → switch-deploy flow.
+
+        Centralises the deletion orchestration that was previously
+        duplicated between ``_execute_deleted`` Phase B (standalone
+        delete) and ``_execute_merged`` Phase 3 (delete-and-create
+        removal of the old policy before its replacement is created).
+
+        # TODO(4.2.1): Workaround — switch_freeform-type policies fail
+        # markDelete on ND; we fall back to direct DELETE /policies/<id>.
+        # Remove once ND supports markDelete for these templates natively.
+
+        Strategy — markDelete-first with automatic fallback.  Rather
+        than trying to predict which templates are PYTHON content-type
+        upfront, ALL policies are sent through ``markDelete`` and the
+        207 Multi-Status response is inspected.  Any policy that fails
+        with ``"content type PYTHON"`` is automatically retried via
+        direct ``DELETE /policies/{policyId}``.  This is more robust
+        than maintaining a hardcoded set of template names, since the
+        content type is an ND-internal property that varies across
+        templates and ND versions.
+
+        Steps:
+
+        1. ``markDelete`` all ``policy_ids`` via ``_api_mark_delete``.
+        2. Classify the 207 response into succeeded /
+           failed-PYTHON / failed-other buckets via
+           ``_parse_mark_delete_response``.
+        3. If any failed-PYTHON: direct ``DELETE /policies/<id>``
+           via ``_direct_delete_policies``.
+        4. If ``self.deploy`` and any markDelete-succeeded, direct-deleted,
+           or blind pending-delete switch targets exist:
+           ``switchActions/deploy`` against the union of those switches to
+           push the removal config.  The deploy is intentionally performed
+           once after the direct-DELETE fallback so markDelete, direct-delete,
+           and blind pending cleanup switches are not redeployed separately.
+
+        When ``self.deploy`` is False, both deploy steps are skipped —
+        markDelete leaves the policy in markDeleted state on the
+        controller (next switch-level deploy cleans it up), while
+        direct DELETE removes the controller record but leaves the
+        running config on the switch until the next deploy.
+
+        The ``register_results`` flag controls whether per-step result
+        rows (``policy_mark_delete``, ``policy_switch_deploy``,
+        ``policy_direct_delete``) are pushed into ``self.results``.
+        Phase 3 (delete_and_create) sets this to ``False`` because the
+        surrounding create flow emits its own combined
+        ``policy_replace`` rows; Phase B (standalone delete) sets it
+        to ``True``.
+
+        Args:
+            policy_ids: Policy IDs to delete.  Caller is responsible
+                for deduplication.
+            policy_switch_map: Mapping from ``policy_id → switchId``,
+                used to target ``switchActions/deploy`` only at the
+                switches that actually need it.
+            policy_template_map: Optional mapping from ``policy_id →
+                templateName``, used purely for nicer
+                ``policy_direct_delete`` messages when
+                ``register_results=True``.
+            context_label: Short label included in logs and markDelete
+                warning messages so each caller's output is
+                distinguishable (e.g. ``"markDelete"`` vs.
+                ``"markDelete (delete_and_create)"``).
+            register_results: Whether to push per-step result rows.
+            extra_deploy_switch_ids: Switch IDs from requested delete entries
+                that were absent from the active-policy cache under
+                ``deploy=true``.  These are included in the consolidated
+                switch deploy without additional controller validation GETs.
+            extra_deploy_wants: Original wanted entries that contributed
+                ``extra_deploy_switch_ids``.  Used only for result transparency.
+
+        Returns:
+            Dict with:
+                - ``mark_succeeded``: list[str]
+                - ``mark_failed_python``: list[str]
+                - ``mark_failed_other``: list[str]
+                - ``deleted_direct``: list[str]
+                - ``failed_direct``: list[str]
+                - ``remove_failed_ids``: set[str] — union of
+                  ``mark_failed_other`` and ``failed_direct``;
+                  policies whose removal could not be completed.
+        """
+        blind_pending_switches = {switch_id for switch_id in (extra_deploy_switch_ids or []) if switch_id}
+
+        if not policy_ids:
+            if self.deploy and blind_pending_switches:
+                self._deploy_blind_pending_delete_switches(
+                    blind_pending_switches,
+                    blind_pending_wants=extra_deploy_wants,
+                )
+            return {
+                "mark_succeeded": [],
+                "mark_failed_python": [],
+                "mark_failed_other": [],
+                "deleted_direct": [],
+                "failed_direct": [],
+                "remove_failed_ids": set(),
+            }
+
+        template_map = policy_template_map or {}
+
+        # ── Step 1: markDelete ──────────────────────────────────────
+        self.log.info(f"{context_label}: Step 1 - markDelete for {len(policy_ids)} policy(ies)")
+        mark_delete_data = self._api_mark_delete(policy_ids)
+
+        mark_succeeded, mark_failed_python, mark_failed_other = self._parse_mark_delete_response(
+            mark_delete_data,
+            policy_ids,
+            context_label=context_label,
+        )
+
+        self.log.info(
+            f"{context_label}: markDelete results: {len(mark_succeeded)} succeeded, "
+            f"{len(mark_failed_python)} failed (PYTHON-type, will retry), "
+            f"{len(mark_failed_other)} failed (other errors)"
+        )
+
+        if register_results:
+            if mark_succeeded:
+                self._register_result(
+                    action="policy_mark_delete",
+                    state="deleted",
+                    operation_type=OperationType.DELETE,
+                    return_code=200,
+                    message=f"Marked {len(mark_succeeded)} policies for deletion",
+                    success=True,
+                    found=True,
+                    diff={
+                        "action": "mark_delete",
+                        "policy_ids": mark_succeeded,
+                    },
+                )
+            if mark_failed_other:
+                self._register_result(
+                    action="policy_mark_delete",
+                    state="deleted",
+                    operation_type=OperationType.DELETE,
+                    return_code=207,
+                    message=(f"markDelete failed for {len(mark_failed_other)} policy(ies): " f"{mark_failed_other}"),
+                    success=False,
+                    found=True,
+                    diff={
+                        "action": "mark_delete_failed",
+                        "policy_ids": mark_failed_other,
+                    },
+                )
+
+        if mark_succeeded and not self.deploy:
+            # deploy=false: markDelete already happened; switch-level deploy
+            # is skipped so config remains on device but policy is marked
+            # for deletion on the controller.  The next switch-level deploy
+            # (manual or via future playbook run with deploy=true) cleans up.
+            self.log.info(f"{context_label}: Deploy=false — {len(mark_succeeded)} policies " "markDeleted but not deployed")
+
+        # ── Step 3: direct DELETE + switch deploy for PYTHON-type ──
+        deleted_direct: list[str] = []
+        failed_direct: list[str] = []
+        if mark_failed_python:
+            self.log.info(f"{context_label}: Step 3 - direct DELETE for " f"{len(mark_failed_python)} PYTHON-type policies: {mark_failed_python}")
+            deleted_direct, failed_direct = self._direct_delete_policies(mark_failed_python)
+
+            if register_results:
+                if deleted_direct:
+                    tpl_names = list({template_map.get(pid, "unknown") for pid in deleted_direct})
+                    self._register_result(
+                        action="policy_direct_delete",
+                        state="deleted",
+                        operation_type=OperationType.DELETE,
+                        return_code=200,
+                        message=(
+                            f"Directly deleted {len(deleted_direct)} PYTHON-type "
+                            f"policy(ies) ({', '.join(tpl_names)}). "
+                            "These templates use content type PYTHON and cannot "
+                            "be markDeleted — direct DELETE is used instead."
+                        ),
+                        success=True,
+                        found=True,
+                        diff={
+                            "action": "direct_delete",
+                            "policy_ids": deleted_direct,
+                            "templates": tpl_names,
+                        },
+                    )
+                if failed_direct:
+                    self._register_result(
+                        action="policy_direct_delete",
+                        state="deleted",
+                        operation_type=OperationType.DELETE,
+                        return_code=-1,
+                        message=(f"Direct DELETE failed for {len(failed_direct)} " f"policy(ies): {failed_direct}"),
+                        success=False,
+                        found=True,
+                        diff={
+                            "action": "direct_delete_failed",
+                            "policy_ids": failed_direct,
+                        },
+                    )
+
+        # ── Step 4: consolidated switchActions/deploy ─────────────────
+        # Deploy to affected switches so ND pushes the config removal to the
+        # devices.  Direct DELETE removes the policy record but the device
+        # still has the running config until we deploy.  The same switch-level
+        # deploy also clears any already-staged pending delete cleanup entries
+        # represented by ``blind_pending_switches``.
+        if self.deploy:
+            affected_switches = {policy_switch_map[pid] for pid in (*mark_succeeded, *deleted_direct) if pid in policy_switch_map}
+            affected_switches.update(blind_pending_switches)
+            affected_switches_list = sorted(affected_switches)
+            if affected_switches_list:
+                self.log.info(f"{context_label}: Consolidated switchActions/deploy for " f"{len(affected_switches_list)} switch(es): {affected_switches_list}")
+                deploy_data = self._api_deploy_switches(affected_switches_list)
+                self._log_deploy_status(deploy_data, context_label)
+
+                if register_results:
+                    diff_payload = {
+                        "action": "switch_deploy",
+                        "switch_ids": affected_switches_list,
+                        "policy_ids": mark_succeeded + deleted_direct,
+                        "deploy_success": True,
+                    }
+                    if blind_pending_switches:
+                        diff_payload["blind_pending_delete_switch_ids"] = sorted(blind_pending_switches)
+                        diff_payload["blind_pending_delete_wants"] = extra_deploy_wants or []
+                        diff_payload["validation"] = "skipped_active_cache_miss"
+                    self._register_result(
+                        action="policy_switch_deploy",
+                        state="deleted",
+                        operation_type=OperationType.DELETE,
+                        return_code=200,
+                        message=(f"Deployed removal config to {len(affected_switches_list)} " "switch(es)"),
+                        success=True,
+                        found=True,
+                        diff=diff_payload,
+                    )
+            elif mark_succeeded or deleted_direct or blind_pending_switches:
+                self.log.warning(f"{context_label}: No switch IDs found for deleted policies — skipping switch deploy")
+
+        if register_results and not mark_succeeded and not deleted_direct:
+            self.log.info(f"{context_label}: No policies were successfully deleted — done")
+
+        return {
+            "mark_succeeded": mark_succeeded,
+            "mark_failed_python": mark_failed_python,
+            "mark_failed_other": mark_failed_other,
+            "deleted_direct": deleted_direct,
+            "failed_direct": failed_direct,
+            "remove_failed_ids": set(mark_failed_other) | set(failed_direct),
+        }
+
+    # =========================================================================
+    # Results Helper
+    # =========================================================================
+
+    def _record_call(self, ep: Any, payload: dict | None = None) -> None:
+        """Stash the path/verb/payload of the call about to be (or just) made.
+
+        Called by every mutating ``_api_*`` helper immediately before
+        ``self.nd.request(...)``, and by check-mode would-be branches
+        that need to surface what *would* have been sent.  The stash is
+        consumed by ``_register_result()`` (and the inline registers in
+        ``_deploy_policies``) which copy it into
+        ``Results.{path,verb,payload}_current``.
+
+        Args:
+            ep:      Endpoint instance exposing ``.path`` and ``.verb``.
+            payload: Optional request body (DELETE-style calls pass None).
+        """
+        try:
+            self._call_path = ep.path
+            self._call_verb = ep.verb
+        except AttributeError:
+            self._call_path = None
+            self._call_verb = None
+        self._call_payload = payload if isinstance(payload, dict) else None
+
+    def _clear_call(self) -> None:
+        """Drop any stashed path/verb/payload.
+
+        Called immediately before a synthetic ``_register_result()`` site
+        (i.e., one that is NOT preceded by a real or would-be HTTP call)
+        so that the result row does not inherit stale call info from a
+        previous iteration.
+        """
+        self._call_path = None
+        self._call_verb = None
+        self._call_payload = None
+
+    def _apply_stashed_call(self) -> None:
+        """Stamp the currently-stashed call info onto Results.*_current.
+
+        No-op if nothing is stashed.  Safe to invoke from any register
+        site.  Does NOT clear the stash so that one bulk call can be
+        attributed to multiple per-entry register rows.
+        """
+        if self._call_path is not None:
+            self.results.path_current = self._call_path
+        if self._call_verb is not None:
+            self.results.verb_current = self._call_verb
+        # payload_current setter accepts None — only stamp when we have one
+        if self._call_payload is not None:
+            self.results.payload_current = self._call_payload
+
+    # -------------------------------------------------------------------------
+    # Would-be endpoint builders (used by check-mode register sites so the
+    # output's path/verb/payload arrays reflect what *would* have been sent).
+    # -------------------------------------------------------------------------
+
+    def _wouldbe_create_ep(self) -> Any:
+        """Return a configured EpManagePoliciesPost for check-mode would-be."""
+        ep = EpManagePoliciesPost()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if self.ticket_id:
+            ep.endpoint_params.ticket_id = self.ticket_id
+        return ep
+
+    def _wouldbe_update_ep(self, policy_id: str) -> Any:
+        """Return a configured EpManagePoliciesPut for check-mode would-be."""
+        ep = EpManagePoliciesPut()
+        ep.fabric_name = self.fabric_name
+        ep.policy_id = policy_id
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if self.ticket_id:
+            ep.endpoint_params.ticket_id = self.ticket_id
+        return ep
+
+    def _wouldbe_mark_delete_ep(self) -> Any:
+        """Return a configured EpManagePolicyActionsMarkDeletePost for check-mode would-be."""
+        ep = EpManagePolicyActionsMarkDeletePost()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if self.ticket_id:
+            ep.endpoint_params.ticket_id = self.ticket_id
+        return ep
+
+    def _wouldbe_switch_deploy_ep(self) -> Any:
+        """Return a configured EpManageSwitchActionsDeployPost for check mode."""
+        ep = EpManageSwitchActionsDeployPost()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        return ep
+
+    def _register_result(
+        self,
+        action: str,
+        operation_type: OperationType,
+        return_code: int,
+        message: str,
+        success: bool,
+        found: bool,
+        diff: dict,
+        data: Any = None,
+        state: str | None = None,
+    ) -> None:
+        """Register a single task result into the Results aggregator.
+
+        Successful read (QUERY) operations are not registered — only
+        writes and failed reads flow into ``Results``.  Gathered data
+        is still surfaced via ``self._gathered`` / ``result.gathered``.
+
+        Args:
+            action: Action label (e.g., "policy_create", "policy_query").
+            operation_type: OperationType enum value.
+            return_code: HTTP return code (or -1 for errors).
+            message: Human-readable message.
+            success: Whether the operation succeeded.
+            found: Whether the policy was found.
+            diff: Diff payload dict.
+            data: Optional response data.
+            state: Override state (defaults to self.state).
+
+        Returns:
+            None.
+        """
+        # Skip successful reads — they would just duplicate the prefetch
+        # GET path in api_* arrays at -vvv.  Failed reads still register.
+        if operation_type == OperationType.QUERY and success:
+            self._clear_call()
+            return
+
+        self.results.action = action
+        self.results.state = state or self.state
+        self.results.check_mode = self.check_mode
+        self.results.operation_type = operation_type
+        self.results.response_current = {
+            "RETURN_CODE": return_code,
+            "MESSAGE": message,
+            "DATA": data if data is not None else {},
+        }
+        result_dict = {"success": success, "found": found}
+        if not success:
+            result_dict["changed"] = False
+        self.results.result_current = result_dict
+        self.results.diff_current = diff
+        self._apply_stashed_call()
+        # Writes surface at -vv, failed reads at -vv alongside them.
+        self.results.verbosity_level_current = 2
+        self.results.register_api_call()
