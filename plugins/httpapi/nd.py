@@ -41,6 +41,7 @@ import re
 import sys
 import tempfile
 import traceback
+from typing import Optional, Tuple
 
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import ConnectionError
