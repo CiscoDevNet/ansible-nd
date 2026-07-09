@@ -13,9 +13,7 @@ Tests the Pydantic model classes for managing IPv4 and IPv6 prefix lists.
 # pylint: disable=disallowed-name,protected-access,redefined-outer-name
 # pylint: disable=use-implicit-booleaness-not-comparison
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 import copy
 

@@ -12,9 +12,7 @@ Verifies fabric_name and prefix_list_name requirements, path construction with U
 and query parameter handling.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_prefix_lists import (

@@ -18,9 +18,7 @@ own base-class test module.
 # pylint: disable=disallowed-name,protected-access,redefined-outer-name,too-many-lines
 # pylint: disable=use-implicit-booleaness-not-comparison
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
