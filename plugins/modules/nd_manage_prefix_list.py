@@ -80,6 +80,9 @@ options:
         description:
         - The list of prefix list entries.
         - Each entry defines a permit/deny action for a specific IP prefix.
+        - This list is authoritative whenever a prefix list is created or updated.
+          Existing entries that are not present in this list are removed, including
+          with O(state=merged). Restate every entry that should remain configured.
         - Required for O(state=merged), O(state=replaced), and O(state=overridden).
         - Optional for O(state=deleted), where identifier-only items
           (O(config.ip_version) + O(config.name)) are accepted.
@@ -148,6 +151,8 @@ options:
     - Use O(state=merged) to create new prefix lists and update existing ones
       as defined in the configuration.
       Prefix lists on ND that are not specified in the configuration are left unchanged.
+      For prefix lists that are specified, O(config.entries) replaces the full
+      entry list; entries omitted from O(config.entries) are removed.
     - Use O(state=replaced) to replace the prefix lists specified in the configuration.
     - Use O(state=overridden) to enforce the configuration as the single source of truth.
       All prefix lists (both IPv4 and IPv6) on ND not present in the configuration
