@@ -41,7 +41,7 @@ payload = rm.to_payload()
 from __future__ import annotations
 
 import ipaddress
-from typing import Annotated, Any, ClassVar, Dict, List, Literal, Optional, Set
+from typing import Annotated, Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -52,7 +52,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_route_map.e
 RULE_TYPE_CHOICES = [e.value for e in RuleTypeEnum]
 Uint32 = Annotated[int, Field(ge=0, le=4294967295)]
 
-_REQUIRED_RULE_FIELDS: Dict[str, Set[str]] = {
+_REQUIRED_RULE_FIELDS: dict[str, set[str]] = {
     RuleTypeEnum.MATCH_IPV4_ACL.value: {"access_control_list_name"},
     RuleTypeEnum.MATCH_IPV6_ACL.value: {"access_control_list_name"},
     RuleTypeEnum.MATCH_IPV4_PREFIX_LIST.value: {"prefix_list_names"},
@@ -65,7 +65,7 @@ _REQUIRED_RULE_FIELDS: Dict[str, Set[str]] = {
     RuleTypeEnum.SET_LOCAL_PREFERENCE.value: {"value"},
 }
 
-_ALLOWED_RULE_FIELDS: Dict[str, Set[str]] = {
+_ALLOWED_RULE_FIELDS: dict[str, set[str]] = {
     RuleTypeEnum.MATCH_IPV4_ACL.value: {"access_control_list_name"},
     RuleTypeEnum.MATCH_IPV6_ACL.value: {"access_control_list_name"},
     RuleTypeEnum.MATCH_IPV4_PREFIX_LIST.value: {"prefix_list_names"},
@@ -164,7 +164,7 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- matchIpv4Acl / matchIpv6Acl ---
 
-    access_control_list_name: Optional[str] = Field(
+    access_control_list_name: str | None = Field(
         default=None,
         alias="accessControlListName",
         description="Name of the access control list to match.",
@@ -172,7 +172,7 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- matchIpv4PrefixList / matchIpv6PrefixList ---
 
-    prefix_list_names: Optional[List[str]] = Field(
+    prefix_list_names: list[str] | None = Field(
         default=None,
         alias="prefixListNames",
         description="Names of the prefix lists to match.",
@@ -180,7 +180,7 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- matchCommunity ---
 
-    community_list_names: Optional[List[str]] = Field(
+    community_list_names: list[str] | None = Field(
         default=None,
         alias="communityListNames",
         description="Names of the community lists to match.",
@@ -188,7 +188,7 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- matchExtendedCommunity ---
 
-    extended_community_list_names: Optional[List[str]] = Field(
+    extended_community_list_names: list[str] | None = Field(
         default=None,
         alias="extendedCommunityListNames",
         description="Names of the extended community lists to match.",
@@ -196,7 +196,7 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- matchCommunity / matchExtendedCommunity ---
 
-    exact_match: Optional[bool] = Field(
+    exact_match: bool | None = Field(
         default=None,
         alias="exactMatch",
         description="Require an exact match for the (extended) community lists.",
@@ -204,7 +204,7 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- matchTag ---
 
-    tags: Optional[List[Uint32]] = Field(
+    tags: list[Uint32] | None = Field(
         default=None,
         alias="tags",
         description="List of integer tags to match (0-4294967295).",
@@ -212,43 +212,43 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- setCommunity ---
 
-    community_numbers: Optional[List[str]] = Field(
+    community_numbers: list[str] | None = Field(
         default=None,
         alias="communityNumbers",
         description="Community numbers in ASN2:NN format (e.g. '65000:100').",
     )
 
-    additive: Optional[bool] = Field(
+    additive: bool | None = Field(
         default=None,
         alias="additive",
         description="Add communities without replacing existing ones.",
     )
 
-    graceful_restart_shutdown_community: Optional[bool] = Field(
+    graceful_restart_shutdown_community: bool | None = Field(
         default=None,
         alias="gracefulRestartShutdownCommunity",
         description="Set the graceful-restart shutdown community.",
     )
 
-    no_advertise_community: Optional[bool] = Field(
+    no_advertise_community: bool | None = Field(
         default=None,
         alias="noAdvertiseCommunity",
         description="Set the no-advertise community.",
     )
 
-    no_export_community: Optional[bool] = Field(
+    no_export_community: bool | None = Field(
         default=None,
         alias="noExportCommunity",
         description="Set the no-export community.",
     )
 
-    local_as_community: Optional[bool] = Field(
+    local_as_community: bool | None = Field(
         default=None,
         alias="localAsCommunity",
         description="Set the local-AS community.",
     )
 
-    internet_community: Optional[bool] = Field(
+    internet_community: bool | None = Field(
         default=None,
         alias="internetCommunity",
         description="Set the internet community.",
@@ -256,7 +256,7 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- setExtendedCommunityList ---
 
-    extended_community_list_name: Optional[str] = Field(
+    extended_community_list_name: str | None = Field(
         default=None,
         alias="extendedCommunityListName",
         description="Name of the extended community list to set.",
@@ -264,7 +264,7 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- setLocalPreference ---
 
-    value: Optional[Uint32] = Field(
+    value: Uint32 | None = Field(
         default=None,
         alias="value",
         description="Local preference value (0-4294967295).",
@@ -272,55 +272,55 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- setIpv4NextHop / setIpv6NextHop ---
 
-    next_hop_ip_collection: Optional[List[str]] = Field(
+    next_hop_ip_collection: list[str] | None = Field(
         default=None,
         alias="nextHopIpCollection",
         description="List of next-hop IP addresses.",
     )
 
-    drop_on_fail: Optional[bool] = Field(
+    drop_on_fail: bool | None = Field(
         default=None,
         alias="dropOnFail",
         description="Drop the packet if the next hop is unavailable.",
     )
 
-    load_share: Optional[bool] = Field(
+    load_share: bool | None = Field(
         default=None,
         alias="loadShare",
         description="Enable load sharing across multiple next hops.",
     )
 
-    enforce_order: Optional[bool] = Field(
+    enforce_order: bool | None = Field(
         default=None,
         alias="enforceOrder",
         description="Enforce the order of next-hop IPs.",
     )
 
-    verify_availability: Optional[bool] = Field(
+    verify_availability: bool | None = Field(
         default=None,
         alias="verifyAvailability",
         description="Ensure the next hop is reachable before using it.",
     )
 
-    use_peer_address: Optional[bool] = Field(
+    use_peer_address: bool | None = Field(
         default=None,
         alias="usePeerAddress",
         description="Use the peer address as the next hop.",
     )
 
-    redistribute_unchanged: Optional[bool] = Field(
+    redistribute_unchanged: bool | None = Field(
         default=None,
         alias="redistributeUnchanged",
         description="Redistribute routes without changing the next hop.",
     )
 
-    unchanged: Optional[bool] = Field(
+    unchanged: bool | None = Field(
         default=None,
         alias="unchanged",
         description="Keep the next hop unchanged.",
     )
 
-    track_id: Optional[int] = Field(
+    track_id: int | None = Field(
         default=None,
         alias="trackId",
         ge=1,
@@ -421,7 +421,7 @@ class RouteMapEntryModel(NDNestedModel):
         description="Action for this entry: permit or deny.",
     )
 
-    rule_entries: List[RouteMapRuleEntryModel] = Field(
+    rule_entries: list[RouteMapRuleEntryModel] = Field(
         alias="ruleEntries",
         description="List of match or set rule conditions.",
     )
@@ -448,14 +448,14 @@ class RouteMapModel(NDBaseModel):
 
     # --- Identifier Configuration ---
 
-    identifiers: ClassVar[Optional[List[str]]] = ["api_name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifiers: ClassVar[list[str] | None] = ["api_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
 
     # --- Serialization Configuration ---
 
-    exclude_from_diff: ClassVar[Set[str]] = {"last_update_timestamp"}
-    payload_exclude_fields: ClassVar[Set[str]] = {"last_update_timestamp"}
-    unwanted_keys: ClassVar[List] = []
+    exclude_from_diff: ClassVar[set[str]] = {"last_update_timestamp"}
+    payload_exclude_fields: ClassVar[set[str]] = {"last_update_timestamp"}
+    unwanted_keys: ClassVar[list] = []
 
     # --- Fields ---
 
@@ -466,19 +466,19 @@ class RouteMapModel(NDBaseModel):
         description="Name of the route map (pattern: ^[a-zA-Z0-9~_-]+$).",
     )
 
-    last_update_timestamp: Optional[str] = Field(
+    last_update_timestamp: str | None = Field(
         default=None,
         alias="lastUpdateTimestamp",
         description="Timestamp of the last update (read-only, set by ND).",
     )
 
-    tenant_name: Optional[str] = Field(
+    tenant_name: str | None = Field(
         default=None,
         alias="tenantName",
         description="Tenant name for tenant-specific route maps.",
     )
 
-    entries: Optional[List[RouteMapEntryModel]] = Field(
+    entries: list[RouteMapEntryModel] | None = Field(
         default=None,
         alias="entries",
         description="List of route map entries (sequence + action + rule conditions).",
@@ -500,7 +500,7 @@ class RouteMapModel(NDBaseModel):
                 self.name = self.name[len(prefix) :]
         return self
 
-    def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
+    def to_diff_dict(self, **kwargs) -> dict[str, Any]:
         """Export for diff comparison, normalizing ND next-hop false defaults."""
         data = super().to_diff_dict(**kwargs)
         for entry in data.get("entries") or []:
@@ -515,7 +515,7 @@ class RouteMapModel(NDBaseModel):
     # --- Argument Spec ---
 
     @classmethod
-    def get_argument_spec(cls) -> Dict[str, Any]:
+    def get_argument_spec(cls) -> dict[str, Any]:
         return dict(
             fabric_name=dict(
                 type="str",

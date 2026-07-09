@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, List, Type
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_route_maps import (
@@ -41,21 +41,21 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
     ``fabric_name`` via ``rest_send.params``.
     """
 
-    model_class: ClassVar[Type[NDBaseModel]] = RouteMapModel
+    model_class: ClassVar[type[NDBaseModel]] = RouteMapModel
 
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
 
     # Standard endpoint references (single-item operations)
-    create_endpoint: Type[NDEndpointBaseModel] = EpManageRouteMapsPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpManageRouteMapsPut
-    delete_endpoint: Type[NDEndpointBaseModel] = EpManageRouteMapsDelete
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageRouteMapsGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageRouteMapsListGet
+    create_endpoint: type[NDEndpointBaseModel] = EpManageRouteMapsPost
+    update_endpoint: type[NDEndpointBaseModel] = EpManageRouteMapsPut
+    delete_endpoint: type[NDEndpointBaseModel] = EpManageRouteMapsDelete
+    query_one_endpoint: type[NDEndpointBaseModel] = EpManageRouteMapsGet
+    query_all_endpoint: type[NDEndpointBaseModel] = EpManageRouteMapsListGet
 
     # Bulk endpoint references
-    create_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageRouteMapsPost
-    delete_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageRouteMapsBulkDelete
+    create_bulk_endpoint: type[NDEndpointBaseModel] = EpManageRouteMapsPost
+    delete_bulk_endpoint: type[NDEndpointBaseModel] = EpManageRouteMapsBulkDelete
 
     _fabric_context: FabricContext | None = None
 
@@ -163,7 +163,7 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
     # Write operations -- bulk
     # -------------------------------------------------------------------------
 
-    def create_bulk(self, model_instances: List[RouteMapModel], **kwargs) -> ResponseType:
+    def create_bulk(self, model_instances: list[RouteMapModel], **kwargs) -> ResponseType:
         """
         Bulk-create route maps.
 
@@ -179,7 +179,7 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
         except Exception as e:
             raise Exception(f"Bulk create failed: {e}") from e
 
-    def delete_bulk(self, model_instances: List[RouteMapModel], **kwargs) -> ResponseType:
+    def delete_bulk(self, model_instances: list[RouteMapModel], **kwargs) -> ResponseType:
         """
         Bulk-delete route maps.
 
