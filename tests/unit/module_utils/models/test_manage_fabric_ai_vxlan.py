@@ -8,6 +8,9 @@ from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type
 
+import pytest
+from pydantic import ValidationError
+
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import FabricTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ebgp_vxlan import (
     FabricAiEbgpVxlanModel,
@@ -85,3 +88,35 @@ def test_manage_fabric_ai_vxlan_00030() -> None:
 
     assert contains_option(ebgp_spec, "aiml_qos") is False
     assert contains_option(ibgp_spec, "aiml_qos") is False
+
+
+def test_manage_fabric_ai_vxlan_00040() -> None:
+    """
+    # Summary
+
+    Verify aiml_qos is locked to True on all construction paths and cannot be
+    overridden to a non-True value, including via a wire payload (from_response).
+    """
+    # Direct construction with aiml_qos=False is rejected.
+    with pytest.raises(ValidationError):
+        FabricAiEbgpVxlanModel(
+            fabric_name="ai_ebgp_fabric",
+            management={"type": "aimlVxlanEbgp", "bgp_asn": "65001", "aiml_qos": False},
+        )
+    with pytest.raises(ValidationError):
+        FabricAiIbgpVxlanModel(
+            fabric_name="ai_ibgp_fabric",
+            management={"type": "aimlVxlanIbgp", "bgp_asn": "65002", "aiml_qos": False},
+        )
+
+    # A wire payload echoing aimlQos: false is also rejected.
+    with pytest.raises(ValidationError):
+        FabricAiEbgpVxlanModel(
+            fabric_name="ai_ebgp_fabric",
+            management={"type": "aimlVxlanEbgp", "bgp_asn": "65001", "aimlQos": False},
+        )
+    with pytest.raises(ValidationError):
+        FabricAiIbgpVxlanModel(
+            fabric_name="ai_ibgp_fabric",
+            management={"type": "aimlVxlanIbgp", "bgp_asn": "65002", "aimlQos": False},
+        )

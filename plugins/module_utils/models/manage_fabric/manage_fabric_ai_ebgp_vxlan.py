@@ -52,10 +52,11 @@ class AimlVxlanEbgpManagementModel(VxlanEbgpManagementModel):
     _argspec_exclude_fields: ClassVar[set[str]] = {"name", "aiml_qos"}
 
     type: Literal["aimlVxlanEbgp"] = Field(description="Type of the fabric", default="aimlVxlanEbgp")
-    aiml_qos: bool = Field(
+    aiml_qos: Literal[True] = Field(
         alias="aimlQos",
         description="Always enabled for AI eBGP VXLAN fabrics.",
         default=True,
+        frozen=True,
     )
 
 

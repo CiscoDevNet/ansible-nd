@@ -25,7 +25,7 @@ from __future__ import annotations
 import enum
 import types
 import typing
-from typing import Any, ClassVar, Dict, Literal, Set, get_args, get_origin
+from typing import Any, ClassVar, Literal, get_args, get_origin
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import NdFabricName
@@ -109,7 +109,7 @@ def _python_type_to_ansible(annotation) -> str:
     return "str"
 
 
-def _build_options_from_model(model_cls, exclude_fields: Set[str] | None = None) -> Dict[str, Any]:
+def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None) -> dict[str, Any]:
     """
     Build Ansible argument spec options dict from a pydantic model's fields.
 
@@ -142,7 +142,7 @@ def _build_options_from_model(model_cls, exclude_fields: Set[str] | None = None)
         if _is_single_literal(inner_type):
             continue
 
-        spec: Dict[str, Any] = {}
+        spec: dict[str, Any] = {}
 
         # Determine if it's a list type
         list_origin = get_origin(inner_type)

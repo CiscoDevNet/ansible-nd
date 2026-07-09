@@ -653,7 +653,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
             "Flowlet aging timer in microseconds. Valid range depends on platform: "
             "Cloud Scale (CS)=1-2000000 (default 500), Silicon One (S1)=1-1024 (default 256)"
         ),
-        default=1,
+        default=None,
     )
     flowlet_dscp: str = Field(
         alias="flowletDscp",
@@ -679,7 +679,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     priority_flow_control_watch_interval: int | None = Field(
         alias="priorityFlowControlWatchInterval",
         description=("Acceptable values from 101 to 1000 (milliseconds). Leave blank for system default (100ms)."),
-        default=101,
+        default=None,
     )
 
     # PTP

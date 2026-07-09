@@ -32,8 +32,6 @@ Or use the convenience method to process a batch::
 
 from __future__ import annotations
 
-from typing import List
-
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import (
     EpFabricConfigSavePost,
 )
@@ -141,7 +139,7 @@ class ConfigActionsMixin:
             operation_type=OperationType.UPDATE,
         )
 
-    def _get_switches_needing_deploy(self, fabric_name: str) -> List[str]:
+    def _get_switches_needing_deploy(self, fabric_name: str) -> list[str]:
         """Query fabric switches and return serial numbers needing deployment.
 
         A switch needs deployment if its ``configSyncStatus`` is not ``inSync``.
@@ -159,7 +157,9 @@ class ConfigActionsMixin:
         for switch in switches:
             additional_data = switch.get("additionalData", {})
             config_status = additional_data.get("configSyncStatus", "")
-            if config_status and config_status != "inSync":
+            # Treat any non-inSync value (including empty/missing) as needing
+            # deployment. An unknown status must not silently skip the switch.
+            if config_status != "inSync":
                 serial_number = switch.get("serialNumber", "")
                 if serial_number:
                     switch_ids.append(serial_number)
@@ -193,7 +193,7 @@ class ConfigActionsMixin:
 
     def execute_config_actions(
         self,
-        fabric_names: List[str],
+        fabric_names: list[str],
         save: bool = False,
         deploy: bool = False,
         deploy_type: str = "global",

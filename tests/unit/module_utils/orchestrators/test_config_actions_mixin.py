@@ -474,6 +474,67 @@ class TestConfigDeploySwitch:
         assert len(results._tasks) == 1
         assert result is None
 
+    def test_deploy_switch_includes_empty_or_missing_status(self):
+        """
+        # Summary
+
+        Verify config_deploy with deploy_type='switch' treats an empty or
+        missing configSyncStatus as "not inSync" and includes those switches
+        in the deploy set.
+
+        ## Test
+
+        - Switch with configSyncStatus="" is included
+        - Switch with no configSyncStatus key is included
+        - Switch with configSyncStatus="inSync" is excluded
+        - POST body contains only the non-inSync switch serial numbers
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.config_deploy()
+        - ConfigActionsMixin._deploy_switches()
+        - ConfigActionsMixin._get_switches_needing_deploy()
+        """
+        switches_response = {
+            "switches": [
+                {
+                    "serialNumber": "FOC111AAA",
+                    "additionalData": {"configSyncStatus": ""},
+                },
+                {
+                    "serialNumber": "FOC222BBB",
+                    "additionalData": {},
+                },
+                {
+                    "serialNumber": "FOC333CCC",
+                    "additionalData": {"configSyncStatus": "inSync"},
+                },
+            ]
+        }
+        deploy_response = {
+            "switchIds": [
+                {"switchId": "FOC111AAA", "status": "success"},
+                {"switchId": "FOC222BBB", "status": "success"},
+            ]
+        }
+
+        rest_send = _make_rest_send(
+            [
+                _success_response(data=switches_response, method="GET"),
+                _success_response(data=deploy_response),
+            ]
+        )
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+
+        orch.config_deploy("test-fabric", deploy_type="switch")
+
+        # Two API calls: GET switches + POST switchActions/deploy
+        assert len(results._tasks) == 2
+        assert "switchActions/deploy" in rest_send.path
+        # Empty and missing statuses are treated as needing deploy; inSync excluded
+        assert rest_send.committed_payload == {"switchIds": ["FOC111AAA", "FOC222BBB"]}
+
 
 # =============================================================================
 # Test: config_deploy — invalid deploy_type
