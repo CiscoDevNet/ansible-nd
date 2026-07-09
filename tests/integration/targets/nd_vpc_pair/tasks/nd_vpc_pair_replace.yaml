@@ -218,24 +218,25 @@
       - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
   tags: replace
 
-- name: REPLACE - TC4 - ASSERT - Verify switch-level deploy API traces
+- name: REPLACE - TC4 - ASSERT - Verify config-save and deploy API traces
   ansible.builtin.assert:
     that:
       - result.deployment.response is defined
-      - >
-        (
-          result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
-          | list
-          | length
-        ) > 0
+      - (result.deployment.response | length) >= 2
       - >
         (
           result.deployment.response
           | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
           | list
           | length
-        ) == 0
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | list
+          | length
+        ) > 0
   tags: replace
 
 - name: REPLACE - TC4 - GATHER - Verify pair exists after deploy flow
@@ -409,20 +410,21 @@
       - result.deployment.config_actions.deploy == true
       - result.deployment.config_actions.type == "switch"
       - result.deployment.response is defined
-      - >
-        (
-          result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
-          | list
-          | length
-        ) > 0
+      - (result.deployment.response | length) >= 2
       - >
         (
           result.deployment.response
           | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
           | list
           | length
-        ) == 0
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | list
+          | length
+        ) > 0
   tags: replace
 
 # TC7 - check_mode should not apply replace configuration changes
