@@ -17,10 +17,6 @@ applied consistently across model files (e.g. all `description` fields share the
   UTF-8 input. Catching this client-side gives users a clear error instead of a confusing server fault.
 - `IPv4CIDR` — `str | None` validated as an IPv4 interface address in CIDR notation (e.g. `10.1.1.1/32`).
 - `IPv6CIDR` — `str | None` validated as an IPv6 interface address in CIDR notation (e.g. `2001:db8::1/128`).
-- `IPv4NetworkCIDR` — `str | None` validated as an IPv4 network prefix in CIDR notation (e.g. `10.1.0.0/16`).
-- `IPv6NetworkCIDR` — `str | None` validated as an IPv6 network prefix in CIDR notation (e.g. `2001:db8::/32`).
-- `IPv4AddressType` — `str | None` validated as an IPv4 address (e.g. `255.255.255.0`).
-- `IPv6AddressType` — `str | None` validated as an IPv6 address (e.g. `ffff:ffff::`).
 """
 
 from __future__ import annotations
