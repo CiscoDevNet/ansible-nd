@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
@@ -38,6 +40,122 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule as NDModuleV2,
     NDModuleError,
 )
+
+
+_BLOCKED_FABRIC_TYPE_TOKENS_FOR_VPC_PAIR_DETAILS = {"vxlanibgp", "vxlanebgp"}
+
+
+def _normalize_fabric_type_token(value: Any) -> str:
+    """
+    Normalize fabric-type strings for stable comparisons.
+
+    Examples:
+      - "vxlanIbgp" -> "vxlanibgp"
+      - "VXLAN_EBGP" -> "vxlanebgp"
+    """
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"[^a-z0-9]", "", value.strip().lower())
+
+
+def _resolve_fabric_type_token(nd_v2: NDModuleV2, fabric_name: str, module: Any) -> str:
+    """
+    Resolve and cache the normalized fabric-type token for current run.
+
+    Best-effort lookup from fabric details endpoint. Returns empty string when
+    fabric type cannot be determined.
+    """
+    cached = module.params.get("_fabric_type_token")
+    if isinstance(cached, str) and cached:
+        return cached
+
+    details_path = f"/api/v1/manage/fabrics/{quote(fabric_name, safe='')}"
+    try:
+        details = nd_v2.request(details_path, HttpVerbEnum.GET)
+    except Exception as exc:
+        module.warn(
+            f"Unable to determine fabric type for '{fabric_name}' while validating vpc_pair_details: "
+            f"{str(exc).splitlines()[0]}"
+        )
+        return ""
+
+    if not isinstance(details, dict):
+        return ""
+
+    candidates: list[str] = []
+    for key in ("fabricType", "fabricTechnology", "type", "category"):
+        value = details.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+
+    management = details.get("management")
+    if isinstance(management, dict):
+        mgmt_type = management.get("type")
+        if isinstance(mgmt_type, str):
+            candidates.append(mgmt_type)
+
+    properties = details.get("properties")
+    if isinstance(properties, dict):
+        for key in ("fabricType", "fabricTechnology", "type"):
+            value = properties.get(key)
+            if isinstance(value, str):
+                candidates.append(value)
+
+    for candidate in candidates:
+        token = _normalize_fabric_type_token(candidate)
+        if token:
+            module.params["_fabric_type_token"] = token
+            return token
+
+    return ""
+
+
+def _get_proposed_vpc_pair_details(proposed_config: Any) -> Any:
+    """Return proposed vpc_pair_details (snake_case or API key), if present."""
+    if not isinstance(proposed_config, dict):
+        return None
+
+    details = proposed_config.get("vpc_pair_details")
+    if details is None:
+        details = proposed_config.get(VpcFieldNames.VPC_PAIR_DETAILS)
+    return details
+
+
+def _validate_vpc_pair_details_fabric_support(
+    nrm: Any,
+    nd_v2: NDModuleV2,
+    fabric_name: str,
+    allow_lookup: bool = True,
+) -> None:
+    """
+    Block vpc_pair_details on fabrics where it is not supported.
+
+    Currently blocked for VXLAN iBGP/eBGP fabrics. Allowed for other fabric
+    types (for example External/ISN-style deployments) where the controller
+    supports the additional settings.
+    """
+    proposed_details = _get_proposed_vpc_pair_details(nrm.proposed_config)
+    if not proposed_details:
+        return
+
+    token = nrm.module.params.get("_fabric_type_token")
+    if not isinstance(token, str) or not token:
+        if not allow_lookup:
+            return
+        token = _resolve_fabric_type_token(nd_v2, fabric_name, nrm.module)
+
+    normalized_token = _normalize_fabric_type_token(token)
+    if normalized_token in _BLOCKED_FABRIC_TYPE_TOKENS_FOR_VPC_PAIR_DETAILS:
+        _raise_vpc_error(
+            msg=(
+                "Invalid nd_manage_vpc_pair input: 'vpc_pair_details' is not supported "
+                "for iBGP/eBGP VXLAN fabrics. Use only peer switch IDs and "
+                "'use_virtual_peer_link' for this fabric type."
+            ),
+            fabric=fabric_name,
+            fabric_type=token,
+            unsupported_field="vpc_pair_details",
+        )
 
 
 def _build_compare_payloads(nrm: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -104,9 +222,6 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
         ValueError: If fabric_name or switch_id is not provided
         AnsibleModule.fail_json: If validation fails
     """
-    if nrm.module.check_mode:
-        return nrm.proposed_config
-
     fabric_name = nrm.module.params.get("fabric_name")
     switch_id = nrm.proposed_config.get(VpcFieldNames.SWITCH_ID)
     peer_switch_id = nrm.proposed_config.get(VpcFieldNames.PEER_SWITCH_ID)
@@ -118,6 +233,20 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
         raise ValueError("switch_id is required but was not provided")
     if not peer_switch_id:
         raise ValueError("peer_switch_id is required but was not provided")
+
+    # Initialize RestSend via NDModuleV2.
+    # Validate details support before create to fail early on unsupported
+    # fabric types (iBGP/eBGP VXLAN).
+    nd_v2 = NDModuleV2(nrm.module)
+    _validate_vpc_pair_details_fabric_support(
+        nrm=nrm,
+        nd_v2=nd_v2,
+        fabric_name=fabric_name,
+        allow_lookup=not nrm.module.check_mode,
+    )
+
+    if nrm.module.check_mode:
+        return nrm.proposed_config
 
     # Validation Step 1: both switches must exist in discovered fabric inventory.
     _validate_switches_exist_in_fabric(
@@ -141,8 +270,6 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
             nrm.module.warn(f"VPC pair {nrm.current_identifier} already exists in desired state - skipping create")
             return nrm.existing_config
 
-    # Initialize RestSend via NDModuleV2
-    nd_v2 = NDModuleV2(nrm.module)
     use_virtual_peer_link = nrm.proposed_config.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False)
 
     # Validate pairing support using dedicated endpoint.
@@ -238,9 +365,6 @@ def custom_vpc_update(nrm: Any) -> dict[str, Any] | None:
     Raises:
         ValueError: If fabric_name or switch_id is not provided
     """
-    if nrm.module.check_mode:
-        return nrm.proposed_config
-
     fabric_name = nrm.module.params.get("fabric_name")
     switch_id = nrm.proposed_config.get(VpcFieldNames.SWITCH_ID)
     peer_switch_id = nrm.proposed_config.get(VpcFieldNames.PEER_SWITCH_ID)
@@ -252,6 +376,20 @@ def custom_vpc_update(nrm: Any) -> dict[str, Any] | None:
         raise ValueError("switch_id is required but was not provided")
     if not peer_switch_id:
         raise ValueError("peer_switch_id is required but was not provided")
+
+    # Initialize RestSend via NDModuleV2.
+    # Validate details support before update to fail early on unsupported
+    # fabric types (iBGP/eBGP VXLAN).
+    nd_v2 = NDModuleV2(nrm.module)
+    _validate_vpc_pair_details_fabric_support(
+        nrm=nrm,
+        nd_v2=nd_v2,
+        fabric_name=fabric_name,
+        allow_lookup=not nrm.module.check_mode,
+    )
+
+    if nrm.module.check_mode:
+        return nrm.proposed_config
 
     # Validation Step 1: both switches must exist in discovered fabric inventory.
     _validate_switches_exist_in_fabric(
@@ -278,8 +416,6 @@ def custom_vpc_update(nrm: Any) -> dict[str, Any] | None:
             nrm.module.warn(f"VPC pair {nrm.current_identifier} is already in desired state - skipping update")
             return nrm.existing_config
 
-    # Initialize RestSend via NDModuleV2
-    nd_v2 = NDModuleV2(nrm.module)
     use_virtual_peer_link = nrm.proposed_config.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False)
 
     # Validate fabric peering support if virtual peer link is requested.

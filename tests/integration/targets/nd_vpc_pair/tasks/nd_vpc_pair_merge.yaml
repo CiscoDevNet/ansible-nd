@@ -624,7 +624,7 @@
         use_virtual_peer_link: false
   register: result
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -634,7 +634,7 @@
       - result.failed == false
       - result.changed == true
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -644,7 +644,7 @@
     method: get
   register: tc7b_vpc_pair_direct
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -658,7 +658,7 @@
     mode: "exists"
   register: tc7b_validation
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -669,7 +669,7 @@
       - tc7b_vpc_pair_direct.current is mapping
       - tc7b_validation.failed == false
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -1776,7 +1776,7 @@
         vpc_pair_details: "{{ vpc_pair_details_extended }}"
   register: result
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -1786,7 +1786,7 @@
     method: get
   register: tc23_vpc_pair_direct
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -1802,7 +1802,7 @@
     validate_vpc_pair_details: true
   register: tc23_validation
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -1815,8 +1815,45 @@
       - tc23_vpc_pair_direct.current is mapping
       - tc23_validation.failed == false
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
+  tags: merge
+
+# TC23b - Reject vpc_pair_details on iBGP/eBGP-type VXLAN fabrics
+- name: MERGE - TC23b - MERGE - Reject vpc_pair_details for disallowed fabric types
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: false
+        vpc_pair_details:
+          type: default
+          domain_id: 1
+          keep_alive_vrf: management
+          switch_keep_alive_local_ip: "192.0.2.11"
+          peer_switch_keep_alive_local_ip: "192.0.2.12"
+  register: tc23b_result
+  failed_when: false
+  when:
+    - vpc_pair_details_disallowed_fabric | default(false) | bool
+  tags: merge
+
+- name: MERGE - TC23b - ASSERT - Verify vpc_pair_details is blocked on disallowed fabrics
+  ansible.builtin.assert:
+    that:
+      - tc23b_result.failed == true
+      - tc23b_result.msg is defined
+      - tc23b_result.msg is search('vpc_pair_details')
+      - tc23b_result.msg is search('not supported')
+  when:
+    - vpc_pair_details_disallowed_fabric | default(false) | bool
   tags: merge
 
 ##############################################

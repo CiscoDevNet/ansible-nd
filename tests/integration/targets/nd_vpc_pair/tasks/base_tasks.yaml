@@ -25,6 +25,17 @@
     test_switch1: "{{ switch1_serial }}"
     test_switch2: "{{ switch2_serial }}"
     test_fabric_type: "{{ fabric_type | default('LANClassic') }}"
+    test_fabric_type_normalized: "{{ (fabric_type | default('LANClassic') | string | lower) }}"
+    vpc_pair_details_disallowed_fabric: >-
+      {{
+        (fabric_type | default('LANClassic') | string | lower)
+        in ['vxlanfabric', 'vxlanibgp', 'vxlanebgp']
+      }}
+    vpc_pair_details_expected_supported: >-
+      {{
+        (fabric_type | default('LANClassic') | string | lower)
+        in ['lanclassic', 'external', 'isn']
+      }}
     deploy_local: true
   delegate_to: localhost
 
