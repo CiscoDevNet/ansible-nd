@@ -279,9 +279,7 @@ class PrefixListModel(NDBaseModel):
         combined value must also fit the 115-character endpoint field.
         """
         if self.tenant_name is None and len(self.name) > _DEFAULT_TENANT_NAME_MAX_LENGTH:
-            raise ValueError(
-                f"name must be {_DEFAULT_TENANT_NAME_MAX_LENGTH} characters or fewer when tenant_name is omitted; got {len(self.name)}."
-            )
+            raise ValueError(f"name must be {_DEFAULT_TENANT_NAME_MAX_LENGTH} characters or fewer when tenant_name is omitted; got {len(self.name)}.")
         if self.tenant_name is not None and len(self.api_name) > _QUALIFIED_NAME_MAX_LENGTH:
             raise ValueError(
                 f"combined tenant-qualified prefix list name '{self.api_name}' must be {_QUALIFIED_NAME_MAX_LENGTH} characters or fewer; "
