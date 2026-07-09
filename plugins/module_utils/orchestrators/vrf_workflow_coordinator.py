@@ -145,7 +145,7 @@ class VrfWorkflowCoordinator:
         timeout: int | None = None,
         send_interval: int | None = None,
     ) -> RestSend:
-        """Build the Gen-3 REST runtime used by resolver and orchestrators."""
+        """Build a Gen-3 REST runtime for resolver or state-machine calls."""
         sender = Sender()
         sender.ansible_module = self.module
 
@@ -161,7 +161,13 @@ class VrfWorkflowCoordinator:
         return rest_send
 
     def _resolve_strategy(self, module_args: dict) -> BaseVrfStrategy:
-        """Resolve fabric topology using the same Gen-3 REST runtime as the workflow."""
+        """Resolve fabric topology with a short-timeout Gen-3 REST probe.
+
+        Topology detection intentionally uses a non-check-mode, single-attempt
+        RestSend variant so expected probe misses do not enter the workflow
+        retry loop. State-machine operations build their own RestSend instances
+        with the module's check mode and default timeout settings.
+        """
         rest_send = self._new_rest_send(params=module_args, check_mode=False, timeout=1, send_interval=1)
         resolver = VrfFabricResolver(
             rest_send=rest_send,
