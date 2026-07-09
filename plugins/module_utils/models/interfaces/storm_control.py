@@ -18,11 +18,17 @@ intent is silently lost with no error and no diff to warn them.
 Because the wire round-trips faithfully there is no wire deviation to work around (no `TODO(X.Y.Z)` marker); this is
 a client-side fail-fast guard so the user learns at validation time rather than discovering the dropped pps on the
 device. `StormControlMutexMixin` centralizes the check so all five interface policy models share one implementation.
+
+The guard is scoped to user/proposed input only. Since ND legitimately echoes both values on GET, enforcing the
+rule while parsing an ND response would make `query`/`gathered`/`diff` raise before the module could report or
+remediate a device already in that state. The check therefore fires on `from_config()` (and any direct/non-response
+construction) but is skipped when the validation context carries `mode="response"` (set by `from_response()`), so
+the write path fails fast while the read path stays permissive.
 """
 
 from __future__ import annotations
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import model_validator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationInfo, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
 # (traffic class label, percentage attribute, pps attribute) for each storm-control class. The attribute names are
@@ -47,28 +53,39 @@ class StormControlMutexMixin(NDNestedModel):  # pylint: disable=too-few-public-m
     fields. The check reads the field values by attribute name, so a model missing one of the pairs is handled
     gracefully (a `None` from `getattr` simply cannot conflict).
 
+    The check is skipped when the validation context carries `mode="response"` (set by `NDBaseModel.from_response`),
+    so parsing an ND echo that carries both values never raises; it fires on `from_config` and any other
+    (non-response) construction so user/proposed input still fails fast. See the module docstring for the rationale.
+
     ## Raises
 
     ### ValueError
 
-    - If both the percentage and pps level are set for the same storm-control class (raised by
-      `_reject_storm_control_level_and_pps` during model validation; surfaces as a Pydantic `ValidationError` when constructing an inheriting model).
+    - If both the percentage and pps level are set for the same storm-control class in a non-response context (raised
+      by `_reject_storm_control_level_and_pps` during model validation; surfaces as a Pydantic `ValidationError` when constructing an inheriting model).
     """
 
     @model_validator(mode="after")
-    def _reject_storm_control_level_and_pps(self) -> "StormControlMutexMixin":
+    def _reject_storm_control_level_and_pps(self, info: ValidationInfo) -> "StormControlMutexMixin":
         """
         # Summary
 
         Reject any storm-control traffic class that has both its percentage level and its pps level set, naming the
         offending class(es) in the error so the user knows exactly which one to drop.
 
+        The check is skipped when the validation context carries `mode="response"` — ND legitimately echoes both
+        values on GET (issue #351), so `from_response()` parsing must stay permissive or `query`/`gathered`/`diff`
+        would raise before the module could report or remediate an existing device already in that state. Every other
+        path (`from_config`, direct construction, any non-response context) enforces the rule so writes fail fast.
+
         ## Raises
 
         ### ValueError
 
-        - If both the percentage and pps level are set for the same storm-control class (broadcast, multicast, or unicast).
+        - If both the percentage and pps level are set for the same storm-control class (broadcast, multicast, or unicast) outside a response context.
         """
+        if info.context and info.context.get("mode") == "response":
+            return self
         conflicts = [
             traffic_class
             for traffic_class, pct_attr, pps_attr in _STORM_CONTROL_CLASSES

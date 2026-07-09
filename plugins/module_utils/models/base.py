@@ -142,8 +142,9 @@ class NDBaseModel(BaseModel, ABC):
 
     @classmethod
     def from_response(cls, response: Dict[str, Any], **kwargs) -> "NDBaseModel":
-        """Create model instance from API response dict."""
-        return cls.model_validate(response, by_alias=True, **kwargs)
+        """Create model instance from API response dict (validation context ``mode=response``)."""
+        context = {"mode": "response", **(kwargs.pop("context", None) or {})}
+        return cls.model_validate(response, by_alias=True, context=context, **kwargs)
 
     @classmethod
     def from_config(cls, ansible_config: Dict[str, Any], **kwargs) -> "NDBaseModel":
@@ -151,10 +152,13 @@ class NDBaseModel(BaseModel, ABC):
 
         Strips None values recursively before validation so that Ansible's
         default None for unspecified options does not override pydantic
-        default_factory values or pollute model_fields_set.
+        default_factory values or pollute model_fields_set. Validation runs with
+        context ``mode=config`` so config-only validators (e.g. the storm-control
+        percentage/pps mutex) fire on config input but not on ND responses.
         """
         cleaned = _strip_none_values(ansible_config)
-        return cls.model_validate(cleaned, by_name=True, **kwargs)
+        context = {"mode": "config", **(kwargs.pop("context", None) or {})}
+        return cls.model_validate(cleaned, by_name=True, context=context, **kwargs)
 
     # --- Identifier Access ---
 

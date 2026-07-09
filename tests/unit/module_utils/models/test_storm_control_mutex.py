@@ -162,3 +162,53 @@ def test_storm_control_mutex_00140(model_cls) -> None:
             storm_control_unicast_level=PCT,
             storm_control_unicast_level_pps=PPS,
         )
+
+
+@pytest.mark.parametrize("model_cls", POLICY_MODELS)
+@pytest.mark.parametrize("label,pct_attr,pps_attr", CLASS_FIELDS)
+def test_storm_control_mutex_00150(model_cls, label, pct_attr, pps_attr) -> None:
+    """
+    # Summary
+
+    User/proposed config parsed via `from_config()` rejects both-set-for-one-class (the write path fails fast).
+
+    ## Test
+
+    - A policy model is built from an Ansible config dict setting both the percentage and pps level for one class.
+    - A `ValidationError` is raised naming the offending traffic class.
+
+    ## Classes and Methods
+
+    - NDBaseModel.from_config()
+    - StormControlMutexMixin._reject_storm_control_level_and_pps()
+    """
+    with pytest.raises(ValidationError, match=label):
+        model_cls.from_config({pct_attr: PCT, pps_attr: PPS})
+
+
+@pytest.mark.parametrize("model_cls", POLICY_MODELS)
+@pytest.mark.parametrize("label,pct_attr,pps_attr", CLASS_FIELDS)
+def test_storm_control_mutex_00160(model_cls, label, pct_attr, pps_attr) -> None:
+    """
+    # Summary
+
+    An ND response parsed via `from_response()` accepts both values for one class and preserves them (the read path
+    stays permissive). ND accepts and echoes both the percentage and pps on GET (issue #351), so an existing device
+    in that state must be parseable for `query`/`gathered`/`diff` to report and remediate it.
+
+    ## Test
+
+    - A policy model is built from an ND response dict (aliased keys) setting both the percentage and pps level for one class.
+    - Construction does not raise, and both values round-trip onto the model.
+
+    ## Classes and Methods
+
+    - NDBaseModel.from_response()
+    - StormControlMutexMixin._reject_storm_control_level_and_pps()
+    """
+    pct_alias = model_cls.model_fields[pct_attr].alias
+    pps_alias = model_cls.model_fields[pps_attr].alias
+    with does_not_raise():
+        instance = model_cls.from_response({pct_alias: PCT, pps_alias: PPS})
+    assert getattr(instance, pct_attr) == PCT
+    assert getattr(instance, pps_attr) == PPS
