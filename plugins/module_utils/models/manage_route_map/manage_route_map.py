@@ -42,15 +42,78 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from typing import Any, ClassVar, Dict, List, Literal, Optional, Set
+import ipaddress
+from typing import Annotated, Any, ClassVar, Dict, List, Literal, Optional, Set
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_route_map.enums import ActionEnum, RuleTypeEnum
 
 # Rule type choices list (used in argument_spec)
 RULE_TYPE_CHOICES = [e.value for e in RuleTypeEnum]
+Uint32 = Annotated[int, Field(ge=0, le=4294967295)]
+
+_REQUIRED_RULE_FIELDS: Dict[str, Set[str]] = {
+    RuleTypeEnum.MATCH_IPV4_ACL.value: {"access_control_list_name"},
+    RuleTypeEnum.MATCH_IPV6_ACL.value: {"access_control_list_name"},
+    RuleTypeEnum.MATCH_IPV4_PREFIX_LIST.value: {"prefix_list_names"},
+    RuleTypeEnum.MATCH_IPV6_PREFIX_LIST.value: {"prefix_list_names"},
+    RuleTypeEnum.MATCH_COMMUNITY.value: {"community_list_names"},
+    RuleTypeEnum.MATCH_EXTENDED_COMMUNITY.value: {"extended_community_list_names"},
+    RuleTypeEnum.MATCH_TAG.value: {"tags"},
+    RuleTypeEnum.SET_COMMUNITY.value: {"community_numbers"},
+    RuleTypeEnum.SET_EXTENDED_COMMUNITY_LIST.value: {"extended_community_list_name"},
+    RuleTypeEnum.SET_LOCAL_PREFERENCE.value: {"value"},
+}
+
+_ALLOWED_RULE_FIELDS: Dict[str, Set[str]] = {
+    RuleTypeEnum.MATCH_IPV4_ACL.value: {"access_control_list_name"},
+    RuleTypeEnum.MATCH_IPV6_ACL.value: {"access_control_list_name"},
+    RuleTypeEnum.MATCH_IPV4_PREFIX_LIST.value: {"prefix_list_names"},
+    RuleTypeEnum.MATCH_IPV6_PREFIX_LIST.value: {"prefix_list_names"},
+    RuleTypeEnum.MATCH_COMMUNITY.value: {"community_list_names", "exact_match"},
+    RuleTypeEnum.MATCH_EXTENDED_COMMUNITY.value: {"extended_community_list_names", "exact_match"},
+    RuleTypeEnum.MATCH_TAG.value: {"tags"},
+    RuleTypeEnum.SET_COMMUNITY.value: {
+        "additive",
+        "community_numbers",
+        "graceful_restart_shutdown_community",
+        "internet_community",
+        "local_as_community",
+        "no_advertise_community",
+        "no_export_community",
+    },
+    RuleTypeEnum.SET_EXTENDED_COMMUNITY_LIST.value: {"extended_community_list_name"},
+    RuleTypeEnum.SET_LOCAL_PREFERENCE.value: {"value"},
+    RuleTypeEnum.SET_IPV4_NEXT_HOP.value: {
+        "drop_on_fail",
+        "enforce_order",
+        "load_share",
+        "next_hop_ip_collection",
+        "redistribute_unchanged",
+        "track_id",
+        "unchanged",
+        "use_peer_address",
+        "verify_availability",
+    },
+    RuleTypeEnum.SET_IPV6_NEXT_HOP.value: {
+        "drop_on_fail",
+        "enforce_order",
+        "load_share",
+        "next_hop_ip_collection",
+        "redistribute_unchanged",
+        "track_id",
+        "unchanged",
+        "use_peer_address",
+        "verify_availability",
+    },
+}
+
+_NEXT_HOP_RULE_TYPES = {
+    RuleTypeEnum.SET_IPV4_NEXT_HOP.value,
+    RuleTypeEnum.SET_IPV6_NEXT_HOP.value,
+}
 
 
 class RouteMapRuleEntryModel(NDNestedModel):
@@ -83,7 +146,8 @@ class RouteMapRuleEntryModel(NDNestedModel):
                                    ``loadShare``, ``enforceOrder``,
                                    ``verifyAvailability``, ``usePeerAddress``,
                                    ``redistributeUnchanged``, ``unchanged``,
-                                   ``trackId``
+                                   ``trackId``. Exactly one next-hop mode is
+                                   required.
     - ``setIpv6NextHop``         - same optional fields as ``setIpv4NextHop``
     """
 
@@ -133,7 +197,7 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- matchTag ---
 
-    tags: Optional[List[int]] = Field(
+    tags: Optional[List[Uint32]] = Field(
         default=None,
         alias="tags",
         description="List of integer tags to match (0-4294967295).",
@@ -193,7 +257,7 @@ class RouteMapRuleEntryModel(NDNestedModel):
 
     # --- setLocalPreference ---
 
-    value: Optional[int] = Field(
+    value: Optional[Uint32] = Field(
         default=None,
         alias="value",
         description="Local preference value (0-4294967295).",
@@ -252,8 +316,79 @@ class RouteMapRuleEntryModel(NDNestedModel):
     track_id: Optional[int] = Field(
         default=None,
         alias="trackId",
+        ge=1,
+        le=512,
         description="Tracking subsystem object ID (1-512).",
     )
+
+    # --- Validators ---
+
+    @model_validator(mode="after")
+    def validate_rule_type_fields(self) -> "RouteMapRuleEntryModel":
+        """
+        Validate discriminator-specific rule fields.
+
+        The OpenAPI schema represents each rule type as a separate object, while
+        this Ansible model intentionally keeps a flat field surface. This
+        validator restores the per-rule required/allowed-field contract.
+        """
+        self._validate_rule_type()
+        self._validate_required_fields()
+        self._validate_allowed_fields()
+        self._validate_next_hop()
+        return self
+
+    @staticmethod
+    def _is_missing(value: Any) -> bool:
+        """Return True when a value should be treated as absent for rule validation."""
+        return value is None or value == "" or value == []
+
+    def _validate_rule_type(self) -> None:
+        """Validate the rule_type discriminator before applying its field matrix."""
+        if self.rule_type not in _ALLOWED_RULE_FIELDS:
+            raise ValueError(f"rule_type '{self.rule_type}' must be one of: {', '.join(RULE_TYPE_CHOICES)}")
+
+    def _validate_required_fields(self) -> None:
+        """Validate fields required by the active rule_type."""
+        required_fields = _REQUIRED_RULE_FIELDS.get(self.rule_type, set())
+        missing = [field for field in sorted(required_fields) if self._is_missing(getattr(self, field))]
+        if missing:
+            raise ValueError(f"rule_type '{self.rule_type}' requires: {', '.join(missing)}")
+
+    def _validate_allowed_fields(self) -> None:
+        """Validate that populated fields are allowed by the active rule_type."""
+        allowed_fields = _ALLOWED_RULE_FIELDS.get(self.rule_type, set())
+        provided_fields = {field for field in self.model_fields_set if field != "rule_type" and not self._is_missing(getattr(self, field))}
+        unexpected = sorted(provided_fields - allowed_fields)
+        if unexpected:
+            raise ValueError(f"rule_type '{self.rule_type}' does not allow: {', '.join(unexpected)}")
+
+    def _validate_next_hop(self) -> None:
+        """Validate next-hop rule mode and address-family combinations."""
+        if self.rule_type not in _NEXT_HOP_RULE_TYPES:
+            return
+
+        selected_modes = [
+            bool(self.next_hop_ip_collection),
+            self.use_peer_address is True,
+            self.unchanged is True,
+            self.redistribute_unchanged is True,
+        ]
+        if sum(selected_modes) != 1:
+            raise ValueError(
+                f"rule_type '{self.rule_type}' requires exactly one next-hop mode: "
+                "next_hop_ip_collection, use_peer_address, unchanged, or redistribute_unchanged."
+            )
+
+        if self.next_hop_ip_collection:
+            expected_version = 4 if self.rule_type == RuleTypeEnum.SET_IPV4_NEXT_HOP.value else 6
+            for address in self.next_hop_ip_collection:
+                parsed_address = ipaddress.ip_address(address)
+                if parsed_address.version != expected_version:
+                    raise ValueError(f"rule_type '{self.rule_type}' expects IPv{expected_version} next-hop addresses.")
+
+        if self.track_id is not None and self._is_missing(self.next_hop_ip_collection):
+            raise ValueError("track_id requires next_hop_ip_collection.")
 
 
 class RouteMapEntryModel(NDNestedModel):

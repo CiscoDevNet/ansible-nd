@@ -15,6 +15,8 @@ from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 
+import pytest
+
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_route_map.manage_route_map import (
     RULE_TYPE_CHOICES,
     RouteMapEntryModel,
@@ -101,6 +103,178 @@ def test_manage_route_map_model_00020() -> None:
 
     assert instance.action == "permit"
     assert instance.sequence_number == 20
+
+
+@pytest.mark.parametrize(
+    "rule_config",
+    [
+        {"rule_type": "matchIpv4Acl", "access_control_list_name": "ACL_IPV4"},
+        {"rule_type": "matchIpv6Acl", "access_control_list_name": "ACL_IPV6"},
+        {"rule_type": "matchIpv4PrefixList", "prefix_list_names": ["PL_IPV4"]},
+        {"rule_type": "matchIpv6PrefixList", "prefix_list_names": ["PL_IPV6"]},
+        {"rule_type": "matchCommunity", "community_list_names": ["COMMUNITY_LIST"], "exact_match": True},
+        {"rule_type": "matchExtendedCommunity", "extended_community_list_names": ["EXT_COMMUNITY_LIST"], "exact_match": False},
+        {"rule_type": "matchTag", "tags": [0, 4294967295]},
+        {"rule_type": "setCommunity", "community_numbers": ["65000:100"], "additive": True},
+        {"rule_type": "setExtendedCommunityList", "extended_community_list_name": "EXT_COMMUNITY_LIST"},
+        {"rule_type": "setLocalPreference", "value": 0},
+    ],
+    ids=[
+        "match-ipv4-acl",
+        "match-ipv6-acl",
+        "match-ipv4-prefix-list",
+        "match-ipv6-prefix-list",
+        "match-community",
+        "match-extended-community",
+        "match-tag",
+        "set-community",
+        "set-extended-community-list",
+        "set-local-preference",
+    ],
+)
+def test_manage_route_map_model_00030(rule_config: dict) -> None:
+    """
+    # Summary
+
+    Verify rule-type companion fields accept the valid minimal permutations.
+
+    ## Classes and Methods
+
+    - RouteMapRuleEntryModel.model_validate()
+    """
+    with does_not_raise():
+        instance = RouteMapRuleEntryModel.model_validate(rule_config, by_name=True)
+
+    assert instance.rule_type == rule_config["rule_type"]
+
+
+@pytest.mark.parametrize(
+    "rule_config, error",
+    [
+        ({"rule_type": "matchIpv4Acl"}, "access_control_list_name"),
+        ({"rule_type": "matchIpv6Acl"}, "access_control_list_name"),
+        ({"rule_type": "matchIpv4PrefixList"}, "prefix_list_names"),
+        ({"rule_type": "matchIpv6PrefixList"}, "prefix_list_names"),
+        ({"rule_type": "matchCommunity"}, "community_list_names"),
+        ({"rule_type": "matchExtendedCommunity"}, "extended_community_list_names"),
+        ({"rule_type": "matchTag"}, "tags"),
+        ({"rule_type": "setCommunity"}, "community_numbers"),
+        ({"rule_type": "setExtendedCommunityList"}, "extended_community_list_name"),
+        ({"rule_type": "setLocalPreference"}, "value"),
+        ({"rule_type": "notSupported"}, "rule_type"),
+    ],
+    ids=[
+        "match-ipv4-acl",
+        "match-ipv6-acl",
+        "match-ipv4-prefix-list",
+        "match-ipv6-prefix-list",
+        "match-community",
+        "match-extended-community",
+        "match-tag",
+        "set-community",
+        "set-extended-community-list",
+        "set-local-preference",
+        "unsupported-rule-type",
+    ],
+)
+def test_manage_route_map_model_00040(rule_config: dict, error: str) -> None:
+    """
+    # Summary
+
+    Verify missing required companion fields and unsupported rule types fail validation.
+
+    ## Classes and Methods
+
+    - RouteMapRuleEntryModel.model_validate()
+    """
+    with pytest.raises(ValueError, match=error):
+        RouteMapRuleEntryModel.model_validate(rule_config, by_name=True)
+
+
+def test_manage_route_map_model_00050() -> None:
+    """
+    # Summary
+
+    Verify populated fields from another rule type fail validation.
+
+    ## Classes and Methods
+
+    - RouteMapRuleEntryModel.model_validate()
+    """
+    with pytest.raises(ValueError, match="does not allow"):
+        RouteMapRuleEntryModel.model_validate({"rule_type": "matchTag", "tags": [100], "value": 200}, by_name=True)
+
+
+@pytest.mark.parametrize(
+    "rule_config",
+    [
+        {"rule_type": "setIpv4NextHop", "next_hop_ip_collection": ["192.0.2.10"], "drop_on_fail": False, "verify_availability": True, "track_id": 10},
+        {"rule_type": "setIpv4NextHop", "use_peer_address": True},
+        {"rule_type": "setIpv4NextHop", "use_peer_address": True, "verify_availability": True},
+        {"rule_type": "setIpv4NextHop", "unchanged": True},
+        {"rule_type": "setIpv4NextHop", "redistribute_unchanged": True},
+        {"rule_type": "setIpv6NextHop", "next_hop_ip_collection": ["2001:db8::10"]},
+    ],
+    ids=[
+        "ipv4-addresses",
+        "use-peer-address",
+        "use-peer-address-with-verify",
+        "unchanged",
+        "redistribute-unchanged",
+        "ipv6-addresses",
+    ],
+)
+def test_manage_route_map_model_00060(rule_config: dict) -> None:
+    """
+    # Summary
+
+    Verify next-hop rules accept one explicit next-hop mode.
+
+    ## Classes and Methods
+
+    - RouteMapRuleEntryModel.model_validate()
+    """
+    with does_not_raise():
+        instance = RouteMapRuleEntryModel.model_validate(rule_config, by_name=True)
+
+    assert instance.rule_type == rule_config["rule_type"]
+
+
+@pytest.mark.parametrize(
+    "rule_config, error",
+    [
+        ({"rule_type": "setIpv4NextHop"}, "exactly one next-hop mode"),
+        ({"rule_type": "setIpv4NextHop", "next_hop_ip_collection": ["192.0.2.10"], "use_peer_address": True}, "exactly one next-hop mode"),
+        ({"rule_type": "setIpv4NextHop", "next_hop_ip_collection": ["2001:db8::10"]}, "expects IPv4"),
+        ({"rule_type": "setIpv6NextHop", "next_hop_ip_collection": ["192.0.2.10"]}, "expects IPv6"),
+        ({"rule_type": "setIpv4NextHop", "use_peer_address": True, "track_id": 10}, "track_id requires next_hop_ip_collection"),
+        ({"rule_type": "setIpv4NextHop", "next_hop_ip_collection": ["192.0.2.10"], "track_id": 0}, "track_id"),
+        ({"rule_type": "matchTag", "tags": [-1]}, "tags"),
+        ({"rule_type": "setLocalPreference", "value": 4294967296}, "value"),
+    ],
+    ids=[
+        "missing-mode",
+        "multiple-modes",
+        "ipv4-rule-ipv6-address",
+        "ipv6-rule-ipv4-address",
+        "track-id-with-peer-mode",
+        "track-id-out-of-range",
+        "tag-out-of-range",
+        "local-preference-out-of-range",
+    ],
+)
+def test_manage_route_map_model_00070(rule_config: dict, error: str) -> None:
+    """
+    # Summary
+
+    Verify invalid next-hop and numeric boundary permutations fail validation.
+
+    ## Classes and Methods
+
+    - RouteMapRuleEntryModel.model_validate()
+    """
+    with pytest.raises(ValueError, match=error):
+        RouteMapRuleEntryModel.model_validate(rule_config, by_name=True)
 
 
 def test_manage_route_map_model_00100() -> None:
