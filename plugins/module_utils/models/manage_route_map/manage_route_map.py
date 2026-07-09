@@ -38,9 +38,7 @@ payload = rm.to_payload()
 ```
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import ipaddress
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, Optional, Set

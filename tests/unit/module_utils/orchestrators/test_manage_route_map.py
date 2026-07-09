@@ -11,9 +11,7 @@ Verifies that route-map CRUD methods configure fabric-scoped endpoints, unwrap l
 wrap create/delete bulk payloads, and fail on per-item 207 bulk errors.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum

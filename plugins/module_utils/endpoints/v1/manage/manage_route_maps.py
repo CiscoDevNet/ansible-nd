@@ -27,8 +27,6 @@ in the ND Manage API.
 
 from __future__ import annotations
 
-__metaclass__ = type
-
 from typing import ClassVar, Literal, Optional
 from urllib.parse import quote
 

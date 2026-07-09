@@ -11,9 +11,7 @@ Tests route-map model identifiers, alias conversion, payload serialization, read
 exclusion, tenantName round-trip, delete-by-name construction, and argspec shape.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 import pytest
 

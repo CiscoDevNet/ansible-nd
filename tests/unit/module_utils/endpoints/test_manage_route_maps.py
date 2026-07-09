@@ -11,9 +11,7 @@ Tests route-map endpoint path construction, required path parameters, query para
 percent-encoding of dynamic fabric / route-map path segments.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_route_maps import (
