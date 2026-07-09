@@ -114,21 +114,20 @@ class ResourceManagerResourceHelpersMixin:
     # Matching helpers
     # ------------------------------------------------------------------
 
-    def _entity_names_match(self, e1, e2):
-        """Compare two entity names in a tilde-order-insensitive way.
+    def _entity_names_match(self, e1, e2, scope_type=None):
+        """Compare two entity names using scope-aware endpoint ordering.
 
-        Splits each name on ``'~'``, sorts the resulting parts alphabetically, and
-        compares the sorted lists.  This ensures that a device_pair entity such as
-        ``'SER1~SER2~label'`` matches ``'SER2~SER1~label'`` regardless of the order
-        in which the serial numbers appear in the playbook vs the ND API response.
+        Device-pair serials are compared order-insensitively. Link entities are
+        compared as endpoint pairs, so reversing both endpoint tuples matches while
+        cross-pairing interfaces to different serials does not.
 
         Args:
             e1: First entity name string.
             e2: Second entity name string.
+            scope_type: Playbook-style scope type, when known.
 
         Returns:
-            True if both names are non-None and their sorted tilde-parts are equal,
-            False otherwise.
+            True if both names are non-None and normalize to the same key.
         """
         if e1 is None or e2 is None:
             self.log.debug(
@@ -137,13 +136,16 @@ class ResourceManagerResourceHelpersMixin:
                 e2,
             )
             return False
-        result = sorted(e1.split("~")) == sorted(e2.split("~"))
+        e1_key = ResourceManagerDiffEngine._normalize_entity_key(e1, log=self.log, scope_type=scope_type)
+        e2_key = ResourceManagerDiffEngine._normalize_entity_key(e2, log=self.log, scope_type=scope_type)
+        result = e1_key == e2_key
         self.log.debug(
-            "_entity_names_match: e1='%s', e2='%s', sorted_e1=%s, sorted_e2=%s, match=%s",
+            "_entity_names_match: e1='%s', e2='%s', scope_type=%s, e1_key=%s, e2_key=%s, match=%s",
             e1,
             e2,
-            sorted(e1.split("~")),
-            sorted(e2.split("~")),
+            scope_type,
+            e1_key,
+            e2_key,
             result,
         )
         return result
@@ -509,7 +511,8 @@ class ResourceManagerResourceHelpersMixin:
         filter_pool_type = filter_item.get("pool_type")
         filter_switches = filter_item.get("switches") or []
 
-        if filter_entity and not self._entity_names_match(resource_entity, filter_entity):
+        entity_scope_type = filter_scope_type or resource_scope_type
+        if filter_entity and not self._entity_names_match(resource_entity, filter_entity, scope_type=entity_scope_type):
             self.log.debug(
                 "manage_gathered: skipping resource id='%s', entity_name mismatch: resource='%s' vs filter='%s'",
                 resource_id,

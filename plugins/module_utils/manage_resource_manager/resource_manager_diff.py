@@ -85,18 +85,39 @@ class ResourceManagerDiffEngine:
         return result
 
     @staticmethod
-    def _normalize_entity_key(entity_name: str, log: logging.Logger) -> str:
-        """Normalize entity_name for order-insensitive comparison.
+    def _normalize_entity_key(entity_name: str, log: logging.Logger, scope_type: str | None = None) -> tuple:
+        """Normalize entity_name for scope-aware comparison.
 
         Args:
             entity_name: Raw entity name string.
             log: Logger instance.
+            scope_type: Playbook-style scope type, when known.
 
         Returns:
-            Tilde-separated string with parts sorted alphabetically.
+            Hashable key suitable for equality checks and dict lookups.
         """
-        normalize_entity_name = "~".join(sorted(entity_name.split("~")))
-        log.debug("Returning normalized entity_name='%s' from raw='%s'", normalize_entity_name, entity_name)
+        parts = entity_name.split("~")
+        inferred_scope_type = scope_type
+        if inferred_scope_type is None:
+            if len(parts) == 4:
+                inferred_scope_type = "link"
+            elif len(parts) in (2, 3):
+                inferred_scope_type = "device_pair"
+
+        if inferred_scope_type == "device_pair" and len(parts) in (2, 3):
+            label = parts[2] if len(parts) == 3 else None
+            normalize_entity_name = ("device_pair", frozenset((parts[0], parts[1])), label)
+        elif inferred_scope_type == "link" and len(parts) == 4:
+            normalize_entity_name = ("link", frozenset(((parts[0], parts[1]), (parts[2], parts[3]))))
+        else:
+            normalize_entity_name = ("exact", entity_name)
+
+        log.debug(
+            "Returning normalized entity_name='%s' from raw='%s', scope_type='%s'",
+            normalize_entity_name,
+            entity_name,
+            scope_type,
+        )
         return normalize_entity_name
 
     @staticmethod
@@ -282,7 +303,7 @@ class ResourceManagerDiffEngine:
         Returns:
             Tuple used as a dict key for matching proposed vs existing.
         """
-        norm_entity = ResourceManagerDiffEngine._normalize_entity_key(entity_name, log=log) if entity_name else None
+        norm_entity = ResourceManagerDiffEngine._normalize_entity_key(entity_name, log=log, scope_type=scope_type) if entity_name else None
         log.debug("_make_resource_key: entity_name provided %s, normalized to '%s'", entity_name, norm_entity)
 
         norm_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name, log=log)
@@ -477,10 +498,12 @@ class ResourceManagerDiffEngine:
         # Build a secondary index keyed by normalised entity_name only.
         # Used to detect partial matches (same entity, different pool/scope/switch)
         # and populate the debugs bucket to mirror ND's mismatch logging.
-        entity_only_index: dict[str, list[ResourceManagerResponse]] = {}
+        entity_only_index: dict[tuple, list[ResourceManagerResponse]] = {}
         for res in existing:
             entity_name = ResourceManagerDiffEngine._resource_attr(res, "entity_name", "entityName") or ""
-            norm = ResourceManagerDiffEngine._normalize_entity_key(entity_name, log=log)
+            scope_details = ResourceManagerDiffEngine._scope_details(res)
+            scope_type = ResourceManagerDiffEngine._extract_scope_type(scope_details, log=log)
+            norm = ResourceManagerDiffEngine._normalize_entity_key(entity_name, log=log, scope_type=scope_type)
             entity_only_index.setdefault(norm, []).append(res)
             log.debug(
                 "entity_only_index: added entity='%s' under norm_key='%s' (total under key: %s)",
@@ -557,7 +580,7 @@ class ResourceManagerDiffEngine:
                     # GAP-7: Partial-match detection — same entity_name, different
                     # pool_name / scope_type / switch_ip.  Mirrors ND's
                     # nd_rm_get_mismatched_values() / changed_dict["debugs"] logic.
-                    norm = ResourceManagerDiffEngine._normalize_entity_key(entity_name, log=log)
+                    norm = ResourceManagerDiffEngine._normalize_entity_key(entity_name, log=log, scope_type=scope_type)
                     partials = entity_only_index.get(norm, [])
                     log.debug(
                         "Partial-match scan for entity='%s' (norm='%s'): %s candidate(s)",
@@ -755,8 +778,12 @@ class ResourceManagerDiffEngine:
 
         # entity_name: tilde-order-insensitive comparison
         if resource_cfg.entity_name is not None:
-            cfg_norm = ResourceManagerDiffEngine._normalize_entity_key(resource_cfg.entity_name, log=log)
-            api_norm = ResourceManagerDiffEngine._normalize_entity_key(api_entity_name, log=log) if api_entity_name else None
+            cfg_norm = ResourceManagerDiffEngine._normalize_entity_key(resource_cfg.entity_name, log=log, scope_type=resource_cfg.scope_type)
+            api_norm = (
+                ResourceManagerDiffEngine._normalize_entity_key(api_entity_name, log=log, scope_type=resource_cfg.scope_type)
+                if api_entity_name
+                else None
+            )
 
             log.debug(
                 "validate_resource_api_fields: checking entity_name — cfg_norm='%s', api_norm='%s'",

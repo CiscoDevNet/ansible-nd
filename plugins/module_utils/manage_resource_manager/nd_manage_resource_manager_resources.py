@@ -661,10 +661,22 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             self.fabric,
         )
 
-    def _entity_filter(self, entity_name):
+    def _entity_filter(self, entity_name, scope_type=None):
         """Build the exact entityName Lucene filter used for safe gathered narrowing."""
-        filter_expr = f"entityName:{entity_name}" if entity_name else None
-        self.log.debug("_entity_filter: entity_name=%s, filter_expr=%s", entity_name, filter_expr)
+        if not entity_name:
+            filter_expr = None
+        elif scope_type in ("device_pair", "link"):
+            filter_expr = None
+        elif scope_type is None and str(entity_name).count("~") in (1, 2, 3):
+            filter_expr = None
+        else:
+            filter_expr = f"entityName:{entity_name}"
+        self.log.debug(
+            "_entity_filter: entity_name=%s, scope_type=%s, filter_expr=%s",
+            entity_name,
+            scope_type,
+            filter_expr,
+        )
         return filter_expr
 
     def _resource_unique_key(self, resource):
@@ -764,7 +776,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 continue
 
             pool_name = filter_item.get("pool_name")
-            filter_expr = self._entity_filter(filter_item.get("entity_name"))
+            filter_expr = self._entity_filter(filter_item.get("entity_name"), scope_type=filter_item.get("scope_type"))
             filter_switches = filter_item.get("switches") or [None]
             for switch_id in filter_switches:
                 criteria.append((pool_name, switch_id, filter_expr))
@@ -1232,9 +1244,14 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         # Build a normalised entity_name → cfg lookup for GAP-5 field validation.
         # If two items share a normalised name (unusual), the last one wins; that is
         # acceptable because validate_resource_api_fields uses order-insensitive comparison.
-        cfg_by_entity: dict[str, ResourceManagerConfigModel] = {
-            ResourceManagerDiffEngine._normalize_entity_key(cfg.entity_name, log=self.log): cfg for cfg, _payload in pending_payloads
-        }
+        cfg_by_entity: dict[tuple, ResourceManagerConfigModel] = {}
+        for cfg, _payload in pending_payloads:
+            norm_key = ResourceManagerDiffEngine._normalize_entity_key(
+                cfg.entity_name,
+                log=self.log,
+                scope_type=cfg.scope_type,
+            )
+            cfg_by_entity[norm_key] = cfg
 
         for resp_item in batch_response.resources:
             if isinstance(resp_item, dict):
@@ -1247,7 +1264,15 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item_data})
             # GAP-5: Validate that the API response fields match what we sent.
             if resp_item_entity_name is not None:
-                norm_key = ResourceManagerDiffEngine._normalize_entity_key(resp_item_entity_name, log=self.log)
+                resp_scope_type = ResourceManagerDiffEngine._extract_scope_type(
+                    ResourceManagerDiffEngine._scope_details(resp_item),
+                    log=self.log,
+                )
+                norm_key = ResourceManagerDiffEngine._normalize_entity_key(
+                    resp_item_entity_name,
+                    log=self.log,
+                    scope_type=resp_scope_type,
+                )
                 matched_cfg = cfg_by_entity.get(norm_key)
                 if matched_cfg is not None:
                     ResourceManagerDiffEngine.validate_resource_api_fields(self.nd, matched_cfg, resp_item, "Resource", log=self.log)

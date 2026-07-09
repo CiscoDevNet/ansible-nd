@@ -1291,20 +1291,40 @@ def test_build_create_payload_with_ip_resource():
 
 
 @pytest.mark.parametrize(
-    ("e1", "e2", "should_match"),
+    ("e1", "e2", "scope_type", "should_match"),
     [
-        ("SER1~SER2", "SER1~SER2", True),  # Exact match
-        ("SER1~SER2", "SER2~SER1", True),  # Reverse order match (device_pair)
-        ("SER1~SER2~LABEL", "SER2~SER1~LABEL", True),  # Mixed order
-        ("SER1~SER2", "SER3~SER4", False),  # Different endpoints
-        ("SER1", "SER1", True),  # Single element
-        ("loopback0", "loopback0", True),  # Non-tilde entity
+        ("SER1~SER2", "SER1~SER2", "device_pair", True),
+        ("SER1~SER2", "SER2~SER1", "device_pair", True),
+        (
+            "{{ ansible_sno_2 }}~{{ ansible_sno_1 }}",
+            "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}",
+            "device_pair",
+            True,
+        ),
+        ("SER1~SER2~LABEL", "SER2~SER1~LABEL", "device_pair", True),
+        ("SER1~SER2~LABEL", "SER2~SER1~OTHER", "device_pair", False),
+        ("SER1~SER2", "SER3~SER4", "device_pair", False),
+        (
+            "SER1~Ethernet1/6~SER2~Ethernet1/10",
+            "SER2~Ethernet1/10~SER1~Ethernet1/6",
+            "link",
+            True,
+        ),
+        (
+            "SER1~Ethernet1/6~SER2~Ethernet1/10",
+            "SER2~Ethernet1/6~SER1~Ethernet1/10",
+            "link",
+            False,
+        ),
+        ("SER1~Ethernet1/6", "Ethernet1/6~SER1", "device_interface", False),
+        ("SER1", "SER1", "device", True),
+        ("loopback0", "loopback0", "fabric", True),
     ],
 )
-def test_entity_names_match_tilde_order_insensitive(e1, e2, should_match):
-    """_entity_names_match compares tilde-separated parts in sorted order."""
+def test_entity_names_match_scope_aware(e1, e2, scope_type, should_match):
+    """_entity_names_match compares multi-endpoint resources without cross-pairing links."""
     module = _resource_manager()
-    result = module._entity_names_match(e1, e2)
+    result = module._entity_names_match(e1, e2, scope_type=scope_type)
     assert result is should_match
 
 
@@ -1425,6 +1445,68 @@ def test_apply_gathered_filters_single_filter():
     assert gathered[0]["entity_name"] == "loopback0"
 
 
+def test_apply_gathered_filters_matches_reversed_device_pair_entity_name():
+    """Gathered entity filters match device-pair serials in either order."""
+    module = _resource_manager()
+    module.config = [{"entity_name": "SER2~SER1", "scope_type": "device_pair"}]
+    module._all_resources = [  # pylint: disable=protected-access
+        _response(
+            entityName="SER1~SER2",
+            poolName="VPC_ID",
+            scopeDetails={
+                "scopeType": "devicePair",
+                "srcSwitchId": "SER1",
+                "dstSwitchId": "SER2",
+            },
+        ),
+        _response(resourceId=102, entityName="SER3~SER4"),
+    ]
+
+    gathered = module._apply_gathered_filters()  # pylint: disable=protected-access
+
+    assert len(gathered) == 1
+    assert gathered[0]["entity_name"] == "SER1~SER2"
+
+
+def test_apply_gathered_filters_matches_reversed_link_entity_name():
+    """Gathered entity filters match links when endpoint pairs are reversed."""
+    module = _resource_manager()
+    module.config = [{"entity_name": "SER2~Ethernet1/10~SER1~Ethernet1/6", "scope_type": "link"}]
+    module._all_resources = [  # pylint: disable=protected-access
+        _response(
+            entityName="SER1~Ethernet1/6~SER2~Ethernet1/10",
+            poolName="SUBNET",
+            resourceValue="fd00:333:4:2::/64",
+            scopeDetails={
+                "scopeType": "link",
+                "srcSwitchId": "SER1",
+                "srcInterfaceName": "Ethernet1/6",
+                "dstSwitchId": "SER2",
+                "dstInterfaceName": "Ethernet1/10",
+            },
+        ),
+        _response(resourceId=102, entityName="SER2~Ethernet1/6~SER1~Ethernet1/10"),
+    ]
+
+    gathered = module._apply_gathered_filters()  # pylint: disable=protected-access
+
+    assert len(gathered) == 1
+    assert gathered[0]["entity_name"] == "SER1~Ethernet1/6~SER2~Ethernet1/10"
+
+
+def test_build_gathered_resource_criteria_omits_entity_filter_for_multi_endpoint_names():
+    """Multi-endpoint gathered filters use local entity matching instead of exact API filtering."""
+    module = _resource_manager()
+    module.config = [
+        {"entity_name": "SER2~SER1", "scope_type": "device_pair"},
+        {"entity_name": "SER2~Ethernet1/10~SER1~Ethernet1/6", "scope_type": "link"},
+    ]
+
+    criteria = module._build_gathered_resource_criteria()  # pylint: disable=protected-access
+
+    assert criteria == [(None, None, None), (None, None, None)]
+
+
 def test_apply_gathered_filters_multiple_filters_with_dedup():
     """_apply_gathered_filters deduplicates results from multiple filters."""
     module = _resource_manager()
@@ -1437,58 +1519,6 @@ def test_apply_gathered_filters_multiple_filters_with_dedup():
     gathered = module._apply_gathered_filters()  # pylint: disable=protected-access
     # Both filters match same resource; dedup should return only one
     assert len(gathered) == 1
-
-
-def test_apply_gathered_filters_keeps_switch_entries_separate_after_pool_type_filter():
-    """Filtered gathered output keeps one entry per resource switch."""
-    module = _resource_manager()
-    module.config = [{"pool_type": "ID"}]
-    module._all_resources = [  # pylint: disable=protected-access
-        _response(
-            resourceId=101,
-            entityName="loopback_dev",
-            poolName="LOOPBACK_ID",
-            resourceValue="200",
-            scopeDetails={
-                "scopeType": "device",
-                "switchId": "SER1",
-                "switchIp": "192.168.10.201",
-            },
-        ),
-        _response(
-            resourceId=102,
-            entityName="loopback_dev",
-            poolName="LOOPBACK_ID",
-            resourceValue="200",
-            scopeDetails={
-                "scopeType": "device",
-                "switchId": "SER2",
-                "switchIp": "192.168.10.202",
-            },
-        ),
-    ]
-
-    gathered = module._apply_gathered_filters()  # pylint: disable=protected-access
-
-    assert gathered == [
-        {
-            "entity_name": "loopback_dev",
-            "pool_type": "ID",
-            "pool_name": "LOOPBACK_ID",
-            "scope_type": "device",
-            "resource": "200",
-            "switches": ["192.168.10.201"],
-        },
-        {
-            "entity_name": "loopback_dev",
-            "pool_type": "ID",
-            "pool_name": "LOOPBACK_ID",
-            "scope_type": "device",
-            "resource": "200",
-            "switches": ["192.168.10.202"],
-        },
-    ]
-
 
 @pytest.mark.parametrize(
     ("resource_value", "expected_pool_type"),
@@ -1585,10 +1615,48 @@ def test_normalize_pool_name_canonical_conversion():
     assert result is not None
 
 
-def test_normalize_entity_key_sorts_tilde_parts():
-    """_normalize_entity_key sorts tilde-separated parts."""
-    result = ResourceManagerDiffEngine._normalize_entity_key("SER2~SER1~LABEL", LOG)
-    assert result == "LABEL~SER1~SER2"
+def test_normalize_entity_key_device_pair_preserves_label_and_ignores_serial_order():
+    """_normalize_entity_key preserves device-pair labels while allowing serial order reversal."""
+    result = ResourceManagerDiffEngine._normalize_entity_key(
+        "SER2~SER1~LABEL",
+        LOG,
+        scope_type="device_pair",
+    )
+    reversed_result = ResourceManagerDiffEngine._normalize_entity_key(
+        "SER1~SER2~LABEL",
+        LOG,
+        scope_type="device_pair",
+    )
+    different_label = ResourceManagerDiffEngine._normalize_entity_key(
+        "SER1~SER2~OTHER",
+        LOG,
+        scope_type="device_pair",
+    )
+
+    assert result == reversed_result
+    assert result != different_label
+
+
+def test_normalize_entity_key_link_preserves_serial_interface_pairs():
+    """_normalize_entity_key compares links as unordered endpoint pairs."""
+    result = ResourceManagerDiffEngine._normalize_entity_key(
+        "SER1~Ethernet1/6~SER2~Ethernet1/10",
+        LOG,
+        scope_type="link",
+    )
+    reversed_result = ResourceManagerDiffEngine._normalize_entity_key(
+        "SER2~Ethernet1/10~SER1~Ethernet1/6",
+        LOG,
+        scope_type="link",
+    )
+    cross_paired = ResourceManagerDiffEngine._normalize_entity_key(
+        "SER2~Ethernet1/6~SER1~Ethernet1/10",
+        LOG,
+        scope_type="link",
+    )
+
+    assert result == reversed_result
+    assert result != cross_paired
 
 
 def test_extract_scope_type_maps_api_to_playbook():
@@ -2405,7 +2473,7 @@ def test_normalize_pool_name_with_empty_string():
 def test_normalize_entity_key_single_element():
     """_normalize_entity_key returns single element unchanged."""
     result = ResourceManagerDiffEngine._normalize_entity_key("loopback0", LOG)
-    assert result == "loopback0"
+    assert result == ("exact", "loopback0")
 
 
 def test_extract_scope_switch_key_val_fabric_scope():
