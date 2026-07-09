@@ -11,7 +11,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_manage_route_map
-version_added: "1.6.0"
+version_added: "2.0.0"
 short_description: Manage route maps on Cisco Nexus Dashboard fabrics
 description:
 - Manage route maps on a Cisco Nexus Dashboard (ND) fabric.
@@ -355,6 +355,90 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed, or in check mode would change, the fabric configuration.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The route map configuration before the module ran, structured the same as the O(config) parameter.
+  - An empty list when no route map configuration existed.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - name: RM_EXPORT
+    tenant_name: tenantSales
+    entries:
+    - sequence_number: 10
+      action: permit
+      rule_entries:
+      - rule_type: matchIpv4PrefixList
+        prefix_list_names:
+        - tenantSales~PL_EXPORT
+after:
+  description:
+  - The route map configuration after the module ran, structured the same as the O(config) parameter.
+  - This reflects the module's predicted post-write state; it is not re-read from the controller after writes.
+  - In check mode, this is the configuration that would result if the module ran outside check mode.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - name: RM_EXPORT
+    tenant_name: tenantSales
+    entries:
+    - sequence_number: 10
+      action: permit
+      rule_entries:
+      - rule_type: setLocalPreference
+        value: 200
+diff:
+  description: The per-route-map difference between C(before) and C(after).
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - name: RM_EXPORT
+    tenant_name: tenantSales
+    entries:
+    - sequence_number: 10
+      action: permit
+      rule_entries:
+      - rule_type: setLocalPreference
+        value: 200
+proposed:
+  description: The route map configuration the module proposed to apply before reconciliation with existing state.
+  returned: when O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+  - name: RM_EXPORT
+    tenant_name: tenantSales
+    entries:
+    - sequence_number: 10
+      action: permit
+      rule_entries:
+      - rule_type: setLocalPreference
+        value: 200
+logs:
+  description: Internal diagnostic log messages collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample:
+  - "manage_state begin state=merged check_mode=False"
+msg:
+  description: A human-readable error message, present only when the module fails.
+  returned: on failure
+  type: str
+  sample: "route map 'RM_EXPORT': entries must contain at least one entry for state 'merged'."
 """
 
 import logging
