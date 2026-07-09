@@ -71,6 +71,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list
 # Allowed characters for prefix list / tenant names (from OpenAPI pattern)
 _NAME_RE = re.compile(r"^[a-zA-Z0-9~_-]+$")
 _TENANT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_DEFAULT_TENANT_NAME_MAX_LENGTH = 63
+_QUALIFIED_NAME_MAX_LENGTH = 115
 
 
 class PrefixListEntryModel(NDNestedModel):
@@ -265,6 +267,27 @@ class PrefixListModel(NDBaseModel):
         return value
 
     # --- Model Validators (cross-field) ---
+
+    @model_validator(mode="after")
+    def validate_name_length_for_tenant_scope(self) -> "PrefixListModel":
+        """
+        Enforce the API's default-tenant and tenant-qualified prefix-list name lengths.
+
+        The OpenAPI schema caps the path/body ``prefixListName`` at 115 characters
+        but documents a stricter 63-character limit for names in the default tenant.
+        Tenant-scoped item paths use the qualified ``tenantName~name`` form, so the
+        combined value must also fit the 115-character endpoint field.
+        """
+        if self.tenant_name is None and len(self.name) > _DEFAULT_TENANT_NAME_MAX_LENGTH:
+            raise ValueError(
+                f"name must be {_DEFAULT_TENANT_NAME_MAX_LENGTH} characters or fewer when tenant_name is omitted; got {len(self.name)}."
+            )
+        if self.tenant_name is not None and len(self.api_name) > _QUALIFIED_NAME_MAX_LENGTH:
+            raise ValueError(
+                f"combined tenant-qualified prefix list name '{self.api_name}' must be {_QUALIFIED_NAME_MAX_LENGTH} characters or fewer; "
+                f"got {len(self.api_name)} from tenant_name length {len(self.tenant_name)} and name length {len(self.name)}."
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_entries_for_ip_version(self) -> "PrefixListModel":

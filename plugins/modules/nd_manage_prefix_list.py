@@ -58,6 +58,8 @@ options:
         - The name of the prefix list.
         - Allowed characters are C([a-zA-Z0-9~_-]).
         - Maximum length is 115 characters (63 for the default tenant).
+        - When O(config.tenant_name) is set, the combined C(tenant_name~name)
+          value must not exceed 115 characters.
         type: str
         required: true
       description:

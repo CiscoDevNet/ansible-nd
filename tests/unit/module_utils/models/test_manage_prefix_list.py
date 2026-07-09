@@ -702,3 +702,48 @@ def test_manage_prefix_list_00190() -> None:
     assert tenant_a.get_identifier_value() != tenant_b.get_identifier_value()
     assert tenant_a.api_name == "TENANT_A~PL-SHARED"
     assert tenant_b.api_name == "TENANT_B~PL-SHARED"
+
+
+def test_manage_prefix_list_00200() -> None:
+    """
+    # Summary
+
+    Verify default-tenant prefix list names are limited to 63 characters.
+
+    ## Classes and Methods
+
+    - PrefixListModel.validate_name_length_for_tenant_scope
+    """
+    good_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    good_config.pop("tenant_name")
+    good_config["name"] = "P" * 63
+    with does_not_raise():
+        PrefixListModel.from_config(good_config)
+
+    bad_config = copy.deepcopy(good_config)
+    bad_config["name"] = "P" * 64
+    with pytest.raises(ValidationError, match="tenant_name is omitted"):
+        PrefixListModel.from_config(bad_config)
+
+
+def test_manage_prefix_list_00210() -> None:
+    """
+    # Summary
+
+    Verify tenant-qualified prefix list names are limited to 115 characters.
+
+    ## Classes and Methods
+
+    - PrefixListModel.validate_name_length_for_tenant_scope
+    """
+    good_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    good_config["tenant_name"] = "T" * 8
+    good_config["name"] = "P" * 106
+    with does_not_raise():
+        model = PrefixListModel.from_config(good_config)
+    assert len(model.api_name) == 115
+
+    bad_config = copy.deepcopy(good_config)
+    bad_config["name"] = "P" * 107
+    with pytest.raises(ValidationError, match="combined tenant-qualified"):
+        PrefixListModel.from_config(bad_config)
