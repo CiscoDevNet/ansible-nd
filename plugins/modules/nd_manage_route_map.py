@@ -47,6 +47,7 @@ options:
       tenant_name:
         description:
         - Optional tenant name for tenant-specific route maps.
+        - Maximum length is 63 characters. Allowed characters are C([A-Za-z0-9_-]).
         - When set, O(config.name) may be either the bare route map name or the fully qualified C(tenant~route_map) API name.
         - The module normalizes tenant-scoped route maps to a bare O(config.name) and uses C(tenant~route_map) for API lookups and deletes.
         type: str

@@ -51,6 +51,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_route_map.e
 # Rule type choices list (used in argument_spec)
 RULE_TYPE_CHOICES = [e.value for e in RuleTypeEnum]
 Uint32 = Annotated[int, Field(ge=0, le=4294967295)]
+DEFAULT_TENANT_ROUTE_MAP_NAME_MAX_LENGTH = 63
+TENANT_ROUTE_MAP_API_NAME_MAX_LENGTH = 115
 
 _REQUIRED_RULE_FIELDS: dict[str, set[str]] = {
     RuleTypeEnum.MATCH_IPV4_ACL.value: {"access_control_list_name"},
@@ -462,7 +464,8 @@ class RouteMapModel(NDBaseModel):
     name: str = Field(
         alias="name",
         min_length=1,
-        max_length=115,
+        max_length=TENANT_ROUTE_MAP_API_NAME_MAX_LENGTH,
+        pattern=r"^[a-zA-Z0-9~_-]+$",
         description="Name of the route map (pattern: ^[a-zA-Z0-9~_-]+$).",
     )
 
@@ -475,6 +478,9 @@ class RouteMapModel(NDBaseModel):
     tenant_name: str | None = Field(
         default=None,
         alias="tenantName",
+        min_length=1,
+        max_length=DEFAULT_TENANT_ROUTE_MAP_NAME_MAX_LENGTH,
+        pattern=r"^[A-Za-z0-9_-]+$",
         description="Tenant name for tenant-specific route maps.",
     )
 
@@ -499,12 +505,16 @@ class RouteMapModel(NDBaseModel):
         return data
 
     @model_validator(mode="after")
-    def normalize_tenant_scoped_name(self) -> "RouteMapModel":
-        """Store tenant-scoped route maps with a bare name and tenant context."""
+    def normalize_and_validate_route_map_name(self) -> "RouteMapModel":
+        """Store tenant route maps with a bare config name and enforce API name limits."""
         if self.tenant_name:
             prefix = f"{self.tenant_name}~"
             if self.name.startswith(prefix):
                 self.name = self.name[len(prefix) :]
+            if len(self.api_name) > TENANT_ROUTE_MAP_API_NAME_MAX_LENGTH:
+                raise ValueError(f"tenant-scoped route map API name '{self.api_name}' must be " f"{TENANT_ROUTE_MAP_API_NAME_MAX_LENGTH} characters or fewer.")
+        elif len(self.name) > DEFAULT_TENANT_ROUTE_MAP_NAME_MAX_LENGTH:
+            raise ValueError(f"default-tenant route map name '{self.name}' must be {DEFAULT_TENANT_ROUTE_MAP_NAME_MAX_LENGTH} characters or fewer.")
         return self
 
     def to_diff_dict(self, **kwargs) -> dict[str, Any]:

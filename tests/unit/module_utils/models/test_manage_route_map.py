@@ -485,6 +485,45 @@ def test_manage_route_map_model_00120() -> None:
     assert instance.entries is None
 
 
+def test_manage_route_map_model_00130() -> None:
+    """
+    # Summary
+
+    Verify default-tenant route map names are limited to 63 characters.
+
+    ## Classes and Methods
+
+    - RouteMapModel.from_config()
+    """
+    with does_not_raise():
+        RouteMapModel.from_config({"name": "R" * 63})
+
+    with pytest.raises(ValueError, match="default-tenant route map name"):
+        RouteMapModel.from_config({"name": "R" * 64})
+
+
+def test_manage_route_map_model_00140() -> None:
+    """
+    # Summary
+
+    Verify tenant-scoped route map API names are limited to 115 characters.
+
+    ## Classes and Methods
+
+    - RouteMapModel.from_config()
+    - RouteMapModel.get_identifier_value()
+    """
+    tenant_name = "T" * 63
+
+    with does_not_raise():
+        instance = RouteMapModel.from_config({"name": "R" * 51, "tenant_name": tenant_name})
+
+    assert instance.get_identifier_value() == f"{tenant_name}~{'R' * 51}"
+
+    with pytest.raises(ValueError, match="tenant-scoped route map API name"):
+        RouteMapModel.from_config({"name": "R" * 52, "tenant_name": tenant_name})
+
+
 def test_manage_route_map_model_00200() -> None:
     """
     # Summary
