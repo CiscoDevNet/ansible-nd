@@ -26,7 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_route_map.m
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 SAMPLE_ANSIBLE_CONFIG = {
-    "name": "tenantSales~RM_EXPORT",
+    "name": "RM_EXPORT",
     "tenant_name": "tenantSales",
     "entries": [
         {
@@ -292,9 +292,11 @@ def test_manage_route_map_model_00100() -> None:
         instance = RouteMapModel.from_config(SAMPLE_ANSIBLE_CONFIG)
 
     assert instance.get_identifier_value() == "tenantSales~RM_EXPORT"
+    assert instance.api_name == "tenantSales~RM_EXPORT"
+    assert instance.name == "RM_EXPORT"
     assert instance.tenant_name == "tenantSales"
     assert instance.to_payload() == {
-        "name": "tenantSales~RM_EXPORT",
+        "name": "RM_EXPORT",
         "tenantName": "tenantSales",
         "entries": [
             {
@@ -329,12 +331,35 @@ def test_manage_route_map_model_00110() -> None:
     with does_not_raise():
         instance = RouteMapModel.from_response(SAMPLE_WIRE_RESPONSE)
 
-    assert instance.name == "tenantSales~RM_EXPORT"
+    assert instance.name == "RM_EXPORT"
+    assert instance.get_identifier_value() == "tenantSales~RM_EXPORT"
     assert instance.tenant_name == "tenantSales"
     assert instance.last_update_timestamp == "2026-01-01T00:00:00Z"
     payload = instance.to_payload()
     assert "lastUpdateTimestamp" not in payload
+    assert payload["name"] == "RM_EXPORT"
     assert payload["tenantName"] == "tenantSales"
+
+
+def test_manage_route_map_model_00115() -> None:
+    """
+    # Summary
+
+    Verify tenant-scoped route maps normalize full API names to bare config names.
+
+    ## Classes and Methods
+
+    - RouteMapModel.from_config()
+    - RouteMapModel.get_identifier_value()
+    - RouteMapModel.to_payload()
+    """
+    with does_not_raise():
+        instance = RouteMapModel.from_config({"name": "tenantSales~RM_EXPORT", "tenant_name": "tenantSales"})
+
+    assert instance.name == "RM_EXPORT"
+    assert instance.api_name == "tenantSales~RM_EXPORT"
+    assert instance.get_identifier_value() == "tenantSales~RM_EXPORT"
+    assert instance.to_payload() == {"name": "RM_EXPORT", "tenantName": "tenantSales"}
 
 
 def test_manage_route_map_model_00120() -> None:

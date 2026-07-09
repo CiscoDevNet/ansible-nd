@@ -190,7 +190,7 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
         """
         try:
             api_endpoint = self._configure_endpoint(self.delete_bulk_endpoint())
-            route_map_names = [item.name for item in model_instances]
+            route_map_names = [item.get_identifier_value() for item in model_instances]
             payload = {"routeMapNames": route_map_names}
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.DELETE)
             self._raise_on_bulk_errors(result, "delete")

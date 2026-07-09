@@ -49,25 +49,26 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "SITE1
     return rest_send
 
 
-def _route_map_model(name: str = "RM1", value: int = 100) -> RouteMapModel:
+def _route_map_model(name: str = "RM1", value: int = 100, tenant_name: str | None = None) -> RouteMapModel:
     """Build a minimal route map model."""
-    return RouteMapModel.from_config(
-        {
-            "name": name,
-            "entries": [
-                {
-                    "sequence_number": 10,
-                    "action": "permit",
-                    "rule_entries": [
-                        {
-                            "rule_type": "setLocalPreference",
-                            "value": value,
-                        }
-                    ],
-                }
-            ],
-        }
-    )
+    config = {
+        "name": name,
+        "entries": [
+            {
+                "sequence_number": 10,
+                "action": "permit",
+                "rule_entries": [
+                    {
+                        "rule_type": "setLocalPreference",
+                        "value": value,
+                    }
+                ],
+            }
+        ],
+    }
+    if tenant_name is not None:
+        config["tenant_name"] = tenant_name
+    return RouteMapModel.from_config(config)
 
 
 class _FakeFabricContext:
@@ -281,6 +282,34 @@ def test_manage_route_map_orchestrator_00300() -> None:
     assert rest_send.committed_payload == model.to_payload()
 
 
+def test_manage_route_map_orchestrator_00310() -> None:
+    """
+    # Summary
+
+    Verify tenant-scoped updates use the fully qualified API path with a bare-name payload.
+
+    ## Classes and Methods
+
+    - ManageRouteMapOrchestrator.update()
+    """
+    model = _route_map_model("RM_UPDATE", value=250, tenant_name="tenantSales")
+
+    def responses():
+        yield _response(return_code=204, message="No Content")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageRouteMapOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps/tenantSales~RM_UPDATE"
+    assert rest_send.verb == HttpVerbEnum.PUT
+    assert rest_send.committed_payload == model.to_payload()
+    assert rest_send.committed_payload["name"] == "RM_UPDATE"
+    assert rest_send.committed_payload["tenantName"] == "tenantSales"
+
+
 def test_manage_route_map_orchestrator_00400() -> None:
     """
     # Summary
@@ -305,6 +334,32 @@ def test_manage_route_map_orchestrator_00400() -> None:
     assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMapActions/remove"
     assert rest_send.verb == HttpVerbEnum.POST
     assert rest_send.committed_payload == {"routeMapNames": ["RM_DELETE"]}
+
+
+def test_manage_route_map_orchestrator_00405() -> None:
+    """
+    # Summary
+
+    Verify tenant-scoped delete payloads use fully qualified API names.
+
+    ## Classes and Methods
+
+    - ManageRouteMapOrchestrator.delete_bulk()
+    """
+    model = RouteMapModel.from_config({"name": "RM_DELETE", "tenant_name": "tenantSales"})
+
+    def responses():
+        yield _response({"results": [{"name": "tenantSales~RM_DELETE", "status": "success", "message": "removed"}]}, return_code=207, message="Multi-Status")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageRouteMapOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.delete_bulk([model])
+
+    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMapActions/remove"
+    assert rest_send.verb == HttpVerbEnum.POST
+    assert rest_send.committed_payload == {"routeMapNames": ["tenantSales~RM_DELETE"]}
 
 
 def test_manage_route_map_orchestrator_00410() -> None:

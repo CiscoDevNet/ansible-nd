@@ -45,7 +45,8 @@ options:
       tenant_name:
         description:
         - Optional tenant name for tenant-specific route maps.
-        - Tenant-specific route maps are identified by their full O(config.name), typically in C(tenant~route_map) form.
+        - When set, O(config.name) may be either the bare route map name or the fully qualified C(tenant~route_map) API name.
+        - The module normalizes tenant-scoped route maps to a bare O(config.name) and uses C(tenant~route_map) for API lookups and deletes.
         type: str
         aliases: [ tenantName ]
       entries:

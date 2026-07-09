@@ -428,7 +428,8 @@ class RouteMapModel(NDBaseModel):
 
     ## Identifier
 
-    ``name`` (single) - the route map name within its fabric.
+    ``api_name`` (single) - the API route map name within its fabric.
+    For tenant-specific route maps this is ``tenant_name~name``.
 
     ## Serialization Notes
 
@@ -440,7 +441,7 @@ class RouteMapModel(NDBaseModel):
 
     # --- Identifier Configuration ---
 
-    identifiers: ClassVar[Optional[List[str]]] = ["name"]
+    identifiers: ClassVar[Optional[List[str]]] = ["api_name"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
 
     # --- Serialization Configuration ---
@@ -475,6 +476,22 @@ class RouteMapModel(NDBaseModel):
         alias="entries",
         description="List of route map entries (sequence + action + rule conditions).",
     )
+
+    @property
+    def api_name(self) -> str:
+        """Return the route-map name used in API paths and delete payloads."""
+        if self.tenant_name and not self.name.startswith(f"{self.tenant_name}~"):
+            return f"{self.tenant_name}~{self.name}"
+        return self.name
+
+    @model_validator(mode="after")
+    def normalize_tenant_scoped_name(self) -> "RouteMapModel":
+        """Store tenant-scoped route maps with a bare name and tenant context."""
+        if self.tenant_name:
+            prefix = f"{self.tenant_name}~"
+            if self.name.startswith(prefix):
+                self.name = self.name[len(prefix) :]
+        return self
 
     # --- Argument Spec ---
 
