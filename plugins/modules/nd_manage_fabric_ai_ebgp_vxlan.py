@@ -109,8 +109,8 @@ options:
             description:
             - The BGP Autonomous System Number for the fabric.
             - Must be a numeric value between 1 and 4294967295, or dotted notation (1-65535.0-65535).
-            - Optional when O(config.management.bgp_asn_auto_allocation) is C(true).
             type: str
+            required: true
           bgp_asn_auto_allocation:
             description:
             - Enable automatic BGP ASN allocation from the O(config.management.bgp_asn_range) pool.

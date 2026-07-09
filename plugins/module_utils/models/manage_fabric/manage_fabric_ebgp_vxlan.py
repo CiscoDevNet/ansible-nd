@@ -98,7 +98,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
 
     # Core eBGP Configuration
-    bgp_asn: str | None = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].")
+    bgp_asn: str = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].")
     site_id: str | None = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN for Spines", default="")
     bgp_as_mode: BgpAsModeEnum = Field(
         alias="bgpAsMode",
@@ -739,7 +739,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     @field_validator("bgp_asn")
     @classmethod
-    def validate_bgp_asn(cls, value: str | None) -> str | None:
+    def validate_bgp_asn(cls, value: str) -> str:
         """
         # Summary
 
@@ -749,8 +749,6 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
         - `ValueError` - If value does not match the expected ASN format
         """
-        if value is None:
-            return value
         if not BGP_ASN_RE.match(value):
             raise ValueError(f"Invalid BGP ASN '{value}'. Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
         return value
@@ -814,7 +812,7 @@ class FabricEbgpModel(FabricBaseModel):
     def _post_validate_consistency(self) -> None:
         """Propagate BGP ASN to site_id if site_id is empty."""
         super()._post_validate_consistency()
-        if self.management is not None and self.management.site_id == "" and self.management.bgp_asn is not None:
+        if self.management is not None and self.management.site_id == "":
             bgp_asn = self.management.bgp_asn
             if "." in bgp_asn:
                 high, low = bgp_asn.split(".")
