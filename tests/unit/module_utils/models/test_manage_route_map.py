@@ -293,8 +293,9 @@ def test_manage_route_map_model_00100() -> None:
     assert instance.api_name == "tenantSales~RM_EXPORT"
     assert instance.name == "RM_EXPORT"
     assert instance.tenant_name == "tenantSales"
+    assert instance.to_config()["name"] == "RM_EXPORT"
     assert instance.to_payload() == {
-        "name": "RM_EXPORT",
+        "name": "tenantSales~RM_EXPORT",
         "tenantName": "tenantSales",
         "entries": [
             {
@@ -335,8 +336,9 @@ def test_manage_route_map_model_00110() -> None:
     assert instance.last_update_timestamp == "2026-01-01T00:00:00Z"
     payload = instance.to_payload()
     assert "lastUpdateTimestamp" not in payload
-    assert payload["name"] == "RM_EXPORT"
+    assert payload["name"] == "tenantSales~RM_EXPORT"
     assert payload["tenantName"] == "tenantSales"
+    assert instance.to_config()["name"] == "RM_EXPORT"
 
 
 def test_manage_route_map_model_00115() -> None:
@@ -357,7 +359,8 @@ def test_manage_route_map_model_00115() -> None:
     assert instance.name == "RM_EXPORT"
     assert instance.api_name == "tenantSales~RM_EXPORT"
     assert instance.get_identifier_value() == "tenantSales~RM_EXPORT"
-    assert instance.to_payload() == {"name": "RM_EXPORT", "tenantName": "tenantSales"}
+    assert instance.to_payload() == {"name": "tenantSales~RM_EXPORT", "tenantName": "tenantSales"}
+    assert instance.to_config() == {"name": "RM_EXPORT", "tenant_name": "tenantSales"}
 
 
 def test_manage_route_map_model_00116() -> None:

@@ -284,7 +284,7 @@ def test_manage_route_map_orchestrator_00310() -> None:
     """
     # Summary
 
-    Verify tenant-scoped updates use the fully qualified API path with a bare-name payload.
+    Verify tenant-scoped updates use the fully qualified API path and payload name.
 
     ## Classes and Methods
 
@@ -304,7 +304,7 @@ def test_manage_route_map_orchestrator_00310() -> None:
     assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps/tenantSales~RM_UPDATE"
     assert rest_send.verb == HttpVerbEnum.PUT
     assert rest_send.committed_payload == model.to_payload()
-    assert rest_send.committed_payload["name"] == "RM_UPDATE"
+    assert rest_send.committed_payload["name"] == "tenantSales~RM_UPDATE"
     assert rest_send.committed_payload["tenantName"] == "tenantSales"
 
 

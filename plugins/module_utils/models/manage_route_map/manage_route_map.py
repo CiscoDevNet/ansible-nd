@@ -491,6 +491,13 @@ class RouteMapModel(NDBaseModel):
             return f"{self.tenant_name}~{self.name}"
         return self.name
 
+    def to_payload(self, **kwargs) -> dict[str, Any]:
+        """Export API payload, using the fully qualified API name for tenant-scoped route maps."""
+        data = super().to_payload(**kwargs)
+        if self.tenant_name:
+            data["name"] = self.api_name
+        return data
+
     @model_validator(mode="after")
     def normalize_tenant_scoped_name(self) -> "RouteMapModel":
         """Store tenant-scoped route maps with a bare name and tenant context."""
