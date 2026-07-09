@@ -24,6 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     RouteMapsEndpointParams,
     RouteMapsListEndpointParams,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import LuceneQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
@@ -105,10 +106,33 @@ def test_manage_route_maps_endpoint_00050() -> None:
     - RouteMapsListEndpointParams.to_query_string()
     - EpManageRouteMapsListGet.path
     """
-    instance = EpManageRouteMapsListGet(endpoint_params=RouteMapsListEndpointParams(cluster_name="cluster1", max=50, offset=10, sort="name:desc"))
+    instance = EpManageRouteMapsListGet(
+        endpoint_params=RouteMapsListEndpointParams(cluster_name="cluster1"),
+        lucene_params=LuceneQueryParams(max=50, offset=10, sort="name:desc"),
+    )
     instance.fabric_name = "SITE1"
 
-    assert instance.path == "/api/v1/manage/fabrics/SITE1/routeMaps?clusterName=cluster1&max=50&offset=10&sort=name:desc"
+    assert instance.path == "/api/v1/manage/fabrics/SITE1/routeMaps?clusterName=cluster1&max=50&offset=10&sort=name%3Adesc"
+
+
+def test_manage_route_maps_endpoint_00060() -> None:
+    """
+    # Summary
+
+    Verify Lucene filters are composed separately from endpoint query params.
+
+    ## Classes and Methods
+
+    - LuceneQueryParams.to_query_string()
+    - EpManageRouteMapsListGet.path
+    """
+    instance = EpManageRouteMapsListGet(
+        endpoint_params=RouteMapsListEndpointParams(cluster_name="cluster1"),
+        lucene_params=LuceneQueryParams(filter="name:RM SALES", max=100),
+    )
+    instance.fabric_name = "SITE1"
+
+    assert instance.path == "/api/v1/manage/fabrics/SITE1/routeMaps?clusterName=cluster1&filter=name:RM%20SALES&max=100"
 
 
 def test_manage_route_maps_endpoint_00100() -> None:

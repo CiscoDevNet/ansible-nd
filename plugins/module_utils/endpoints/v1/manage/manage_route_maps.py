@@ -34,8 +34,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin, RouteMapNameMixin
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import CompositeQueryParams, EndpointQueryParams, LuceneQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict, Field
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
@@ -58,6 +58,8 @@ class RouteMapsEndpointParams(EndpointQueryParams):
     ```
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     cluster_name: str | None = Field(
         default=None,
         min_length=1,
@@ -74,46 +76,25 @@ class RouteMapsListEndpointParams(EndpointQueryParams):
     ## Parameters
 
     - cluster_name: Name of the target Nexus Dashboard cluster (multi-cluster deployments)
-    - filter: Lucene-format filter string
-    - max: Maximum number of records to return
-    - offset: Number of records to skip for pagination
-    - sort: Sort field with optional ``:desc`` suffix
+
+    Lucene filtering, pagination, and sorting are handled by the list endpoint's
+    separate ``lucene_params`` field.
 
     ## Usage
 
     ```python
-    params = RouteMapsListEndpointParams(max=10, offset=0)
+    params = RouteMapsListEndpointParams(cluster_name="cluster1")
     query_string = params.to_query_string()
-    # Returns: "max=10&offset=0"
+    # Returns: "clusterName=cluster1"
     ```
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Name of the target Nexus Dashboard cluster to execute this API, in a multi-cluster deployment",
-    )
-
-    filter: str | None = Field(
-        default=None,
-        description="Lucene format filter - Filter the response based on this filter field",
-    )
-
-    max: int | None = Field(
-        default=None,
-        ge=1,
-        description="Number of records to return",
-    )
-
-    offset: int | None = Field(
-        default=None,
-        ge=0,
-        description="Number of records to skip for pagination",
-    )
-
-    sort: str | None = Field(
-        default=None,
-        description="Sort the records by the declared fields in either ascending (default) or descending (:desc) order",
     )
 
 
@@ -138,6 +119,10 @@ class _EpManageRouteMapsBase(RouteMapNameMixin, FabricNameMixin, NDEndpointBaseM
     def set_identifiers(self, identifier: IdentifierKey = None) -> None:
         """Set the route_map_name from the identifier value."""
         self.route_map_name = identifier
+
+    def _query_string(self) -> str:
+        """Return endpoint-specific query parameters."""
+        return self.endpoint_params.to_query_string()
 
     @property
     def path(self) -> str:
@@ -169,7 +154,7 @@ class _EpManageRouteMapsBase(RouteMapNameMixin, FabricNameMixin, NDEndpointBaseM
             segments.append(quote(self.route_map_name, safe=""))
 
         base_path = BasePath.path(*segments)
-        query_string = self.endpoint_params.to_query_string()
+        query_string = self._query_string()
         if query_string:
             return f"{base_path}?{query_string}"
         return base_path
@@ -259,6 +244,11 @@ class EpManageRouteMapsListGet(_EpManageRouteMapsBase):
     class_name: Literal["EpManageRouteMapsListGet"] = Field(default="EpManageRouteMapsListGet", description="Class name for backward compatibility")
 
     endpoint_params: RouteMapsListEndpointParams = Field(default_factory=RouteMapsListEndpointParams, description="Endpoint-specific query parameters")
+    lucene_params: LuceneQueryParams = Field(default_factory=LuceneQueryParams, description="Lucene-style filtering parameters")
+
+    def _query_string(self) -> str:
+        """Return composed endpoint and Lucene query parameters."""
+        return CompositeQueryParams().add(self.endpoint_params).add(self.lucene_params).to_query_string()
 
     @property
     def verb(self) -> HttpVerbEnum:
