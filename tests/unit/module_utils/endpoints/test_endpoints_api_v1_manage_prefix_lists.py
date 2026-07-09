@@ -408,12 +408,14 @@ def test_endpoints_prefix_lists_00050():
         instance = EpManageIpv4PrefixListsListGet()
         instance.fabric_name = "SITE1"
         instance.endpoint_params.cluster_name = "CLUSTER-1"
-        instance.endpoint_params.filter = "name=PL-*"
-        instance.endpoint_params.max = 100
+        instance.lucene_params.filter = "name:PL-1 AND tenantName:TENANT1"
+        instance.lucene_params.max = 100
         path = instance.path
     # Query string should be present
     assert "?" in path
-    assert "clusterName=CLUSTER-1" in path or "cluster_name=CLUSTER-1" in path
+    assert "clusterName=CLUSTER-1" in path
+    assert "filter=name:PL-1%20AND%20tenantName:TENANT1" in path
+    assert "max=100" in path
 
 
 # =============================================================================

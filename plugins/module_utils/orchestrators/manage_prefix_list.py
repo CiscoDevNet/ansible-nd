@@ -148,10 +148,6 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         except KeyError:
             raise ValueError(f"Unsupported ip_version '{version}'. Expected 'ipv4' or 'ipv6'.") from None
 
-    def _endpoint_classes_for_version(self, version: str) -> dict[str, Any]:
-        """Backwards-compatible accessor returning the per-version config (endpoint classes + payload keys)."""
-        return self._config_for_version(version)
-
     def _split_by_ip_version(self, model_instances: list[PrefixListModel]) -> dict[str, list[PrefixListModel]]:
         """Split model instances into ipv4/ipv6 buckets and fail fast on unsupported versions."""
         grouped: dict[str, list[PrefixListModel]] = {"ipv4": [], "ipv6": []}
@@ -180,6 +176,12 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             endpoint_params.max = max_records
         if offset is not None and hasattr(endpoint_params, "offset"):
             endpoint_params.offset = offset
+        lucene_params = getattr(api_endpoint, "lucene_params", None)
+        if lucene_params is not None:
+            if max_records is not None:
+                lucene_params.max = max_records
+            if offset is not None:
+                lucene_params.offset = offset
         return api_endpoint
 
     @staticmethod
@@ -354,7 +356,12 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             config = self._config_for_version(str(model_instance.ip_version))
             api_endpoint = self._configure_endpoint(config["get"]())
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+            if result:
+                result["ipVersion"] = str(model_instance.ip_version)
+                if model_instance.tenant_name is not None:
+                    result.setdefault("tenantName", model_instance.tenant_name)
+            return result
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 

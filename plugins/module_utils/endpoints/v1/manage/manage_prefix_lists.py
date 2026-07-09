@@ -49,7 +49,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin, PrefixListNameMixin
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import CompositeQueryParams, EndpointQueryParams, LuceneQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
@@ -73,38 +73,12 @@ class PrefixListsListEndpointParams(EndpointQueryParams):
     Query parameters for prefix list collection (list) endpoints.
 
     - cluster_name: multi-cluster target cluster name
-    - filter: Lucene-format filter string
-    - max: maximum number of records
-    - offset: records to skip for pagination
-    - sort: sort field with optional ``:desc`` suffix
     """
 
     cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Name of the target Nexus Dashboard cluster to execute this API, in a multi-cluster deployment",
-    )
-
-    filter: str | None = Field(
-        default=None,
-        description="Lucene format filter - Filter the response based on this filter field",
-    )
-
-    max: int | None = Field(
-        default=None,
-        ge=1,
-        description="Number of records to return",
-    )
-
-    offset: int | None = Field(
-        default=None,
-        ge=0,
-        description="Number of records to skip for pagination",
-    )
-
-    sort: str | None = Field(
-        default=None,
-        description="Sort the records by the declared fields in either ascending (default) or descending (:desc) order",
     )
 
 
@@ -151,7 +125,11 @@ class _EpManagePrefixListsBase(PrefixListNameMixin, FabricNameMixin, NDEndpointB
         if self.prefix_list_name is not None:
             segments.append(quote(self.prefix_list_name, safe=""))
         base = BasePath.path(*segments)
-        qs = self.endpoint_params.to_query_string()
+        query_params = CompositeQueryParams().add(self.endpoint_params)
+        lucene_params = getattr(self, "lucene_params", None)
+        if lucene_params is not None:
+            query_params.add(lucene_params)
+        qs = query_params.to_query_string()
         return f"{base}?{qs}" if qs else base
 
 
@@ -189,6 +167,7 @@ class EpManageIpv4PrefixListsListGet(_EpManageIpv4PrefixListsBase):
         default="EpManageIpv4PrefixListsListGet", description="Class name for backward compatibility"
     )
     endpoint_params: PrefixListsListEndpointParams = Field(default_factory=PrefixListsListEndpointParams)
+    lucene_params: LuceneQueryParams = Field(default_factory=LuceneQueryParams, description="Lucene query parameters")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -322,6 +301,7 @@ class EpManageIpv6PrefixListsListGet(_EpManageIpv6PrefixListsBase):
         default="EpManageIpv6PrefixListsListGet", description="Class name for backward compatibility"
     )
     endpoint_params: PrefixListsListEndpointParams = Field(default_factory=PrefixListsListEndpointParams)
+    lucene_params: LuceneQueryParams = Field(default_factory=LuceneQueryParams, description="Lucene query parameters")
 
     @property
     def verb(self) -> HttpVerbEnum:

@@ -108,7 +108,7 @@ def test_manage_prefix_list_00010() -> None:
 
 
 # =============================================================================
-# Test: _endpoint_classes_for_version helper (explicit routing + fail-fast)
+# Test: _config_for_version helper (explicit routing + fail-fast)
 # =============================================================================
 
 
@@ -116,16 +116,16 @@ def test_manage_prefix_list_00020() -> None:
     """
     # Summary
 
-    Verify _endpoint_classes_for_version returns correct endpoint classes for ipv4.
+    Verify _config_for_version returns correct endpoint classes for ipv4.
 
     ## Test
 
-    - _endpoint_classes_for_version("ipv4") returns IPv4 endpoint class dict
+    - _config_for_version("ipv4") returns IPv4 endpoint class dict
     - Dict includes get, list, post, put, delete, bulk_delete keys
 
     ## Classes and Methods
 
-    - ManagePrefixListOrchestrator._endpoint_classes_for_version()
+    - ManagePrefixListOrchestrator._config_for_version()
     """
 
     def responses():
@@ -136,7 +136,7 @@ def test_manage_prefix_list_00020() -> None:
     instance = ManagePrefixListOrchestrator(rest_send=rest_send)
 
     with does_not_raise():
-        ep_classes = instance._endpoint_classes_for_version("ipv4")
+        ep_classes = instance._config_for_version("ipv4")
 
     assert "get" in ep_classes
     assert "list" in ep_classes
@@ -150,16 +150,16 @@ def test_manage_prefix_list_00030() -> None:
     """
     # Summary
 
-    Verify _endpoint_classes_for_version returns correct endpoint classes for ipv6.
+    Verify _config_for_version returns correct endpoint classes for ipv6.
 
     ## Test
 
-    - _endpoint_classes_for_version("ipv6") returns IPv6 endpoint class dict
+    - _config_for_version("ipv6") returns IPv6 endpoint class dict
     - Dict includes get, list, post, put, delete, bulk_delete keys
 
     ## Classes and Methods
 
-    - ManagePrefixListOrchestrator._endpoint_classes_for_version()
+    - ManagePrefixListOrchestrator._config_for_version()
     """
 
     def responses():
@@ -170,7 +170,7 @@ def test_manage_prefix_list_00030() -> None:
     instance = ManagePrefixListOrchestrator(rest_send=rest_send)
 
     with does_not_raise():
-        ep_classes = instance._endpoint_classes_for_version("ipv6")
+        ep_classes = instance._config_for_version("ipv6")
 
     assert "get" in ep_classes
     assert "list" in ep_classes
@@ -180,16 +180,16 @@ def test_manage_prefix_list_00040() -> None:
     """
     # Summary
 
-    Verify _endpoint_classes_for_version raises ValueError for unknown ip_version (fail-fast routing).
+    Verify _config_for_version raises ValueError for unknown ip_version (fail-fast routing).
 
     ## Test
 
-    - _endpoint_classes_for_version("invalid") raises ValueError
+    - _config_for_version("invalid") raises ValueError
     - Error message identifies the unknown version
 
     ## Classes and Methods
 
-    - ManagePrefixListOrchestrator._endpoint_classes_for_version()
+    - ManagePrefixListOrchestrator._config_for_version()
     """
 
     def responses():
@@ -200,7 +200,7 @@ def test_manage_prefix_list_00040() -> None:
     instance = ManagePrefixListOrchestrator(rest_send=rest_send)
 
     with pytest.raises(ValueError, match="Unsupported ip_version.*invalid"):
-        instance._endpoint_classes_for_version("invalid")
+        instance._config_for_version("invalid")
 
 
 # =============================================================================
@@ -406,7 +406,7 @@ def test_manage_prefix_list_00100() -> None:
 
     ## Classes and Methods
 
-    - ManagePrefixListOrchestrator._endpoint_classes_for_version()
+    - ManagePrefixListOrchestrator._config_for_version()
     """
 
     def responses():
@@ -416,8 +416,8 @@ def test_manage_prefix_list_00100() -> None:
     rest_send = _build_rest_send(gen_responses)
     instance = ManagePrefixListOrchestrator(rest_send=rest_send)
 
-    ipv4_classes = instance._endpoint_classes_for_version("ipv4")
-    ipv6_classes = instance._endpoint_classes_for_version("ipv6")
+    ipv4_classes = instance._config_for_version("ipv4")
+    ipv6_classes = instance._config_for_version("ipv6")
 
     # Verify they are different classes
     assert ipv4_classes["get"] is not ipv6_classes["get"]
@@ -1120,6 +1120,7 @@ def test_manage_prefix_list_00220() -> None:
     assert rest_send.verb == HttpVerbEnum.GET.value
     assert rest_send.path.endswith("/ipv4PrefixLists/PL-IPV4-BORDERS")
     assert result["name"] == "PL-IPV4-BORDERS"
+    assert result["ipVersion"] == "ipv4"
 
 
 def test_manage_prefix_list_00230() -> None:
@@ -1143,6 +1144,8 @@ def test_manage_prefix_list_00230() -> None:
     model = PrefixListModel.from_config(config)
 
     with does_not_raise():
-        instance.query_one(model)
+        result = instance.query_one(model)
 
     assert rest_send.path.endswith("/ipv4PrefixLists/TENANT1~PL-IPV4-BORDERS")
+    assert result["ipVersion"] == "ipv4"
+    assert result["tenantName"] == "TENANT1"

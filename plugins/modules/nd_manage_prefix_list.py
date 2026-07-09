@@ -104,6 +104,9 @@ options:
           prefix:
             description:
             - The IP prefix in CIDR notation.
+            - Host bits are normalized to the containing network for idempotency.
+              For example, C(10.1.1.5/24) is treated as C(10.1.1.0/24) and a
+              bare host address is treated as a host route.
             - Must be an IPv4 CIDR (e.g. C(10.0.0.0/8)) when
               O(config.ip_version=ipv4).
             - Must be an IPv6 CIDR (e.g. C(2001:db8::/32)) when
@@ -166,6 +169,8 @@ notes:
   A single task may contain a mix of IPv4 and IPv6 entries.
 - Prefix and mask values are normalized locally for stable idempotency when Nexus Dashboard returns
   equivalent IPv6 values in compressed notation.
+- Prefix normalization uses network semantics, so host bits in O(config.entries.prefix) are masked
+  to the containing network before comparison and payload generation.
 """
 
 EXAMPLES = r"""
