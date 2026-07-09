@@ -94,6 +94,7 @@ class PrefixListEntryModel(NDNestedModel):
     )
 
     action: PrefixListActionEnum = Field(
+        default=PrefixListActionEnum.PERMIT,
         alias="action",
         description="Action for matching prefixes: permit or deny.",
     )
@@ -390,7 +391,8 @@ class PrefixListModel(NDBaseModel):
                             ),
                             action=dict(
                                 type="str",
-                                required=True,
+                                required=False,
+                                default="permit",
                                 choices=["permit", "deny"],
                             ),
                             prefix=dict(

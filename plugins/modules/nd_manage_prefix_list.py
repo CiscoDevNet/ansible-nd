@@ -96,9 +96,9 @@ options:
           action:
             description:
             - The action to take when the prefix matches.
-            - No default is applied because the action changes routing-policy behavior.
+            - Defaults to C(permit), matching the Nexus Dashboard UI default.
             type: str
-            required: true
+            default: permit
             choices: [ permit, deny ]
           prefix:
             description:

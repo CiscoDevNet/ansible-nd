@@ -92,6 +92,21 @@ def test_manage_prefix_list_00010() -> None:
     assert entry.mask is None
 
 
+def test_manage_prefix_list_00015() -> None:
+    """
+    # Summary
+
+    Verify PrefixListEntryModel defaults action to permit.
+
+    ## Classes and Methods
+
+    - PrefixListEntryModel.__init__()
+    """
+    entry = PrefixListEntryModel(sequence_number=10, prefix="10.0.1.0/24")
+
+    assert entry.action == "permit"
+
+
 def test_manage_prefix_list_00020() -> None:
     """
     # Summary
@@ -602,6 +617,8 @@ def test_manage_prefix_list_00170() -> None:
     assert entries["type"] == "list"
     assert entries["elements"] == "dict"
     assert entries["required"] is False
+    assert entries["options"]["action"]["default"] == "permit"
+    assert entries["options"]["action"]["required"] is False
 
 
 def test_manage_prefix_list_00175() -> None:
