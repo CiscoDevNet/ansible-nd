@@ -499,6 +499,7 @@ def test_manage_route_map_model_00200() -> None:
     config_options = spec["config"]["options"]
     rule_options = config_options["entries"]["options"]["rule_entries"]["options"]
 
+    assert spec["cluster_name"]["type"] == "str"
     assert config_options["name"]["required"] is True
     assert config_options["entries"].get("required") is not True
     assert config_options["tenant_name"]["aliases"] == ["tenantName"]

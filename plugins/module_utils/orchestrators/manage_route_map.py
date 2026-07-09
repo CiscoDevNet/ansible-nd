@@ -65,6 +65,11 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
         return self.rest_send.params.get("fabric_name")
 
     @property
+    def cluster_name(self) -> str | None:
+        """Return the optional target cluster name from module params."""
+        return self.rest_send.params.get("cluster_name")
+
+    @property
     def fabric_context(self) -> FabricContext:
         """Return a lazily-created fabric context for pre-flight checks."""
         if self._fabric_context is None:
@@ -72,8 +77,11 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
         return self._fabric_context
 
     def _configure_endpoint(self, api_endpoint):
-        """Set fabric_name on a route-map endpoint before path generation."""
+        """Set module-scoped endpoint values before path generation."""
         api_endpoint.fabric_name = self.fabric_name
+        params = getattr(api_endpoint, "endpoint_params", None)
+        if self.cluster_name and params is not None and hasattr(params, "cluster_name"):
+            params.cluster_name = self.cluster_name
         return api_endpoint
 
     def preflight(self, model_instances: list[RouteMapModel]) -> None:

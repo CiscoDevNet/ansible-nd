@@ -33,13 +33,16 @@ def _response(data: dict | None = None, return_code: int = 200, message: str = "
     }
 
 
-def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "SITE1") -> RestSend:
+def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "SITE1", cluster_name: str | None = None) -> RestSend:
     """Build a RestSend wired to file-style sender responses."""
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
     sender.gen = gen_responses
 
-    rest_send = RestSend({"check_mode": False, "fabric_name": fabric_name, "state": "merged"})
+    params = {"check_mode": False, "fabric_name": fabric_name, "state": "merged"}
+    if cluster_name is not None:
+        params["cluster_name"] = cluster_name
+    rest_send = RestSend(params)
     rest_send.sender = sender
     rest_send.response_handler = ResponseHandler()
     rest_send.unit_test = True
@@ -102,6 +105,7 @@ def test_manage_route_map_orchestrator_00010() -> None:
     assert instance.supports_bulk_create is True
     assert instance.supports_bulk_delete is True
     assert instance.fabric_name == "SITE1"
+    assert instance.cluster_name is None
 
 
 def test_manage_route_map_orchestrator_00020() -> None:
@@ -177,6 +181,33 @@ def test_manage_route_map_orchestrator_00110() -> None:
     assert result == model.to_payload()
     assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps/RM_ONE"
     assert rest_send.verb == HttpVerbEnum.GET
+
+
+def test_manage_route_map_orchestrator_00120() -> None:
+    """
+    # Summary
+
+    Verify cluster_name is forwarded to route-map read endpoints.
+
+    ## Classes and Methods
+
+    - ManageRouteMapOrchestrator.query_all()
+    - ManageRouteMapOrchestrator.query_one()
+    """
+    model = _route_map_model("RM_ONE")
+
+    def responses():
+        yield _response({"routeMaps": []})
+        yield _response(model.to_payload())
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), cluster_name="CLUSTER-1")
+    instance = ManageRouteMapOrchestrator(rest_send=rest_send)
+
+    instance.query_all()
+    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps?clusterName=CLUSTER-1"
+
+    instance.query_one(model)
+    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps/RM_ONE?clusterName=CLUSTER-1"
 
 
 def test_manage_route_map_orchestrator_00200() -> None:
@@ -405,3 +436,35 @@ def test_manage_route_map_orchestrator_00420() -> None:
 
     with pytest.raises(Exception, match=r"Bulk delete failed: Route map bulk delete failed for RM_MISSING: failed: Route map not found\."):
         instance.delete_bulk([model])
+
+
+def test_manage_route_map_orchestrator_00500() -> None:
+    """
+    # Summary
+
+    Verify cluster_name is forwarded to route-map mutation endpoints.
+
+    ## Classes and Methods
+
+    - ManageRouteMapOrchestrator.create_bulk()
+    - ManageRouteMapOrchestrator.update()
+    - ManageRouteMapOrchestrator.delete_bulk()
+    """
+    model = _route_map_model("RM_CLUSTER")
+
+    def responses():
+        yield _response({"results": [{"name": "RM_CLUSTER", "status": "success", "message": "created"}]}, return_code=207, message="Multi-Status")
+        yield _response(return_code=204, message="No Content")
+        yield _response({"results": [{"name": "RM_CLUSTER", "status": "success", "message": "removed"}]}, return_code=207, message="Multi-Status")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), cluster_name="CLUSTER-1")
+    instance = ManageRouteMapOrchestrator(rest_send=rest_send)
+
+    instance.create_bulk([model])
+    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps?clusterName=CLUSTER-1"
+
+    instance.update(model)
+    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps/RM_CLUSTER?clusterName=CLUSTER-1"
+
+    instance.delete_bulk([model])
+    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMapActions/remove?clusterName=CLUSTER-1"

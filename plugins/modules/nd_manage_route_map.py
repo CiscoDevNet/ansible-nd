@@ -26,6 +26,10 @@ options:
     - This is a required parameter for all operations.
     type: str
     required: true
+  cluster_name:
+    description:
+    - Target cluster name in a multi-cluster deployment.
+    type: str
   config:
     description:
     - The list of route maps to configure.

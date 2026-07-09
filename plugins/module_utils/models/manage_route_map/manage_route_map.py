@@ -528,6 +528,9 @@ class RouteMapModel(NDBaseModel):
                 type="str",
                 required=True,
             ),
+            cluster_name=dict(
+                type="str",
+            ),
             config=dict(
                 type="list",
                 elements="dict",
