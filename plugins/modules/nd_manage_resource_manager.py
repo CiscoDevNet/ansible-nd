@@ -335,12 +335,12 @@ proposed:
   elements: dict
 api_paths:
   description: API request paths included when Ansible verbosity is C(-vv) or higher.
-  returned: when verbosity is C(-vv) or higher
+  returned: when verbosity is C(-vvv) or higher
   type: list
   elements: str
 api_verbs:
   description: API request methods included when Ansible verbosity is C(-vv) or higher.
-  returned: when verbosity is C(-vv) or higher
+  returned: when verbosity is C(-vvv) or higher
   type: list
   elements: str
 api_response:
