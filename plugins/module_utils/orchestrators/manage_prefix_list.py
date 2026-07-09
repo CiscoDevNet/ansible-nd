@@ -269,7 +269,7 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
                 results.append(item)
             if not self._has_next_page(raw, len(page), offset):
                 break
-            offset += _QUERY_PAGE_SIZE
+            offset += len(page)
         return results
 
     @staticmethod

@@ -617,13 +617,16 @@ def test_manage_prefix_list_00136() -> None:
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses, state="overridden")
-    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    results = Results()
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send, results=results)
 
     with does_not_raise():
         result = instance.query_all()
 
     assert [row["name"] for row in result] == ["PL-IPV4-PAGE-1", "PL-IPV4-PAGE-2"]
     assert {row["ipVersion"] for row in result} == {"ipv4"}
+    assert results.path[0].endswith("/ipv4PrefixLists?max=100&offset=0")
+    assert results.path[1].endswith("/ipv4PrefixLists?max=100&offset=1")
 
 
 # =============================================================================
