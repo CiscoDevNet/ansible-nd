@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from typing import Any, ClassVar, Dict, List, Literal, Optional, Set
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -106,7 +106,7 @@ class PrefixListEntryModel(NDNestedModel):
         description="IP prefix in CIDR notation (e.g. '10.1.1.0/24' or '2001:db8::/32').",
     )
 
-    exact_length: Optional[int] = Field(
+    exact_length: int | None = Field(
         default=None,
         alias="exactLength",
         description="Exact prefix length to match.",
@@ -114,19 +114,19 @@ class PrefixListEntryModel(NDNestedModel):
 
     # NOTE: Python field names avoid collision with Pydantic's built-in
     # ``min_length`` / ``max_length`` Field constraints.
-    min_prefix_length: Optional[int] = Field(
+    min_prefix_length: int | None = Field(
         default=None,
         alias="minLength",
         description="Minimum prefix length to match.",
     )
 
-    max_prefix_length: Optional[int] = Field(
+    max_prefix_length: int | None = Field(
         default=None,
         alias="maxLength",
         description="Maximum prefix length to match.",
     )
 
-    mask: Optional[str] = Field(
+    mask: str | None = Field(
         default=None,
         alias="mask",
         description="Explicit match mask in dotted-decimal IPv4 or IPv6 address format.",
@@ -143,7 +143,7 @@ class PrefixListEntryModel(NDNestedModel):
 
     @field_validator("mask")
     @classmethod
-    def normalize_mask(cls, value: Optional[str]) -> Optional[str]:
+    def normalize_mask(cls, value: str | None) -> str | None:
         """Normalize explicit match masks so equivalent IPv6 spellings do not cause false diffs."""
         if value is None:
             return None
@@ -174,14 +174,14 @@ class PrefixListModel(NDBaseModel):
 
     # --- Identifier Configuration ---
 
-    identifiers: ClassVar[Optional[List[str]]] = ["ip_version", "tenant_name", "name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "composite"
+    identifiers: ClassVar[list[str] | None] = ["ip_version", "tenant_name", "name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
 
     # --- Serialization Configuration ---
 
-    exclude_from_diff: ClassVar[Set[str]] = {"last_update_timestamp"}
-    payload_exclude_fields: ClassVar[Set[str]] = {"ip_version", "last_update_timestamp"}
-    unwanted_keys: ClassVar[List] = []
+    exclude_from_diff: ClassVar[set[str]] = {"last_update_timestamp"}
+    payload_exclude_fields: ClassVar[set[str]] = {"ip_version", "last_update_timestamp"}
+    unwanted_keys: ClassVar[list] = []
 
     # --- Fields ---
 
@@ -204,20 +204,20 @@ class PrefixListModel(NDBaseModel):
         description="Description of the prefix list.",
     )
 
-    last_update_timestamp: Optional[str] = Field(
+    last_update_timestamp: str | None = Field(
         default=None,
         alias="lastUpdateTimestamp",
         description="Timestamp of the last update (read-only, set by ND).",
     )
 
-    tenant_name: Optional[str] = Field(
+    tenant_name: str | None = Field(
         default=None,
         alias="tenantName",
         max_length=63,
         description="Name of the tenant (pattern: ^[A-Za-z0-9_-]+$).",
     )
 
-    entries: Optional[List[PrefixListEntryModel]] = Field(
+    entries: list[PrefixListEntryModel] | None = Field(
         default=None,
         alias="entries",
         description="List of prefix list entries.",
@@ -260,7 +260,7 @@ class PrefixListModel(NDBaseModel):
 
     @field_validator("tenant_name")
     @classmethod
-    def validate_tenant_name(cls, value: Optional[str]) -> Optional[str]:
+    def validate_tenant_name(cls, value: str | None) -> str | None:
         """Enforce tenant name pattern: ^[A-Za-z0-9_-]+$."""
         if value is not None and not _TENANT_RE.match(value):
             raise ValueError(f"Tenant name '{value}' is invalid. " "Only alphanumeric characters, '_', and '-' are allowed.")
@@ -375,7 +375,7 @@ class PrefixListModel(NDBaseModel):
         return super().get_diff(other, exclude_unset=exclude_unset)
 
     @classmethod
-    def validate_config_for_state(cls, config: List[Dict[str, Any]], state: str) -> None:
+    def validate_config_for_state(cls, config: list[dict[str, Any]], state: str) -> None:
         """Validate state-dependent requirements that cannot be expressed in a static Ansible argspec."""
         if state not in {"merged", "replaced", "overridden"}:
             return
@@ -385,7 +385,7 @@ class PrefixListModel(NDBaseModel):
                 raise ValueError(f"config[{index}].entries is required and must contain at least one entry when state is '{state}'.")
 
     @classmethod
-    def get_argument_spec(cls) -> Dict[str, Any]:
+    def get_argument_spec(cls) -> dict[str, Any]:
         return dict(
             fabric_name=dict(
                 type="str",
