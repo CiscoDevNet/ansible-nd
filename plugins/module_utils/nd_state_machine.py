@@ -101,11 +101,26 @@ class NDStateMachine:
             # subset = proposed items not present in the existing inventory -- the same key-membership
             # criterion get_diff_config uses to classify "new" (PR #362 review).
             items_to_create = [item for item in proposed_items if self.existing.get(item.get_identifier_value()) is None]
-            self.model_orchestrator.preflight_create(items_to_create)
 
-            # Capability preflight runs here -- before _manage_create_update_state, whose mutations are
-            # skipped in check mode -- so dry-runs surface incapable switches (PR #275 / issue #273).
-            self.model_orchestrator.preflight(proposed_items)
+            # Normalize preflight failures to NDStateMachineError (PR #362 review, gmicol). Both preflight
+            # hooks raise a bare RuntimeError (base_interface.preflight_create / the capability preflight),
+            # but nd_interface_svi and nd_interface_subinterface_managed/_unmanaged catch only
+            # NDStateMachineError at their entrypoint. Without this wrap a policy-less (or capability) preflight
+            # failure in those modules escapes as an unhandled RuntimeError, bypassing fail_json and losing the
+            # structured before/after/changed output the guard exists to provide. This wrap deliberately does
+            # NOT route through _execute_operation: both preflights must run in check mode too, and
+            # _execute_operation skips execution during a dry-run.
+            try:
+                self.model_orchestrator.preflight_create(items_to_create)
+
+                # Capability preflight runs here -- before _manage_create_update_state, whose mutations are
+                # skipped in check mode -- so dry-runs surface incapable switches (PR #275 / issue #273).
+                self.model_orchestrator.preflight(proposed_items)
+            except NDStateMachineError:
+                raise
+            except Exception as e:
+                raise NDStateMachineError(f"Preflight failed: {e}") from e
+
             self._manage_create_update_state()
 
             if self.state == "overridden":

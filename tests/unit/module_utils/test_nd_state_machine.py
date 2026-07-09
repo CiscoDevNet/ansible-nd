@@ -31,6 +31,7 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -303,12 +304,15 @@ def test_nd_state_machine_00150() -> None:
 
     Verify a `preflight_create` failure propagates out of `manage_state` BEFORE any mutation, even outside check mode.
     This guards the seam: the guard is wired ahead of the create/update execution loops, so a policy-less create fails
-    fast with no `create`/`create_bulk` side effect.
+    fast with no `create`/`create_bulk` side effect. The raw `RuntimeError` from the guard is normalized to
+    `NDStateMachineError` so module entrypoints that catch only `NDStateMachineError` still route through `fail_json`
+    (PR #362 review).
 
     ## Test
 
     - `state: merged`, `check_mode: False`, one new policy-less item
-    - `preflight_create` raises `RuntimeError`, which propagates from `manage_state`
+    - `preflight_create` raises `RuntimeError`, which `manage_state` re-raises as `NDStateMachineError`
+    - The original `RuntimeError` is preserved as the exception `__cause__`
     - No `create`/`create_bulk` call is recorded (failed before the mutation loop)
 
     ## Classes and Methods
@@ -321,8 +325,10 @@ def test_nd_state_machine_00150() -> None:
     module = _build_module(state="merged", check_mode=False, config=_CONFIG)
     instance = NDStateMachine(module=module, model_orchestrator=spy)
 
-    with pytest.raises(RuntimeError, match=r"without a policy"):
+    with pytest.raises(NDStateMachineError, match=r"without a policy") as exc_info:
         instance.manage_state()
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
 
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert "preflight_create" in names
@@ -342,7 +348,7 @@ def test_nd_state_machine_00160() -> None:
     ## Test
 
     - `state: merged`, `check_mode: False`, one new policy-less item; `preflight_create` raises `RuntimeError`
-    - The error propagates from `manage_state`
+    - The error propagates from `manage_state` (normalized to `NDStateMachineError`)
     - `output.format()` reports `changed is False`, `before == []`, and `after == []` (no phantom item)
 
     ## Classes and Methods
@@ -355,7 +361,7 @@ def test_nd_state_machine_00160() -> None:
     module = _build_module(state="merged", check_mode=False, config=_CONFIG)
     instance = NDStateMachine(module=module, model_orchestrator=spy)
 
-    with pytest.raises(RuntimeError, match=r"without a policy"):
+    with pytest.raises(NDStateMachineError, match=r"without a policy"):
         instance.manage_state()
 
     output = instance.output.format()
@@ -393,7 +399,7 @@ def test_nd_state_machine_00170() -> None:
 
     - `state: merged`, `check_mode: False`, one new policy-less item
     - Capability `preflight` is rigged to raise, and `preflight_create` is the real `base_interface` guard
-    - The policy error (`without a policy`) propagates, not the capability error
+    - The policy error (`without a policy`) propagates (normalized to `NDStateMachineError`), not the capability error
     - The recorded call order shows `preflight_create` first
 
     ## Classes and Methods
@@ -405,8 +411,56 @@ def test_nd_state_machine_00170() -> None:
     module = _build_module(state="merged", check_mode=False, config=_CONFIG)
     instance = NDStateMachine(module=module, model_orchestrator=spy)
 
-    with pytest.raises(RuntimeError, match=r"without a policy"):
+    with pytest.raises(NDStateMachineError, match=r"without a policy"):
         instance.manage_state()
 
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert names[0] == "preflight_create"
+
+
+class _CapabilityOnlyFailingSpy(_SpyLoopbackOrchestrator):
+    """Spy whose capability `preflight` raises while `preflight_create` is the record-only no-op inherited from
+    `_SpyLoopbackOrchestrator`. Isolates the capability-preflight leg so a test can assert its bare `RuntimeError`
+    is normalized to `NDStateMachineError` by `manage_state` -- the latent gap the PR #362 review wrap also closes.
+    """
+
+    def preflight(self, model_instances) -> None:
+        self._calls.append(("preflight", list(model_instances)))
+        raise RuntimeError("capability preflight failed: switch not capable")
+
+
+def test_nd_state_machine_00180() -> None:
+    """
+    # Summary
+
+    Verify a capability `preflight` failure is normalized to `NDStateMachineError` by `manage_state`, not left as a
+    bare `RuntimeError`. Without this, nd_interface_svi and nd_interface_subinterface_managed/_unmanaged -- which catch
+    only `NDStateMachineError` at their entrypoint -- would let a capability-preflight failure escape as an unhandled
+    exception, bypassing `fail_json` and the structured before/after/changed output (PR #362 review, gmicol). The
+    policy guard passes here (record-only spy) so the capability leg is the raising one, and no mutation runs.
+
+    ## Test
+
+    - `state: merged`, `check_mode: False`, one new item; `preflight_create` is the record-only no-op, capability
+      `preflight` raises `RuntimeError`
+    - `manage_state` re-raises as `NDStateMachineError` carrying the capability message, with the `RuntimeError` as
+      `__cause__`
+    - No `create`/`create_bulk` call is recorded (failed before the mutation loop)
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - NDBaseInterfaceOrchestrator.preflight()
+    """
+    spy = _CapabilityOnlyFailingSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"capability preflight failed") as exc_info:
+        instance.manage_state()
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert "create" not in names
+    assert "create_bulk" not in names
