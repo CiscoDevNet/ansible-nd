@@ -317,15 +317,22 @@ EXAMPLES = """
 
 RETURN = """
 changed:
-  description: Whether any changes were made.
-  returned: when state is not gathered
+  description:
+  - Whether any changes were made.
+  - Returned for all states; for C(state=gathered) this module returns C(false).
+  returned: always
   type: bool
 diff:
-  description: Tracking of merged and deleted resources.
-  returned: when state is not gathered and verbosity is C(-v) or C(-vv)
+  description: Tracking of merged, deleted, gathered, and debug resource buckets.
+  returned: when state is not gathered
   type: list
   elements: dict
   sample: [{"merged": [], "deleted": [], "gathered": [], "debugs": []}]
+proposed:
+  description: Proposed resource operations before execution.
+  returned: when state is not gathered and C(output_level) is C(info) or C(debug)
+  type: list
+  elements: dict
 api_paths:
   description: API request paths included when Ansible verbosity is C(-vv) or higher.
   returned: when verbosity is C(-vv) or higher
@@ -362,16 +369,22 @@ api_payload:
   type: list
   elements: raw
 before:
-  description: State before module execution (always empty list for this module).
+  description:
+  - State snapshot before module execution.
+  - Entries are translated to the module C(state=merged) config shape.
   returned: when state is not gathered
   type: list
+  elements: dict
 after:
-  description: State after module execution (always empty list for this module).
+  description:
+  - State snapshot after module execution.
+  - Entries are translated to the module C(state=merged) config shape.
   returned: when state is not gathered
   type: list
+  elements: dict
 gathered:
   description:
-  - The current fabric resource returned.
+  - The current fabric resources returned.
   - Each entry mirrors the resource data from the ND API.
   returned: when state is gathered
   type: list
