@@ -841,6 +841,21 @@ def main():
     )
 
     require_pydantic(module)
+
+    # Parse and validate config_actions BEFORE any state mutation so invalid
+    # input fails deterministically on every run, including idempotent no-drift
+    # runs, and never mutates ND before failing.
+    config_actions = module.params.get("config_actions") or {}
+    save = config_actions.get("save", False)
+    deploy = config_actions.get("deploy", False)
+    deploy_type = config_actions.get("type", "switch")
+    state = module.params.get("state", "merged")
+
+    try:
+        ManageExternalFabricOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+    except ValueError as e:
+        module.fail_json(msg=str(e))
+
     nd_state_machine = None
     try:
         # Initialize StateMachine
@@ -852,13 +867,7 @@ def main():
         # Manage state
         nd_state_machine.manage_state()
 
-        # Execute config save/deploy actions via orchestrator mixin
-        config_actions = module.params.get("config_actions") or {}
-        save = config_actions.get("save", False)
-        deploy = config_actions.get("deploy", False)
-        deploy_type = config_actions.get("type", "global")
-        state = module.params.get("state", "merged")
-
+        # Execute config save/deploy actions via orchestrator mixin (only on real changes)
         if state != "deleted" and len(nd_state_machine.sent) > 0:
             fabric_names = []
             for item in nd_state_machine.sent:

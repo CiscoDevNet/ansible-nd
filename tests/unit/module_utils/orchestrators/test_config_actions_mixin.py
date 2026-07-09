@@ -700,3 +700,97 @@ class TestExecuteConfigActions:
 
         # 3 API calls: save + GET switches + POST switchActions/deploy
         assert len(results._tasks) == 3
+
+
+# =============================================================================
+# Test: validate_config_actions (side-effect-free input validation)
+# =============================================================================
+
+
+class TestValidateConfigActions:
+    """Tests for ConfigActionsMixin.validate_config_actions().
+
+    This validator is intended to be called *before* any resource mutation and
+    without an orchestrator instance, so invalid input fails deterministically
+    on every run (including idempotent no-drift runs) and never mutates ND.
+    """
+
+    def test_deploy_without_save_raises_value_error(self):
+        """
+        # Summary
+
+        Verify validate_config_actions raises ValueError when deploy=True and save=False.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.validate_config_actions()
+        """
+        with pytest.raises(ValueError, match="deploy=True requires save=True"):
+            ConfigActionsMixin.validate_config_actions(save=False, deploy=True, deploy_type="switch")
+
+    def test_invalid_deploy_type_raises_value_error(self):
+        """
+        # Summary
+
+        Verify validate_config_actions raises ValueError for an invalid deploy_type.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.validate_config_actions()
+        """
+        with pytest.raises(ValueError, match="invalid type"):
+            ConfigActionsMixin.validate_config_actions(save=True, deploy=True, deploy_type="bogus")
+
+    def test_save_and_deploy_valid(self):
+        """
+        # Summary
+
+        Verify validate_config_actions accepts save=True with deploy=True.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.validate_config_actions()
+        """
+        ConfigActionsMixin.validate_config_actions(save=True, deploy=True, deploy_type="switch")
+        ConfigActionsMixin.validate_config_actions(save=True, deploy=True, deploy_type="global")
+
+    def test_save_only_valid(self):
+        """
+        # Summary
+
+        Verify validate_config_actions accepts save=True with deploy=False.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.validate_config_actions()
+        """
+        ConfigActionsMixin.validate_config_actions(save=True, deploy=False, deploy_type="switch")
+
+    def test_both_false_valid(self):
+        """
+        # Summary
+
+        Verify validate_config_actions accepts both save and deploy as False (no action).
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.validate_config_actions()
+        """
+        ConfigActionsMixin.validate_config_actions(save=False, deploy=False, deploy_type="switch")
+        # Defaults are also valid (no action, default type).
+        ConfigActionsMixin.validate_config_actions()
+
+    def test_callable_on_orchestrator_class_without_instance(self):
+        """
+        # Summary
+
+        Verify validate_config_actions is reachable via the concrete orchestrator class
+        without constructing an instance, mirroring how module main() calls it before
+        creating the state machine.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.validate_config_actions()
+        """
+        with pytest.raises(ValueError, match="deploy=True requires save=True"):
+            ConfigActionsOrchestrator.validate_config_actions(save=False, deploy=True, deploy_type="switch")

@@ -165,6 +165,32 @@ class ConfigActionsMixin:
                     switch_ids.append(serial_number)
         return switch_ids
 
+    @staticmethod
+    def validate_config_actions(
+        save: bool = False,
+        deploy: bool = False,
+        deploy_type: str = "switch",
+    ) -> None:
+        """Validate config_actions input independently of execution.
+
+        This is intentionally side-effect free so callers can validate user
+        input *before* any resource mutation and regardless of whether the run
+        results in changes. This guarantees invalid input fails deterministically
+        on every run, including idempotent no-drift runs, without mutating ND.
+
+        Args:
+            save: Whether to save configuration.
+            deploy: Whether to deploy configuration (requires save=True).
+            deploy_type: ``"global"`` or ``"switch"``.
+
+        Raises:
+            ValueError: If deploy=True but save=False, or deploy_type is invalid.
+        """
+        if deploy and not save:
+            raise ValueError("config_actions: deploy=True requires save=True")
+        if deploy_type not in ("global", "switch"):
+            raise ValueError(f"config_actions: invalid type '{deploy_type}'. Must be 'global' or 'switch'.")
+
     def execute_config_actions(
         self,
         fabric_names: List[str],
@@ -184,8 +210,7 @@ class ConfigActionsMixin:
             ValueError: If deploy=True but save=False.
             Exception: If any save or deploy request fails.
         """
-        if deploy and not save:
-            raise ValueError("config_actions: deploy=True requires save=True")
+        self.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
 
         if not save and not deploy:
             return

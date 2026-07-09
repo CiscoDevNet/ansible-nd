@@ -3,22 +3,27 @@
 test_fabric_merged: "ibgp_test_fabric_merged"
 test_fabric_replaced: "ibgp_test_fabric_replaced"
 test_fabric_deleted: "ibgp_test_fabric_deleted"
+test_fabric_config_actions: "ibgp_test_fabric_config_actions"
 
 ebgp_test_fabric_merged: "ebgp_test_fabric_merged"
 ebgp_test_fabric_replaced: "ebgp_test_fabric_replaced"
 ebgp_test_fabric_deleted: "ebgp_test_fabric_deleted"
+ebgp_test_fabric_config_actions: "ebgp_test_fabric_config_actions"
 
 ext_test_fabric_merged: "ext_test_fabric_merged"
 ext_test_fabric_replaced: "ext_test_fabric_replaced"
 ext_test_fabric_deleted: "ext_test_fabric_deleted"
+ext_test_fabric_config_actions: "ext_test_fabric_config_actions"
 
 ai_ibgp_test_fabric_merged: "ai_ibgp_test_fabric_merged"
 ai_ibgp_test_fabric_replaced: "ai_ibgp_test_fabric_replaced"
 ai_ibgp_test_fabric_deleted: "ai_ibgp_test_fabric_deleted"
+ai_ibgp_test_fabric_config_actions: "ai_ibgp_test_fabric_config_actions"
 
 ai_ebgp_test_fabric_merged: "ai_ebgp_test_fabric_merged"
 ai_ebgp_test_fabric_replaced: "ai_ebgp_test_fabric_replaced"
 ai_ebgp_test_fabric_deleted: "ai_ebgp_test_fabric_deleted"
+ai_ebgp_test_fabric_config_actions: "ai_ebgp_test_fabric_config_actions"
 
 # Common fabric configuration for all tests
 # common_fabric_config:
