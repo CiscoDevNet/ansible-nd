@@ -41,7 +41,7 @@
   ansible.builtin.assert:
     that:
       - ipv4_after.entries | length == 1
-      - ipv4_after.description is none or ipv4_after.description == ""
+      - ipv4_after.description | default("") == ""
 
 # --- REPLACED: IDEMPOTENCY ---
 

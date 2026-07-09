@@ -821,6 +821,32 @@ def test_manage_prefix_list_00180() -> None:
     assert results.metadata[-1]["action"] == OperationType.UPDATE.value
 
 
+def test_manage_prefix_list_00185() -> None:
+    """
+    # Summary
+
+    Verify replace-style updates send an empty description when config omits it.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.update
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("update_ipv4_prefix_list")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS", "entries": [{"sequence_number": 10, "prefix": "10.0.1.0/24"}]}
+    rest_send = _build_rest_send(gen_responses, config=[config], state="replaced")
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert rest_send.committed_payload["description"] == ""
+
+
 # =============================================================================
 # Test: delete / delete_bulk (207 Multi-Status)
 # =============================================================================

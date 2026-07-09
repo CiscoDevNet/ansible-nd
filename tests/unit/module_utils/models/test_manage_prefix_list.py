@@ -564,6 +564,33 @@ def test_manage_prefix_list_00160() -> None:
     # prefixListEntries should not be present or should be None/excluded
 
 
+def test_manage_prefix_list_00165() -> None:
+    """
+    # Summary
+
+    Verify replace-style diff detects stale descriptions when config omits description.
+
+    ## Classes and Methods
+
+    - PrefixListModel.get_diff
+    """
+    existing = PrefixListModel.from_response(copy.deepcopy(SAMPLE_IPV4_API_RESPONSE))
+    proposed = PrefixListModel.from_config(
+        {
+            "ip_version": "ipv4",
+            "tenant_name": "TENANT1",
+            "name": "PL-IPV4-BORDERS",
+            "entries": copy.deepcopy(SAMPLE_IPV4_CONFIG["entries"]),
+        }
+    )
+
+    assert existing.get_diff(proposed, exclude_unset=True) is True
+    assert existing.get_diff(proposed, exclude_unset=False) is False
+
+    existing.description = ""
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
 # =============================================================================
 # Test: argument spec
 # =============================================================================

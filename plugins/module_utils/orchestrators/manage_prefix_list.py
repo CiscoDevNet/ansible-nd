@@ -328,7 +328,10 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             config = self._config_for_version(str(model_instance.ip_version))
             api_endpoint = self._configure_endpoint(config["put"]())
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.UPDATE)
+            payload = model_instance.to_payload()
+            if self.rest_send.params.get("state") in {"replaced", "overridden"} and model_instance.description is None:
+                payload["description"] = ""
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.UPDATE)
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 

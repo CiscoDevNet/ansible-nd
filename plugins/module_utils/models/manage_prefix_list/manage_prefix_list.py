@@ -359,6 +359,21 @@ class PrefixListModel(NDBaseModel):
         """Return the tenant-aware composite identifier."""
         return (str(self.ip_version), self.tenant_name, self.name)
 
+    def get_diff(self, other: NDBaseModel, exclude_unset: bool = False) -> bool:
+        """
+        Compare prefix-list config, treating omitted description as empty in replace-style states.
+
+        ``NDStateMachine`` calls this with ``exclude_unset=True`` for ``merged``,
+        where omitted fields must be left untouched. For ``replaced`` and
+        ``overridden`` it passes ``exclude_unset=False``; in that path an omitted
+        description means the desired value is empty/absent, so a stale controller
+        description must trigger an update.
+        """
+        if not exclude_unset and isinstance(other, PrefixListModel):
+            if other.description is None and self.description not in (None, ""):
+                return False
+        return super().get_diff(other, exclude_unset=exclude_unset)
+
     @classmethod
     def validate_config_for_state(cls, config: List[Dict[str, Any]], state: str) -> None:
         """Validate state-dependent requirements that cannot be expressed in a static Ansible argspec."""
