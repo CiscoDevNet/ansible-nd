@@ -95,6 +95,23 @@
         }
     },
 
+    "ipv4_single_tenant_prefix_list_without_tenant_name": {
+        "TEST_NOTES": ["Tenant-scoped IPv4 prefix list item GET where the API omits tenantName"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists/TENANT1~PL-IPV4-BORDERS",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "TENANT1~PL-IPV4-BORDERS",
+            "description": "IPv4 Border Router Prefixes",
+            "entries": [
+                {"sequenceNumber": 10, "action": "permit", "prefix": "10.0.1.0/24"},
+                {"sequenceNumber": 20, "action": "deny", "prefix": "192.168.0.0/16"}
+            ],
+            "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+        }
+    },
+
     "ipv6_single_prefix_list": {
         "TEST_NOTES": ["Single IPv6 prefix list via the GET item endpoint"],
         "RETURN_CODE": 200,

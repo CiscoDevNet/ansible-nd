@@ -230,6 +230,8 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         if not result:
             return None
         result["ipVersion"] = version
+        if tenant_name is not None:
+            result.setdefault("tenantName", tenant_name)
         return result
 
     def _query_proposed_existing(self, identifiers: list[tuple[str, str | None, str]]) -> list[dict[str, Any]]:
@@ -331,6 +333,8 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             api_endpoint = self._configure_endpoint(config["put"]())
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
             payload = model_instance.to_payload()
+            if model_instance.tenant_name is not None:
+                payload["name"] = model_instance.api_name
             if self.rest_send.params.get("state") in {"replaced", "overridden"} and model_instance.description is None:
                 payload["description"] = ""
             return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.UPDATE)

@@ -558,6 +558,41 @@ def test_manage_prefix_list_00135() -> None:
     assert rest_send.path.endswith("/ipv4PrefixLists/PL-IPV4-BORDERS")
 
 
+def test_manage_prefix_list_00132() -> None:
+    """
+    # Summary
+
+    Verify scoped tenant item lookups inject tenantName when the API omits it.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.query_all
+    - ManagePrefixListOrchestrator._query_one_existing
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("ipv4_single_tenant_prefix_list_without_tenant_name")
+
+    config = {
+        "ip_version": "ipv4",
+        "tenant_name": "TENANT1",
+        "name": "PL-IPV4-BORDERS",
+        "entries": [{"sequence_number": 10, "prefix": "10.0.1.0/24"}],
+    }
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, config=[config], state="merged")
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    model = PrefixListModel.from_response(result[0])
+    assert rest_send.path.endswith("/ipv4PrefixLists/TENANT1~PL-IPV4-BORDERS")
+    assert model.tenant_name == "TENANT1"
+    assert model.name == "PL-IPV4-BORDERS"
+    assert model.get_identifier_value() == ("ipv4", "TENANT1", "PL-IPV4-BORDERS")
+
+
 def test_manage_prefix_list_00134() -> None:
     """
     # Summary
@@ -904,6 +939,39 @@ def test_manage_prefix_list_00185() -> None:
         instance.update(model)
 
     assert rest_send.committed_payload["description"] == ""
+
+
+def test_manage_prefix_list_00186() -> None:
+    """
+    # Summary
+
+    Verify tenant-scoped updates send the qualified API name in the PUT body.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.update
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("update_ipv4_prefix_list")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {
+        "ip_version": "ipv4",
+        "tenant_name": "TENANT1",
+        "name": "PL-IPV4-BORDERS",
+        "entries": [{"sequence_number": 10, "prefix": "10.0.1.0/24"}],
+    }
+    rest_send = _build_rest_send(gen_responses, config=[config])
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert rest_send.path.endswith("/ipv4PrefixLists/TENANT1~PL-IPV4-BORDERS")
+    assert rest_send.committed_payload["name"] == "TENANT1~PL-IPV4-BORDERS"
+    assert rest_send.committed_payload["tenantName"] == "TENANT1"
 
 
 # =============================================================================
