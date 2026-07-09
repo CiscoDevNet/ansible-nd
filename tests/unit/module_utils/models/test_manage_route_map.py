@@ -362,6 +362,110 @@ def test_manage_route_map_model_00115() -> None:
     assert instance.to_payload() == {"name": "RM_EXPORT", "tenantName": "tenantSales"}
 
 
+def test_manage_route_map_model_00116() -> None:
+    """
+    # Summary
+
+    Verify ND-returned false next-hop defaults do not trigger a route-map diff.
+
+    ## Classes and Methods
+
+    - RouteMapModel.from_response()
+    - RouteMapModel.from_config()
+    - RouteMapModel.get_diff()
+    """
+    existing = RouteMapModel.from_response(
+        {
+            "name": "RM_NH",
+            "entries": [
+                {
+                    "sequenceNumber": 10,
+                    "action": "permit",
+                    "ruleEntries": [
+                        {
+                            "ruleType": "setIpv4NextHop",
+                            "nextHopIpCollection": ["192.0.2.10"],
+                            "dropOnFail": False,
+                            "enforceOrder": False,
+                            "loadShare": False,
+                            "redistributeUnchanged": False,
+                            "unchanged": False,
+                            "usePeerAddress": False,
+                            "verifyAvailability": False,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    proposed = RouteMapModel.from_config(
+        {
+            "name": "RM_NH",
+            "entries": [
+                {
+                    "sequence_number": 10,
+                    "action": "permit",
+                    "rule_entries": [{"rule_type": "setIpv4NextHop", "next_hop_ip_collection": ["192.0.2.10"]}],
+                }
+            ],
+        }
+    )
+
+    assert existing.get_diff(proposed, exclude_unset=True) is True
+
+
+def test_manage_route_map_model_00117() -> None:
+    """
+    # Summary
+
+    Verify true next-hop flags still trigger a diff when the proposed rule disables them.
+
+    ## Classes and Methods
+
+    - RouteMapModel.from_response()
+    - RouteMapModel.from_config()
+    - RouteMapModel.get_diff()
+    """
+    existing = RouteMapModel.from_response(
+        {
+            "name": "RM_NH",
+            "entries": [
+                {
+                    "sequenceNumber": 10,
+                    "action": "permit",
+                    "ruleEntries": [
+                        {
+                            "ruleType": "setIpv4NextHop",
+                            "nextHopIpCollection": ["192.0.2.10"],
+                            "verifyAvailability": True,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    proposed = RouteMapModel.from_config(
+        {
+            "name": "RM_NH",
+            "entries": [
+                {
+                    "sequence_number": 10,
+                    "action": "permit",
+                    "rule_entries": [
+                        {
+                            "rule_type": "setIpv4NextHop",
+                            "next_hop_ip_collection": ["192.0.2.10"],
+                            "verify_availability": False,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert existing.get_diff(proposed, exclude_unset=True) is False
+
+
 def test_manage_route_map_model_00120() -> None:
     """
     # Summary

@@ -114,6 +114,15 @@ _NEXT_HOP_RULE_TYPES = {
     RuleTypeEnum.SET_IPV4_NEXT_HOP.value,
     RuleTypeEnum.SET_IPV6_NEXT_HOP.value,
 }
+_NEXT_HOP_FALSE_DEFAULT_FIELDS = (
+    "dropOnFail",
+    "enforceOrder",
+    "loadShare",
+    "redistributeUnchanged",
+    "unchanged",
+    "usePeerAddress",
+    "verifyAvailability",
+)
 
 
 class RouteMapRuleEntryModel(NDNestedModel):
@@ -492,6 +501,18 @@ class RouteMapModel(NDBaseModel):
             if self.name.startswith(prefix):
                 self.name = self.name[len(prefix) :]
         return self
+
+    def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
+        """Export for diff comparison, normalizing ND next-hop false defaults."""
+        data = super().to_diff_dict(**kwargs)
+        for entry in data.get("entries") or []:
+            for rule_entry in entry.get("ruleEntries") or []:
+                if rule_entry.get("ruleType") not in _NEXT_HOP_RULE_TYPES:
+                    continue
+                for field_name in _NEXT_HOP_FALSE_DEFAULT_FIELDS:
+                    if rule_entry.get(field_name) is False:
+                        rule_entry.pop(field_name)
+        return data
 
     # --- Argument Spec ---
 
