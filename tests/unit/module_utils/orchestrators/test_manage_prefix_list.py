@@ -25,7 +25,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.manage_prefix_list import PrefixListModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_prefix_list import ManagePrefixListOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_prefix_list import ManagePrefixListOrchestrator, _SCOPED_QUERY_MAX_IDENTIFIERS
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -558,6 +558,28 @@ def test_manage_prefix_list_00135() -> None:
     assert rest_send.path.endswith("/ipv4PrefixLists/PL-IPV4-BORDERS")
 
 
+def test_manage_prefix_list_00134() -> None:
+    """
+    # Summary
+
+    Verify proposed identifier extraction does not validate full prefix-list entries.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator._proposed_identifiers
+    """
+
+    def responses():
+        yield {}
+
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS", "entries": [{"sequence_number": 10, "prefix": "not-a-cidr"}]}
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, config=[config], state="merged")
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+
+    assert instance._proposed_identifiers() == [("ipv4", None, "PL-IPV4-BORDERS")]
+
+
 def test_manage_prefix_list_00137() -> None:
     """
     # Summary
@@ -580,6 +602,43 @@ def test_manage_prefix_list_00137() -> None:
 
     with pytest.raises(Exception, match="entries is required"):
         instance.query_all()
+
+
+def test_manage_prefix_list_00138() -> None:
+    """
+    # Summary
+
+    Verify large item-state configs fall back to paginated collection scans.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.query_all
+    - ManagePrefixListOrchestrator._should_use_scoped_query
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("ipv4_prefix_lists_ok")
+        yield responses_manage_prefix_list("ipv6_prefix_lists_ok")
+
+    configs = [
+        {
+            "ip_version": "ipv4",
+            "name": f"PL-IPV4-{idx}",
+            "entries": [{"sequence_number": 10, "prefix": "10.0.0.0/8"}],
+        }
+        for idx in range(_SCOPED_QUERY_MAX_IDENTIFIERS + 1)
+    ]
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, config=configs, state="merged")
+    results = Results()
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send, results=results)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert len(result) == 2
+    assert results.path[0].endswith("/ipv4PrefixLists?max=100&offset=0")
+    assert results.path[1].endswith("/ipv6PrefixLists?max=100&offset=0")
 
 
 def test_manage_prefix_list_00136() -> None:

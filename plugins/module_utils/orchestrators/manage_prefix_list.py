@@ -30,6 +30,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 _QUERY_PAGE_SIZE = 100
+_SCOPED_QUERY_MAX_IDENTIFIERS = 8
 
 # Per-item ``status`` values in a 207 Multi-Status body that count as a failure. Anything else --
 # ``success``, missing, empty, or future progress tokens -- is tolerated so informational rows do
@@ -204,20 +205,21 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         identifiers: list[tuple[str, str | None, str]] = []
         seen: set[tuple[str, str | None, str]] = set()
         for item in self._raw_items_from_params(self.rest_send.params):
-            model = PrefixListModel.from_config(item)
-            identifier = model.get_identifier_value()
-            if not isinstance(identifier, tuple) or len(identifier) != 3:
+            version = item.get("ip_version", item.get("ipVersion"))
+            name = item.get("name")
+            if version is None or name is None:
                 continue
-            normalized = (str(identifier[0]), identifier[1], str(identifier[2]))
+            tenant_name = item.get("tenant_name", item.get("tenantName"))
+            normalized = (str(version), tenant_name, str(name))
             if normalized not in seen:
                 seen.add(normalized)
                 identifiers.append(normalized)
         return identifiers
 
-    def _should_use_scoped_query(self) -> bool:
+    def _should_use_scoped_query(self, identifiers: list[tuple[str, str | None, str]]) -> bool:
         """Return whether initialization can query only proposed prefix-list identities."""
         state = self.rest_send.params.get("state")
-        return state in {"merged", "replaced", "deleted"} and bool(self._raw_items_from_params(self.rest_send.params))
+        return state in {"merged", "replaced", "deleted"} and 0 < len(identifiers) <= _SCOPED_QUERY_MAX_IDENTIFIERS
 
     def _query_one_existing(self, version: str, tenant_name: str | None, name: str) -> dict[str, Any] | None:
         """Fetch one existing prefix list, returning ``None`` when it is absent."""
@@ -230,10 +232,10 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         result["ipVersion"] = version
         return result
 
-    def _query_proposed_existing(self) -> list[dict[str, Any]]:
+    def _query_proposed_existing(self, identifiers: list[tuple[str, str | None, str]]) -> list[dict[str, Any]]:
         """Fetch only the existing prefix lists named by module ``config``."""
         results: list[dict[str, Any]] = []
-        for version, tenant_name, name in self._proposed_identifiers():
+        for version, tenant_name, name in identifiers:
             item = self._query_one_existing(version, tenant_name, name)
             if item is not None:
                 results.append(item)
@@ -362,8 +364,9 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         try:
             PrefixListModel.validate_config_for_state(self._raw_items_from_params(self.rest_send.params), self.rest_send.params.get("state", ""))
 
-            if self._should_use_scoped_query():
-                return self._query_proposed_existing()
+            proposed_identifiers = self._proposed_identifiers()
+            if self._should_use_scoped_query(proposed_identifiers):
+                return self._query_proposed_existing(proposed_identifiers)
 
             results = []
             for version in _VERSION_CONFIG:
