@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import pytest
 
+from unittest.mock import patch
+
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
     NetworkConfigModel,
@@ -26,6 +28,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks im
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_workflow_coordinator import (
     NetworkWorkflowCoordinator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators import network_workflow_coordinator as coordinator_mod
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_state_machine import (
     NetworkStateMachine,
 )
@@ -92,6 +95,33 @@ def _orchestrator():
         rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}),
         strategy=strategy,
     )
+
+
+def test_network_workflow_coordinator_resolves_strategy_with_gen3_restsend():
+    events = []
+    module = _Module({"fabric_name": "fab1", "state": "gathered", "config": []})
+    module.check_mode = True
+
+    class FakeResolver:
+        def __init__(self, rest_send, fabric_name):
+            events.append(("NetworkFabricResolver", rest_send, fabric_name))
+            self.workflow_trace = [{"event": "fabric_resolver_start"}]
+
+        def resolve(self):
+            events.append(("resolve",))
+            return StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+
+    with patch.object(coordinator_mod, "NetworkFabricResolver", FakeResolver):
+        coordinator = NetworkWorkflowCoordinator(module=module)
+        strategy = coordinator._resolve_strategy(dict(module.params))
+
+    resolver_rest_send = events[0][1]
+    assert strategy.fabric_type == "standalone"
+    assert resolver_rest_send.params["check_mode"] is False
+    assert resolver_rest_send.timeout == 1
+    assert resolver_rest_send.send_interval == 1
+    assert events == [("NetworkFabricResolver", resolver_rest_send, "fab1"), ("resolve",)]
+    assert coordinator.workflow_trace[0]["event"] == "fabric_resolver_start"
 
 
 def _mcfg_parent_orchestrator():
@@ -1165,7 +1195,7 @@ def test_network_attachment_query_chunks_large_network_name_sets():
     assert manager.queried_chunks == [["net-0", "net-1"], ["net-2", "net-3"], ["net-4"]]
 
 
-def test_network_attachment_query_missing_network_falls_back_per_name():
+def test_network_attachment_query_missing_network_falls_back_to_unscoped_read():
     class RecordingManager(NetworkAttachmentManager):
         def __init__(self):
             super().__init__(coordinator=None)
@@ -1175,16 +1205,17 @@ def test_network_attachment_query_missing_network_falls_back_per_name():
             self.queried_names.append(network_names)
             if network_names == ["BLUE_NET", "MISSING_NET"]:
                 raise RuntimeError("Network(s) [MISSING_NET] not found in fabric")
-            if network_names == ["BLUE_NET"]:
-                return [{"networkName": "BLUE_NET", "switchId": "SW1"}]
-            raise RuntimeError("Network(s) [MISSING_NET] not found in fabric")
+            return [
+                {"networkName": "BLUE_NET", "switchId": "SW1"},
+                {"networkName": "GREEN_NET", "switchId": "SW2"},
+            ]
 
     manager = RecordingManager()
 
     assert manager.current_attachment_details_ignore_missing({}, _orchestrator().strategy, ["BLUE_NET", "MISSING_NET"]) == [
         {"networkName": "BLUE_NET", "switchId": "SW1"}
     ]
-    assert manager.queried_names == [["BLUE_NET", "MISSING_NET"], ["BLUE_NET"], ["MISSING_NET"]]
+    assert manager.queried_names == [["BLUE_NET", "MISSING_NET"], None]
 
 
 def test_tor_is_modeled_as_normal_attachment_payload():

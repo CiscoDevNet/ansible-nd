@@ -558,46 +558,15 @@ api_metadata:
 """
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec, NDModule
+from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_fabric_resolver import (
-    NetworkFabricResolver,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_workflow_coordinator import (
     NetworkWorkflowCoordinator,
 )
-
-# ---------------------------------------------------------------------------
-# Argument-spec helpers
-# ---------------------------------------------------------------------------
-
-
-def network_base_argument_spec():
-    """Re-exported for backward compatibility. Defined in network_argument_specs."""
-    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import (
-        network_base_argument_spec as _impl,
-    )
-
-    return _impl()
-
-
-def _child_fabric_config_element_spec():
-    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import (
-        _child_fabric_config_element_spec as _impl,
-    )
-
-    return _impl()
-
-
-def network_parent_argument_spec():
-    """Re-exported for backward compatibility. Defined in network_argument_specs."""
-    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import (
-        network_parent_argument_spec as _impl,
-    )
-
-    return _impl()
-
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import (
+    network_parent_argument_spec,
+)
 
 # ---------------------------------------------------------------------------
 # Module entry point
@@ -629,25 +598,7 @@ def main():
     require_pydantic(module)
 
     try:
-        fabric_name: str = module.params["fabric_name"]
-
-        # Resolve the Network strategy from the ND API
-        nd_module = NDModule(module)
-        resolver = NetworkFabricResolver(
-            nd_module=nd_module,
-            fabric_name=fabric_name,
-        )
-        strategy = resolver.resolve()
-
-        # Run the workflow coordinator for the resolved strategy
-        coordinator_args = {
-            "module": module,
-            "strategy": strategy,
-        }
-        resolver_trace = getattr(resolver, "workflow_trace", None)
-        if resolver_trace:
-            coordinator_args["initial_workflow_trace"] = resolver_trace
-        coordinator = NetworkWorkflowCoordinator(**coordinator_args)
+        coordinator = NetworkWorkflowCoordinator(module=module)
         result = coordinator.run()
 
         module.exit_json(**result)

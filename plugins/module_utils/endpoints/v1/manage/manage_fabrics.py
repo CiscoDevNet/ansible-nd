@@ -33,7 +33,7 @@ from __future__ import annotations
 
 __metaclass__ = type
 
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
@@ -100,7 +100,7 @@ class FabricsTicketEndpointParams(FabricsEndpointParams):
     Endpoint-specific query parameters for fabric membership mutation endpoints.
     """
 
-    ticket_id: Optional[str] = Field(
+    ticket_id: str | None = Field(
         default=None,
         min_length=1,
         description="Change control ticket ID",
@@ -643,7 +643,7 @@ class EpManageFabricsDeploymentFreezeGet(_EpManageFabricsBase):
         default="EpManageFabricsDeploymentFreezeGet", frozen=True, description="Class name for backward compatibility"
     )
 
-    _path_suffix: ClassVar[Optional[str]] = "deploymentFreeze"
+    _path_suffix: ClassVar[str | None] = "deploymentFreeze"
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -662,7 +662,7 @@ class EpManageFabricsMembersGet(_EpManageFabricsBase):
         description="Class name for backward compatibility",
     )
 
-    _path_suffix: ClassVar[Optional[str]] = "members"
+    _path_suffix: ClassVar[str | None] = "members"
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -681,7 +681,7 @@ class EpManageFabricsMemberCandidatesGet(_EpManageFabricsBase):
         description="Class name for backward compatibility",
     )
 
-    _path_suffix: ClassVar[Optional[str]] = "memberCandidates"
+    _path_suffix: ClassVar[str | None] = "memberCandidates"
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -700,7 +700,7 @@ class EpManageFabricsMembersAddPost(_EpManageFabricsBase):
         description="Class name for backward compatibility",
     )
 
-    _path_suffix: ClassVar[Optional[str]] = "actions/addMembers"
+    _path_suffix: ClassVar[str | None] = "actions/addMembers"
 
     endpoint_params: FabricsTicketEndpointParams = Field(default_factory=FabricsTicketEndpointParams, description="Endpoint-specific query parameters")
 
@@ -719,7 +719,7 @@ class EpManageFabricsMembersRemovePost(_EpManageFabricsBase):
         description="Class name for backward compatibility",
     )
 
-    _path_suffix: ClassVar[Optional[str]] = "actions/removeMembers"
+    _path_suffix: ClassVar[str | None] = "actions/removeMembers"
 
     endpoint_params: FabricsTicketEndpointParams = Field(default_factory=FabricsTicketEndpointParams, description="Endpoint-specific query parameters")
 
