@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Mike Wiebe (@mwiebe) <mwiebe@cisco.com>
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -13,19 +13,21 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 
 DOCUMENTATION = r"""
 ---
-module: nd_manage_fabric_ebgp_vxlan
+module: nd_manage_fabric_ai_ebgp_vxlan
 version_added: "2.0.0"
-short_description: Manage eBGP VXLAN fabrics on Cisco Nexus Dashboard
+short_description: Manage AI/ML eBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
-- Manage eBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
-- It supports creating, updating, replacing, and deleting eBGP VXLAN fabrics.
+- Manage AI/ML eBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
+- It supports creating, updating, replacing, and deleting AI/ML eBGP VXLAN fabrics.
+- AI/ML eBGP VXLAN fabrics are optimized for AI and machine learning workloads using eBGP underlay with VXLAN overlay.
+- The AI/ML eBGP VXLAN fabric type (C(aimlVxlanEbgp)) shares the same management properties as the standard eBGP VXLAN
+  fabric type (C(vxlanEbgp)), but is specifically designated for AI/ML workloads.
 author:
-- Mike Wiebe (@mwiebe)
 - Matt Tarkington (@mtarking)
 options:
   config:
     description:
-    - The list of eBGP VXLAN fabrics to configure.
+    - The list of AI/ML eBGP VXLAN fabrics to configure.
     type: list
     elements: dict
     suboptions:
@@ -53,51 +55,56 @@ options:
             required: true
       license_tier:
         description:
-        - The license tier for the fabric.
+        - The License Tier for fabric.
         type: str
         default: essentials
         choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
-        - The alert suspension state for the fabric.
+        - The Alert Suspend state configured on the fabric.
         type: str
         default: disabled
         choices: [ enabled, disabled ]
       telemetry_collection:
         description:
-        - Enable telemetry collection for the fabric.
+        - Enable telemetry collection.
         type: bool
         default: false
       telemetry_collection_type:
         description:
-        - The telemetry collection type.
+        - The telemetry collection method.
         type: str
         default: inBand
+        choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
-        - The telemetry streaming protocol.
+        - The Telemetry Streaming Protocol.
         type: str
         default: ipv4
+        choices: [ ipv4, ipv6 ]
       telemetry_source_interface:
         description:
-        - The telemetry source interface.
+        - Telemetry Source Interface Loopback ID, only valid if Telemetry Collection is set to inBand.
         type: str
         default: loopback0
       telemetry_source_vrf:
         description:
-        - The telemetry source VRF.
+        - VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.
         type: str
         default: default
       security_domain:
         description:
-        - The security domain associated with the fabric.
+        - The Security Domain associated with the fabric.
         type: str
         default: all
       management:
         description:
-        - The eBGP VXLAN management configuration for the fabric.
+        - The AI/ML eBGP VXLAN management configuration for the fabric.
+        - AI QoS (aimlQos) is always enabled for AI/ML fabrics and is not user-configurable in this module.
+        - Properties are grouped by template section for readability in the module documentation source.
         type: dict
         suboptions:
+          # General
           bgp_asn:
             description:
             - The BGP Autonomous System Number for the fabric.
@@ -151,6 +158,11 @@ options:
             description:
             - In an IPv6 routed fabric or VXLAN EVPN fabric with IPv6 underlay, assign IPv4 address
               used for BGP Router ID to the routing loopback interface.
+            type: bool
+            default: true
+          evpn:
+            description:
+            - Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric.
             type: bool
             default: true
           route_map_tag:
@@ -814,10 +826,12 @@ options:
             description:
             - Backup hourly only if there is any config deployment since last backup.
             type: bool
+            default: false
           scheduled_backup:
             description:
             - Enable backup at the specified time daily.
             type: bool
+            default: false
           scheduled_backup_time:
             description:
             - Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59).
@@ -1044,12 +1058,6 @@ options:
             - Queuing policy for all other switches in the fabric.
             type: str
             default: queuing_policy_default_other
-          aiml_qos:
-            description:
-            - Configures QoS and Queuing Policies specific to N9K Cloud Scale (CS) and
-              Silicon One (S1) switch fabric for AI network workloads.
-            type: bool
-            default: false
           aiml_qos_policy:
             description:
             - Queuing policy based on predominant fabric link speed.
@@ -1120,6 +1128,7 @@ options:
             - Flowlet aging timer in microseconds. Valid range depends on platform.
               Cloud Scale (CS) 1-2000000 (default 500), Silicon One (S1) 1-1024 (default 256).
             type: int
+            default: 1
           flowlet_dscp:
             description:
             - DSCP values for flowlet load balancing. Numeric (0-63) with ranges/comma, or named values
@@ -1144,6 +1153,7 @@ options:
             - Acceptable values from 101 to 1000 (milliseconds).
               Leave blank for system default (100ms).
             type: int
+            default: 101
           ptp:
             description:
             - Enable Precision Time Protocol (PTP).
@@ -1388,18 +1398,18 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
-- Only eBGP VXLAN fabric type (C(vxlanEbgp)) is supported by this module.
+- Only AI/ML eBGP VXLAN fabric type (C(aimlVxlanEbgp)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
 - O(config.management.site_id) defaults to the value of O(config.management.bgp_asn) if not provided.
 - The default O(config.management.vpc_peer_keep_alive_option) for eBGP fabrics is C(management), unlike iBGP fabrics.
 """
 
 EXAMPLES = r"""
-- name: Create an eBGP VXLAN fabric using state merged (with auto ASN allocation)
-  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+- name: Create an AI/ML eBGP VXLAN fabric using state merged (with auto ASN allocation)
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     state: merged
     config:
-      - fabric_name: my_ebgp_fabric
+      - fabric_name: my_ai_ebgp_fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1474,11 +1484,11 @@ EXAMPLES = r"""
           management_ipv4_prefix: 24
   register: result
 
-- name: Create an eBGP VXLAN fabric with a static BGP ASN
-  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+- name: Create an AI/ML eBGP VXLAN fabric with a static BGP ASN
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     state: merged
     config:
-      - fabric_name: my_ebgp_fabric_static
+      - fabric_name: my_ai_ebgp_fabric_static
         management:
           bgp_asn: "65001"
           bgp_asn_auto_allocation: false
@@ -1498,22 +1508,22 @@ EXAMPLES = r"""
           vrf_vlan_range: "2000-2299"
   register: result
 
-- name: Update specific fields on an existing eBGP fabric using state merged (partial update)
-  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+- name: Update specific fields on an existing AI/ML eBGP fabric using state merged (partial update)
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     state: merged
     config:
-      - fabric_name: my_ebgp_fabric
+      - fabric_name: my_ai_ebgp_fabric
         management:
           bgp_asn_range: "65100-65199"
           anycast_gateway_mac: "2020.0000.00bb"
           performance_monitoring: true
   register: result
 
-- name: Create or fully replace an eBGP VXLAN fabric using state replaced
-  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+- name: Create or fully replace an AI/ML eBGP VXLAN fabric using state replaced
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     state: replaced
     config:
-      - fabric_name: my_ebgp_fabric
+      - fabric_name: my_ai_ebgp_fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1531,7 +1541,7 @@ EXAMPLES = r"""
           performance_monitoring: true
           replication_mode: multicast
           multicast_group_subnet: "239.1.3.0/25"
-          rendezvous_point_count: 3
+          rendezvous_point_count: 4
           rendezvous_point_loopback_id: 253
           vpc_peer_link_vlan: "3700"
           vpc_peer_keep_alive_option: management
@@ -1561,10 +1571,10 @@ EXAMPLES = r"""
   register: result
 
 - name: Replace fabric with only required fields (all optional settings revert to defaults)
-  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     state: replaced
     config:
-      - fabric_name: my_ebgp_fabric
+      - fabric_name: my_ai_ebgp_fabric
         management:
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
@@ -1573,7 +1583,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Enforce exact fabric inventory using state overridden (deletes unlisted fabrics)
-  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     state: overridden
     config:
       - fabric_name: fabric_east
@@ -1628,15 +1638,15 @@ EXAMPLES = r"""
           vrf_vlan_range: "2000-2299"
   register: result
 
-- name: Delete a specific eBGP fabric using state deleted
-  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+- name: Delete a specific AI/ML eBGP fabric using state deleted
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     state: deleted
     config:
-      - fabric_name: my_ebgp_fabric
+      - fabric_name: my_ai_ebgp_fabric
   register: result
 
-- name: Delete multiple eBGP fabrics in a single task
-  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+- name: Delete multiple AI/ML eBGP fabrics in a single task
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     state: deleted
     config:
       - fabric_name: fabric_east
@@ -1653,28 +1663,28 @@ changed:
     sample: true
 before:
     description:
-    - eBGP VXLAN fabric configuration before changes.
+    - AI/ML eBGP VXLAN fabric configuration before changes.
     - Queried from the controller and may contain read-only properties.
     type: list
     returned: always
-    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65001"}}]
+    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65001"}}]
 after:
     description:
-    - eBGP VXLAN fabric configuration after changes.
+    - AI/ML eBGP VXLAN fabric configuration after changes.
     - Refreshed from the controller after write operations.
     type: list
     returned: always
-    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
 diff:
     description: Configuration differences between before and after states.
     type: list
     returned: always
-    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
 proposed:
     description: Proposed configuration sent to the module.
     type: list
     returned: info or debug output_level
-    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
 output_level:
     description: The output level set for the module.
     type: str
@@ -1689,7 +1699,7 @@ api_paths:
     description: API endpoint paths used during operations.
     type: list
     returned: verbosity >= 2 (-vv)
-    sample: ["/api/v1/manage/fabrics/fabric_east"]
+    sample: ["/api/v1/manage/fabrics/ai_ebgp_fabric"]
 api_verbs:
     description: HTTP methods used during operations.
     type: list
@@ -1722,15 +1732,15 @@ api_payload:
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ebgp_vxlan import FabricAiEbgpVxlanModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import ManageAiEbgpVxlanFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 
 
 def main():
     argument_spec = nd_argument_spec()
-    argument_spec.update(FabricEbgpModel.get_argument_spec())
+    argument_spec.update(FabricAiEbgpVxlanModel.get_argument_spec())
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -1749,7 +1759,7 @@ def main():
     state = module.params.get("state", "merged")
 
     try:
-        ManageEbgpFabricOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+        ManageAiEbgpVxlanFabricOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
     except ValueError as e:
         module.fail_json(msg=str(e))
 
@@ -1758,7 +1768,7 @@ def main():
         # Initialize StateMachine
         nd_state_machine = NDStateMachine(
             module=module,
-            model_orchestrator=ManageEbgpFabricOrchestrator,
+            model_orchestrator=ManageAiEbgpVxlanFabricOrchestrator,
         )
 
         # Manage state

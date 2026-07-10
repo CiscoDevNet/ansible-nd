@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Mike Wiebe (@mwiebe) <mwiebe@cisco.com>
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -13,19 +13,21 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 
 DOCUMENTATION = r"""
 ---
-module: nd_manage_fabric_ibgp_vxlan
+module: nd_manage_fabric_ai_ibgp_vxlan
 version_added: "2.0.0"
-short_description: Manage iBGP VXLAN fabrics on Cisco Nexus Dashboard
+short_description: Manage AI/ML iBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
-- Manage iBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
-- It supports creating, updating, replacing, and deleting iBGP VXLAN fabrics.
+- Manage AI/ML iBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
+- It supports creating, updating, replacing, and deleting AI/ML iBGP VXLAN fabrics.
+- AI/ML iBGP VXLAN fabrics are optimized for AI and machine learning workloads using iBGP underlay with VXLAN overlay.
+- The AI/ML iBGP VXLAN fabric type (C(aimlVxlanIbgp)) shares the same management properties as the standard iBGP VXLAN
+  fabric type (C(vxlanIbgp)), but is specifically designated for AI/ML workloads.
 author:
-- Mike Wiebe (@mwiebe)
 - Matt Tarkington (@mtarking)
 options:
   config:
     description:
-    - The list of iBGP VXLAN fabrics to configure.
+    - The list of AI/ML iBGP VXLAN fabrics to configure.
     type: list
     elements: dict
     suboptions:
@@ -53,49 +55,52 @@ options:
             required: true
       license_tier:
         description:
-        - The license tier for the fabric.
+        - The License Tier for fabric.
         type: str
         default: essentials
         choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
-        - The alert suspension state for the fabric.
+        - The Alert Suspend state configured on the fabric.
         type: str
         default: disabled
         choices: [ enabled, disabled ]
       telemetry_collection:
         description:
-        - Enable telemetry collection for the fabric.
+        - Enable telemetry collection.
         type: bool
         default: false
       telemetry_collection_type:
         description:
-        - The telemetry collection type.
+        - The telemetry collection method.
         type: str
         default: inBand
+        choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
-        - The telemetry streaming protocol.
+        - The Telemetry Streaming Protocol.
         type: str
         default: ipv4
+        choices: [ ipv4, ipv6 ]
       telemetry_source_interface:
         description:
-        - The telemetry source interface.
+        - Telemetry Source Interface Loopback ID, only valid if Telemetry Collection is set to inBand.
         type: str
         default: loopback0
       telemetry_source_vrf:
         description:
-        - The telemetry source VRF.
+        - VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.
         type: str
         default: default
       security_domain:
         description:
-        - The security domain associated with the fabric.
+        - The Security Domain associated with the fabric.
         type: str
         default: all
       management:
         description:
-        - The iBGP VXLAN management configuration for the fabric.
+        - The AI/ML iBGP VXLAN management configuration for the fabric.
+        - AI QoS (aimlQos) is always enabled for AI/ML fabrics and is not user-configurable in this module.
         - Properties are grouped by template section for readability in the module documentation source.
         type: dict
         suboptions:
@@ -261,6 +266,7 @@ options:
             - MVPN VRI ID range (minimum 1, maximum 65535) for vPC.
             - Applicable when TRM is enabled with IPv6 underlay, or mvpn_vrf_route_import_id is enabled with IPv4 underlay.
             type: str
+            default: ""
           vrf_route_import_id_reallocation:
             description:
             - One time VRI ID re-allocation based on MVPN VRI ID Range.
@@ -384,12 +390,12 @@ options:
             default: "0.0.0.0"
           bgp_loopback_id:
             description:
-            - The BGP routing loopback interface ID (0-1023).
+            - The BGP loopback interface ID (0-1023).
             type: int
             default: 0
           nve_loopback_id:
             description:
-            - The NVE VTEP loopback interface ID (0-1023).
+            - The NVE loopback interface ID (0-1023).
             type: int
             default: 1
           anycast_loopback_id:
@@ -414,7 +420,7 @@ options:
             default: ""
           link_state_routing_tag:
             description:
-            - The link state underlay routing tag.
+            - The link state routing tag.
             type: str
             default: UNDERLAY
           bgp_authentication:
@@ -806,12 +812,6 @@ options:
             - Queuing policy for all other switches in the fabric.
             type: str
             default: queuing_policy_default_other
-          aiml_qos:
-            description:
-            - Enable AI/ML QoS. Configures QoS and queuing policies specific to N9K Cloud Scale and Silicon One switch fabric
-              for AI network workloads.
-            type: bool
-            default: false
           aiml_qos_policy:
             description:
             - Queuing policy based on predominant fabric link speed.
@@ -876,6 +876,7 @@ options:
             - "Flowlet aging timer in microseconds. Valid range depends on platform: Cloud Scale (CS)=1-2000000,
               Silicon One (S1)=1-1024."
             type: int
+            default: 1
           flowlet_dscp:
             description:
             - DSCP values for flowlet load balancing. Numeric (0-63) with ranges/comma, or named values.
@@ -895,6 +896,7 @@ options:
             description:
             - PFC watch interval in milliseconds (101-1000). Leave blank for system default (100ms).
             type: int
+            default: 101
           ptp:
             description:
             - Enable Precision Time Protocol (PTP).
@@ -1450,10 +1452,12 @@ options:
             description:
             - Enable real-time backup.
             type: bool
+            default: false
           scheduled_backup:
             description:
             - Enable scheduled backup.
             type: bool
+            default: false
           scheduled_backup_time:
             description:
             - The scheduled backup time.
@@ -1593,18 +1597,18 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
-- Only iBGP VXLAN fabric type (C(vxlanIbgp)) is supported by this module.
+- Only AI/ML iBGP VXLAN fabric type (C(aimlVxlanIbgp)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
 - The O(config.management.bgp_asn) field is required when creating a fabric.
 - O(config.management.site_id) defaults to the value of O(config.management.bgp_asn) if not provided.
 """
 
 EXAMPLES = r"""
-- name: Create an iBGP VXLAN fabric using state merged
-  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+- name: Create an AI/ML iBGP VXLAN fabric using state merged
+  cisco.nd.nd_manage_fabric_ai_ibgp_vxlan:
     state: merged
     config:
-      - fabric_name: my_fabric
+      - fabric_name: ai_ibgp_fabric_1
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1635,24 +1639,6 @@ EXAMPLES = r"""
           vpc_domain_id_range: "1-1000"
           bgp_loopback_id: 0
           nve_loopback_id: 1
-          vrf_template: Default_VRF_Universal
-          network_template: Default_Network_Universal
-          vrf_extension_template: Default_VRF_Extension_Universal
-          network_extension_template: Default_Network_Extension_Universal
-          l3_vni_no_vlan_default_option: false
-          fabric_mtu: 9216
-          l2_host_interface_mtu: 9216
-          tenant_dhcp: true
-          nxapi: true
-          nxapi_https_port: 443
-          nxapi_http: false
-          nxapi_http_port: 80
-          snmp_trap: true
-          anycast_border_gateway_advertise_physical_ip: false
-          greenfield_debug_flag: enable
-          tcam_allocation: true
-          real_time_interface_statistics_collection: false
-          interface_statistics_load_interval: 10
           bgp_loopback_ip_range: "10.2.0.0/22"
           nve_loopback_ip_range: "10.3.0.0/22"
           anycast_rendezvous_point_ip_range: "10.254.254.0/24"
@@ -1661,28 +1647,14 @@ EXAMPLES = r"""
           l3_vni_range: "50000-59000"
           network_vlan_range: "2300-2999"
           vrf_vlan_range: "2000-2299"
-          sub_interface_dot1q_range: "2-511"
-          vrf_lite_auto_config: manual
-          vrf_lite_subnet_range: "10.33.0.0/16"
-          vrf_lite_subnet_target_mask: 30
-          auto_unique_vrf_lite_ip_prefix: false
-          per_vrf_loopback_auto_provision: true
-          per_vrf_loopback_ip_range: "10.5.0.0/22"
-          banner: ""
-          day0_bootstrap: false
-          local_dhcp_server: false
-          dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
-          management_ipv4_prefix: 24
+          allow_smart_switch_onboarding: true
   register: result
 
-- name: Update specific fields on an existing fabric using state merged (partial update)
-  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+- name: Update specific fields on an existing AI/ML fabric using state merged (partial update)
+  cisco.nd.nd_manage_fabric_ai_ibgp_vxlan:
     state: merged
     config:
-      - fabric_name: my_fabric
+      - fabric_name: ai_ibgp_fabric_1
         management:
           bgp_asn: "65002"
           site_id: "65002"
@@ -1690,165 +1662,19 @@ EXAMPLES = r"""
           performance_monitoring: true
   register: result
 
-- name: Create or fully replace an iBGP VXLAN fabric using state replaced
-  cisco.nd.nd_manage_fabric_ibgp_vxlan:
-    state: replaced
-    config:
-      - fabric_name: my_fabric
-        location:
-          latitude: 37.7749
-          longitude: -122.4194
-        license_tier: premier
-        alert_suspend: disabled
-        security_domain: all
-        telemetry_collection: false
-        management:
-          bgp_asn: "65004"
-          site_id: "65004"
-          target_subnet_mask: 30
-          anycast_gateway_mac: "2020.0000.00dd"
-          performance_monitoring: true
-          replication_mode: multicast
-          multicast_group_subnet: "239.1.3.0/25"
-          auto_generate_multicast_group_address: false
-          underlay_multicast_group_address_limit: 128
-          tenant_routed_multicast: false
-          rendezvous_point_count: 3
-          rendezvous_point_loopback_id: 253
-          vpc_peer_link_vlan: "3700"
-          vpc_peer_link_enable_native_vlan: false
-          vpc_peer_keep_alive_option: loopback
-          vpc_auto_recovery_timer: 300
-          vpc_delay_restore_timer: 120
-          vpc_peer_link_port_channel_id: "600"
-          vpc_ipv6_neighbor_discovery_sync: false
-          advertise_physical_ip: true
-          vpc_domain_id_range: "1-800"
-          bgp_loopback_id: 0
-          nve_loopback_id: 1
-          vrf_template: Default_VRF_Universal
-          network_template: Default_Network_Universal
-          vrf_extension_template: Default_VRF_Extension_Universal
-          network_extension_template: Default_Network_Extension_Universal
-          l3_vni_no_vlan_default_option: false
-          fabric_mtu: 9000
-          l2_host_interface_mtu: 9000
-          tenant_dhcp: false
-          nxapi: false
-          nxapi_https_port: 443
-          nxapi_http: true
-          nxapi_http_port: 80
-          snmp_trap: false
-          anycast_border_gateway_advertise_physical_ip: true
-          greenfield_debug_flag: disable
-          tcam_allocation: false
-          real_time_interface_statistics_collection: true
-          interface_statistics_load_interval: 30
-          bgp_loopback_ip_range: "10.22.0.0/22"
-          nve_loopback_ip_range: "10.23.0.0/22"
-          anycast_rendezvous_point_ip_range: "10.254.252.0/24"
-          intra_fabric_subnet_range: "10.24.0.0/16"
-          l2_vni_range: "40000-59000"
-          l3_vni_range: "60000-69000"
-          network_vlan_range: "2400-3099"
-          vrf_vlan_range: "2100-2399"
-          sub_interface_dot1q_range: "2-511"
-          vrf_lite_auto_config: manual
-          vrf_lite_subnet_range: "10.53.0.0/16"
-          vrf_lite_subnet_target_mask: 30
-          auto_unique_vrf_lite_ip_prefix: false
-          per_vrf_loopback_auto_provision: true
-          per_vrf_loopback_ip_range: "10.25.0.0/22"
-          per_vrf_loopback_auto_provision_ipv6: true
-          per_vrf_loopback_ipv6_range: "fd00::a25:0/112"
-          banner: "^ Managed by Ansible ^"
-          day0_bootstrap: false
-          local_dhcp_server: false
-          dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
-          management_ipv4_prefix: 24
-          management_ipv6_prefix: 64
-  register: result
-
-- name: Replace fabric with only required fields (all optional settings revert to defaults)
-  cisco.nd.nd_manage_fabric_ibgp_vxlan:
-    state: replaced
-    config:
-      - fabric_name: my_fabric
-        management:
-          bgp_asn: "65004"
-          site_id: "65004"
-          banner: "^ Managed by Ansible ^"
-  register: result
-
-- name: Enforce exact fabric inventory using state overridden (deletes unlisted fabrics)
-  cisco.nd.nd_manage_fabric_ibgp_vxlan:
-    state: overridden
-    config:
-      - fabric_name: fabric_east
-        location:
-          latitude: 40.7128
-          longitude: -74.0060
-        license_tier: premier
-        alert_suspend: disabled
-        security_domain: all
-        telemetry_collection: false
-        management:
-          bgp_asn: "65010"
-          site_id: "65010"
-          target_subnet_mask: 30
-          anycast_gateway_mac: "2020.0000.0010"
-          replication_mode: multicast
-          multicast_group_subnet: "239.1.10.0/25"
-          bgp_loopback_ip_range: "10.10.0.0/22"
-          nve_loopback_ip_range: "10.11.0.0/22"
-          anycast_rendezvous_point_ip_range: "10.254.10.0/24"
-          intra_fabric_subnet_range: "10.12.0.0/16"
-          l2_vni_range: "30000-49000"
-          l3_vni_range: "50000-59000"
-          network_vlan_range: "2300-2999"
-          vrf_vlan_range: "2000-2299"
-      - fabric_name: fabric_west
-        location:
-          latitude: 34.0522
-          longitude: -118.2437
-        license_tier: premier
-        alert_suspend: disabled
-        security_domain: all
-        telemetry_collection: false
-        management:
-          bgp_asn: "65020"
-          site_id: "65020"
-          target_subnet_mask: 30
-          anycast_gateway_mac: "2020.0000.0020"
-          replication_mode: multicast
-          multicast_group_subnet: "239.1.20.0/25"
-          bgp_loopback_ip_range: "10.20.0.0/22"
-          nve_loopback_ip_range: "10.21.0.0/22"
-          anycast_rendezvous_point_ip_range: "10.254.20.0/24"
-          intra_fabric_subnet_range: "10.22.0.0/16"
-          l2_vni_range: "30000-49000"
-          l3_vni_range: "50000-59000"
-          network_vlan_range: "2300-2999"
-          vrf_vlan_range: "2000-2299"
-  register: result
-
-- name: Delete a specific fabric using state deleted
-  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+- name: Delete an AI/ML iBGP VXLAN fabric
+  cisco.nd.nd_manage_fabric_ai_ibgp_vxlan:
     state: deleted
     config:
-      - fabric_name: my_fabric
+      - fabric_name: ai_ibgp_fabric_1
   register: result
 
-- name: Delete multiple fabrics in a single task
-  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+- name: Delete multiple AI/ML fabrics in a single task
+  cisco.nd.nd_manage_fabric_ai_ibgp_vxlan:
     state: deleted
     config:
-      - fabric_name: fabric_east
-      - fabric_name: fabric_west
-      - fabric_name: fabric_old
+      - fabric_name: ai_ibgp_fabric_1
+      - fabric_name: ai_ibgp_fabric_2
   register: result
 """
 
@@ -1860,28 +1686,28 @@ changed:
     sample: true
 before:
     description:
-    - iBGP VXLAN fabric configuration before changes.
+    - AI/ML iBGP VXLAN fabric configuration before changes.
     - Queried from the controller and may contain read-only properties.
     type: list
     returned: always
-    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65001"}}]
+    sample: [{"fabric_name": "ai_ibgp_fabric", "management": {"bgp_asn": "65001"}}]
 after:
     description:
-    - iBGP VXLAN fabric configuration after changes.
+    - AI/ML iBGP VXLAN fabric configuration after changes.
     - Refreshed from the controller after write operations.
     type: list
     returned: always
-    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+    sample: [{"fabric_name": "ai_ibgp_fabric", "management": {"bgp_asn": "65002"}}]
 diff:
     description: Configuration differences between before and after states.
     type: list
     returned: always
-    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+    sample: [{"fabric_name": "ai_ibgp_fabric", "management": {"bgp_asn": "65002"}}]
 proposed:
     description: Proposed configuration sent to the module.
     type: list
     returned: info or debug output_level
-    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+    sample: [{"fabric_name": "ai_ibgp_fabric", "management": {"bgp_asn": "65002"}}]
 output_level:
     description: The output level set for the module.
     type: str
@@ -1896,7 +1722,7 @@ api_paths:
     description: API endpoint paths used during operations.
     type: list
     returned: verbosity >= 2 (-vv)
-    sample: ["/api/v1/manage/fabrics/fabric_east"]
+    sample: ["/api/v1/manage/fabrics/ai_ibgp_fabric"]
 api_verbs:
     description: HTTP methods used during operations.
     type: list
@@ -1929,15 +1755,15 @@ api_payload:
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import ManageIbgpFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ibgp_vxlan import FabricAiIbgpVxlanModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ibgp_vxlan import ManageAiIbgpVxlanFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 
 
 def main():
     argument_spec = nd_argument_spec()
-    argument_spec.update(FabricIbgpModel.get_argument_spec())
+    argument_spec.update(FabricAiIbgpVxlanModel.get_argument_spec())
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -1956,7 +1782,7 @@ def main():
     state = module.params.get("state", "merged")
 
     try:
-        ManageIbgpFabricOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+        ManageAiIbgpVxlanFabricOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
     except ValueError as e:
         module.fail_json(msg=str(e))
 
@@ -1965,7 +1791,7 @@ def main():
         # Initialize StateMachine
         nd_state_machine = NDStateMachine(
             module=module,
-            model_orchestrator=ManageIbgpFabricOrchestrator,
+            model_orchestrator=ManageAiIbgpVxlanFabricOrchestrator,
         )
 
         # Manage state

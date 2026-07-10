@@ -21,10 +21,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import FabricExternalConnectivityModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions_mixin import ConfigActionsMixin
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
-class ManageExternalFabricOrchestrator(NDBaseOrchestrator):
+class ManageExternalFabricOrchestrator(ConfigActionsMixin, NDBaseOrchestrator):
     model_class: ClassVar[type[NDBaseModel]] = FabricExternalConnectivityModel
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPost

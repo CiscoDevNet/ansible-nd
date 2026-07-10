@@ -92,11 +92,13 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
+    _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
+
     # Fabric Type (required for discriminated union)
     type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
 
     # Core eBGP Configuration
-    bgp_asn: str | None = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].")
+    bgp_asn: str = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].")
     site_id: str | None = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN for Spines", default="")
     bgp_as_mode: BgpAsModeEnum = Field(
         alias="bgpAsMode",
@@ -248,7 +250,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
             "MVPN VRI ID (minimum: 1, maximum: 65535) for vPC, applicable when TRM enabled "
             "with IPv6 underlay, or mvpnVrfRouteImportId enabled with IPv4 underlay"
         ),
-        default=None,
+        default="",
     )
     vrf_route_import_id_reallocation: bool = Field(
         alias="vrfRouteImportIdReallocation", description="One time VRI ID re-allocation based on 'MVPN VRI ID Range'", default=False
@@ -256,7 +258,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     # Advanced Features
     anycast_gateway_mac: str = Field(alias="anycastGatewayMac", description="Shared anycast gateway MAC address for all VTEPs", default="2020.0000.00aa")
-    target_subnet_mask: int = Field(alias="targetSubnetMask", description="Mask for underlay subnet IP range", ge=24, le=31, default=30)
+    target_subnet_mask: int = Field(alias="targetSubnetMask", description="Mask for underlay subnet IP range", ge=30, le=31, default=30)
     fabric_mtu: int = Field(alias="fabricMtu", description="Intra Fabric Interface MTU. Must be an even number", ge=1500, le=9216, default=9216)
     l2_host_interface_mtu: int = Field(
         alias="l2HostInterfaceMtu", description="Layer 2 host interface MTU. Must be an even number", ge=1500, le=9216, default=9216
@@ -401,9 +403,9 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     # Backup / Restore
     real_time_backup: bool | None = Field(
-        alias="realTimeBackup", description="Backup hourly only if there is any config deployment since last backup", default=None
+        alias="realTimeBackup", description="Backup hourly only if there is any config deployment since last backup", default=False
     )
-    scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=None)
+    scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=False)
     scheduled_backup_time: str = Field(
         alias="scheduledBackupTime", description=("Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)"), default=""
     )
@@ -452,29 +454,29 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     # DNS / NTP / Syslog Collections
     ntp_server_collection: list[str] = Field(
-        default_factory=lambda: ["string"], alias="ntpServerCollection", description="List of NTP server IPv4/IPv6 addresses and/or hostnames"
+        default_factory=list, alias="ntpServerCollection", description="List of NTP server IPv4/IPv6 addresses and/or hostnames"
     )
     ntp_server_vrf_collection: list[str] = Field(
-        default_factory=lambda: ["string"],
+        default_factory=list,
         alias="ntpServerVrfCollection",
         description=("NTP Server VRFs. One VRF for all NTP servers or a list of VRFs, one per NTP server"),
     )
     dns_collection: list[str] = Field(default_factory=list, alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses")
     dns_vrf_collection: list[str] = Field(
-        default_factory=lambda: ["string"],
+        default_factory=list,
         alias="dnsVrfCollection",
         description=("DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server"),
     )
     syslog_server_collection: list[str] = Field(
-        default_factory=lambda: ["string"], alias="syslogServerCollection", description="List of Syslog server IPv4/IPv6 addresses and/or hostnames"
+        default_factory=list, alias="syslogServerCollection", description="List of Syslog server IPv4/IPv6 addresses and/or hostnames"
     )
     syslog_server_vrf_collection: list[str] = Field(
-        default_factory=lambda: ["string"],
+        default_factory=list,
         alias="syslogServerVrfCollection",
         description=("Syslog Server VRFs. One VRF for all Syslog servers or a list of VRFs, one per Syslog server"),
     )
     syslog_severity_collection: list[int] = Field(
-        default_factory=lambda: [7], alias="syslogSeverityCollection", description="List of Syslog severity values, one per Syslog server"
+        default_factory=list, alias="syslogSeverityCollection", description="List of Syslog severity values, one per Syslog server"
     )
 
     # Extra Config / Pre-Interface Config / AAA / Banner
@@ -737,7 +739,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     @field_validator("bgp_asn")
     @classmethod
-    def validate_bgp_asn(cls, value: str | None) -> str | None:
+    def validate_bgp_asn(cls, value: str) -> str:
         """
         # Summary
 
@@ -747,8 +749,6 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
         - `ValueError` - If value does not match the expected ASN format
         """
-        if value is None:
-            return value
         if not BGP_ASN_RE.match(value):
             raise ValueError(f"Invalid BGP ASN '{value}'. Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
         return value
@@ -812,7 +812,7 @@ class FabricEbgpModel(FabricBaseModel):
     def _post_validate_consistency(self) -> None:
         """Propagate BGP ASN to site_id if site_id is empty."""
         super()._post_validate_consistency()
-        if self.management is not None and self.management.site_id == "" and self.management.bgp_asn is not None:
+        if self.management is not None and self.management.site_id == "":
             bgp_asn = self.management.bgp_asn
             if "." in bgp_asn:
                 high, low = bgp_asn.split(".")
