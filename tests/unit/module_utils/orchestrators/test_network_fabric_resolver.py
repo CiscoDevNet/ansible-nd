@@ -67,8 +67,7 @@ def _controller_response(status: int, message: str, data: dict | None = None) ->
 
 def _real_rest_send_resolver(fabric_name: str, responses: list[dict], sender_exception: Exception | None = None) -> NetworkFabricResolver:
     def generated_responses():
-        for response in responses:
-            yield response
+        yield from responses
 
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
