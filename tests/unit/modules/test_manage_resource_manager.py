@@ -1017,8 +1017,8 @@ def test_get_all_resources_reads_multiple_pages_with_offsets():
 
     paths = [call.args[0] for call in nd.request.call_args_list]
     assert len(module._all_resources) == 2  # pylint: disable=protected-access
-    assert "max=500&offset=0" in paths[0]
-    assert "max=500&offset=1" in paths[1]
+    assert "max=100&offset=0" in paths[0]
+    assert "max=100&offset=1" in paths[1]
 
 
 def test_fetch_resources_paginated_uses_filtered_query_path():
@@ -1039,7 +1039,7 @@ def test_fetch_resources_paginated_uses_filtered_query_path():
     assert "poolName=LOOPBACK_ID" in path
     assert "switchId=SER1" in path
     assert "filter=entityName:loopback0" in path
-    assert "max=500" in path
+    assert "max=100" in path
     assert "offset=0" in path
 
 
@@ -1684,10 +1684,10 @@ def test_make_resource_key_builds_dedup_key():
 # =========================================================================
 
 
-def test_get_all_resources_api_error_500_raises():
-    """_get_all_resources with API 500 error raises ValueError."""
+def test_get_all_resources_api_error_100_raises():
+    """_get_all_resources with API 100 error raises ValueError."""
     nd = _mock_nd_module()
-    error = NDModuleError(msg="Internal Server Error", status=500)
+    error = NDModuleError(msg="Internal Server Error", status=100)
     nd.request.side_effect = error
 
     with pytest.raises(ValueError, match="API call failed"):
@@ -1759,8 +1759,8 @@ def test_validate_input_empty_config_for_deleted_raises():
         module._validate_input()  # pylint: disable=protected-access
 
 
-def test_manage_state_merged_uses_filtered_candidate_get():
-    """Merged state queries only safe resource candidates before diffing."""
+def test_manage_state_merged_fetches_full_inventory_before_diffing():
+    """Merged state fetches full resource inventory before local diffing."""
     config = [
         {
             "entity_name": "loopback0",
@@ -1797,14 +1797,16 @@ def test_manage_state_merged_uses_filtered_candidate_get():
     paths = [call.args[0] for call in nd.request.call_args_list]
     resource_paths = [path for path in paths if "/resources" in path]
     assert resource_paths
-    assert "poolName=LOOPBACK_ID" in resource_paths[0]
-    assert "switchId=SER1" in resource_paths[0]
-    assert "max=500" in resource_paths[0]
-    assert "offset=0" in resource_paths[0]
+    path = resource_paths[0]
+    assert "max=" in path
+    assert "offset=0" in path
+    assert "poolName=" not in path
+    assert "switchId=" not in path
+    assert "filter=" not in path
 
 
-def test_manage_state_deleted_uses_filtered_candidate_get():
-    """Deleted state uses the same filtered candidate lookup before remove-by-ID matching."""
+def test_manage_state_deleted_fetches_full_inventory_before_matching():
+    """Deleted state fetches full resource inventory before remove-by-ID matching."""
     config = [
         {
             "entity_name": "loopback0",
@@ -1829,10 +1831,11 @@ def test_manage_state_deleted_uses_filtered_candidate_get():
     resource_paths = [path for path in paths if "/resources" in path]
     assert resource_paths
     path = resource_paths[0]
-    assert "poolName=LOOPBACK_ID" in path
-    assert "switchId=SER1" in path
-    assert "max=500" in path
+    assert "max=" in path
     assert "offset=0" in path
+    assert "poolName=" not in path
+    assert "switchId=" not in path
+    assert "filter=" not in path
     assert len(resource_paths) == 1
 
 

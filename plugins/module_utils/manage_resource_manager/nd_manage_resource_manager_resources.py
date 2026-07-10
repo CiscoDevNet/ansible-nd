@@ -59,7 +59,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
     Preserves the same business logic as nd_manage_resource_manager.py.
     """
 
-    RESOURCE_PAGE_SIZE = 500
+    RESOURCE_PAGE_SIZE = 100
 
     def __init__(
         self,
@@ -462,7 +462,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         page_size = self.RESOURCE_PAGE_SIZE
         visited_offsets = set()
         page_count = 0
-        max_pages = 10000
+        max_pages = 1000
 
         while True:
             if offset in visited_offsets:
@@ -790,41 +790,6 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         self.log.debug("_build_gathered_resource_criteria: built %s criteria item(s)", len(criteria))
         return criteria
 
-    def _switch_filter_supported(self, scope_type):
-        """Return True when the resources GET switchId filter safely maps to the scope."""
-        supported = scope_type in ("device", "device_interface")
-        self.log.debug("_switch_filter_supported: scope_type=%s, supported=%s", scope_type, supported)
-        return supported
-
-    def _build_candidate_resource_criteria(self, configs):
-        """Build safe filtered GET criteria for modifying states."""
-        self.log.debug(
-            "_build_candidate_resource_criteria: building criteria from %s validated config item(s)",
-            len(configs or []),
-        )
-        criteria = []
-        for idx, cfg in enumerate(configs):
-            pool_name = cfg.pool_name
-            if self._switch_filter_supported(cfg.scope_type) and cfg.switches:
-                for switch_id in cfg.switches:
-                    criteria.append((pool_name, switch_id, None))
-                    self.log.debug(
-                        "_build_candidate_resource_criteria: added switch-filtered criteria from config index=%s: pool_name=%s, switch_id=%s",
-                        idx,
-                        pool_name,
-                        switch_id,
-                    )
-                continue
-            criteria.append((pool_name, None, None))
-            self.log.debug(
-                "_build_candidate_resource_criteria: added pool-only criteria from config index=%s: pool_name=%s, scope_type=%s",
-                idx,
-                pool_name,
-                cfg.scope_type,
-            )
-        self.log.debug("_build_candidate_resource_criteria: built %s criteria item(s)", len(criteria))
-        return criteria
-
     def _refresh_existing_resources(self, update_previous=False):
         """Load the current candidate resource snapshot for the active state."""
         self.log.info(
@@ -841,8 +806,8 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 self.log.debug("_refresh_existing_resources: gathered with config, fetching filtered candidate inventory")
                 resources = self._fetch_resources_for_criteria(self._build_gathered_resource_criteria())
         else:
-            self.log.debug("_refresh_existing_resources: modifying state, fetching filtered candidate inventory")
-            resources = self._fetch_resources_for_criteria(self._build_candidate_resource_criteria(self.proposed))
+            self.log.debug("_refresh_existing_resources: modifying state, fetching full paginated inventory")
+            resources = self._fetch_resources_paginated()
 
         self._all_resources = resources
         self._resources_fetched = True
