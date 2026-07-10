@@ -180,6 +180,27 @@ class NDModule:
             self.log.debug(msg)
         return self._rest_send
 
+    def get_rest_send(self) -> RestSend:
+        """
+        # Summary
+
+        Public accessor for the lazily-initialised ``RestSend`` instance.
+
+        Wraps the private ``_get_rest_send()`` to provide a stable public
+        API for external callers (e.g., modules or resource helpers that
+        need ``RestSend`` *before* any ``request()`` call has been made).
+
+        The existing ``rest_send`` ``@property`` is unsuitable for these
+        early-access patterns because it raises ``ValueError`` until
+        ``request()`` initialises ``_rest_send``. This method triggers
+        the lazy initialisation instead.
+
+        ## Returns
+
+        -   RestSend: Configured ``RestSend`` instance ready for use.
+        """
+        return self._get_rest_send()
+
     @property
     def rest_send(self) -> RestSend:
         """

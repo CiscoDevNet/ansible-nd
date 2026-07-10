@@ -1,0 +1,685 @@
+---
+##################################################################
+##  nd_policy_group — Special-case test scenarios               ##
+##################################################################
+#
+# Consolidated file covering scenarios that don't fit cleanly in
+# merged.yaml / deleted.yaml / gathered.yaml:
+#
+#   A. FORCE_CREATE     create_additional_policy=true (Fix C)
+#   B. CHECK_MODE       --check / check_mode=true on merged/deleted
+#   C. NO_DEPLOY        deploy=false (markDelete-only / no push)
+#   D. POLICY_ID        identification via POLICY-GROUP-* IDs
+#   E. VALIDATION       expected module failures (bad input)
+#   F. BFD_PREREQ       feature_enable bfd → switch_freeform BFD timers
+#
+# All test policy groups use description prefix "SPC-" to isolate
+# from other test files. cleanup.yaml deletes all SPC- groups.
+
+
+- name: "SPECIAL - Import cleanup tasks (pre)"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: special
+
+- block:
+
+    ##############################################################
+    ##  A. FORCE_CREATE — create_additional_policy: true        ##
+    ##############################################################
+
+    # SETUP: Create a baseline switch_freeform group so force-create
+    # has an existing (description, template_name) collision.
+    - name: "SPECIAL A.SETUP - Baseline switch_freeform group"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "SPC-FORCE-baseline freeform"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "spanning-tree mode rapid-pvst"
+      register: result
+      tags: special
+
+    - name: "SPECIAL A.SETUP - Verify baseline present"
+      vars:
+        baseline: "{{ result.after | selectattr('description', 'equalto', 'SPC-FORCE-baseline freeform') | list }}"
+      ansible.builtin.assert:
+        that:
+          - baseline | length == 1
+          - baseline[0].template_name == "switch_freeform"
+          - baseline[0].template_inputs.CONF is search("rapid-pvst")
+      tags: special
+
+    # ---- TC1: force_create WITH description (duplicate by intent) ----
+    - name: "SPECIAL A.TC1 - Force-create duplicate (same desc, different CONF)"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "SPC-FORCE-baseline freeform"
+            create_additional_policy: true
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "spanning-tree vlan 1-100 priority 4096"
+      register: result
+      tags: special
+
+    - name: "SPECIAL A.TC1 - Verify force_created surfaced (with description)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - result.force_created is defined
+          - result.force_created | length == 1
+          - result.force_created[0].template_name == "switch_freeform"
+          - result.force_created[0].description == "SPC-FORCE-baseline freeform"
+          - result.force_created[0].create_additional_policy == true
+          - result.force_created[0].template_inputs.CONF is search("priority 4096")
+      tags: special
+
+    # Capture force-created duplicate's policy_id (shares composite key
+    # with baseline → shared cleanup can only remove one of them).
+    - name: "SPECIAL A.TC1 - Pin force-created duplicate policy_id for cleanup"
+      ansible.builtin.set_fact:
+        spc_dup_force_policy_id: "{{ result.force_created[0].policy_id | default('') }}"
+      tags: special
+
+    # ---- TC2: force_create WITHOUT description ----
+    - name: "SPECIAL A.TC2 - Force-create without description"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: true
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "as-format asdot"
+      register: result
+      tags: special
+
+    - name: "SPECIAL A.TC2 - Verify force_created surfaced (no description)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - result.force_created is defined
+          - result.force_created | length == 1
+          - result.force_created[0].template_name == "switch_freeform"
+          - "'description' not in result.force_created[0]"
+          - result.force_created[0].create_additional_policy == true
+          - result.force_created[0].template_inputs.CONF == "as-format asdot"
+      tags: special
+
+    - name: "SPECIAL A.TC2 - Pin anonymous force-created policy_id for cleanup"
+      ansible.builtin.set_fact:
+        spc_anon_force_policy_id: "{{ result.force_created[0].policy_id | default('') }}"
+      tags: special
+
+    ##############################################################
+    ##  B. CHECK_MODE                                            ##
+    ##############################################################
+
+    # ---- TC3: check_mode merged (no real create) ----
+    - name: "SPECIAL B.TC3 - check_mode merged on non-existent group"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            description: "SPC-CHECK-Timezone PST"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              TIME_ZONE: PST
+              HOUR_OFFSET: -8
+              MINUTE_OFFSET: 0
+      check_mode: true
+      register: result
+      tags: special
+
+    - name: "SPECIAL B.TC3 - Verify check_mode reports change, target NOT in before"
+      vars:
+        target_before: "{{ result.before | selectattr('description', 'equalto', 'SPC-CHECK-Timezone PST') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - target_before | length == 0
+      tags: special
+
+    - name: "SPECIAL B.TC3.verify - Confirm nothing was actually created"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+            description: "SPC-CHECK-Timezone PST"
+      register: result
+      tags: special
+
+    - name: "SPECIAL B.TC3.verify - Gathered confirms no real creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered == []
+      tags: special
+
+    # SETUP for TC4: create a real group to delete in check_mode
+    - name: "SPECIAL B.TC4.setup - Create group for check_mode delete"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_summertime
+            description: "SPC-CHECK-MD-Summertime CEST"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
+      register: result
+      tags: special
+
+    - name: "SPECIAL B.TC4.setup - Verify setup created"
+      vars:
+        target: "{{ result.after | selectattr('description', 'equalto', 'SPC-CHECK-MD-Summertime CEST') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - target | length == 1
+      tags: special
+
+    # ---- TC4: check_mode deleted (no real delete) ----
+    - name: "SPECIAL B.TC4 - check_mode deleted on existing group"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: clock_summertime
+            description: "SPC-CHECK-MD-Summertime CEST"
+      check_mode: true
+      register: result
+      tags: special
+
+    - name: "SPECIAL B.TC4 - Verify check_mode reports change, target IS in before"
+      vars:
+        target_before: "{{ result.before | selectattr('description', 'equalto', 'SPC-CHECK-MD-Summertime CEST') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - target_before | length == 1
+          - target_before[0].template_name == "clock_summertime"
+      tags: special
+
+    - name: "SPECIAL B.TC4.verify - Confirm group still exists after check_mode"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_summertime
+            description: "SPC-CHECK-MD-Summertime CEST"
+      register: result
+      tags: special
+
+    - name: "SPECIAL B.TC4.verify - Gathered confirms group not deleted"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length == 1
+          - result.gathered[0].description == "SPC-CHECK-MD-Summertime CEST"
+      tags: special
+
+    ##############################################################
+    ##  C. NO_DEPLOY — deploy: false                             ##
+    ##############################################################
+
+    # ---- TC5: deploy=false on create ----
+    - name: "SPECIAL C.TC5 - Create with deploy=false"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        config:
+          - name: switch_freeform
+            description: "SPC-NODEPLOY-as-format asdot"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "as-format asdot"
+      register: result
+      tags: special
+
+    - name: "SPECIAL C.TC5 - Verify policy created (controller-side state)"
+      vars:
+        target: "{{ result.after | selectattr('description', 'equalto', 'SPC-NODEPLOY-as-format asdot') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - target | length == 1
+          - target[0].template_name == "switch_freeform"
+          - target[0].switch_ids | length == 1
+          - switch_serial_1 in target[0].switch_ids
+      tags: special
+
+    - name: "SPECIAL C.TC5 - MANUAL VERIFICATION REQUIRED"
+      ansible.builtin.debug:
+        msg:
+          - "MANUAL CHECK: ND UI should show policy group 'SPC-NODEPLOY-as-format asdot'"
+          - "in NOT_DEPLOYED state (config exists but not pushed to switch)."
+          - "Switch {{ switch_serial_1 }} should NOT have 'as-format asdot' in running-config."
+      tags: special
+
+    # SETUP for TC6: create a multi-switch group, then remove one switch with deploy=false
+    - name: "SPECIAL C.TC6.setup - Create multi-switch group"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "SPC-NODEPLOY-Enable LACP"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+              - "{{ switch_serial_2 }}"
+            template_inputs:
+              featureName: lacp
+      register: result
+      tags: special
+
+    - name: "SPECIAL C.TC6.setup - Verify both switches attached"
+      vars:
+        target: "{{ result.after | selectattr('description', 'equalto', 'SPC-NODEPLOY-Enable LACP') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - target | length == 1
+          - target[0].switch_ids | length == 2
+      tags: special
+
+    # ---- TC6: deploy=false on update with switch removal ----
+    - name: "SPECIAL C.TC6 - Update with switch removal, deploy=false"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        config:
+          - name: feature_enable
+            description: "SPC-NODEPLOY-Enable LACP"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lacp
+      register: result
+      tags: special
+
+    - name: "SPECIAL C.TC6 - Verify switch removed in controller state"
+      vars:
+        before_t: "{{ result.before | selectattr('description', 'equalto', 'SPC-NODEPLOY-Enable LACP') | list }}"
+        after_t: "{{ result.after | selectattr('description', 'equalto', 'SPC-NODEPLOY-Enable LACP') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - before_t | length == 1
+          - before_t[0].switch_ids | length == 2
+          - after_t | length == 1
+          - after_t[0].switch_ids | length == 1
+          - switch_serial_1 in after_t[0].switch_ids
+          - switch_serial_2 not in after_t[0].switch_ids
+      tags: special
+
+    - name: "SPECIAL C.TC6 - MANUAL VERIFICATION REQUIRED"
+      ansible.builtin.debug:
+        msg:
+          - "MANUAL CHECK: switch {{ switch_serial_2 }} was removed from the policy group"
+          - "with deploy=false. Verify on the switch that the lacp feature is still"
+          - "configured (not yet undeployed)."
+      tags: special
+
+    ##############################################################
+    ##  D. POLICY_ID — identification via POLICY-GROUP-* IDs    ##
+    ##############################################################
+
+    # SETUP: Create a known group and capture its policy_id
+    - name: "SPECIAL D.SETUP - Create group for ID-based tests"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "SPC-ID-Enable LLDP"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lldp
+      register: result
+      tags: special
+
+    - name: "SPECIAL D.SETUP - Verify created and capture policy_id"
+      vars:
+        target: "{{ result.after | selectattr('description', 'equalto', 'SPC-ID-Enable LLDP') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - target | length == 1
+          - target[0].policy_id is match('^POLICY-GROUP-')
+      tags: special
+
+    - name: "SPECIAL D.SETUP - Pin policy_id for subsequent TCs"
+      ansible.builtin.set_fact:
+        spc_policy_id: "{{ (result.after | selectattr('description', 'equalto', 'SPC-ID-Enable LLDP') | list)[0].policy_id }}"
+      tags: special
+
+    # ---- TC7: gather by ID ----
+    - name: "SPECIAL D.TC7 - Gather policy group by POLICY-GROUP-* ID"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: "{{ spc_policy_id }}"
+      register: result
+      tags: special
+
+    - name: "SPECIAL D.TC7 - Verify gather-by-ID returns the right group"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length == 1
+          - result.gathered[0].policy_id == spc_policy_id
+          - result.gathered[0].description == "SPC-ID-Enable LLDP"
+          - result.gathered[0].name == "feature_enable"
+      tags: special
+
+    # ---- TC8: update by ID (no description provided) ----
+    - name: "SPECIAL D.TC8 - Update existing group by ID only"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: "{{ spc_policy_id }}"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+              - "{{ switch_serial_2 }}"
+            template_inputs:
+              featureName: lldp
+      register: result
+      tags: special
+
+    - name: "SPECIAL D.TC8 - Verify update-by-ID applied correctly"
+      vars:
+        before_t: "{{ result.before | selectattr('policy_id', 'equalto', spc_policy_id) | list }}"
+        after_t: "{{ result.after | selectattr('policy_id', 'equalto', spc_policy_id) | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - before_t | length == 1
+          - before_t[0].switch_ids | length == 1
+          - after_t | length == 1
+          - after_t[0].switch_ids | length == 2
+      tags: special
+
+    # ---- TC10: merged with unknown POLICY-GROUP-* ID → fail ----
+    # (TC9 — delete by ID — moved after TC10/11/12 to keep spc_policy_id alive)
+    - name: "SPECIAL D.TC10 - Merged with unknown POLICY-GROUP-* ID"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: POLICY-GROUP-FAKE999
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lldp
+      register: result
+      ignore_errors: true
+      tags: special
+
+    - name: "SPECIAL D.TC10 - Verify failure with helpful message"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+          - result.msg is search('POLICY-GROUP-FAKE999')
+      tags: special
+
+    - name: "SPECIAL D.TC10 - Reset connection after expected module failure"
+      ansible.builtin.meta: reset_connection
+      tags: special
+
+    # ---- TC11: deleted with unknown POLICY-GROUP-* ID → skip silently ----
+    - name: "SPECIAL D.TC11 - Deleted with unknown POLICY-GROUP-* ID"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: POLICY-GROUP-FAKE998
+      register: result
+      tags: special
+
+    - name: "SPECIAL D.TC11 - Verify silent skip (no failure)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: special
+
+    # ---- TC12: mixed config — update-by-ID + new create-by-desc ----
+    - name: "SPECIAL D.TC12 - Mixed: update by ID + create by description"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: "{{ spc_policy_id }}"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lldp
+          - name: clock_timezone
+            description: "SPC-ID-Timezone EST"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              TIME_ZONE: EST
+              HOUR_OFFSET: -5
+              MINUTE_OFFSET: 0
+      register: result
+      tags: special
+
+    - name: "SPECIAL D.TC12 - Verify mixed update + create"
+      vars:
+        updated: "{{ result.after | selectattr('policy_id', 'equalto', spc_policy_id) | list }}"
+        new_grp: "{{ result.after | selectattr('description', 'equalto', 'SPC-ID-Timezone EST') | list }}"
+        new_before: "{{ result.before | selectattr('description', 'equalto', 'SPC-ID-Timezone EST') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - updated | length == 1
+          - updated[0].switch_ids | length == 1
+          - new_grp | length == 1
+          - new_grp[0].template_name == "clock_timezone"
+          - new_before | length == 0
+      tags: special
+
+    # ---- TC9: delete by ID ----
+    - name: "SPECIAL D.TC9 - Delete policy group by POLICY-GROUP-* ID"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ spc_policy_id }}"
+      register: result
+      tags: special
+
+    - name: "SPECIAL D.TC9 - Verify delete-by-ID succeeded"
+      vars:
+        before_t: "{{ result.before | selectattr('policy_id', 'equalto', spc_policy_id) | list }}"
+        after_t: "{{ result.after | selectattr('policy_id', 'equalto', spc_policy_id) | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - before_t | length == 1
+          - after_t | length == 0
+      tags: special
+
+    ##############################################################
+    ##  E. VALIDATION — expected failures                        ##
+    ##############################################################
+
+    # ---- TC13: missing template_name (no `name` field) ----
+    - name: "SPECIAL E.TC13 - Missing `name` field in merged config"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - description: "SPC-VAL-no-name"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "ip pim sparse-mode"
+      register: result
+      ignore_errors: true
+      tags: special
+
+    - name: "SPECIAL E.TC13 - Verify failure on missing name"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+          - result.msg is search("'name' is required")
+      tags: special
+
+    # ---- TC14: cross-entry duplicate (description, name) ----
+    - name: "SPECIAL E.TC14 - Duplicate (description, name) across config entries"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "SPC-VAL-duplicate-key"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "no ip domain-lookup"
+          - name: switch_freeform
+            description: "SPC-VAL-duplicate-key"
+            switch_ids:
+              - "{{ switch_serial_2 }}"
+            template_inputs:
+              CONF: "ip domain-name example.com"
+      register: result
+      ignore_errors: true
+      tags: special
+
+    - name: "SPECIAL E.TC14 - Verify duplicate detection"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+          - result.msg is search('Duplicate')
+          - result.msg is search('SPC-VAL-duplicate-key')
+      tags: special
+
+    ##############################################################
+    ##  F. BFD_PREREQ — feature_enable bfd → BFD timers          ##
+    ##############################################################
+    #
+    # switch_freeform "bfd interval ..." requires `feature bfd` to be
+    # enabled first on the switch. Verify the module correctly handles
+    # both policies in a single bulk-create call.
+
+    - name: "SPECIAL F.TC15 - Bulk: feature_enable bfd + BFD timers freeform"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "SPC-BFD-Enable BFD feature"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: bfd
+          - name: switch_freeform
+            description: "SPC-BFD-BFD timers"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+      register: result
+      tags: special
+
+    - name: "SPECIAL F.TC15 - Verify both BFD policies created"
+      vars:
+        feat: "{{ result.after | selectattr('description', 'equalto', 'SPC-BFD-Enable BFD feature') | list }}"
+        timers: "{{ result.after | selectattr('description', 'equalto', 'SPC-BFD-BFD timers') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+          - feat | length == 1
+          - feat[0].template_name == "feature_enable"
+          - feat[0].template_inputs.featureName == "bfd"
+          - timers | length == 1
+          - timers[0].template_name == "switch_freeform"
+          - timers[0].template_inputs.CONF is search("bfd interval 250")
+      tags: special
+
+    # Idempotence on BFD chain
+    - name: "SPECIAL F.TC15b - Idempotence on BFD bulk create"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "SPC-BFD-Enable BFD feature"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: bfd
+          - name: switch_freeform
+            description: "SPC-BFD-BFD timers"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+      register: result
+      tags: special
+
+    - name: "SPECIAL F.TC15b - Verify idempotence on BFD chain"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: special
+
+  always:
+    # The shared cleanup deletes by (description, name) which collapses
+    # force-create duplicates. Target the captured policy_ids first.
+    - name: "SPECIAL - Cleanup force-created policies by policy_id"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ item }}"
+      loop:
+        - "{{ spc_dup_force_policy_id | default('') }}"
+        - "{{ spc_anon_force_policy_id | default('') }}"
+      when: item != ''
+      ignore_errors: true
+      tags: special
+
+    - name: "SPECIAL - Final cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: special
