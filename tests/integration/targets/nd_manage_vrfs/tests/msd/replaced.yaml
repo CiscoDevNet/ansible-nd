@@ -1,0 +1,214 @@
+---
+- name: Test Entry Point - [nd_manage_vrfs - msd - replaced]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MSD Replaced Tests - [nd_manage_vrfs]                  +"
+      - "----------------------------------------------------------------"
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced - Build Parent and Child Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    target_vrf_names:
+      - ansible-msd-replaced
+      - ansible-msd-repl-parent
+    nd_vrf_msd_replace_base:
+      - vrf_name: ansible-msd-replaced
+        vrf_id: "{{ nd_vrf_base_id + 21 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 21 }}"
+        vrf_description: Ansible ND VRF MSD replaced base
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
+            adv_host_routes: false
+            adv_default_routes: true
+            static_default_route: true
+      - vrf_name: ansible-msd-repl-parent
+        vrf_id: "{{ nd_vrf_base_id + 29 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 29 }}"
+        vrf_description: Ansible ND VRF MSD replaced parent-only base
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+    nd_vrf_msd_replace_config:
+      - vrf_name: ansible-msd-replaced
+        vrf_id: "{{ nd_vrf_base_id + 21 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 21 }}"
+        vrf_description: Ansible ND VRF MSD replaced updated
+        loopback_route_tag: 12348
+        redist_direct_rmap: FABRIC-RMAP-REDIST-SUBNET
+        v6_redist_direct_rmap: FABRIC-RMAP-REDIST-SUBNET
+        ipv6_linklocal_enable: true
+        disable_rt_auto: true
+        import_vpn_rt:
+          - "65000:50021"
+        export_vpn_rt:
+          - "65000:50021"
+        import_evpn_rt:
+          - "65000:50021"
+        export_evpn_rt:
+          - "65000:50021"
+        adv_host_routes: true
+        adv_default_routes: false
+        static_default_route: false
+        max_bgp_paths: 4
+        max_ibgp_paths: 4
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
+            adv_host_routes: true
+            adv_default_routes: false
+            static_default_route: false
+            bgp_password: abcdef12
+            bgp_passwd_encrypt: 3
+      - vrf_name: ansible-msd-repl-parent
+        vrf_id: "{{ nd_vrf_base_id + 29 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 29 }}"
+        vrf_description: Ansible ND VRF MSD replaced parent-only updated
+        loopback_route_tag: 12351
+        max_bgp_paths: 2
+        max_ibgp_paths: 2
+        ipv6_linklocal_enable: true
+        adv_host_routes: true
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+  delegate_to: localhost
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced - Prepare Base Configuration
+  vars:
+    file: msd_replace_base
+    vrf_conf: "{{ nd_vrf_msd_replace_base }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced - Prepare Replacement Configuration
+  vars:
+    file: msd_replace
+    vrf_conf: "{{ nd_vrf_msd_replace_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced TC1 - Create Base VRF
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_msd_replace_base_conf }}"
+  register: msd_replace_base_result
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced TC2 - Replace Parent and Child VRF
+  cisco.nd.nd_manage_vrfs: &msd_replace_conf
+    fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
+    state: replaced
+    config: "{{ nd_vrf_msd_replace_conf }}"
+    output_level: debug
+  register: msd_replace_result
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced TC2 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - msd_replace_result.changed == true
+      - msd_replace_result.fabric_type == "multisite_parent"
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced TC2 - Gather Parent VRFs
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
+    state: gathered
+    config: []
+  register: msd_replace_parent_gathered
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced TC2 - Validate Parent VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ msd_replace_parent_gathered }}"
+    test_data: "{{ nd_vrf_msd_replace_conf }}"
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced TC2 - Gather Child VRFs
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ nd_vrf_msd_child_fabric }}"
+    state: gathered
+    config: []
+  register: msd_replace_child_gathered
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced TC2 - Validate Child VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ msd_replace_child_gathered }}"
+    test_data:
+      - vrf_name: ansible-msd-replaced
+        adv_host_routes: true
+        adv_default_routes: false
+        static_default_route: false
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced TC2 - Validate Parent-Only VRF On Child
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ msd_replace_child_gathered }}"
+    test_data:
+      - vrf_name: ansible-msd-repl-parent
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced TC3 - Idempotence
+  cisco.nd.nd_manage_vrfs: *msd_replace_conf
+  register: msd_replace_idempotent
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced
+
+- name: MSD Replaced TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - msd_replace_idempotent.changed == false
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - replaced

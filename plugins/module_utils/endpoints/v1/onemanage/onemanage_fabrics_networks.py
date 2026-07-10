@@ -35,7 +35,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
 class _EpOneManageFabricsNetworksBase(FabricNameMixin, NDEndpointBaseModel):
-    """Base class for onemanage fabric network endpoints."""
+    """Base class for OneManage fabric network endpoints."""
 
     proxy_path: str = Field(default="", description="Optional ND proxy prefix")
 

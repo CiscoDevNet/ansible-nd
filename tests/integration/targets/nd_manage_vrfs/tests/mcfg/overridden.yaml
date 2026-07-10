@@ -1,0 +1,169 @@
+---
+- name: Test Entry Point - [nd_manage_vrfs - mcfg - overridden]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MCFG Overridden Tests - [nd_manage_vrfs]               +"
+      - "----------------------------------------------------------------"
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden - Build Parent and Child Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    target_vrf_names:
+      - ansible-nd-vrf-mcfg-over-keep
+      - ansible-nd-vrf-mcfg-over-remove
+    nd_vrf_mcfg_over_seed:
+      - vrf_name: ansible-nd-vrf-mcfg-over-keep
+        vrf_id: "{{ nd_vrf_base_id + 32 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 32 }}"
+        vrf_description: Ansible ND VRF MCFG override keep seed
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: false
+      - vrf_name: ansible-nd-vrf-mcfg-over-remove
+        vrf_id: "{{ nd_vrf_base_id + 33 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 33 }}"
+        vrf_description: Ansible ND VRF MCFG override remove seed
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: false
+    nd_vrf_mcfg_over_config:
+      - vrf_name: ansible-nd-vrf-mcfg-over-keep
+        vrf_id: "{{ nd_vrf_base_id + 32 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 32 }}"
+        vrf_description: Ansible ND VRF MCFG override keep updated
+        loopback_route_tag: 12355
+        max_bgp_paths: 3
+        max_ibgp_paths: 3
+        ipv6_linklocal_enable: true
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: true
+            adv_default_routes: false
+            static_default_route: false
+  delegate_to: localhost
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden - Prepare Seed Configuration
+  vars:
+    file: mcfg_over_seed
+    vrf_conf: "{{ nd_vrf_mcfg_over_seed }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden - Prepare Override Configuration
+  vars:
+    file: mcfg_over
+    vrf_conf: "{{ nd_vrf_mcfg_over_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC1 - Seed VRFs
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_mcfg_over_seed_conf }}"
+  register: mcfg_over_seed_result
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC2 - Override VRFs
+  cisco.nd.nd_manage_vrfs: &mcfg_over_conf
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
+    state: overridden
+    config: "{{ nd_vrf_mcfg_over_conf }}"
+    output_level: debug
+  register: mcfg_over_result
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC2 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - mcfg_over_result.changed == true
+      - mcfg_over_result.fabric_type == "multicluster_parent"
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC2 - Gather Parent VRFs
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
+    state: gathered
+    config: []
+  register: mcfg_over_gathered
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC2 - Validate Remaining VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ mcfg_over_gathered }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-mcfg-over-keep
+        vrf_id: "{{ nd_vrf_base_id + 32 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 32 }}"
+        vrf_description: Ansible ND VRF MCFG override keep updated
+        loopback_route_tag: 12355
+        max_bgp_paths: 3
+        max_ibgp_paths: 3
+        ipv6_linklocal_enable: true
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC2 - Validate Removed VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ mcfg_over_gathered }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-mcfg-over-remove
+    present: false
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC3 - Idempotence
+  cisco.nd.nd_manage_vrfs: *mcfg_over_conf
+  register: mcfg_over_idempotent
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - overridden
+
+- name: MCFG Overridden TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - mcfg_over_idempotent.changed == false
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - overridden

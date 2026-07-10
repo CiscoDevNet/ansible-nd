@@ -1,0 +1,18 @@
+---
+- name: Discover ND VRF Test Cases
+  ansible.builtin.find:
+    paths: "{{ role_path }}/tests/{{ nd_vrf_test_topology }}"
+    patterns: "{{ testcase }}.yaml"
+    recurse: true
+  delegate_to: localhost
+  register: nd_vrf_testcases
+
+- name: Build List of ND VRF Test Items
+  ansible.builtin.set_fact:
+    nd_vrf_test_items: "{{ nd_vrf_testcases.files | map(attribute='path') | list }}"
+
+- name: Run ND VRF Test Cases
+  ansible.builtin.include_tasks: "{{ nd_vrf_test_case_to_run }}"
+  with_items: "{{ nd_vrf_test_items }}"
+  loop_control:
+    loop_var: nd_vrf_test_case_to_run
