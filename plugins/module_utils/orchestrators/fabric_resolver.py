@@ -58,6 +58,14 @@ def _response_message(data: Any) -> str:
     return str(data)
 
 
+class FabricResolverNotFound(Exception):
+    """Raised when a resolver lookup receives an explicit controller 404."""
+
+
+class FabricResolverRequestError(Exception):
+    """Raised when a required resolver request fails for a non-404 reason."""
+
+
 def _is_error_response(response: Any) -> bool:
     """Return True when a wrapped ND response represents an HTTP/API error."""
     if not isinstance(response, dict):
@@ -180,12 +188,18 @@ class FabricResolverBase:
         """Send a resolver request through RestSend."""
         self._rest_send.path = path
         self._rest_send.verb = HttpVerbEnum(method.upper())
-        self._rest_send.commit()
+        try:
+            self._rest_send.commit()
+        except Exception as exc:
+            raise FabricResolverRequestError(f"{method.upper()} {path} failed before controller response: {exc}") from exc
 
         if ignore_not_found_error and self._rest_send.return_code == 404:
             return {}
+        if self._rest_send.return_code == 404:
+            raise FabricResolverNotFound(f"{method.upper()} {path} returned 404: {self._rest_send.error_summary}")
         if not self._rest_send.success:
-            raise Exception(f"Request failed {self._rest_send.error_summary}")
+            detail = _response_message(_response_data(self._rest_send.response_current))
+            raise FabricResolverRequestError(f"{method.upper()} {path} failed: {self._rest_send.error_summary}: {detail}")
         return self._rest_send.response_current
 
     def _controller_version(self) -> str:
@@ -388,7 +402,7 @@ class FabricResolverBase:
         enriched = dict(fabric_data or {})
         try:
             details = self._fetch_manage_fabric_details(self.fabric_name, enriched.get("clusterName"))
-        except Exception:
+        except FabricResolverNotFound:
             details = {}
 
         management = details.get("management") if isinstance(details, dict) else {}
@@ -416,7 +430,7 @@ class FabricResolverBase:
         """Resolve fabric topology with Manage endpoints and OneManage MCFG probe."""
         try:
             fabric_details = self._fetch_manage_fabric_details(self.fabric_name)
-        except Exception:
+        except FabricResolverNotFound:
             fabric_details = {}
 
         if fabric_details and fabric_details.get("category") != "fabricGroup":
