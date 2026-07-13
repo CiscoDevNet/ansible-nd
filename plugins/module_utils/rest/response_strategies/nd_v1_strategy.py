@@ -28,9 +28,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-# Per-item status literals that mark a failure inside an HTTP 207 Multi-Status body.
-# ND is inconsistent about the literal across endpoints: "failed" (batch interface /
-# switchActions/deploy), "error" (breakout), and "failure" (acl / maintenance_mode).
+# Per-item status literals that mark a failure inside a Multi-Status body. ND sends these
+# on HTTP 207 and, for some endpoints, on HTTP 200 as well, so the body is scanned on any
+# success code. ND is also inconsistent about the literal across endpoints: "failed" (batch
+# interface / switchActions/deploy), "error" (breakout), and "failure" (acl / maintenance_mode).
 _MULTISTATUS_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 
 # DATA envelope keys whose items carry a per-item `status`. Two known shapes:
@@ -46,7 +47,7 @@ def _failed_multistatus_items(response: dict) -> list[dict[str, Any]]:
     """
     # Summary
 
-    Return the per-item entries reporting a failure in an HTTP 207 Multi-Status body.
+    Return the per-item entries reporting a failure in a Multi-Status body.
 
     ## Description
 
@@ -163,8 +164,10 @@ class NdV1Strategy:
 
         - Top-level `ERROR` key is present
         - `DATA.error` key is present
-        - An HTTP 207 Multi-Status body reports a per-item failure in
-          `DATA.results[]` or `DATA.switchIds[]` (status `failed`/`error`)
+        - A Multi-Status body reports a per-item failure in `DATA.results[]` or
+          `DATA.switchIds[]` (status `failed`/`failure`/`error`). This is checked on any
+          success code, not only 207: ND sends per-item statuses on HTTP 200 for some
+          endpoints (e.g. the L3Out batch POST).
 
         ## Parameters
 
@@ -186,10 +189,11 @@ class NdV1Strategy:
         data = response.get("DATA")
         if isinstance(data, dict) and data.get("error") is not None:
             return False
-        # ND returns HTTP 207 for batch operations and reports per-item outcomes in
-        # DATA.results[]/DATA.switchIds[] items carrying status: success|failed|error.
-        # The 207 status alone does not indicate every item succeeded, so a body with
-        # any failing item must not be classified as success. See issue #295.
+        # ND reports per-item outcomes for batch operations in DATA.results[]/DATA.switchIds[]
+        # items carrying status: success|failed|failure|error. The HTTP status alone does not
+        # indicate every item succeeded -- ND sends these bodies on 207 and, for some endpoints,
+        # on plain 200 -- so any success-code response with a failing item must not be
+        # classified as success. See issue #295.
         if _failed_multistatus_items(response):
             return False
         return True
@@ -199,7 +203,7 @@ class NdV1Strategy:
         """
         # Summary
 
-        Format a single failing 207 Multi-Status item as `label: message`.
+        Format a single failing Multi-Status item as `label: message`.
 
         ## Description
 
@@ -292,7 +296,7 @@ class NdV1Strategy:
         3. code/message dict
         4. messages array with code/severity/message (all items joined)
         5. errors array (all items joined)
-        6. 207 Multi-Status per-item failures (results[]/switchIds[], all joined)
+        6. Multi-Status per-item failures (results[]/switchIds[], all joined)
         7. Unknown dict format
         8. Non-dict DATA
 
@@ -335,7 +339,7 @@ class NdV1Strategy:
 
         ## Description
 
-        Checks, in priority order: `raw_response`, `code`/`message`, the `messages[]` array, the `errors[]` array, and 207 Multi-Status per-item
+        Checks, in priority order: `raw_response`, `code`/`message`, the `messages[]` array, the `errors[]` array, and Multi-Status per-item
         failures (`results[]`/`switchIds[]`). Falls back to a generic status message when no specific format matches.
 
         ## Parameters
@@ -373,7 +377,7 @@ class NdV1Strategy:
         if msg is None and "errors" in data_dict and len(data_dict.get("errors", [])) > 0:
             msg = f"ND Error: {'; '.join(str(e) for e in data_dict['errors'])}"
 
-        # 207 Multi-Status per-item failures (results[]/switchIds[])
+        # Multi-Status per-item failures (results[]/switchIds[])
         if msg is None:
             failed_items = _failed_multistatus_items(response)
             if failed_items:

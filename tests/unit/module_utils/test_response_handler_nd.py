@@ -1459,13 +1459,14 @@ def test_response_handler_nd_01000():
 
 
 # =============================================================================
-# Test: 207 Multi-Status per-item failure detection (issue #295)
+# Test: Multi-Status per-item failure detection (issue #295)
 #
-# ND returns HTTP 207 for batch operations and reports per-item outcomes in a
-# DATA envelope array whose items carry status: "success" | "failed" | "error".
-# The two known envelope shapes are DATA.results[] (batch interface / breakout)
-# and DATA.switchIds[] (switchActions/deploy). A 207 whose body contains a
-# failing item must NOT be classified as success.
+# ND reports per-item outcomes for batch operations in a DATA envelope array whose
+# items carry status: "success" | "failed" | "failure" | "error". The two known
+# envelope shapes are DATA.results[] (batch interface / breakout) and
+# DATA.switchIds[] (switchActions/deploy). ND sends these bodies on HTTP 207 and,
+# for some endpoints, on plain HTTP 200 -- so any success-code response whose body
+# contains a failing item must NOT be classified as success.
 # =============================================================================
 
 

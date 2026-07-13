@@ -240,13 +240,14 @@ def test_l3out_00120() -> None:
     """
     # Summary
 
-    Verify `create` detects per-item failure in 207 multi-status response.
+    Verify `create` detects a per-item failure in a multi-status response body.
 
     ## Test
 
     - POST returns 200 but response body has item with status "failed"
     - `RuntimeError` is raised surfacing the per-item failure message (now via the centralized
-      `NdV1Strategy` 207/multi-status handling in RestSend)
+      `NdV1Strategy` per-item failure detection in RestSend, which scans the body on any
+      success code, not only 207)
 
     ## Classes and Methods
 
@@ -563,13 +564,14 @@ def test_l3out_00520() -> None:
     """
     # Summary
 
-    Verify `delete_bulk` detects per-item failure in 207 multi-status response.
+    Verify `delete_bulk` detects a per-item failure in a multi-status response body.
 
     ## Test
 
     - POST returns 200 but response body has one item with status "failed"
     - `RuntimeError` is raised surfacing the per-item failure message (now via the centralized
-      `NdV1Strategy` 207/multi-status handling in RestSend)
+      `NdV1Strategy` per-item failure detection in RestSend, which scans the body on any
+      success code, not only 207)
 
     ## Classes and Methods
 
