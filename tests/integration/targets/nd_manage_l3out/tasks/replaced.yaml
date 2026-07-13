@@ -1,0 +1,44 @@
+---
+# Replaced state tests for nd_manage_l3out
+# Copyright: (c) 2026, Cisco Systems, Inc.
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- REPLACED: Change static L3Out to BGP with routed interfaces ---
+
+- name: "REPLACED: Replace static L3Out configuration (check mode)"
+  cisco.nd.nd_manage_l3out: &replace_l3out_static
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ l3out_static_replaced }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_static
+
+- name: "REPLACED: Replace static L3Out configuration (normal mode)"
+  cisco.nd.nd_manage_l3out: *replace_l3out_static
+  register: nm_replaced_static
+
+- name: "REPLACED: Verify replacement"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_static is changed
+      - nm_replaced_static is changed
+
+# --- REPLACED IDEMPOTENCY ---
+
+- name: "REPLACED IDEMPOTENT: Re-apply replacement (check mode)"
+  cisco.nd.nd_manage_l3out: *replace_l3out_static
+  check_mode: true
+  register: cm_replaced_idem
+
+- name: "REPLACED IDEMPOTENT: Re-apply replacement (normal mode)"
+  cisco.nd.nd_manage_l3out: *replace_l3out_static
+  register: nm_replaced_idem
+
+- name: "REPLACED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_idem is not changed
+      - nm_replaced_idem is not changed

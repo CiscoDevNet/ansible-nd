@@ -1,0 +1,177 @@
+---
+- name: Test Entry Point - [nd_manage_networks - mcfg - sanity]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MCFG Sanity Tests - [nd_manage_networks]               +"
+      - "----------------------------------------------------------------"
+  tags: sanity
+
+- name: MCFG Sanity - Build Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_mcfg_parent_fabric }}"
+    target_network_names:
+      - ansible-nd-net-mcfg-sanity
+    target_network_delete_config:
+      - network_name: ansible-nd-net-mcfg-sanity
+        is_l2only: true
+    nd_network_mcfg_sanity_parent_expected:
+      - network_name: ansible-nd-net-mcfg-sanity
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 30 }}"
+        vlan_id: "{{ nd_network_base_vlan + 30 }}"
+        vlan_name: ansible_nd_net_mcfg_sanity
+        rt_auto: true
+        enable_ir: false
+    nd_network_mcfg_sanity_child_expected:
+      - network_name: ansible-nd-net-mcfg-sanity
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 30 }}"
+        vlan_id: "{{ nd_network_base_vlan + 30 }}"
+        vlan_name: ansible_nd_net_mcfg_sanity
+        enable_ir: false
+    nd_network_mcfg_sanity_config:
+      - network_name: ansible-nd-net-mcfg-sanity
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 30 }}"
+        vlan_id: "{{ nd_network_base_vlan + 30 }}"
+        vlan_name: ansible_nd_net_mcfg_sanity
+        rt_auto: true
+        enable_ir: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+        deploy: false
+  delegate_to: localhost
+  tags: sanity
+
+- name: MCFG Sanity - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity - Prepare Configuration
+  vars:
+    file: mcfg_sanity
+    network_conf: "{{ nd_network_mcfg_sanity_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC1 - Merge Parent Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_mcfg_sanity_conf }}"
+    output_level: debug
+  register: mcfg_sanity_merged
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC1 - Assert Parent Workflow
+  ansible.builtin.assert:
+    that:
+      - mcfg_sanity_merged.changed == true
+      - mcfg_sanity_merged.fabric_type == "multicluster_parent"
+      - mcfg_sanity_merged.child_fabrics is not defined
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC2 - Gather Parent Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_mcfg_sanity_conf }}"
+  register: mcfg_sanity_gathered
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC2 - Validate Parent Network
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ mcfg_sanity_gathered }}"
+    test_data: "{{ nd_network_mcfg_sanity_parent_expected }}"
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC2 - Gather Child Network Directly
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+    state: gathered
+    config: []
+  register: mcfg_sanity_child_gathered
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC2 - Validate Child Network
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ mcfg_sanity_child_gathered }}"
+    test_data: "{{ nd_network_mcfg_sanity_child_expected }}"
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC3 - Merge Parent Network Idempotence
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_mcfg_sanity_conf }}"
+    output_level: debug
+  register: mcfg_sanity_merged_idempotent
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC3 - Assert Merge Idempotence
+  ansible.builtin.assert:
+    that:
+      - mcfg_sanity_merged_idempotent.changed == false
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC4 - Delete Parent Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: deleted
+    config: "{{ target_network_delete_config }}"
+    output_level: debug
+  register: mcfg_sanity_deleted
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC4 - Assert Delete
+  ansible.builtin.assert:
+    that:
+      - mcfg_sanity_deleted.changed == true
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC4 - Delete Parent Network Idempotence
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: deleted
+    config: "{{ target_network_delete_config }}"
+    output_level: debug
+  register: mcfg_sanity_deleted_idempotent
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC4 - Assert Delete Idempotence
+  ansible.builtin.assert:
+    that:
+      - mcfg_sanity_deleted_idempotent.changed == false
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC5 - Reject Write Operation on Child Fabric
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+    state: merged
+    config: "{{ nd_network_mcfg_sanity_parent_expected }}"
+  register: mcfg_sanity_child_write
+  failed_when: false
+  when: nd_network_run_mcfg | bool
+  tags: sanity
+
+- name: MCFG Sanity TC5 - Assert Child Write Rejection
+  ansible.builtin.assert:
+    that:
+      - "'Only state=\\'gathered\\' is allowed on child fabrics' in mcfg_sanity_child_write.msg"
+  when: nd_network_run_mcfg | bool
+  tags: sanity

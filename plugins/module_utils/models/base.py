@@ -10,6 +10,20 @@ from typing import List, Dict, Any, ClassVar, Set, Tuple, Union, Literal, Option
 from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 
+def _strip_none_values(data):
+    """Recursively remove keys with None values from dicts.
+
+    This ensures Ansible's implicit None defaults (for unspecified options)
+    are not passed to pydantic, allowing default_factory and model defaults
+    to take effect without polluting model_fields_set.
+    """
+    if isinstance(data, dict):
+        return {k: _strip_none_values(v) for k, v in data.items() if v is not None}
+    if isinstance(data, list):
+        return [_strip_none_values(item) for item in data]
+    return data
+
+
 class NDBaseModel(BaseModel, ABC):
     """
     Base model for all Nexus Dashboard API objects.
@@ -133,8 +147,14 @@ class NDBaseModel(BaseModel, ABC):
 
     @classmethod
     def from_config(cls, ansible_config: Dict[str, Any], **kwargs) -> "NDBaseModel":
-        """Create model instance from Ansible config dict."""
-        return cls.model_validate(ansible_config, by_name=True, **kwargs)
+        """Create model instance from Ansible config dict.
+
+        Strips None values recursively before validation so that Ansible's
+        default None for unspecified options does not override pydantic
+        default_factory values or pollute model_fields_set.
+        """
+        cleaned = _strip_none_values(ansible_config)
+        return cls.model_validate(cleaned, by_name=True, **kwargs)
 
     # --- Identifier Access ---
 
