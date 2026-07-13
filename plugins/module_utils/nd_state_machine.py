@@ -59,6 +59,13 @@ class NDStateMachine:
 
         self.model_class = self.model_orchestrator.model_class
         self.state = self.module.params["state"]
+        raw_config = self.module.params.get("config")
+
+        if self.state in ["merged", "replaced", "overridden"] and raw_config is None:
+            raise NDStateMachineError(
+                f"config must be provided and cannot be null for state '{self.state}'. "
+                "Use config: [] only when intentionally managing an explicit empty set."
+            )
 
         # Cached flags
         self.check_mode = self.module.check_mode
@@ -76,7 +83,7 @@ class NDStateMachine:
             # Ongoing collection of configuration objects that were changed
             self.sent = NDConfigCollection(model_class=self.model_class)
             # Collection of configuration objects given by user
-            self.proposed = NDConfigCollection.from_ansible_config(data=self.module.params.get("config", []), model_class=self.model_class)
+            self.proposed = NDConfigCollection.from_ansible_config(data=raw_config, model_class=self.model_class)
 
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
 

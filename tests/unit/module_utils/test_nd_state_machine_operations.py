@@ -18,7 +18,8 @@ tests in ``test_utils.py`` cannot reach:
   of ``sent``; without it the failure is raised as ``NDStateMachineError``.
 - bulk-delete failure keeps every item, while bulk-delete success removes only
   the targeted items.
-- ``NDConfigCollection.from_ansible_config`` normalizes a ``None`` config.
+- ``NDStateMachine`` rejects omitted/null config for mutating write states so
+  ``state: overridden`` cannot accidentally delete everything.
 
 A tiny real ``NDBaseModel`` subclass drives the genuine diff/merge logic, while a
 duck-typed fake orchestrator records the CRUD calls it receives and can simulate
@@ -41,6 +42,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 
 # =============================================================================
 # Test doubles
@@ -114,6 +116,46 @@ class _FakeOrchestrator:
         self.calls["delete_bulk"].append(list(model_instances))
         if "delete_bulk" in self.fail_ops:
             raise Exception("delete_bulk failed")
+        return None
+
+
+_MISSING = object()
+
+
+class _FakeModule:
+    """Minimal module object for exercising ``NDStateMachine.__init__``."""
+
+    def __init__(self, state: str = "merged", config: Any = _MISSING, check_mode: bool = False, ignore_errors: bool = False) -> None:
+        self.check_mode = check_mode
+        self.params: dict[str, Any] = {
+            "state": state,
+            "output_level": "normal",
+            "ignore_errors": ignore_errors,
+        }
+        if config is not _MISSING:
+            self.params["config"] = config
+
+
+class _InitFakeOrchestrator(NDBaseOrchestrator):
+    """Minimal real orchestrator subclass for ``NDStateMachine.__init__`` tests."""
+
+    model_class: ClassVar[type[NDBaseModel]] = _FakeModel
+    create_endpoint: ClassVar[Any] = None
+    update_endpoint: ClassVar[Any] = None
+    delete_endpoint: ClassVar[Any] = None
+    query_one_endpoint: ClassVar[Any] = None
+    query_all_endpoint: ClassVar[Any] = None
+
+    def query_all(self, model_instance=None, **kwargs):
+        return []
+
+    def create(self, model_instance, **kwargs):
+        return {}
+
+    def update(self, model_instance, **kwargs):
+        return {}
+
+    def delete(self, model_instance, **kwargs):
         return None
 
 
@@ -396,6 +438,23 @@ def test_overridden_deletes_non_proposed_items():
     assert _names(sm.sent) == ["b", "c"]
 
 
+def test_overridden_explicit_empty_config_deletes_all_existing():
+    """An explicit empty overridden config means delete every existing item."""
+    orch = _FakeOrchestrator(supports_bulk_delete=False)
+    sm = _make_state_machine(
+        state="overridden",
+        orchestrator=orch,
+        existing=[_model("a", "x"), _model("b", "y")],
+        proposed=[],
+    )
+
+    sm.manage_state()
+
+    assert _names(orch.calls["delete"]) == ["a", "b"]
+    assert len(sm.existing) == 0
+    assert _names(sm.sent) == ["a", "b"]
+
+
 # =============================================================================
 # _execute_operation contract
 # =============================================================================
@@ -445,7 +504,45 @@ def test_execute_operation_non_ignored_error_raises():
 
 
 # =============================================================================
-# from_ansible_config normalization (config may be None)
+# config missing/null/empty handling
+# =============================================================================
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize(
+    "config",
+    [
+        pytest.param(_MISSING, id="missing"),
+        pytest.param(None, id="null"),
+    ],
+)
+def test_state_machine_rejects_missing_or_null_config_for_write_states(state, config):
+    """Write states require explicit config so null cannot become destructive."""
+    module = _FakeModule(state=state, config=config)
+
+    with pytest.raises(NDStateMachineError, match=r"config must be provided and cannot be null"):
+        NDStateMachine(module=module, model_orchestrator=_InitFakeOrchestrator)
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "deleted"])
+def test_state_machine_accepts_explicit_empty_config(state):
+    """Explicit ``config: []`` remains distinct from omitted/null config."""
+    module = _FakeModule(state=state, config=[])
+    sm = NDStateMachine(module=module, model_orchestrator=_InitFakeOrchestrator)
+
+    assert len(sm.proposed) == 0
+
+
+def test_deleted_state_tolerates_null_config_as_empty():
+    """Null delete config is non-destructive: it targets no proposed items."""
+    module = _FakeModule(state="deleted", config=None)
+    sm = NDStateMachine(module=module, model_orchestrator=_InitFakeOrchestrator)
+
+    assert len(sm.proposed) == 0
+
+
+# =============================================================================
+# from_ansible_config normalization
 # =============================================================================
 
 

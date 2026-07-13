@@ -241,9 +241,10 @@ class NDConfigCollection:
         """
         Create collection from Ansible config.
 
-        ``data`` may be ``None`` when the module's ``config`` parameter is
-        omitted or explicitly set to null. It is normalized to an empty
-        collection so callers never have to special-case the absent config.
+        ``data`` may be ``None`` for callers that intentionally treat absent
+        config as an empty collection. Callers whose state semantics distinguish
+        omitted/null config from an explicit empty list must validate that
+        before calling this helper.
         """
         items = [model_class.from_config(item_data, **kwargs) for item_data in (data or [])]
         return NDConfigCollection(model_class=model_class, items=items)
