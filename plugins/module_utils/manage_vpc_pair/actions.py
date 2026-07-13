@@ -41,7 +41,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModuleError,
 )
 
-
 _BLOCKED_FABRIC_TYPE_TOKENS_FOR_VPC_PAIR_DETAILS = {"vxlanibgp", "vxlanebgp"}
 
 
@@ -73,10 +72,7 @@ def _resolve_fabric_type_token(nd_v2: NDModuleV2, fabric_name: str, module: Any)
     try:
         details = nd_v2.request(details_path, HttpVerbEnum.GET)
     except Exception as exc:
-        module.warn(
-            f"Unable to determine fabric type for '{fabric_name}' while validating vpc_pair_details: "
-            f"{str(exc).splitlines()[0]}"
-        )
+        module.warn(f"Unable to determine fabric type for '{fabric_name}' while validating vpc_pair_details: " f"{str(exc).splitlines()[0]}")
         return ""
 
     if not isinstance(details, dict):
