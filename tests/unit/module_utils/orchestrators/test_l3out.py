@@ -245,12 +245,13 @@ def test_l3out_00120() -> None:
     ## Test
 
     - POST returns 200 but response body has item with status "failed"
-    - `RuntimeError` is raised with "partially failed" message
+    - `RuntimeError` is raised surfacing the per-item failure message (now via the centralized
+      `NdV1Strategy` 207/multi-status handling in RestSend)
 
     ## Classes and Methods
 
     - L3OutOrchestrator.create()
-    - L3OutOrchestrator._validate_bulk_response()
+    - NdV1Strategy.is_success()
     """
     method_name = inspect.stack()[0][3]
 
@@ -262,7 +263,7 @@ def test_l3out_00120() -> None:
     instance = L3OutOrchestrator(rest_send=rest_send)
     model = _build_l3out_model()
 
-    match = r"Create failed for .*partially failed"
+    match = r"Create failed for .*L3Out already exists"
     with pytest.raises(RuntimeError, match=match):
         instance.create(model)
 
@@ -567,12 +568,13 @@ def test_l3out_00520() -> None:
     ## Test
 
     - POST returns 200 but response body has one item with status "failed"
-    - `RuntimeError` is raised with "partially failed" message
+    - `RuntimeError` is raised surfacing the per-item failure message (now via the centralized
+      `NdV1Strategy` 207/multi-status handling in RestSend)
 
     ## Classes and Methods
 
     - L3OutOrchestrator.delete_bulk()
-    - L3OutOrchestrator._validate_bulk_response()
+    - NdV1Strategy.is_success()
     """
     method_name = inspect.stack()[0][3]
 
@@ -587,7 +589,7 @@ def test_l3out_00520() -> None:
         _build_l3out_model(name="test-l3out-static", include_config=False),
     ]
 
-    match = r"Bulk delete failed.*partially failed"
+    match = r"Bulk delete failed.*L3Out not found"
     with pytest.raises(RuntimeError, match=match):
         instance.delete_bulk(models)
 

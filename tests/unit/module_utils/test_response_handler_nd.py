@@ -1459,6 +1459,345 @@ def test_response_handler_nd_01000():
 
 
 # =============================================================================
+# Test: 207 Multi-Status per-item failure detection (issue #295)
+#
+# ND returns HTTP 207 for batch operations and reports per-item outcomes in a
+# DATA envelope array whose items carry status: "success" | "failed" | "error".
+# The two known envelope shapes are DATA.results[] (batch interface / breakout)
+# and DATA.switchIds[] (switchActions/deploy). A 207 whose body contains a
+# failing item must NOT be classified as success.
+# =============================================================================
+
+
+def test_response_handler_nd_01200():
+    """
+    # Summary
+
+    Verify 207 with a failed `DATA.results[]` item is not success.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and a results[] item status "failed"
+      sets success=False, changed=False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Port-channel1.999",
+                    "status": "failed",
+                    "message": "Sub-interface can be created only on routed interfaces",
+                }
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
+
+
+def test_response_handler_nd_01210():
+    """
+    # Summary
+
+    Verify 207 with an errored `DATA.results[]` item is not success.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and a results[] item status "error"
+      (breakout-style literal) sets success=False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Ethernet1/1",
+                    "status": "error",
+                    "message": "Breakout not supported on this port",
+                }
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01220():
+    """
+    # Summary
+
+    Verify 207 with a failed `DATA.switchIds[]` item is not success.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and a switchIds[] item status "failed"
+      (switchActions/deploy shape) sets success=False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {"switchId": "FDO1234ABCD", "status": "success"},
+                {"switchId": "FDO5678WXYZ", "status": "failed", "message": "Deploy failed on peer"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01230():
+    """
+    # Summary
+
+    Verify 207 whose per-item statuses all succeed remains success.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and results[] items all status "success"
+      sets success=True, changed=True (no failing item present)
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "Ethernet1/1", "status": "success"},
+                {"name": "Ethernet1/2", "status": "success"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+    assert instance.result["changed"] is True
+
+
+def test_response_handler_nd_01240():
+    """
+    # Summary
+
+    Verify error_message aggregates failed `DATA.results[]` items.
+
+    ## Test
+
+    - A 207 with a failed results[] item exposes an error_message
+      naming the item and its per-item message
+
+    ## Classes and Methods
+
+    - NdV1Strategy.extract_error_message()
+    - ResponseHandler.error_message
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Port-channel1.999",
+                    "status": "failed",
+                    "message": "Sub-interface can be created only on routed interfaces",
+                }
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    instance.commit()
+    assert instance.error_message is not None
+    assert "Port-channel1.999" in instance.error_message
+    assert "Sub-interface can be created only on routed interfaces" in instance.error_message
+
+
+def test_response_handler_nd_01250():
+    """
+    # Summary
+
+    Verify error_message aggregates failed `DATA.switchIds[]` items.
+
+    ## Test
+
+    - A 207 with a failed switchIds[] item exposes an error_message
+      naming the switch and its per-item message
+
+    ## Classes and Methods
+
+    - NdV1Strategy.extract_error_message()
+    - ResponseHandler.error_message
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {"switchId": "FDO5678WXYZ", "status": "failed", "message": "Deploy failed on peer"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    instance.commit()
+    assert instance.error_message is not None
+    assert "FDO5678WXYZ" in instance.error_message
+    assert "Deploy failed on peer" in instance.error_message
+
+
+def test_response_handler_nd_01260():
+    """
+    # Summary
+
+    Verify a mixed 207 (one ok, one failed) fails and names only the failure.
+
+    ## Test
+
+    - A 207 with one success item and one failed item sets success=False
+    - error_message names only the failed item, not the successful one
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - NdV1Strategy.extract_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {"switchId": "FDO1111AAAA", "status": "success"},
+                {"switchId": "FDO2222BBBB", "status": "failed", "message": "peer deploy failed"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message is not None
+    assert "FDO2222BBBB" in instance.error_message
+    assert "FDO1111AAAA" not in instance.error_message
+
+
+def test_response_handler_nd_01270():
+    """
+    # Summary
+
+    Verify the `failure` per-item literal (not just `failed`) is detected.
+
+    ## Test
+
+    - A 207 with a results[] item status "failure" sets success=False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "acl-1", "status": "failure", "message": "rejected"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01280():
+    """
+    # Summary
+
+    Verify a per-item status with surrounding whitespace and mixed case still counts as a failure.
+
+    ## Test
+
+    - A 207 with a results[] item status "  Failed  " (padded, mixed case) sets success=False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "eth1/1", "status": "  Failed  ", "message": "rejected"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01290():
+    """
+    # Summary
+
+    Verify a 207 whose per-item `status` is None (or a non-failure value) remains success.
+
+    ## Test
+
+    - A 207 with a results[] item whose status is None does not flip success
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "eth1/1", "status": None, "message": "no status key"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+
+
+# =============================================================================
 # Test: ResponseHandler commit() can be called multiple times
 # =============================================================================
 

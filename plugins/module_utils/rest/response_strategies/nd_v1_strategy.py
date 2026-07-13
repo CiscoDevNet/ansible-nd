@@ -28,6 +28,57 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+# Per-item status literals that mark a failure inside an HTTP 207 Multi-Status body.
+# ND is inconsistent about the literal across endpoints: "failed" (batch interface /
+# switchActions/deploy), "error" (breakout), and "failure" (acl / maintenance_mode).
+_MULTISTATUS_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
+
+# DATA envelope keys whose items carry a per-item `status`. Two known shapes:
+# - `results`   -> batch interface POST / breakout action
+# - `switchIds` -> switchActions/deploy (per-switch outcome)
+_MULTISTATUS_ITEM_KEYS = ("results", "switchIds")
+
+# Item keys, in priority order, used to label a failing item in an error message.
+_MULTISTATUS_ITEM_LABEL_KEYS = ("name", "switchId", "serialNumber", "id")
+
+
+def _failed_multistatus_items(response: dict) -> list[dict[str, Any]]:
+    """
+    # Summary
+
+    Return the per-item entries reporting a failure in an HTTP 207 Multi-Status body.
+
+    ## Description
+
+    Scans the known ND Multi-Status envelope arrays (`DATA.results[]` and `DATA.switchIds[]`) and returns every item whose `status` is a failure
+    literal (`failed`/`failure`/`error`, case-insensitive, whitespace-tolerant). Returns an empty list when `DATA` is not a dict, neither array is
+    present, or every item succeeded.
+
+    ## Parameters
+
+    - response: Response dict with keys RETURN_CODE, MESSAGE, DATA, etc.
+
+    ## Returns
+
+    - List of failing item dicts (empty list when none fail)
+
+    ## Raises
+
+    None
+    """
+    data = response.get("DATA")
+    if not isinstance(data, dict):
+        return []
+    failed: list[dict[str, Any]] = []
+    for key in _MULTISTATUS_ITEM_KEYS:
+        items = data.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict) and str(item.get("status") or "").strip().lower() in _MULTISTATUS_FAILURE_STATUSES:
+                failed.append(item)
+    return failed
+
 
 class NdV1Strategy:
     """
@@ -112,6 +163,8 @@ class NdV1Strategy:
 
         - Top-level `ERROR` key is present
         - `DATA.error` key is present
+        - An HTTP 207 Multi-Status body reports a per-item failure in
+          `DATA.results[]` or `DATA.switchIds[]` (status `failed`/`error`)
 
         ## Parameters
 
@@ -133,7 +186,41 @@ class NdV1Strategy:
         data = response.get("DATA")
         if isinstance(data, dict) and data.get("error") is not None:
             return False
+        # ND returns HTTP 207 for batch operations and reports per-item outcomes in
+        # DATA.results[]/DATA.switchIds[] items carrying status: success|failed|error.
+        # The 207 status alone does not indicate every item succeeded, so a body with
+        # any failing item must not be classified as success. See issue #295.
+        if _failed_multistatus_items(response):
+            return False
         return True
+
+    @staticmethod
+    def _format_multistatus_failure(item: dict[str, Any]) -> str:
+        """
+        # Summary
+
+        Format a single failing 207 Multi-Status item as `label: message`.
+
+        ## Description
+
+        Labels the item by the first present identifier key (`name`, `switchId`, `serialNumber`, `id`) and appends its per-item `message` (falling
+        back to `status` when no message is present). When no identifier key is present, only the message is returned.
+
+        ## Parameters
+
+        - item: A per-item dict from `DATA.results[]` or `DATA.switchIds[]`
+
+        ## Returns
+
+        - A human-readable `label: message` string (or just the message when unlabeled)
+
+        ## Raises
+
+        None
+        """
+        label = next((str(item[key]) for key in _MULTISTATUS_ITEM_LABEL_KEYS if item.get(key) is not None), None)
+        detail = item.get("message") or item.get("status") or "failed"
+        return f"{label}: {detail}" if label is not None else str(detail)
 
     def is_not_found(self, return_code: int) -> bool:
         """
@@ -205,8 +292,9 @@ class NdV1Strategy:
         3. code/message dict
         4. messages array with code/severity/message (all items joined)
         5. errors array (all items joined)
-        6. Unknown dict format
-        7. Non-dict DATA
+        6. 207 Multi-Status per-item failures (results[]/switchIds[], all joined)
+        7. Unknown dict format
+        8. Non-dict DATA
 
         ## Parameters
 
@@ -232,34 +320,67 @@ class NdV1Strategy:
             msg = f"Connection failed for {request_path}. {message}"
         # Dict response data - check various ND error formats
         elif isinstance(response_data, dict):
-            # Type-narrow response_data to dict[str, Any] for pylint
-            # pylint: disable=unsupported-membership-test,unsubscriptable-object
-            data_dict: dict[str, Any] = response_data
-            # Raw response (non-JSON)
-            if "raw_response" in data_dict:
-                msg = "ND Error: Response could not be parsed as JSON"
-            # code/message format
-            elif "code" in data_dict and "message" in data_dict:
-                msg = f"ND Error {data_dict['code']}: {data_dict['message']}"
-
-            # messages array format
-            if msg is None and "messages" in data_dict and len(data_dict.get("messages", [])) > 0:
-                parts = []
-                for m in data_dict["messages"]:
-                    if all(k in m for k in ("code", "severity", "message")):
-                        parts.append(f"ND Error {m['code']} ({m['severity']}): {m['message']}")
-                if parts:
-                    msg = "; ".join(parts)
-
-            # errors array format
-            if msg is None and "errors" in data_dict and len(data_dict.get("errors", [])) > 0:
-                msg = f"ND Error: {'; '.join(str(e) for e in data_dict['errors'])}"
-
-            # Unknown dict format - fallback
-            if msg is None:
-                msg = f"ND Error: Request failed with status {return_code}"
+            msg = self._extract_dict_error_message(response_data, response, return_code)
         # Non-dict response data
         else:
             msg = f"ND Error: {response_data}"
 
+        return msg
+
+    def _extract_dict_error_message(self, data_dict: dict[str, Any], response: dict, return_code: int) -> str:
+        """
+        # Summary
+
+        Extract an error message from a dict `DATA` body across the known ND v1 formats.
+
+        ## Description
+
+        Checks, in priority order: `raw_response`, `code`/`message`, the `messages[]` array, the `errors[]` array, and 207 Multi-Status per-item
+        failures (`results[]`/`switchIds[]`). Falls back to a generic status message when no specific format matches.
+
+        ## Parameters
+
+        - data_dict: The response `DATA` dict
+        - response: The full response dict (needed to scan Multi-Status envelopes)
+        - return_code: The response `RETURN_CODE`, used in the fallback message
+
+        ## Returns
+
+        - A human-readable error message string (never None)
+
+        ## Raises
+
+        None
+        """
+        msg: Optional[str] = None
+        # Raw response (non-JSON)
+        if "raw_response" in data_dict:
+            msg = "ND Error: Response could not be parsed as JSON"
+        # code/message format
+        elif "code" in data_dict and "message" in data_dict:
+            msg = f"ND Error {data_dict['code']}: {data_dict['message']}"
+
+        # messages array format
+        if msg is None and "messages" in data_dict and len(data_dict.get("messages", [])) > 0:
+            parts = []
+            for m in data_dict["messages"]:
+                if all(k in m for k in ("code", "severity", "message")):
+                    parts.append(f"ND Error {m['code']} ({m['severity']}): {m['message']}")
+            if parts:
+                msg = "; ".join(parts)
+
+        # errors array format
+        if msg is None and "errors" in data_dict and len(data_dict.get("errors", [])) > 0:
+            msg = f"ND Error: {'; '.join(str(e) for e in data_dict['errors'])}"
+
+        # 207 Multi-Status per-item failures (results[]/switchIds[])
+        if msg is None:
+            failed_items = _failed_multistatus_items(response)
+            if failed_items:
+                parts = [self._format_multistatus_failure(item) for item in failed_items]
+                msg = f"ND Error: {'; '.join(parts)}"
+
+        # Unknown dict format - fallback
+        if msg is None:
+            msg = f"ND Error: Request failed with status {return_code}"
         return msg
