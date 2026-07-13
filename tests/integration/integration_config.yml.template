@@ -1,0 +1,11 @@
+# Local integration test config — DO NOT COMMIT the actual integration_config.yml
+# Copy this file to integration_config.yml and fill in your values.
+
+# Path to the logging config JSON (enables nd_policy debug logging)
+nd_logging_config: <PATH_TO_COLLECTION>/plugins/module_utils/logging_config.json
+
+# Fabric and switch details for integration tests
+fabric_name: <FABRIC_NAME>
+switch_serial_1: <SWITCH_SERIAL_1>
+switch_serial_2: <SWITCH_SERIAL_2>
+switch_serial_3: <SWITCH_SERIAL_3>

@@ -8,9 +8,9 @@
 Unit tests for `NDBaseInterfaceOrchestrator`.
 
 Verifies the shared interface-orchestrator infrastructure: lazy `FabricContext`, switch IP-to-serial
-resolution, fabric pre-flight validation, endpoint configuration, deploy/remove queue de-duplication,
-and bulk `deploy_pending` / `remove_pending` flush against the `interfaceActions/deploy` and
-`interfaceActions/remove` endpoints.
+resolution, fabric pre-flight validation, capability-preflight gating, endpoint configuration,
+deploy/remove queue de-duplication, and bulk `deploy_pending` / `remove_pending` flush against the
+`interfaceActions/deploy` and `interfaceActions/remove` endpoints.
 
 Uses `_StubInterfaceOrchestrator`, a minimal concrete subclass, to satisfy `NDBaseOrchestrator`'s
 Pydantic field requirements without coupling these tests to any per-feature orchestrator.
@@ -24,6 +24,7 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
+from types import SimpleNamespace
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -59,6 +60,25 @@ class _StubInterfaceOrchestrator(NDBaseInterfaceOrchestrator):
     delete_endpoint: type[NDEndpointBaseModel] = NDEndpointBaseModel
     query_one_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesGet
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
+
+
+class _StubOptedInOrchestrator(_StubInterfaceOrchestrator):
+    """Stub that opts in to capability preflight via `interface_type` but omits `interface_mode`.
+
+    Used to verify `validate_switches_capable` raises a clear error for a half-configured subclass.
+    """
+
+    interface_type = "loopback"
+
+
+class _StubCapableOrchestrator(_StubInterfaceOrchestrator):
+    """Stub that fully opts in to capability preflight via both `interface_type` and `interface_mode`.
+
+    Used to drive `validate_switches_capable` through the resolution + capability-endpoint code path.
+    """
+
+    interface_type = "loopback"
+    interface_mode = "managed"
 
 
 def responses_base_interface(key: str):
@@ -766,3 +786,254 @@ def test_base_interface_00720() -> None:
         instance.remove_pending()
 
     assert instance._pending_removes == [("loopback10", "FDO12345ABC")]
+
+
+# =============================================================================
+# Test: validate_switches_capable
+# =============================================================================
+
+
+def test_base_interface_00800() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` is a no-op when `interface_type` is `""` (the opted-out base default).
+
+    ## Test
+
+    - `_StubInterfaceOrchestrator` leaves `interface_type` as `""`
+    - `validate_switches_capable` returns without resolving switches or raising, even for a non-empty input
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+
+def test_base_interface_00810() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` raises a clear `RuntimeError` when a subclass sets `interface_type` but leaves `interface_mode` empty.
+
+    ## Test
+
+    - `_StubOptedInOrchestrator` sets `interface_type` but inherits the empty `interface_mode`
+    - `validate_switches_capable` raises `RuntimeError` naming the class and both ClassVars
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubOptedInOrchestrator(rest_send=rest_send)
+
+    match = r"_StubOptedInOrchestrator sets interface_type but not interface_mode"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+
+def test_base_interface_00820() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` aggregates multiple unresolvable `switch_ip` values into a single `RuntimeError`
+    (issue #301), so one typo cannot mask resolution or capability problems on the remaining entries.
+
+    ## Test
+
+    - Switches inventory contains only `192.168.12.151`
+    - Three model_instances are passed: the valid IP and two distinct unknown IPs
+    - `validate_switches_capable` raises `RuntimeError` naming BOTH unknown IPs in a single message
+    - The capability endpoint is NOT contacted (no second fixture consumed)
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    model_instances = [
+        SimpleNamespace(switch_ip="192.168.12.151"),
+        SimpleNamespace(switch_ip="10.1.1.99"),
+        SimpleNamespace(switch_ip="10.1.1.100"),
+    ]
+    match = r"Cannot resolve switch_ip to switchId in fabric 'fabric_1' for: 10\.1\.1\.100, 10\.1\.1\.99"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_switches_capable(model_instances)
+
+
+def test_base_interface_00830() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` downgrades a capability endpoint failure to a warning in `--check` mode
+    (issue #302), so dry-runs stay green when the unpublished `capableSwitches` endpoint is unavailable.
+
+    ## Test
+
+    - `rest_send.check_mode` is True
+    - Switches inventory resolves the one target IP to `FDO12345ABC`
+    - `capableSwitches` GET returns 404 -> `InterfaceCapabilityPreflight._query_get` raises `RuntimeError`
+    - `validate_switches_capable` does NOT raise
+    - A warning containing `Capability preflight skipped in check mode` is recorded on the mock module
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.check_mode = True
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    warnings = rest_send.sender.ansible_module.warnings
+    assert len(warnings) == 1
+    assert "Capability preflight skipped in check mode" in warnings[0]
+
+
+def test_base_interface_00840() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` downgrades a capability MISMATCH (offending switch) to a warning in `--check`
+    mode (issue #302), so dry-runs still surface the information without failing the run.
+
+    ## Test
+
+    - `rest_send.check_mode` is True
+    - Switches inventory resolves the target IP to `FDO12345ABC`
+    - `capableSwitches` returns 200 with an empty `switches` list -> `validate` raises with offender details
+    - `validate_switches_capable` does NOT raise
+    - A warning is recorded mentioning the offending `switchId`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.check_mode = True
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    warnings = rest_send.sender.ansible_module.warnings
+    assert len(warnings) == 1
+    assert "Capability preflight skipped in check mode" in warnings[0]
+    assert "FDO12345ABC" in warnings[0]
+
+
+def test_base_interface_00850() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` still raises a capability mismatch OUTSIDE `--check` mode (issue #302 regression
+    guard): the softening behavior must be gated on `check_mode`.
+
+    ## Test
+
+    - `rest_send.check_mode` is False
+    - Switches inventory resolves the target IP
+    - `capableSwitches` returns 200 with an empty `switches` list
+    - `validate_switches_capable` raises `RuntimeError` naming the offending `switchId`
+    - No warning is recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    match = r"not capable of hosting interface_type='loopback' mode='managed'"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    assert rest_send.sender.ansible_module.warnings == []
+
+
+def test_base_interface_00860() -> None:
+    """
+    # Summary
+
+    Verify `preflight` delegates to `validate_switches_capable`. `NDStateMachine` calls `preflight` (the generic
+    pre-mutation hook) rather than `validate_switches_capable` directly, so this guards the interface override that
+    wires the two together.
+
+    ## Test
+
+    - `rest_send.check_mode` is True
+    - Switches inventory resolves the target IP to `FDO12345ABC`
+    - `capableSwitches` returns 200 with an empty `switches` list (the target is incapable)
+    - `preflight` does NOT raise (check-mode softening, inherited from `validate_switches_capable`)
+    - A warning mentioning the offending `switchId` is recorded -> proves `preflight` routed through `validate_switches_capable`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.check_mode = True
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.preflight([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    warnings = rest_send.sender.ansible_module.warnings
+    assert len(warnings) == 1
+    assert "Capability preflight skipped in check mode" in warnings[0]
+    assert "FDO12345ABC" in warnings[0]

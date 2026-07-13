@@ -16,11 +16,15 @@ with interface-type-specific payload construction and query filtering.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import ClassVar
+
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
     EpManageInterfacesRemove,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
+from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import InterfaceCapabilityPreflight
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import ModelType, NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
@@ -50,7 +54,14 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
     deploy: bool = True
 
+    # Subclasses opt in to capability preflight by setting BOTH ClassVars (e.g. loopback sets
+    # `interface_type = "loopback"` and `interface_mode = "managed"`). Leaving `interface_type` as ""
+    # opts out — used by interface types with no capability endpoint (e.g. future breakout).
+    interface_type: ClassVar[str] = ""
+    interface_mode: ClassVar[str] = ""
+
     _fabric_context: FabricContext | None = None
+    _capability_preflight: InterfaceCapabilityPreflight | None = None
 
     def model_post_init(self, __context) -> None:
         """
@@ -107,6 +118,98 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - If no switch matches the given IP in the fabric.
         """
         return self.fabric_context.get_switch_id(switch_ip)
+
+    @property
+    def capability_preflight(self) -> InterfaceCapabilityPreflight:
+        """
+        # Summary
+
+        Return a lazily-initialized `InterfaceCapabilityPreflight` for this orchestrator's fabric. Shares the orchestrator's
+        `FabricContext` so error messages for incapable switches are enriched with `switch_ip`.
+
+        ## Raises
+
+        None
+        """
+        if self._capability_preflight is None:
+            self._capability_preflight = InterfaceCapabilityPreflight(
+                rest_send=self.rest_send,
+                fabric_name=self.fabric_name,
+                fabric_context=self.fabric_context,
+            )
+        return self._capability_preflight
+
+    def preflight(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Run capability preflight for the proposed interfaces. Delegates to `validate_switches_capable`, which is a
+        no-op unless the orchestrator opts in via the `interface_type`/`interface_mode` ClassVars. Invoked by
+        `NDStateMachine.manage_state` before create/update operations so the check runs in `--check` mode, where the
+        underlying mutations are skipped.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `validate_switches_capable` (see its docstring).
+        """
+        self.validate_switches_capable(model_instances)
+
+    def validate_switches_capable(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Pre-flight the set of target switches against the ND `capableSwitches` endpoint for this orchestrator's
+        `interface_type` and `interface_mode` ClassVars. A single GET covers every target switch. On failure, raises a
+        `RuntimeError` naming every offending switch.
+
+        When `interface_type` is `""` (default on the base class) this method is a no-op — subclasses opt in by setting
+        both the `interface_type` and `interface_mode` ClassVars.
+
+        All `switch_ip` values are resolved before the capability check runs; if any are unresolvable, a single aggregate
+        `RuntimeError` names every unknown IP so a typo on one entry does not mask resolution or capability problems on
+        the remaining entries (issue #301).
+
+        In `--check` mode the capability GET is still issued, but a failure of the capability check itself — whether an
+        endpoint outage or one or more incapable switches — is downgraded to a warning rather than re-raised, so dry-runs
+        stay green when the unpublished endpoint is unavailable (issue #302). Unresolvable `switch_ip` values are always
+        raised, including in check mode, because they reflect user input errors rather than environmental flakiness.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If one or more switches are not capable of hosting the requested `(interface_type, interface_mode)` pair
+          (outside `--check` mode).
+        - If the orchestrator sets `interface_type` but leaves `interface_mode` empty.
+        - If one or more `switch_ip` values do not match any switch in the fabric (aggregated into a single message).
+        - If the underlying capability GET request fails (outside `--check` mode).
+        """
+        if not self.interface_type:
+            return
+        if not self.interface_mode:
+            raise RuntimeError(
+                f"{type(self).__name__} sets interface_type but not interface_mode; both ClassVars are required to enable capability preflight."
+            )
+        switch_ids: set[str] = set()
+        unresolved: list[str] = []
+        for model_instance in model_instances:
+            switch_ip = model_instance.switch_ip
+            try:
+                switch_ids.add(self._resolve_switch_id(switch_ip))
+            except RuntimeError:
+                unresolved.append(switch_ip)
+        if unresolved:
+            raise RuntimeError(f"Cannot resolve switch_ip to switchId in fabric '{self.fabric_name}' for: {', '.join(sorted(set(unresolved)))}.")
+        if not switch_ids:
+            return
+        try:
+            self.capability_preflight.validate(self.interface_type, self.interface_mode, switch_ids)
+        except RuntimeError as e:
+            if not self.rest_send.check_mode:
+                raise
+            self.rest_send.warn(f"Capability preflight skipped in check mode: {e}")
 
     def validate_prerequisites(self) -> None:
         """

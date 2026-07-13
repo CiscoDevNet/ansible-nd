@@ -1,0 +1,216 @@
+---
+- name: Test Entry Point - [nd_manage_networks - mcfg - merged]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MCFG Merged Tests - [nd_manage_networks]         +"
+      - "----------------------------------------------------------------"
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged - Build Parent and Child Network Config
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_mcfg_parent_fabric }}"
+    target_network_delete_config:
+      - network_name: ansible-nd-net-mcfg-merged-switch
+        is_l2only: true
+      - network_name: ansible-nd-net-mcfg-merged-resource
+        is_l2only: true
+    nd_network_mcfg_merged_stage_config:
+      - network_name: ansible-nd-net-mcfg-merged-switch
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 241 }}"
+        vlan_id: "{{ nd_network_base_vlan + 241 }}"
+        vlan_name: ans_nd_net_mcfg_mrg_sw
+        rt_auto: true
+        enable_ir: false
+        deploy: false
+        deploy_type: switch
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+            enable_ir: false
+      - network_name: ansible-nd-net-mcfg-merged-resource
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 242 }}"
+        vlan_id: "{{ nd_network_base_vlan + 242 }}"
+        vlan_name: ans_nd_net_mcfg_mrg_res
+        rt_auto: true
+        enable_ir: false
+        deploy: false
+        deploy_type: network
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+            enable_ir: false
+    nd_network_mcfg_merged_deploy_config:
+      - network_name: ansible-nd-net-mcfg-merged-switch
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 241 }}"
+        vlan_id: "{{ nd_network_base_vlan + 241 }}"
+        vlan_name: ans_nd_net_mcfg_mrg_sw
+        rt_auto: true
+        enable_ir: false
+        deploy: true
+        deploy_type: switch
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+            enable_ir: false
+      - network_name: ansible-nd-net-mcfg-merged-resource
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 242 }}"
+        vlan_id: "{{ nd_network_base_vlan + 242 }}"
+        vlan_name: ans_nd_net_mcfg_mrg_res
+        rt_auto: true
+        enable_ir: false
+        deploy: true
+        deploy_type: network
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+            enable_ir: false
+  delegate_to: localhost
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged - Prepare Stage Configuration
+  vars:
+    file: mcfg_merged_stage
+    network_conf: "{{ nd_network_mcfg_merged_stage_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged - Prepare Deploy Configuration
+  vars:
+    file: mcfg_merged_deploy
+    network_conf: "{{ nd_network_mcfg_merged_deploy_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged TC1 - Stage Parent and Child Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_mcfg_merged_stage_conf }}"
+    output_level: debug
+  register: mcfg_merged_staged
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged TC1 - Assert Structured Stage Result
+  ansible.builtin.assert:
+    that:
+      - mcfg_merged_staged.changed == true
+      - mcfg_merged_staged.fabric_type == "multicluster_parent"
+      - >-
+        mcfg_merged_staged.workflow ==
+        "Multicluster Parent without Child Fabric Processing"
+      - mcfg_merged_staged.parent_fabric.fabric_type == "multicluster_parent"
+      - mcfg_merged_staged.child_fabrics is not defined
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged TC2 - Deploy Parent Once With Mixed Deploy Types
+  cisco.nd.nd_manage_networks: &mcfg_merged_deploy_conf
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_mcfg_merged_deploy_conf }}"
+    output_level: debug
+  register: mcfg_merged_deployed
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged TC2 - Assert Deploy Result
+  ansible.builtin.assert:
+    that:
+      - mcfg_merged_deployed.changed == true
+      - mcfg_merged_deployed.child_fabrics is not defined
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged TC3 - Gather Parent Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_mcfg_merged_stage_conf }}"
+  register: mcfg_merged_parent_gathered
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged TC3 - Validate Parent Networks
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ mcfg_merged_parent_gathered }}"
+    test_data: "{{ nd_network_mcfg_merged_stage_conf }}"
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged TC3 - Gather Child Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+    state: gathered
+    config: []
+  register: mcfg_merged_child_gathered
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged TC3 - Validate Child Networks
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ mcfg_merged_child_gathered }}"
+    test_data:
+      - network_name: ansible-nd-net-mcfg-merged-switch
+        network_id: "{{ nd_network_base_id + 241 }}"
+        vlan_id: "{{ nd_network_base_vlan + 241 }}"
+        vlan_name: ans_nd_net_mcfg_mrg_sw
+        enable_ir: false
+      - network_name: ansible-nd-net-mcfg-merged-resource
+        network_id: "{{ nd_network_base_id + 242 }}"
+        vlan_id: "{{ nd_network_base_vlan + 242 }}"
+        vlan_name: ans_nd_net_mcfg_mrg_res
+        enable_ir: false
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged TC4 - Idempotence
+  cisco.nd.nd_manage_networks: *mcfg_merged_deploy_conf
+  register: mcfg_merged_idempotent
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged
+
+- name: MCFG Merged TC4 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - mcfg_merged_idempotent.changed == false
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - merged

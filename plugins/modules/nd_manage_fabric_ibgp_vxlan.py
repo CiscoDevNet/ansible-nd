@@ -36,11 +36,6 @@ options:
         - The O(config.fabric_name) must be defined when creating, updating or deleting a fabric.
         type: str
         required: true
-      category:
-        description:
-        - The resource category.
-        type: str
-        default: fabric
       location:
         description:
         - The geographic location of the fabric.
@@ -105,12 +100,6 @@ options:
         type: dict
         suboptions:
           # General
-          type:
-            description:
-            - The fabric management type. Must be C(vxlanIbgp) for iBGP VXLAN fabrics.
-            type: str
-            default: vxlanIbgp
-            choices: [ vxlanIbgp ]
           bgp_asn:
             description:
             - The BGP Autonomous System Number for the fabric.
@@ -136,7 +125,7 @@ options:
             choices: [ ospf, isis ]
           target_subnet_mask:
             description:
-            - The target subnet mask for intra-fabric links (24-31).
+            - The target subnet mask for intra-fabric links (30-31).
             type: int
             default: 30
           ipv6_link_local:
@@ -1572,6 +1561,33 @@ options:
     type: str
     default: merged
     choices: [ merged, replaced, overridden, deleted ]
+  config_actions:
+    description:
+    - Controls save and deploy behavior after fabric configuration is updated.
+    - Save writes pending configuration to the controller.
+    - Deploy pushes the saved configuration to switches.
+    - Skipped automatically when O(state=deleted) or when no changes are made.
+    type: dict
+    suboptions:
+      save:
+        description:
+        - Whether to save fabric configuration after changes.
+        type: bool
+        default: false
+      deploy:
+        description:
+        - Whether to deploy fabric configuration to switches after saving.
+        - Requires O(config_actions.save=true) when enabled.
+        type: bool
+        default: false
+      type:
+        description:
+        - Scope of the deploy operation.
+        - C(switch) deploys only to affected switches.
+        - C(global) deploys to all switches in the fabric.
+        type: str
+        default: switch
+        choices: [ switch, global ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -1589,7 +1605,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_fabric
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1598,7 +1613,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65001"
           site_id: "65001"
           target_subnet_mask: 30
@@ -1669,7 +1683,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_fabric
-        category: fabric
         management:
           bgp_asn: "65002"
           site_id: "65002"
@@ -1682,7 +1695,6 @@ EXAMPLES = r"""
     state: replaced
     config:
       - fabric_name: my_fabric
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1691,7 +1703,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65004"
           site_id: "65004"
           target_subnet_mask: 30
@@ -1766,9 +1777,7 @@ EXAMPLES = r"""
     state: replaced
     config:
       - fabric_name: my_fabric
-        category: fabric
         management:
-          type: vxlanIbgp
           bgp_asn: "65004"
           site_id: "65004"
           banner: "^ Managed by Ansible ^"
@@ -1779,7 +1788,6 @@ EXAMPLES = r"""
     state: overridden
     config:
       - fabric_name: fabric_east
-        category: fabric
         location:
           latitude: 40.7128
           longitude: -74.0060
@@ -1788,7 +1796,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65010"
           site_id: "65010"
           target_subnet_mask: 30
@@ -1804,7 +1811,6 @@ EXAMPLES = r"""
           network_vlan_range: "2300-2999"
           vrf_vlan_range: "2000-2299"
       - fabric_name: fabric_west
-        category: fabric
         location:
           latitude: 34.0522
           longitude: -118.2437
@@ -1813,7 +1819,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65020"
           site_id: "65020"
           target_subnet_mask: 30
@@ -1848,6 +1853,77 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+    description: Whether the module made any changes.
+    type: bool
+    returned: always
+    sample: true
+before:
+    description:
+    - iBGP VXLAN fabric configuration before changes.
+    - Queried from the controller and may contain read-only properties.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65001"}}]
+after:
+    description:
+    - iBGP VXLAN fabric configuration after changes.
+    - Refreshed from the controller after write operations.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+diff:
+    description: Configuration differences between before and after states.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+proposed:
+    description: Proposed configuration sent to the module.
+    type: list
+    returned: info or debug output_level
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+output_level:
+    description: The output level set for the module.
+    type: str
+    returned: always
+    sample: normal
+logs:
+    description: Debug log messages from module execution.
+    type: list
+    returned: debug output_level
+    sample: ["Starting state machine for merged state"]
+api_paths:
+    description: API endpoint paths used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["/api/v1/manage/fabrics/fabric_east"]
+api_verbs:
+    description: HTTP methods used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["PUT"]
+api_response:
+    description: Full API responses from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"RETURN_CODE": 200, "MESSAGE": "Success"}]
+api_result:
+    description: Operation results from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"success": true, "changed": true}]
+api_diff:
+    description: API-level differences for each operation.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_metadata:
+    description: Operation metadata with sequence and identifiers.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_payload:
+    description: Request payloads sent to the API.
+    type: list
+    returned: verbosity >= 3 (-vvv)
 """
 
 from ansible.module_utils.basic import AnsibleModule
@@ -1856,6 +1932,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import N
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import ManageIbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 
 
 def main():
@@ -1867,6 +1944,22 @@ def main():
         supports_check_mode=True,
     )
 
+    require_pydantic(module)
+
+    # Parse and validate config_actions BEFORE any state mutation so invalid
+    # input fails deterministically on every run, including idempotent no-drift
+    # runs, and never mutates ND before failing.
+    config_actions = module.params.get("config_actions") or {}
+    save = config_actions.get("save", False)
+    deploy = config_actions.get("deploy", False)
+    deploy_type = config_actions.get("type", "switch")
+    state = module.params.get("state", "merged")
+
+    try:
+        ManageIbgpFabricOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+    except ValueError as e:
+        module.fail_json(msg=str(e))
+
     nd_state_machine = None
     try:
         # Initialize StateMachine
@@ -1877,6 +1970,21 @@ def main():
 
         # Manage state
         nd_state_machine.manage_state()
+
+        # Execute config save/deploy actions via orchestrator mixin (only on real changes)
+        if state != "deleted" and len(nd_state_machine.sent) > 0:
+            fabric_names = []
+            for item in nd_state_machine.sent:
+                name = item.get_identifier_value()
+                if name and name not in fabric_names:
+                    fabric_names.append(name)
+            if fabric_names:
+                nd_state_machine.model_orchestrator.execute_config_actions(
+                    fabric_names=fabric_names,
+                    save=save,
+                    deploy=deploy,
+                    deploy_type=deploy_type,
+                )
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))

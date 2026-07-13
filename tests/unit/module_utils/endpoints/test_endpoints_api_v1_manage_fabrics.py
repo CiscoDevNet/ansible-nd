@@ -21,6 +21,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsDeploymentFreezeGet,
     EpManageFabricsGet,
     EpManageFabricsListGet,
+    EpManageFabricsMemberCandidatesGet,
+    EpManageFabricsMembersAddPost,
+    EpManageFabricsMembersGet,
+    EpManageFabricsMembersRemovePost,
     EpManageFabricsPost,
     EpManageFabricsPut,
     EpManageFabricsSummaryGet,
@@ -1007,3 +1011,48 @@ def test_endpoints_api_v1_manage_fabrics_00930():
         instance.endpoint_params.cluster_name = "cluster1"
         result = instance.path
     assert result == "/api/v1/manage/fabrics/my-fabric/deploymentFreeze?clusterName=cluster1"
+
+
+# =============================================================================
+# Test: Fabric member endpoints
+# =============================================================================
+
+
+def test_endpoints_api_v1_manage_fabrics_00800():
+    """
+    # Summary
+
+    Verify fabric members and member candidate endpoint paths.
+    """
+    with does_not_raise():
+        members = EpManageFabricsMembersGet()
+        members.fabric_name = "my-fabric"
+        members.endpoint_params.cluster_name = "cluster1"
+        candidates = EpManageFabricsMemberCandidatesGet()
+        candidates.fabric_name = "my-fabric"
+
+    assert members.path == "/api/v1/manage/fabrics/my-fabric/members?clusterName=cluster1"
+    assert members.verb == HttpVerbEnum.GET
+    assert candidates.path == "/api/v1/manage/fabrics/my-fabric/memberCandidates"
+    assert candidates.verb == HttpVerbEnum.GET
+
+
+def test_endpoints_api_v1_manage_fabrics_00810():
+    """
+    # Summary
+
+    Verify fabric add/remove member action endpoint paths.
+    """
+    with does_not_raise():
+        add_members = EpManageFabricsMembersAddPost()
+        add_members.fabric_name = "my-fabric"
+        add_members.endpoint_params.ticket_id = "CHG123"
+        remove_members = EpManageFabricsMembersRemovePost()
+        remove_members.fabric_name = "my-fabric"
+        remove_members.endpoint_params.cluster_name = "cluster1"
+        remove_members.endpoint_params.ticket_id = "CHG456"
+
+    assert add_members.path == "/api/v1/manage/fabrics/my-fabric/actions/addMembers?ticketId=CHG123"
+    assert add_members.verb == HttpVerbEnum.POST
+    assert remove_members.path == "/api/v1/manage/fabrics/my-fabric/actions/removeMembers?clusterName=cluster1&ticketId=CHG456"
+    assert remove_members.verb == HttpVerbEnum.POST

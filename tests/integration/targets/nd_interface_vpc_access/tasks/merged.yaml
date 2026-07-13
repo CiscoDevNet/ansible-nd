@@ -1,0 +1,48 @@
+---
+# Merged state tests for nd_interface_vpc_access
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- MERGED CREATE ---
+
+- name: "MERGED CREATE: Create vpc100 (check mode)"
+  cisco.nd.nd_interface_vpc_access: &merge_vpc
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_access_baseline }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create
+
+- name: "MERGED CREATE: Create vpc100 (normal mode)"
+  cisco.nd.nd_interface_vpc_access: *merge_vpc
+  register: nm_merged_create
+
+- name: "MERGED CREATE: Verify creation produced a change"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create is changed
+      - nm_merged_create is changed
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Pause for switch convergence"
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: "MERGED IDEMPOTENT: Re-apply vpc100 (check mode)"
+  cisco.nd.nd_interface_vpc_access: *merge_vpc
+  check_mode: true
+  register: cm_merged_idem
+
+- name: "MERGED IDEMPOTENT: Re-apply vpc100 (normal mode)"
+  cisco.nd.nd_interface_vpc_access: *merge_vpc
+  register: nm_merged_idem
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem is not changed
+      - nm_merged_idem is not changed

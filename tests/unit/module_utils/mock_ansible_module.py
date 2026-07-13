@@ -53,6 +53,7 @@ class MockAnsibleModule:
     ## Methods
 
     - fail_json: Raises AnsibleFailJson exception with the provided message
+    - warn: Records the warning on the instance for later assertion
     """
 
     check_mode = False
@@ -64,6 +65,9 @@ class MockAnsibleModule:
         "check_mode": False,
     }
     supports_check_mode = True
+
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
 
     @staticmethod
     def fail_json(msg, **kwargs) -> AnsibleFailJson:
@@ -82,6 +86,19 @@ class MockAnsibleModule:
         - AnsibleFailJson: Always raised with the provided message
         """
         raise AnsibleFailJson(msg)
+
+    def warn(self, message: str) -> None:
+        """
+        # Summary
+
+        Mock the `AnsibleModule.warn` method. Records the warning on `self.warnings` so unit tests can assert the
+        warning surfaced.
+
+        ## Raises
+
+        None
+        """
+        self.warnings.append(message)
 
     def public_method_for_pylint(self):
         """

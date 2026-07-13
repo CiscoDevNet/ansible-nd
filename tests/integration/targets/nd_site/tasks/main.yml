@@ -146,8 +146,8 @@
     - nm_add_ndfc_site.current.spec.siteType == "NDFC"
     - nm_add_ndfc_site.current.spec.name == "fabric-standalone"
 
-# ADD SITE (Type - DCNM)
-- name: Create DCNM site
+# ADD SITE (legacy site type)
+- name: Create legacy site
   cisco.nd.nd_site:
     <<: *nd_info
     url: '{{ apic_ip_address }}'
@@ -157,14 +157,14 @@
     site_type: dcnm
     login_domain: "DefaultAuth"
     state: present
-  register: nm_add_dcnm_site
+  register: nm_add_legacy_site
 
-- name: Verify nm_add_dcnm_site
+- name: Verify nm_add_legacy_site
   ansible.builtin.assert:
     that:
-    - nm_add_dcnm_site is changed
-    - nm_add_dcnm_site.current.spec.siteType == "DCNM"
-    - nm_add_dcnm_site.current.spec.name == "edge"
+    - nm_add_legacy_site is changed
+    - nm_add_legacy_site.current.spec.siteType == "DCNM"
+    - nm_add_legacy_site.current.spec.name == "edge"
 
 # QUERY SITEs
 - name: Query All Sites

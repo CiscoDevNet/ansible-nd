@@ -1,0 +1,496 @@
+# Copyright: (c) 2026, Cisco Systems, Inc.
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+from __future__ import absolute_import, division, print_function
+
+from typing import Any, ClassVar, Dict, List, Literal, Optional
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+    FieldSerializationInfo,
+    SecretStr,
+    SerializationInfo,
+    field_serializer,
+    model_serializer,
+    model_validator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+
+# =============================================================================
+# Nested Models - Bottom-up hierarchy
+# =============================================================================
+
+
+class Ipv4PeeringModel(NDNestedModel):
+    """IPv4 BGP peering route map configuration."""
+
+    ipv4_route_map_in: Optional[str] = Field(default=None, alias="ipv4RouteMapIn")
+    ipv4_route_map_out: Optional[str] = Field(default=None, alias="ipv4RouteMapOut")
+
+
+class Ipv6PeeringModel(NDNestedModel):
+    """IPv6 BGP peering route map configuration."""
+
+    ipv6_route_map_in: Optional[str] = Field(default=None, alias="ipv6RouteMapIn")
+    ipv6_route_map_out: Optional[str] = Field(default=None, alias="ipv6RouteMapOut")
+
+
+class FabricBgpDetailsModel(NDNestedModel):
+    """BGP peering details for a fabric in L3Out routing configuration."""
+
+    local_asn: Optional[str] = Field(default=None, alias="localAsn")
+    ipv4_peering_details: Optional[Ipv4PeeringModel] = Field(default=None, alias="ipv4PeeringDetails")
+    ipv6_peering_details: Optional[Ipv6PeeringModel] = Field(default=None, alias="ipv6PeeringDetails")
+    advertise_host_routes: Optional[bool] = Field(default=None, alias="advertiseHostRoutes")
+    advertise_default_route: Optional[bool] = Field(default=None, alias="advertiseDefaultRoute")
+    configure_static_default_route: Optional[bool] = Field(default=None, alias="configureStaticDefaultRoute")
+    soft_reconfiguration_inbound: Optional[str] = Field(default=None, alias="softReconfigurationInbound")
+    default_originate: Optional[bool] = Field(default=None, alias="defaultOriginate")
+    log_neighbor_change: Optional[bool] = Field(default=None, alias="logNeighborChange")
+    allow_as_in_asn_occurence_number: Optional[int] = Field(default=None, alias="allowAsInAsnOccurenceNumber")
+    as_override: Optional[bool] = Field(default=None, alias="asOverride")
+    no_prepend: Optional[bool] = Field(default=None, alias="noPrepend")
+    replace_as: Optional[bool] = Field(default=None, alias="replaceAs")
+    disable_peer_as_check: Optional[bool] = Field(default=None, alias="disablePeerAsCheck")
+    auth_key: Optional[SecretStr] = Field(default=None, alias="authKey")
+    auth_key_encryption_type: Optional[str] = Field(default=None, alias="authKeyEncryptionType")
+
+    @field_serializer("auth_key")
+    def serialize_auth_key(self, value: Optional[SecretStr], info: FieldSerializationInfo) -> Optional[str]:
+        """Serialize auth_key: plaintext for API payload and diff, masked everywhere else."""
+        if value is None:
+            return None
+        mode = (info.context or {}).get("mode")
+        if mode in ("payload", "diff"):
+            return value.get_secret_value()
+        return "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+
+
+class StaticRouteModel(NDNestedModel):
+    """Static route configuration for L3Out."""
+
+    ip_version: str = Field(alias="ipVersion")
+    ip_prefix: str = Field(alias="ipPrefix")
+    next_hop: str = Field(alias="nextHop")
+    switch_ids: List[str] = Field(alias="switchIds")
+    route_preference: Optional[int] = Field(default=None, alias="routePreference")
+    next_hop_name: Optional[str] = Field(default=None, alias="nextHopName")
+    tag: Optional[int] = Field(default=None, alias="tag")
+    track_id: Optional[int] = Field(default=None, alias="trackId")
+    next_hop_vrf_name: Optional[str] = Field(default=None, alias="nextHopVrfName")
+
+
+class BgpRoutingModel(NDNestedModel):
+    """BGP-specific routing configuration for an L3Out.
+
+    Groups the BGP attributes that live flat under ``routingDetails`` on the
+    ND wire into a single user-facing ``bgp`` dict. RoutingDetailsModel hoists
+    these fields back to the wire's flat layout during payload/diff
+    serialization.
+    """
+
+    auth: Optional[bool] = Field(default=None, alias="auth")
+    bfd: Optional[bool] = Field(default=None, alias="bfd")
+    hold_interval: Optional[int] = Field(default=None, alias="holdInterval")
+    keep_alive_interval: Optional[int] = Field(default=None, alias="keepAliveInterval")
+    fabric1_details: Optional[FabricBgpDetailsModel] = Field(default=None, alias="fabric1Details")
+    fabric2_details: Optional[FabricBgpDetailsModel] = Field(default=None, alias="fabric2Details")
+
+
+class StaticRoutingModel(NDNestedModel):
+    """Static-routing-specific configuration for an L3Out.
+
+    Groups the static-route attributes that live flat under ``routingDetails``
+    on the ND wire into a single user-facing ``static`` dict.
+    """
+
+    fabric1_static_routes: Optional[List[StaticRouteModel]] = Field(default=None, alias="fabric1StaticRoutes")
+    fabric2_static_routes: Optional[List[StaticRouteModel]] = Field(default=None, alias="fabric2StaticRoutes")
+
+
+class RoutingDetailsModel(NDNestedModel):
+    """Routing configuration for L3Out.
+
+    The user-facing schema exposes two mutually-exclusive dicts, ``bgp`` and
+    ``static``, selected by ``routing_protocol``. The ND wire format is flat
+    (BGP and static fields sit directly under ``routingDetails``), so this
+    model groups the flat wire fields into the nested dicts on input and
+    flattens them back out on payload/diff serialization.
+    """
+
+    # Wire keys that belong to each protocol group, used to regroup a flat
+    # ND response into the nested bgp/static dicts.
+    _BGP_WIRE_KEYS: ClassVar[set] = {"auth", "bfd", "holdInterval", "keepAliveInterval", "fabric1Details", "fabric2Details"}
+    _STATIC_WIRE_KEYS: ClassVar[set] = {"fabric1StaticRoutes", "fabric2StaticRoutes"}
+
+    routing_protocol: str = Field(alias="routingProtocol")
+    bgp: Optional[BgpRoutingModel] = Field(default=None)
+    static: Optional[StaticRoutingModel] = Field(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _group_wire_fields(cls, data: Any) -> Any:
+        """Regroup a flat ND response into the nested bgp/static dicts.
+
+        Config input already arrives nested (the argspec exposes bgp/static),
+        so it is passed through untouched. A flat ND response carries the
+        BGP/static fields directly under routingDetails; those are collected
+        into bgp/static sub-dicts so the nested model can validate them.
+        """
+        if not isinstance(data, dict):
+            return data
+        # Already nested (Ansible config input) -> leave as-is.
+        if "bgp" in data or "static" in data:
+            return data
+        bgp_sub = {key: data.pop(key) for key in list(data) if key in cls._BGP_WIRE_KEYS}
+        static_sub = {key: data.pop(key) for key in list(data) if key in cls._STATIC_WIRE_KEYS}
+        if bgp_sub:
+            data["bgp"] = bgp_sub
+        if static_sub:
+            data["static"] = static_sub
+        return data
+
+    @model_serializer(mode="wrap")
+    def _flatten_wire(self, handler, info: SerializationInfo) -> Dict[str, Any]:
+        """Flatten the nested bgp/static dicts back to the ND wire layout.
+
+        For payload and diff serialization the bgp/static sub-dict contents are
+        hoisted directly under routingDetails (matching the ND wire format).
+        For config output (mode='config') the nested user-facing schema is
+        preserved.
+        """
+        data = handler(self)
+        mode = info.context.get("mode") if info.context else None
+        if mode == "config":
+            return data
+        for key in ("bgp", "static"):
+            sub = data.pop(key, None)
+            if isinstance(sub, dict):
+                data.update(sub)
+        return data
+
+
+class SwitchDetailsModel(NDNestedModel):
+    """Switch interface details for L3Out link configuration."""
+
+    switch_id: str = Field(alias="switchId")
+    interface_name: str = Field(alias="interfaceName")
+    interface_ipv4_address: Optional[str] = Field(default=None, alias="ipv4Address")
+    interface_ipv6_address: Optional[str] = Field(default=None, alias="ipv6Address")
+    interface_description: Optional[str] = Field(default=None, alias="interfaceDescription")
+    interface_admin_state: Optional[bool] = Field(default=None, alias="interfaceAdminState")
+    netflow: Optional[bool] = Field(default=None, alias="netflow")
+    netflow_monitor: Optional[str] = Field(default=None, alias="netflowMonitor")
+
+
+class LinkModel(NDNestedModel):
+    """Link configuration for L3Out connectivity."""
+
+    mtu: Optional[int] = Field(default=None, alias="mtu")
+    ipv4_mask_length: Optional[int] = Field(default=None, alias="ipv4MaskLength")
+    ipv6_prefix_length: Optional[int] = Field(default=None, alias="ipv6PrefixLength")
+    # Unified encapsulation VLAN. Maps to the ND wire field dot1qId for
+    # subInterface links and vlanId for svi links. The mapping is applied by
+    # ConnectivityDetailsModel based on its routing_interface_type. Kept without
+    # a static alias so it serializes as ``vlan_id`` until the parent renames it.
+    vlan_id: Optional[int] = Field(default=None)
+    ipv4_pim: Optional[bool] = Field(default=None, alias="ipv4Pim")
+    ipv6_pim: Optional[bool] = Field(default=None, alias="ipv6Pim")
+    switch1_details: Optional[SwitchDetailsModel] = Field(default=None, alias="switch1Details")
+    switch2_details: Optional[SwitchDetailsModel] = Field(default=None, alias="switch2Details")
+
+
+class ConnectivityDetailsModel(NDNestedModel):
+    """Connectivity configuration for L3Out."""
+
+    routing_interface_type: str = Field(alias="routingInterfaceType")
+    links: Optional[List[LinkModel]] = Field(default=None, alias="links")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_wire_vlan_fields(cls, data: Any) -> Any:
+        """Normalize ND wire VLAN keys (dot1qId/vlanId) to the unified vlan_id.
+
+        ND returns the encapsulation as dot1qId for subInterface links and
+        vlanId for svi links. Both are mapped to the single vlan_id attribute
+        so the model exposes one field regardless of interface type.
+        """
+        if isinstance(data, dict):
+            links = data.get("links")
+            if isinstance(links, list):
+                for link in links:
+                    if isinstance(link, dict) and "vlan_id" not in link:
+                        if "dot1qId" in link:
+                            link["vlan_id"] = link.pop("dot1qId")
+                        elif "vlanId" in link:
+                            link["vlan_id"] = link.pop("vlanId")
+        return data
+
+    @model_validator(mode="after")
+    def validate_connectivity_type_requirements(self) -> "ConnectivityDetailsModel":
+        """Validate type-specific vlan_id requirements and ranges."""
+        if not self.links:
+            return self
+
+        interface_type = self.routing_interface_type
+        for idx, link in enumerate(self.links):
+            if interface_type == "subInterface":
+                if link.vlan_id is None:
+                    raise ValueError(f"links[{idx}]: 'vlan_id' is required when " f"routing_interface_type is 'subInterface'.")
+                if not 1 <= link.vlan_id <= 4094:
+                    raise ValueError(f"links[{idx}]: 'vlan_id' must be between 1 and 4094 when " f"routing_interface_type is 'subInterface'.")
+            elif interface_type == "svi":
+                if link.vlan_id is None:
+                    raise ValueError(f"links[{idx}]: 'vlan_id' is required when " f"routing_interface_type is 'svi'.")
+                if not 2 <= link.vlan_id <= 4094:
+                    raise ValueError(f"links[{idx}]: 'vlan_id' must be between 2 and 4094 when " f"routing_interface_type is 'svi'.")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _serialize_vlan_mapping(self, handler, info: SerializationInfo) -> Dict[str, Any]:
+        """Map the unified vlan_id back to the ND wire key per interface type.
+
+        For payload and diff serialization, vlan_id becomes dot1qId
+        (subInterface) or vlanId (svi). For config output (mode='config') the
+        unified vlan_id is preserved so the user-facing schema stays single.
+        """
+        data = handler(self)
+        mode = info.context.get("mode") if info.context else None
+        if mode == "config":
+            return data
+
+        links = data.get("links")
+        if isinstance(links, list):
+            wire_key = None
+            if self.routing_interface_type == "subInterface":
+                wire_key = "dot1qId"
+            elif self.routing_interface_type == "svi":
+                wire_key = "vlanId"
+            for link in links:
+                if isinstance(link, dict) and "vlan_id" in link:
+                    value = link.pop("vlan_id")
+                    if wire_key is not None:
+                        link[wire_key] = value
+        return data
+
+
+# =============================================================================
+# Main L3Out Model
+# =============================================================================
+
+
+class L3OutModel(NDBaseModel):
+    """
+    Layer-3 Out (L3Out) configuration for Nexus Dashboard.
+
+    L3Outs provide connectivity between ND-managed fabrics and external networks.
+    They support multiple connectivity types (routed, subInterface, svi) and
+    routing protocols (BGP, static).
+
+    Identifier: name (single)
+
+    Serialization notes:
+        - attach is excluded from API payload (module-side operation only)
+        - All nested structures use Pydantic aliases for camelCase conversion
+    """
+
+    # --- Identifier Configuration ---
+
+    identifiers: ClassVar[Optional[List[str]]] = ["name"]
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+
+    # --- Serialization Configuration ---
+
+    payload_exclude_fields: ClassVar[set] = {"attach"}
+    exclude_from_diff: ClassVar[set] = {"attach"}
+
+    # --- Fields ---
+
+    name: str = Field(alias="name")
+    fabric1_name: Optional[str] = Field(default=None, alias="fabric1Name")
+    fabric2_name: Optional[str] = Field(default=None, alias="fabric2Name")
+    vrf1_name: Optional[str] = Field(default=None, alias="vrf1Name")
+    vrf2_name: Optional[str] = Field(default=None, alias="vrf2Name")
+    tenant1_name: Optional[str] = Field(default=None, alias="tenant1Name")
+    tenant2_name: Optional[str] = Field(default=None, alias="tenant2Name")
+    configured_fabrics: Optional[str] = Field(default=None, alias="configuredFabrics")
+    ip_version: Optional[str] = Field(default=None, alias="ipVersion")
+    connectivity_details: Optional[ConnectivityDetailsModel] = Field(default=None, alias="connectivityDetails")
+    routing_details: Optional[RoutingDetailsModel] = Field(default=None, alias="routingDetails")
+
+    # Module-side field (not sent to API)
+    attach: Optional[bool] = Field(default=None)
+
+    # --- Overrides ---
+
+    def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
+        """Export for diff comparison with secrets as plaintext for accurate change detection."""
+        return self.model_dump(
+            by_alias=True,
+            exclude_none=True,
+            exclude=self.exclude_from_diff or None,
+            mode="json",
+            context={"mode": "diff"},
+            **kwargs,
+        )
+
+    # --- Argument Spec ---
+
+    @classmethod
+    def get_argument_spec(cls) -> Dict:
+        """
+        Return the Ansible argument spec for the nd_manage_l3out module.
+
+        The L3Out module has a complex nested structure with discriminated types
+        for connectivity (routed/subInterface/svi) and routing (bgp/static).
+        """
+
+        # Switch details spec - used in all link types
+        switch_details_spec = dict(
+            switch_id=dict(type="str", required=True),
+            interface_name=dict(type="str", required=True),
+            interface_admin_state=dict(type="bool"),
+            interface_ipv4_address=dict(type="str"),
+            interface_ipv6_address=dict(type="str"),
+            netflow=dict(type="bool"),
+            netflow_monitor=dict(type="str"),
+            interface_description=dict(type="str"),
+        )
+
+        # Link spec - common fields plus type-specific
+        link_spec = dict(
+            # Common fields
+            mtu=dict(type="int"),
+            ipv4_pim=dict(type="bool"),
+            ipv6_pim=dict(type="bool"),
+            ipv4_mask_length=dict(type="int"),
+            ipv6_prefix_length=dict(type="int"),
+            # Type-specific encapsulation VLAN (dot1q tag for subInterface,
+            # VLAN ID for svi). Range validated per routing_interface_type.
+            vlan_id=dict(type="int"),
+            # Switch details
+            switch1_details=dict(type="dict", options=switch_details_spec),
+            switch2_details=dict(type="dict", options=switch_details_spec),
+        )
+
+        # Connectivity details spec
+        connectivity_details_spec = dict(
+            routing_interface_type=dict(
+                type="str",
+                required=True,
+                choices=["routed", "subInterface", "svi"],
+            ),
+            links=dict(type="list", elements="dict", options=link_spec),
+        )
+
+        # Static route spec
+        static_route_spec = dict(
+            ip_version=dict(type="str", required=True, choices=["ipv4", "ipv6"]),
+            ip_prefix=dict(type="str", required=True),
+            next_hop=dict(type="str", required=True),
+            switch_ids=dict(type="list", elements="str", required=True),
+            route_preference=dict(type="int"),
+            next_hop_name=dict(type="str"),
+            tag=dict(type="int"),
+            track_id=dict(type="int"),
+            next_hop_vrf_name=dict(type="str"),
+        )
+
+        # IPv4/IPv6 route maps spec
+        ipv4_peering_details_spec = dict(
+            ipv4_route_map_in=dict(type="str"),
+            ipv4_route_map_out=dict(type="str"),
+        )
+
+        ipv6_peering_details_spec = dict(
+            ipv6_route_map_in=dict(type="str"),
+            ipv6_route_map_out=dict(type="str"),
+        )
+
+        # Fabric peering details spec (for BGP)
+        fabric_peering_details_spec = dict(
+            auth_key=dict(type="str", no_log=True),
+            auth_key_encryption_type=dict(type="str", choices=["3des", "type6", "type7"]),
+            advertise_host_routes=dict(type="bool"),
+            advertise_default_route=dict(type="bool"),
+            configure_static_default_route=dict(type="bool"),
+            soft_reconfiguration_inbound=dict(
+                type="str",
+                choices=["enabled", "disabled", "enabledAlways"],
+            ),
+            default_originate=dict(type="bool"),
+            local_asn=dict(type="str"),
+            no_prepend=dict(type="bool"),
+            replace_as=dict(type="bool"),
+            as_override=dict(type="bool"),
+            disable_peer_as_check=dict(type="bool"),
+            log_neighbor_change=dict(type="bool"),
+            allow_as_in_asn_occurence_number=dict(type="int"),
+            ipv4_peering_details=dict(type="dict", options=ipv4_peering_details_spec),
+            ipv6_peering_details=dict(type="dict", options=ipv6_peering_details_spec),
+        )
+
+        # Routing details spec - discriminated by routing_protocol, with the
+        # protocol-specific configuration grouped under mutually-exclusive
+        # bgp/static dicts so required attributes are enforced by the argspec.
+        bgp_spec = dict(
+            auth=dict(type="bool"),
+            bfd=dict(type="bool"),
+            hold_interval=dict(type="int"),
+            keep_alive_interval=dict(type="int"),
+            fabric1_details=dict(type="dict", options=fabric_peering_details_spec),
+            fabric2_details=dict(type="dict", options=fabric_peering_details_spec),
+        )
+
+        static_spec = dict(
+            fabric1_static_routes=dict(type="list", elements="dict", options=static_route_spec),
+            fabric2_static_routes=dict(type="list", elements="dict", options=static_route_spec),
+        )
+
+        routing_details_spec = dict(
+            routing_protocol=dict(
+                type="str",
+                required=True,
+                choices=["static", "bgp"],
+            ),
+            bgp=dict(type="dict", options=bgp_spec),
+            static=dict(type="dict", options=static_spec),
+        )
+
+        # L3Out spec
+        l3out_spec = dict(
+            name=dict(type="str", required=True),
+            attach=dict(type="bool"),  # Optional: attach/detach L3Out after operation
+            fabric1_name=dict(type="str"),
+            fabric2_name=dict(type="str"),
+            vrf1_name=dict(type="str"),
+            vrf2_name=dict(type="str"),
+            tenant1_name=dict(type="str"),
+            tenant2_name=dict(type="str"),
+            configured_fabrics=dict(type="str", choices=["both", "fabric1", "fabric2"]),
+            ip_version=dict(type="str", choices=["ipv4", "ipv6", "both"]),
+            connectivity_details=dict(type="dict", options=connectivity_details_spec),
+            routing_details=dict(
+                type="dict",
+                options=routing_details_spec,
+                # bgp and static are mutually exclusive; the one matching
+                # routing_protocol is required.
+                mutually_exclusive=[("bgp", "static")],
+                required_if=[
+                    ("routing_protocol", "bgp", ("bgp",)),
+                    ("routing_protocol", "static", ("static",)),
+                ],
+            ),
+        )
+
+        return dict(
+            fabric_name=dict(type="str", required=True),
+            state=dict(
+                type="str",
+                default="merged",
+                choices=["merged", "replaced", "deleted"],
+            ),
+            config=dict(type="list", elements="dict", required=True, options=l3out_spec),
+        )

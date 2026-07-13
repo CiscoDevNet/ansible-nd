@@ -1,0 +1,13 @@
+---
+# Fabric used for all ACL tests. The fabric must already exist on Nexus
+# Dashboard. Override with -e "acl_test_fabric=<your-fabric>" or via
+# integration_config.yml.
+acl_fabric: "{{ acl_test_fabric | default('NAC-SiteA') }}"
+
+# Test ACL names (kept unique to avoid clobbering production ACLs).
+acl_ipv4_name: "ansible-test-ipv4-acl"
+acl_ipv6_name: "ansible-test-ipv6-acl"
+
+# Network values used by entries.
+acl_test_network_ipv4: "10.1.1.0"
+acl_test_prefix_ipv6: "2001:db8::/32"
