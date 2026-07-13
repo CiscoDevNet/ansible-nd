@@ -45,8 +45,17 @@ def responses_subif(key: str):
     return load_fixture("test_subinterface_managed_interface")[key]
 
 
-def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> RestSend:
-    """Build a RestSend wired to the file-based Sender and the real ResponseHandler."""
+def _build_rest_send(
+    gen_responses: ResponseGenerator,
+    fabric_name: str = "fabric_1",
+    state: str | None = None,
+    config: list[dict] | None = None,
+) -> RestSend:
+    """Build a RestSend wired to the file-based Sender and the real ResponseHandler.
+
+    `state` and `config` populate `rest_send.params` so `query_all`'s `_switches_to_query` scoping
+    (fabric-wide for `overridden`, config-scoped otherwise) can be exercised.
+    """
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
     sender.gen = gen_responses
@@ -56,7 +65,13 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    rest_send = RestSend({"check_mode": False, "fabric_name": fabric_name})
+    params: dict = {"check_mode": False, "fabric_name": fabric_name}
+    if state is not None:
+        params["state"] = state
+    if config is not None:
+        params["config"] = config
+
+    rest_send = RestSend(params)
     rest_send.sender = sender
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
@@ -64,9 +79,14 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     return rest_send
 
 
-def _build_orchestrator(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> SubinterfaceManagedInterfaceOrchestrator:
+def _build_orchestrator(
+    gen_responses: ResponseGenerator,
+    fabric_name: str = "fabric_1",
+    state: str | None = None,
+    config: list[dict] | None = None,
+) -> SubinterfaceManagedInterfaceOrchestrator:
     """Construct an orchestrator with the file-based RestSend injected."""
-    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name)
+    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, state=state, config=config)
     return SubinterfaceManagedInterfaceOrchestrator(rest_send=rest_send)
 
 
@@ -198,11 +218,13 @@ def test_subinterface_managed_orchestrator_00400() -> None:
     """
     # Summary
 
-    Verify `query_all` validates the fabric, iterates all switches, filters to interfaceType=subInterface AND
-    managed policyType=subinterface, and injects `switchIp` onto each kept interface.
+    Verify `query_all` validates the fabric, iterates all switches (`state: overridden` is fabric-wide per
+    `_switches_to_query`), filters to interfaceType=subInterface AND managed policyType=subinterface, and
+    injects `switchIp` onto each kept interface.
 
     ## Test
 
+    - state is `overridden`, so `_switches_to_query` returns the full switch map
     - Fabric summary returns 200
     - Two switches in the switch list
     - Switch 1 returns: managed subinterface (kept), ethernet (filtered by interfaceType),
@@ -213,6 +235,7 @@ def test_subinterface_managed_orchestrator_00400() -> None:
     ## Classes and Methods
 
     - SubinterfaceManagedInterfaceOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator._switches_to_query()
     """
 
     def responses():
@@ -224,7 +247,7 @@ def test_subinterface_managed_orchestrator_00400() -> None:
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        orchestrator = _build_orchestrator(gen_responses)
+        orchestrator = _build_orchestrator(gen_responses, state="overridden")
         result = orchestrator.query_all()
 
     assert isinstance(result, list)
@@ -266,6 +289,47 @@ def test_subinterface_managed_orchestrator_00420() -> None:
 
     with pytest.raises(RuntimeError, match=r"Query all failed.*missing_fabric"):
         orchestrator.query_all()
+
+
+def test_subinterface_managed_orchestrator_00440() -> None:
+    """
+    # Summary
+
+    Verify `query_all` scopes its per-switch interface-list fan-out to switches named in the user config when
+    `state` is not `overridden`, rather than querying every switch in the fabric.
+
+    ## Test
+
+    - Fabric has two switches (192.168.1.1, 192.168.1.2), but config names only 192.168.1.1
+    - state is `merged` (non-overridden), so `_switches_to_query` returns only the config switch
+    - Only the config switch's interfaces are fetched; the second switch is never queried (the response
+      generator yields exactly three responses — summary, switch list, switch-1 interfaces — and would raise
+      if a second per-switch GET were issued)
+    - Result contains only the managed subinterface on the config switch
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._switches_to_query()
+    - SubinterfaceManagedInterfaceOrchestrator.query_all()
+    """
+
+    def responses():
+        yield responses_subif("test_query_all_config_scoped_00440a")
+        yield responses_subif("test_query_all_config_scoped_00440b")
+        yield responses_subif("test_query_all_config_scoped_00440c")
+
+    gen_responses = ResponseGenerator(responses())
+
+    config = [{"switch_ip": "192.168.1.1", "interface_name": "Ethernet1/3.2"}]
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses, state="merged", config=config)
+        result = orchestrator.query_all()
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "Ethernet1/3.2"
+    assert result[0]["switchIp"] == "192.168.1.1"
 
 
 # =============================================================================

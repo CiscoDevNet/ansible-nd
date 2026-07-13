@@ -98,9 +98,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Initialize ethernet-specific mutable private state after Pydantic model construction. Extends
-        `NDBaseInterfaceOrchestrator.model_post_init` to add the normalize queue (initialized the same
-        way as the sibling `_pending_deploys` / `_pending_removes` queues) and the per-switch interface
-        cache read by `_switch_interfaces`.
+        `NDBaseInterfaceOrchestrator.model_post_init` to add the normalize and reset queues (initialized
+        the same way as the sibling `_pending_deploys` / `_pending_removes` queues).
 
         ## Raises
 
@@ -109,7 +108,6 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         super().model_post_init(__context)
         self._pending_normalizes: list[tuple[str, str]] = []
         self._pending_resets: list[tuple[str, str]] = []
-        self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -176,28 +174,6 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return False
         policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
         return any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS)
-
-    def _switch_interfaces(self, switch_id: str) -> dict[str, dict]:
-        """
-        # Summary
-
-        Return every interface on `switch_id`, keyed by lower-cased interface name. The underlying
-        `interfaceList` GET is issued at most once per switch per module run; the result is cached so
-        that `query_all` and the port-channel membership check share a single fetch per switch rather
-        than each querying the controller independently.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - Via `_request` if the interface-list API request fails with a non-404 status.
-        """
-        if switch_id not in self._switch_interfaces_cache:
-            api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-            interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
-            self._switch_interfaces_cache[switch_id] = {iface["interfaceName"].lower(): iface for iface in interfaces if iface.get("interfaceName")}
-        return self._switch_interfaces_cache[switch_id]
 
     def _existing_interface(self, interface_name: str, switch_id: str) -> dict | None:
         """
@@ -640,30 +616,6 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
-
-    def _switches_to_query(self) -> dict[str, str]:
-        """
-        # Summary
-
-        Return the `{switch_ip: switch_id}` subset that `query_all` should scan.
-
-        For `state: overridden` the scope is fabric-wide, so the full switch map is returned. For every other state
-        the state machine only consults existing interfaces identified by `switch_ip` values present in the user
-        config, so only those switches are returned. This keeps the interface-list request count proportional to
-        config size rather than fabric size.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - Via `FabricContext.switch_map` if the switches API query fails.
-        """
-        switch_map = self.fabric_context.switch_map
-        if self.rest_send.params.get("state") == "overridden":
-            return switch_map
-        config_items = self.rest_send.params.get("config") or []
-        config_ips = {item.get("switch_ip") for item in config_items if item.get("switch_ip")}
-        return {ip: sid for ip, sid in switch_map.items() if ip in config_ips}
 
     def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
         """
