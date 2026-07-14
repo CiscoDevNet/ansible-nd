@@ -208,6 +208,42 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         self.validate_switches_capable(model_instances)
 
+    def preflight_create(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Require a policy on every interface being created. ND rejects a policy-less create per-interface (`mode is
+        required` / `invalid policyType ''`) and never creates an empty interface, but the failure surfaces as
+        `interface[0] '<name>'` inside a generic create error after a round-trip. This guard is local-only and fails
+        fast — before the API-backed capability preflight and before any mutation, in check mode too — naming the
+        offending `(switch_ip, interface_name)` in module terms (issue #350). Only the initial inventory fetch
+        precedes it.
+
+        Invoked by `NDStateMachine` with only the proposed items not present in the existing inventory (the create
+        subset), so a `merged`/`replaced` update that legitimately omits a policy already present on the switch is
+        never affected. A config item with no `config_data` (identifier only) is correct for `state: deleted`, which
+        does not route through this hook. Offenders are aggregated into a single `RuntimeError` so one message names
+        every policy-less create item.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If any create item has no `config_data.network_os.policy`.
+        """
+        offenders: list[str] = []
+        for model_instance in model_instances:
+            config_data = getattr(model_instance, "config_data", None)
+            network_os = getattr(config_data, "network_os", None) if config_data is not None else None
+            policy = getattr(network_os, "policy", None) if network_os is not None else None
+            if policy is None:
+                offenders.append(f"(switch_ip={model_instance.switch_ip}, interface_name={model_instance.interface_name})")
+        if offenders:
+            raise RuntimeError(
+                f"Cannot create interface(s) without a policy (config_data.network_os.policy is required to create an interface) "
+                f"in fabric '{self.fabric_name}': {', '.join(offenders)}. Supply a policy, or use state: deleted to remove an interface."
+            )
+
     def validate_switches_capable(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary

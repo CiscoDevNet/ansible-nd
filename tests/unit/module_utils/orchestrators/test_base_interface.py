@@ -1037,3 +1037,232 @@ def test_base_interface_00860() -> None:
     assert len(warnings) == 1
     assert "Capability preflight skipped in check mode" in warnings[0]
     assert "FDO12345ABC" in warnings[0]
+
+
+# =============================================================================
+# Test: preflight_create() policy-required-on-create guard (issue #350)
+# =============================================================================
+
+
+def _iface_model(switch_ip: str, interface_name: str, *, policy: bool = True, config_data: bool = True, network_os: bool = True):
+    """Build a lightweight stand-in for an interface model instance for `preflight_create` tests.
+
+    `preflight_create` reads `config_data` -> `network_os` -> `policy` via `getattr`, so a `SimpleNamespace`
+    faithfully exercises the traversal without coupling these tests to any per-feature Pydantic model. Set
+    `config_data=False` for an identifier-only item, or `policy=False` for a `config_data` with no policy.
+    """
+    if not config_data:
+        config_data_obj = None
+    else:
+        network_os_obj = SimpleNamespace(policy=(SimpleNamespace() if policy else None)) if network_os else None
+        config_data_obj = SimpleNamespace(network_os=network_os_obj)
+    return SimpleNamespace(switch_ip=switch_ip, interface_name=interface_name, config_data=config_data_obj)
+
+
+def test_base_interface_00900() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` does not raise when every create item carries a policy.
+
+    ## Test
+
+    - Two items each have `config_data.network_os.policy` set
+    - `preflight_create` does not raise
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    items = [_iface_model("192.168.12.151", "loopback100"), _iface_model("192.168.12.152", "loopback101")]
+    with does_not_raise():
+        instance.preflight_create(items)
+
+
+def test_base_interface_00910() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` raises `RuntimeError` for a create item with no `config_data` at all, naming the
+    offending `switch_ip`, `interface_name`, and the fabric.
+
+    ## Test
+
+    - One item has `config_data` of None (identifier only)
+    - `preflight_create` raises `RuntimeError` naming the switch_ip, interface_name, and fabric_1
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    match = r"without a policy.*fabric 'fabric_1'.*switch_ip=192\.168\.12\.151, interface_name=loopback100"
+    with pytest.raises(RuntimeError, match=match):
+        instance.preflight_create([_iface_model("192.168.12.151", "loopback100", config_data=False)])
+
+
+def test_base_interface_00920() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` raises when `config_data` is present but `policy` is None (the `config_data`-without-policy
+    case, distinct from no `config_data` at all).
+
+    ## Test
+
+    - One item has `config_data.network_os` present but `policy` is None
+    - `preflight_create` raises `RuntimeError` naming the offending interface
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    match = r"switch_ip=192\.168\.12\.151, interface_name=Vlan100"
+    with pytest.raises(RuntimeError, match=match):
+        instance.preflight_create([_iface_model("192.168.12.151", "Vlan100", policy=False)])
+
+
+def test_base_interface_00930() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` aggregates multiple offenders into a single `RuntimeError` naming each.
+
+    ## Test
+
+    - Two items both lack a policy
+    - `preflight_create` raises one `RuntimeError` naming both interface_names
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    items = [
+        _iface_model("192.168.12.151", "loopback100", config_data=False),
+        _iface_model("192.168.12.152", "loopback101", policy=False),
+    ]
+    with pytest.raises(RuntimeError) as exc_info:
+        instance.preflight_create(items)
+    message = str(exc_info.value)
+    assert "interface_name=loopback100" in message
+    assert "interface_name=loopback101" in message
+
+
+def test_base_interface_00940() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` names only the policy-less offender and not the valid sibling in a mixed batch.
+
+    ## Test
+
+    - One item has a policy, one does not
+    - `preflight_create` raises `RuntimeError` naming the offender only
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    items = [
+        _iface_model("192.168.12.151", "loopback_ok"),
+        _iface_model("192.168.12.152", "loopback_bad", config_data=False),
+    ]
+    with pytest.raises(RuntimeError) as exc_info:
+        instance.preflight_create(items)
+    message = str(exc_info.value)
+    assert "interface_name=loopback_bad" in message
+    assert "loopback_ok" not in message
+
+
+def test_base_interface_00950() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` is a no-op for an empty create set (the common case where a state run produces only updates).
+
+    ## Test
+
+    - `preflight_create([])` does not raise
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.preflight_create([])
+
+
+def test_base_interface_00960() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` still raises in `--check` mode. The guard is a deterministic input-validation error with no
+    API dependency, so it fails fast in a dry-run rather than downgrading to a warning like the capability preflight.
+
+    ## Test
+
+    - `rest_send.check_mode` is True
+    - A policy-less create item still raises `RuntimeError`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.check_mode = True
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    with pytest.raises(RuntimeError, match=r"without a policy"):
+        instance.preflight_create([_iface_model("192.168.12.151", "loopback100", config_data=False)])
