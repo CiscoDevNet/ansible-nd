@@ -1798,6 +1798,202 @@ def test_response_handler_nd_01290():
     assert instance.result["success"] is True
 
 
+def test_response_handler_nd_01300():
+    """
+    # Summary
+
+    Verify an empty-string label key is skipped rather than used as the label.
+
+    ## Test
+
+    - A 207 whose failing item carries name="" falls through to the next label key (switchId)
+    - The message is labelled "FDO5678WXYZ: ...", not ": ..."
+
+    ## Classes and Methods
+
+    - NdV1Strategy._format_multistatus_failure()
+    - NdV1Strategy.extract_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "", "switchId": "FDO5678WXYZ", "status": "failed", "message": "Deploy failed"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message is not None
+    assert "FDO5678WXYZ: Deploy failed" in instance.error_message
+    assert not instance.error_message.startswith("ND Error: : ")
+
+
+def test_response_handler_nd_01310():
+    """
+    # Summary
+
+    Verify `warningMessage` is used as the per-item detail when no `message` key is present.
+
+    ## Test
+
+    - A 207 failing item carrying warningMessage (fabric update-group shape) surfaces that text
+
+    ## Classes and Methods
+
+    - NdV1Strategy._format_multistatus_failure()
+    - NdV1Strategy.extract_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "leaf_group", "status": "failed", "warningMessage": "Switch not found"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message is not None
+    assert "leaf_group: Switch not found" in instance.error_message
+
+
+def test_response_handler_nd_01320():
+    """
+    # Summary
+
+    Verify a failing item with neither a label key nor a detail key yields the generic literal.
+
+    ## Test
+
+    - A 207 failing item carrying only status="failed" surfaces "ND Error: failed"
+
+    ## Classes and Methods
+
+    - NdV1Strategy._format_multistatus_failure()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"status": "failed"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message == "ND Error: failed"
+
+
+# =============================================================================
+# Test: Null-valued DATA keys do not crash error-message extraction
+#
+# ND may send `messages` or `errors` with an explicit null value. The key is
+# present, so a bare `"messages" in data_dict and len(data_dict["messages"])`
+# raises TypeError on the very path that reports an error to the user.
+# =============================================================================
+
+
+def test_response_handler_nd_01330():
+    """
+    # Summary
+
+    Verify a null `DATA.messages` does not raise and falls back to the generic message.
+
+    ## Test
+
+    - A 500 whose DATA carries messages=None commits without raising
+    - error_message is the generic status fallback
+
+    ## Classes and Methods
+
+    - NdV1Strategy._extract_dict_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 500,
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"messages": None},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message == "ND Error: Request failed with status 500"
+
+
+def test_response_handler_nd_01340():
+    """
+    # Summary
+
+    Verify a null `DATA.errors` does not raise and falls back to the generic message.
+
+    ## Test
+
+    - A 500 whose DATA carries errors=None commits without raising
+    - error_message is the generic status fallback
+
+    ## Classes and Methods
+
+    - NdV1Strategy._extract_dict_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 500,
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"errors": None},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message == "ND Error: Request failed with status 500"
+
+
+# =============================================================================
+# Test: DATA.error text is surfaced, not dropped
+#
+# is_success() classifies a response carrying DATA.error as a failure. Without a
+# matching branch in the error-message extractor, the text ND actually sent was
+# dropped in favour of the generic "Request failed with status <code>" fallback.
+# =============================================================================
+
+
+def test_response_handler_nd_01350():
+    """
+    # Summary
+
+    Verify the scalar `DATA.error` value is surfaced in error_message.
+
+    ## Test
+
+    - A 200 whose DATA carries error="ND error occurred" sets success=False
+    - error_message carries the error text rather than the generic fallback
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - NdV1Strategy._extract_dict_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {"error": "ND error occurred"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message == "ND Error: ND error occurred"
+
+
 # =============================================================================
 # Test: ResponseHandler commit() can be called multiple times
 # =============================================================================
