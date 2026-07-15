@@ -164,6 +164,25 @@ class IpfmLoopbackPolicyModel(LoopbackPolicyBase):
     secondary_ip_list: list[SecondaryIpModel] | None = Field(default=None, alias="secondaryIpList", description="Secondary IPv4 addresses")
 
 
+class MplsLoopbackPolicyModel(LoopbackPolicyBase):
+    """
+    # Summary
+
+    Policy fields for the NX-OS `mplsLoopback` template. Maps to `configData.networkOS.policy` where
+    `policyType == "mplsLoopback"`. Note: `mplsLoopback` is lab-verified creatable but absent from the ND create-side
+    discriminator enum (spec drift); modelled per the template and wire.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["mplsLoopback"] = Field(alias="policyType", description="MPLS loopback policy template discriminator")
+    dci_routing_protocol: Literal["ospf", "isis"] | None = Field(default=None, alias="dciRoutingProtocol", description="DCI link-state routing protocol")
+    dci_routing_tag: str | None = Field(default=None, alias="dciRoutingTag", description="DCI routing tag")
+    ospf_area_id: str | None = Field(default=None, alias="ospfAreaId", min_length=1, max_length=15, description="OSPF area identifier")
+
+
 class LoopbackNetworkOSModel(NDNestedModel):
     """
     # Summary

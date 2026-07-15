@@ -1770,3 +1770,57 @@ def test_ipfm_loopback_strict_rejects_foreign_field():
     from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import IpfmLoopbackPolicyModel
     with pytest.raises(ValidationError):
         IpfmLoopbackPolicyModel(policyType="ipfmLoopback", ospfAreaId="0")
+
+
+# =============================================================================
+# Test: MplsLoopbackPolicyModel
+# =============================================================================
+
+
+def test_mpls_loopback_parses_and_round_trips():
+    """
+    # Summary
+
+    Verify `MplsLoopbackPolicyModel` parses and round-trips correctly.
+
+    ## Test
+
+    - Construct with camelCase aliases
+    - to_payload() converts to camelCase output with correct field names
+    - dciRoutingProtocol and other MPLS-specific fields are preserved
+
+    ## Classes and Methods
+
+    - MplsLoopbackPolicyModel.__init__()
+    - MplsLoopbackPolicyModel.to_payload()
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import MplsLoopbackPolicyModel
+    model = MplsLoopbackPolicyModel(
+        policyType="mplsLoopback", ip="10.3.3.3",
+        dciRoutingProtocol="isis", dciRoutingTag="MPLS_UNDERLAY", ospfAreaId="0",
+    )
+    payload = model.to_payload()
+    assert payload["policyType"] == "mplsLoopback"
+    assert payload["dciRoutingProtocol"] == "isis"
+    assert payload["dciRoutingTag"] == "MPLS_UNDERLAY"
+
+
+def test_mpls_loopback_strict_rejects_foreign_field():
+    """
+    # Summary
+
+    Verify `MplsLoopbackPolicyModel` rejects a field belonging to a different `policy_type` branch.
+
+    ## Test
+
+    - Construct with a foreign field (e.g. `routingTag` from IPFM loopback)
+    - Raises ValidationError (`extra="forbid"`)
+
+    ## Classes and Methods
+
+    - MplsLoopbackPolicyModel.__init__()
+    """
+    from pydantic import ValidationError
+    from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import MplsLoopbackPolicyModel
+    with pytest.raises(ValidationError):
+        MplsLoopbackPolicyModel(policyType="mplsLoopback", routingTag="777")
