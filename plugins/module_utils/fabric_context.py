@@ -359,9 +359,12 @@ class FabricContext:
 
         - If no switch matches the given IP in the fabric.
         """
-        if switch_ip not in self.switch_map:
+        self._load_switch_maps()
+        if self._switch_map is None or self._switches is None:
+            raise AssertionError("switch records are None after _load_switch_maps()")
+        if switch_ip not in self._switch_map:
             raise RuntimeError(f"No switch found with fabricManagementIp '{switch_ip}' in fabric '{self._fabric_name}'.")
-        for switch in self.switches:
+        for switch in self._switches:
             if switch.get("fabricManagementIp") == switch_ip:
                 raw = (switch.get("additionalData") or {}).get("platformType")
                 try:
