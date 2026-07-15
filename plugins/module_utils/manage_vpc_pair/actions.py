@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 from urllib.parse import quote
 
@@ -36,25 +35,18 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runtime_p
     _build_vpc_pair_payload,
     _get_api_field_value,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
+    FabricTypeEnum,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule as NDModuleV2,
     NDModuleError,
 )
 
-_BLOCKED_FABRIC_TYPE_TOKENS_FOR_VPC_PAIR_DETAILS = {"vxlanibgp", "vxlanebgp"}
-
-
-def _normalize_fabric_type_token(value: Any) -> str:
-    """
-    Normalize fabric-type strings for stable comparisons.
-
-    Examples:
-      - "vxlanIbgp" -> "vxlanibgp"
-      - "VXLAN_EBGP" -> "vxlanebgp"
-    """
-    if not isinstance(value, str):
-        return ""
-    return re.sub(r"[^a-z0-9]", "", value.strip().lower())
+_BLOCKED_FABRIC_TYPES_FOR_VPC_PAIR_DETAILS = {
+    FabricTypeEnum.VXLAN_IBGP.value,
+    FabricTypeEnum.VXLAN_EBGP.value,
+}
 
 
 def _first_line(value: Any) -> str:
@@ -66,19 +58,20 @@ def _first_line(value: Any) -> str:
     return lines[0] if lines else "unknown error"
 
 
-def _resolve_fabric_type_token(nd_v2: NDModuleV2, fabric_name: str, module: Any) -> str:
+def _resolve_fabric_type(nd_v2: NDModuleV2, fabric_name: str, module: Any) -> str:
     """
-    Resolve and cache the normalized fabric-type token for current run.
+    Resolve and cache the canonical fabric type for the current run.
 
-    The lookup is fail-open: when type cannot be determined, return empty string
+    Nexus Dashboard returns the fabric type in ``management.type``. The lookup
+    is fail-open: when the type cannot be determined, return an empty string
     and skip the VXLAN iBGP/eBGP vpc_pair_details block to avoid false
     negatives caused by transient lookup failures.
 
-        Candidate precedence is deterministic and based on observed response shapes:
-            1. /api/v1/manage/fabrics/<name> -> management.type
-            2. /api/v1/manage/fabrics/<name>/switches -> fabricType
+    Candidate precedence is deterministic and based on observed response shapes:
+      1. /api/v1/manage/fabrics/<name> -> management.type
+      2. /api/v1/manage/fabrics/<name>/switches -> fabricType
     """
-    cached = module.params.get("_fabric_type_token")
+    cached = module.params.get("_fabric_type")
     if isinstance(cached, str) and cached:
         return cached
 
@@ -92,17 +85,12 @@ def _resolve_fabric_type_token(nd_v2: NDModuleV2, fabric_name: str, module: Any)
     if not isinstance(details, dict):
         return ""
 
-    token = _normalize_fabric_type_token(details.get("fabricType"))
-    if token:
-        module.params["_fabric_type_token"] = token
-        return token
-
     management = details.get("management")
     if isinstance(management, dict):
-        token = _normalize_fabric_type_token(management.get("type"))
-        if token:
-            module.params["_fabric_type_token"] = token
-            return token
+        fabric_type = management.get("type")
+        if isinstance(fabric_type, str) and fabric_type:
+            module.params["_fabric_type"] = fabric_type
+            return fabric_type
 
     return ""
 
@@ -137,14 +125,13 @@ def _validate_vpc_pair_details_fabric_support(
     if proposed_details is None:
         return
 
-    token = nrm.module.params.get("_fabric_type_token")
-    if not isinstance(token, str) or not token:
+    fabric_type = nrm.module.params.get("_fabric_type")
+    if not isinstance(fabric_type, str) or not fabric_type:
         if not allow_lookup:
             return
-        token = _resolve_fabric_type_token(nd_v2, fabric_name, nrm.module)
+        fabric_type = _resolve_fabric_type(nd_v2, fabric_name, nrm.module)
 
-    normalized_token = _normalize_fabric_type_token(token)
-    if normalized_token in _BLOCKED_FABRIC_TYPE_TOKENS_FOR_VPC_PAIR_DETAILS:
+    if fabric_type in _BLOCKED_FABRIC_TYPES_FOR_VPC_PAIR_DETAILS:
         _raise_vpc_error(
             msg=(
                 "Invalid nd_manage_vpc_pair input: 'vpc_pair_details' is not supported "
@@ -152,7 +139,7 @@ def _validate_vpc_pair_details_fabric_support(
                 "'use_virtual_peer_link' for this fabric type."
             ),
             fabric=fabric_name,
-            fabric_type=token,
+            fabric_type=fabric_type,
             unsupported_field="vpc_pair_details",
         )
 
