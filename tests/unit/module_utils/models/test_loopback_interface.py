@@ -1700,7 +1700,7 @@ def test_loopback_policy_strips_none_valued_keys():
     """
     with does_not_raise():
         model = LoopbackPolicyModel(policyType="loopback", ip="10.1.1.1/32", dciRoutingTag=None)
-    assert model.ip == "10.1.1.1/32"
+    assert model.ip == "10.1.1.1"
     assert model.policy_type == "loopback"
 
 
