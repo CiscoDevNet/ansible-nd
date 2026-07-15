@@ -541,6 +541,9 @@ def test_fabric_context_00230() -> None:
 
     assert len(switches) == 3
     assert switches[0]["switchId"] == "FDO12345ABC"
+    # `switches` returns a shallow copy: mutating it must not corrupt the cache.
+    switches.append({"fabricManagementIp": "10.0.0.9", "switchId": "BOGUS"})
+    assert len(instance.switches) == 3
     assert instance.get_platform_type("192.168.12.151") == PlatformTypeEnum.NX_OS
     assert instance.get_platform_type("192.168.12.152") == PlatformTypeEnum.IOS_XE
     # Switch exists but reports no platformType -> None (not a raise).
