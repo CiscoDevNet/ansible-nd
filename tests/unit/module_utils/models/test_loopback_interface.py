@@ -1679,19 +1679,23 @@ def test_loopback_policy_strips_none_valued_keys():
     Verify `LoopbackPolicyBase.strip_none_valued_keys` drops `None`-valued keys before validation so unset flat-argspec
     options are not rejected by `extra="forbid"`.
 
+    A foreign (undeclared) key with value None must be stripped before extra="forbid" runs, so it does NOT raise —
+    unlike the same foreign key with a real value (see the strict-reject test).
+
     ## Test
 
-    - Construct with `routeMapTag=None` and `ipv6=None`
-    - Neither raises ValidationError; both remain None on the instance
+    - Construct with a foreign key `dciRoutingTag=None` (field from a different policy_type branch)
+    - No ValidationError is raised (the None value is stripped before extra="forbid" validation)
+    - Instance fields are correctly populated
 
     ## Classes and Methods
 
     - LoopbackPolicyBase.strip_none_valued_keys()
     """
-    # Unset flat-argspec options arrive as None and must be dropped, not rejected by extra="forbid".
-    model = LoopbackPolicyModel(policyType="loopback", ip="10.1.1.1/32", routeMapTag=None, ipv6=None)
-    assert model.route_map_tag is None
-    assert model.ipv6 is None
+    with does_not_raise():
+        model = LoopbackPolicyModel(policyType="loopback", ip="10.1.1.1/32", dciRoutingTag=None)
+    assert model.ip == "10.1.1.1/32"
+    assert model.policy_type == "loopback"
 
 
 def test_loopback_policy_type_enum_members():
