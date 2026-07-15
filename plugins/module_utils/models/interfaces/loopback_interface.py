@@ -34,7 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4CIDR, IPv6CIDR
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv6CIDR
 
 
 class LoopbackPolicyModel(NDNestedModel):
@@ -49,7 +49,7 @@ class LoopbackPolicyModel(NDNestedModel):
     """
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    ip: IPv4CIDR = Field(default=None, alias="ip", description="Loopback IPv4 address in CIDR notation (e.g. 10.1.1.1/32)")
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
     ipv6: IPv6CIDR = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
     route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
