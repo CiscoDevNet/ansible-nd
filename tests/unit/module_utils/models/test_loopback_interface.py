@@ -1609,14 +1609,16 @@ def test_loopback_interface_00730():
     """
     # Summary
 
-    Verify scaffolding fields (`interface_type`, `mode`, `network_os_type`, `policy_type`) are NOT exposed in the argument spec.
+    Verify scaffolding fields (`interface_type`, `mode`, `network_os_type`) are NOT exposed in the argument spec, but
+    `policy_type` IS exposed as a required discriminator field.
 
-    These are hardcoded in the model since this module only handles loopback interfaces with `policyType: "loopback"` on NX-OS.
-    The IP Fabric for Media (`ipfmLoopback`) and user-defined (`userDefined`) policies will get dedicated modules.
+    `policy_type` is now exposed because the module supports a discriminated union of three policy types (`loopback`,
+    `ipfmLoopback`, `mplsLoopback`), allowing playbook users to specify which template they want.
 
     ## Test
 
-    - `interface_type`, `policy_type`, `mode`, `network_os_type` are not present anywhere in the argument spec
+    - `interface_type`, `mode`, `network_os_type` are not present anywhere in the argument spec
+    - `policy_type` IS present in the policy options as a required field with the three choices
 
     ## Classes and Methods
 
@@ -1630,7 +1632,10 @@ def test_loopback_interface_00730():
     network_os_options = config_data_options["network_os"]["options"]
     assert "network_os_type" not in network_os_options
     policy_options = network_os_options["policy"]["options"]
-    assert "policy_type" not in policy_options
+    # policy_type IS now exposed as the required discriminator
+    assert "policy_type" in policy_options
+    assert policy_options["policy_type"]["required"] is True
+    assert set(policy_options["policy_type"]["choices"]) == {"loopback", "ipfmLoopback", "mplsLoopback"}
 
 
 def test_loopback_policy_strict_rejects_foreign_field():
@@ -1912,3 +1917,28 @@ def test_full_interface_round_trip_via_api_response():
     assert isinstance(model.config_data.network_os.policy, LoopbackPolicyModel)
     payload = model.to_payload()
     assert payload["configData"]["networkOS"]["policy"]["policyType"] == "loopback"
+
+
+def test_argument_spec_policy_options():
+    """
+    # Summary
+
+    Verify the argument spec includes a required `policy_type` field and the union of all branch fields.
+
+    ## Test
+
+    - `policy_type` is required with choices ["loopback", "ipfmLoopback", "mplsLoopback"]
+    - All union fields from all three branches are present in policy options
+    - Fields from loopback branch, IPFM branch, and MPLS branch coexist
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceModel.get_argument_spec()
+    """
+    spec = LoopbackInterfaceModel.get_argument_spec()
+    policy = spec["config"]["options"]["config_data"]["options"]["network_os"]["options"]["policy"]["options"]
+    assert policy["policy_type"]["required"] is True
+    assert set(policy["policy_type"]["choices"]) == {"loopback", "ipfmLoopback", "mplsLoopback"}
+    # union fields present across all three branches
+    for field in ("ipv6", "route_map_tag", "advertise_loopback", "routing_tag", "secondary_ip_list", "dci_routing_tag", "ospf_area_id"):
+        assert field in policy, field
