@@ -283,7 +283,7 @@ class EpManageInterfacesDelete(_EpManageInterfacesBase):
     """
     # Summary
 
-    Delete a specific interface configuration.
+    Delete a specific interface via the per-interface endpoint.
 
     - Path: `/api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name}`
     - Verb: DELETE
@@ -293,6 +293,10 @@ class EpManageInterfacesDelete(_EpManageInterfacesBase):
 
     To reset physical interfaces to their default state, see `EpManageInterfacesNormalize` and set the payload to an
     appropriate default config (for example `module_utils/models/interfaces/interface_default_config.py`).
+
+    Also used by vPC interface orchestrators because the `interfaceActions/remove` bulk endpoint returns
+    `Invalid Interface` for vPC entries on ND 4.2.1 (lab-verified). The per-interface DELETE returns 204
+    on success and a subsequent GET returns 404.
 
     ## Raises
 

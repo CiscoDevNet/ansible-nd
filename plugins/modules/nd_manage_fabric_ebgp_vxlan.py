@@ -36,11 +36,6 @@ options:
         - The O(config.fabric_name) must be defined when creating, updating or deleting a fabric.
         type: str
         required: true
-      category:
-        description:
-        - The resource category.
-        type: str
-        default: fabric
       location:
         description:
         - The geographic location of the fabric.
@@ -103,18 +98,12 @@ options:
         - The eBGP VXLAN management configuration for the fabric.
         type: dict
         suboptions:
-          type:
-            description:
-            - The fabric management type. Must be C(vxlanEbgp) for eBGP VXLAN fabrics.
-            type: str
-            default: vxlanEbgp
-            choices: [ vxlanEbgp ]
           bgp_asn:
             description:
             - The BGP Autonomous System Number for the fabric.
             - Must be a numeric value between 1 and 4294967295, or dotted notation (1-65535.0-65535).
-            - Optional when O(config.management.bgp_asn_auto_allocation) is C(true).
             type: str
+            required: true
           bgp_asn_auto_allocation:
             description:
             - Enable automatic BGP ASN allocation from the O(config.management.bgp_asn_range) pool.
@@ -380,7 +369,7 @@ options:
             default: false
           target_subnet_mask:
             description:
-            - Mask for underlay subnet IP range (24-31).
+            - Mask for underlay subnet IP range (30-31).
             type: int
             default: 30
           anycast_gateway_mac:
@@ -1367,6 +1356,33 @@ options:
     type: str
     default: merged
     choices: [ merged, replaced, overridden, deleted ]
+  config_actions:
+    description:
+    - Controls save and deploy behavior after fabric configuration is updated.
+    - Save writes pending configuration to the controller.
+    - Deploy pushes the saved configuration to switches.
+    - Skipped automatically when O(state=deleted) or when no changes are made.
+    type: dict
+    suboptions:
+      save:
+        description:
+        - Whether to save fabric configuration after changes.
+        type: bool
+        default: false
+      deploy:
+        description:
+        - Whether to deploy fabric configuration to switches after saving.
+        - Requires O(config_actions.save=true) when enabled.
+        type: bool
+        default: false
+      type:
+        description:
+        - Scope of the deploy operation.
+        - C(switch) deploys only to affected switches.
+        - C(global) deploys to all switches in the fabric.
+        type: str
+        default: switch
+        choices: [ switch, global ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -1374,8 +1390,6 @@ notes:
 - This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only eBGP VXLAN fabric type (C(vxlanEbgp)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
-- The O(config.management.bgp_asn) field is optional when O(config.management.bgp_asn_auto_allocation) is C(true).
-- The O(config.management.bgp_asn) field is required when O(config.management.bgp_asn_auto_allocation) is C(false).
 - O(config.management.site_id) defaults to the value of O(config.management.bgp_asn) if not provided.
 - The default O(config.management.vpc_peer_keep_alive_option) for eBGP fabrics is C(management), unlike iBGP fabrics.
 """
@@ -1386,7 +1400,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_ebgp_fabric
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1395,7 +1408,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65535"
           bgp_as_mode: multiAS
@@ -1467,9 +1479,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_ebgp_fabric_static
-        category: fabric
         management:
-          type: vxlanEbgp
           bgp_asn: "65001"
           bgp_asn_auto_allocation: false
           site_id: "65001"
@@ -1493,7 +1503,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_ebgp_fabric
-        category: fabric
         management:
           bgp_asn_range: "65100-65199"
           anycast_gateway_mac: "2020.0000.00bb"
@@ -1505,7 +1514,6 @@ EXAMPLES = r"""
     state: replaced
     config:
       - fabric_name: my_ebgp_fabric
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1514,7 +1522,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
           site_id: "65004"
@@ -1558,9 +1565,7 @@ EXAMPLES = r"""
     state: replaced
     config:
       - fabric_name: my_ebgp_fabric
-        category: fabric
         management:
-          type: vxlanEbgp
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
           site_id: "65004"
@@ -1572,7 +1577,6 @@ EXAMPLES = r"""
     state: overridden
     config:
       - fabric_name: fabric_east
-        category: fabric
         location:
           latitude: 40.7128
           longitude: -74.0060
@@ -1581,7 +1585,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65010"
           bgp_asn_auto_allocation: false
           site_id: "65010"
@@ -1599,7 +1602,6 @@ EXAMPLES = r"""
           network_vlan_range: "2300-2999"
           vrf_vlan_range: "2000-2299"
       - fabric_name: fabric_west
-        category: fabric
         location:
           latitude: 34.0522
           longitude: -118.2437
@@ -1608,7 +1610,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65020"
           bgp_asn_auto_allocation: false
           site_id: "65020"
@@ -1645,6 +1646,77 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+    description: Whether the module made any changes.
+    type: bool
+    returned: always
+    sample: true
+before:
+    description:
+    - eBGP VXLAN fabric configuration before changes.
+    - Queried from the controller and may contain read-only properties.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65001"}}]
+after:
+    description:
+    - eBGP VXLAN fabric configuration after changes.
+    - Refreshed from the controller after write operations.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+diff:
+    description: Configuration differences between before and after states.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+proposed:
+    description: Proposed configuration sent to the module.
+    type: list
+    returned: info or debug output_level
+    sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+output_level:
+    description: The output level set for the module.
+    type: str
+    returned: always
+    sample: normal
+logs:
+    description: Debug log messages from module execution.
+    type: list
+    returned: debug output_level
+    sample: ["Starting state machine for merged state"]
+api_paths:
+    description: API endpoint paths used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["/api/v1/manage/fabrics/fabric_east"]
+api_verbs:
+    description: HTTP methods used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["PUT"]
+api_response:
+    description: Full API responses from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"RETURN_CODE": 200, "MESSAGE": "Success"}]
+api_result:
+    description: Operation results from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"success": true, "changed": true}]
+api_diff:
+    description: API-level differences for each operation.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_metadata:
+    description: Operation metadata with sequence and identifiers.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_payload:
+    description: Request payloads sent to the API.
+    type: list
+    returned: verbosity >= 3 (-vvv)
 """
 
 from ansible.module_utils.basic import AnsibleModule
@@ -1653,6 +1725,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import N
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 
 
 def main():
@@ -1664,6 +1737,22 @@ def main():
         supports_check_mode=True,
     )
 
+    require_pydantic(module)
+
+    # Parse and validate config_actions BEFORE any state mutation so invalid
+    # input fails deterministically on every run, including idempotent no-drift
+    # runs, and never mutates ND before failing.
+    config_actions = module.params.get("config_actions") or {}
+    save = config_actions.get("save", False)
+    deploy = config_actions.get("deploy", False)
+    deploy_type = config_actions.get("type", "switch")
+    state = module.params.get("state", "merged")
+
+    try:
+        ManageEbgpFabricOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+    except ValueError as e:
+        module.fail_json(msg=str(e))
+
     nd_state_machine = None
     try:
         # Initialize StateMachine
@@ -1674,6 +1763,21 @@ def main():
 
         # Manage state
         nd_state_machine.manage_state()
+
+        # Execute config save/deploy actions via orchestrator mixin (only on real changes)
+        if state != "deleted" and len(nd_state_machine.sent) > 0:
+            fabric_names = []
+            for item in nd_state_machine.sent:
+                name = item.get_identifier_value()
+                if name and name not in fabric_names:
+                    fabric_names.append(name)
+            if fabric_names:
+                nd_state_machine.model_orchestrator.execute_config_actions(
+                    fabric_names=fabric_names,
+                    save=save,
+                    deploy=deploy,
+                    deploy_type=deploy_type,
+                )
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))

@@ -18,6 +18,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
 
 
+class AclNameMixin(BaseModel):
+    """Mixin for endpoints that require acl_name parameter."""
+
+    acl_name: str | None = Field(default=None, min_length=1, max_length=115, description="ACL name")
+
+
 class ClusterNameMixin(BaseModel):
     """Mixin for endpoints that require cluster_name parameter."""
 
@@ -157,3 +163,19 @@ class ViewMixin(BaseModel):
     """Mixin for endpoints that support view parameter."""
 
     view: str | None = Field(default=None, description="Optional view type for filtering results")
+
+
+class PolicyIdMixin(BaseModel):
+    """Mixin for endpoints that require policy_id parameter."""
+
+    policy_id: str | None = Field(default=None, min_length=1, description="Policy ID (e.g., POLICY-12345)")
+
+
+class PolicyGroupIdMixin(BaseModel):
+    """Mixin for endpoints that require policy_group_id parameter."""
+
+    policy_group_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Policy Group ID (e.g., POLICY-GROUP-143310)",
+    )

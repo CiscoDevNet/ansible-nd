@@ -4,6 +4,7 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
+import logging
 from copy import deepcopy
 from typing import Any, Dict, List, Set
 
@@ -251,3 +252,82 @@ class FabricUtils:
             "status": self.nd.status,
             "response_data": response_data,
         }
+
+
+# =========================================================================
+# Exceptions
+# =========================================================================
+
+
+class SwitchOperationError(Exception):
+    """Raised when a switch operation fails."""
+
+
+# =========================================================================
+# API Response Validation
+# =========================================================================
+
+
+class ApiDataChecker:
+    """Detect controller-embedded errors in API response DATA payloads.
+
+    The Nexus Dashboard API signals certain errors by embedding an error
+    object inside ``DATA`` as ``{"code": <N>, "message": "<reason>"}`` even
+    when the transport-level result is marked successful.  Any payload dict
+    that contains a ``"code"`` key is treated as an error; the absence of
+    ``"code"`` means the payload is a genuine data body.
+    """
+
+    @staticmethod
+    def check(
+        data: Any,
+        context: str,
+        log: logging.Logger,
+        fail_callback=None,
+    ) -> None:
+        """Fail or raise if the response DATA contains an embedded error code.
+
+        Args:
+            data: Value returned by ``nd.request()`` or extracted from
+                  ``response_current["DATA"]``.
+            context: Human-readable description of the operation.
+            log: Logger instance.
+            fail_callback: Optional callable (e.g. ``module.fail_json``) that
+                           accepts a ``msg`` keyword argument.  When provided
+                           it is called on error instead of raising
+                           ``SwitchOperationError``.
+        """
+        log.debug(f"ApiDataChecker.check: Checking response for context: {context}")
+        log.debug(f"ApiDataChecker.check: data type={type(data)}, has 'error'={'error' in data if isinstance(data, dict) else 'N/A'}")
+
+        # Check for error object in response (some APIs return this structure)
+        if isinstance(data, dict) and "error" in data:
+            error_obj = data.get("error", {})
+            log.debug(f"ApiDataChecker.check: Found error object: {error_obj}")
+            if isinstance(error_obj, dict) and "code" in error_obj:
+                # Extract message from nested structure
+                error_msg = error_obj.get("message", "Unknown error")
+                if isinstance(error_msg, dict):
+                    error_msg = error_msg.get("message") or error_msg.get("status") or str(error_msg)
+                msg = f"{context} failed \u2014 controller returned error: " f"{error_msg} (code={error_obj['code']})"
+                log.error(msg)
+                if fail_callback is not None:
+                    log.debug(f"ApiDataChecker.check: Calling fail_callback with msg: {msg}")
+                    fail_callback(msg=msg)
+                    return  # Should not reach here
+                else:
+                    raise SwitchOperationError(msg)
+
+        # Check for code in data payload (embedded error pattern)
+        if isinstance(data, dict) and "code" in data:
+            error_msg = data.get("message", "Unknown error")
+            msg = f"{context} failed \u2014 controller returned error: " f"{error_msg} (code={data['code']})"
+            log.error(msg)
+            if fail_callback is not None:
+                log.debug(f"ApiDataChecker.check: Calling fail_callback with msg: {msg}")
+                fail_callback(msg=msg)
+                return  # Should not reach here
+            else:
+                raise SwitchOperationError(msg)
+
+        log.debug("ApiDataChecker.check: No errors detected in response")

@@ -21,6 +21,8 @@ from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 
+import importlib
+import pkgutil
 from typing import ClassVar, Literal, Optional
 
 import pytest
@@ -28,7 +30,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import FabricExternalConnectivityModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_external import ManageExternalFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import ManageIbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -590,3 +598,83 @@ class TestPreflightNoOp:
         orch = _make_orchestrator(rest_send, results=None)
 
         assert orch.preflight([]) is None
+
+
+# =============================================================================
+# Test: preflight_create() generic no-op hook
+# =============================================================================
+
+
+class TestPreflightCreateNoOp:
+    """Tests for the generic preflight_create() pre-mutation hook on NDBaseOrchestrator.
+
+    NDStateMachine invokes preflight_create() with only the create (`new`) subset before any
+    create/update API call. The base implementation must be a no-op so non-interface orchestrators
+    (local_user, fabric_*) are unaffected even when an item carries no policy; interface orchestrators
+    override it to require a policy on create (issue #350).
+    """
+
+    def test_preflight_create_returns_none_and_issues_no_request(self):
+        """preflight_create() on the generic base returns None and makes no API call."""
+        # No responses seeded: any HTTP attempt would StopIteration.
+        rest_send = _make_rest_send([])
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+
+        assert orch.preflight_create([StubModel(name="a"), StubModel(name="b")]) is None
+        assert results._tasks == []
+
+    def test_preflight_create_accepts_empty_sequence(self):
+        """preflight_create() tolerates an empty create set."""
+        rest_send = _make_rest_send([])
+        orch = _make_orchestrator(rest_send, results=None)
+
+        assert orch.preflight_create([]) is None
+
+
+# =============================================================================
+# Test: model_class must be a ClassVar, never a pydantic field (issue #344)
+# =============================================================================
+
+
+def _all_orchestrator_classes() -> list[type[NDBaseOrchestrator]]:
+    """Import every module in the orchestrators package and collect all NDBaseOrchestrator subclasses."""
+    package = importlib.import_module("ansible_collections.cisco.nd.plugins.module_utils.orchestrators")
+    classes: set[type[NDBaseOrchestrator]] = set()
+    for module_info in pkgutil.iter_modules(package.__path__):
+        module = importlib.import_module(f"{package.__name__}.{module_info.name}")
+        for obj in vars(module).values():
+            if isinstance(obj, type) and issubclass(obj, NDBaseOrchestrator):
+                classes.add(obj)
+    return sorted(classes, key=lambda cls: cls.__name__)
+
+
+class TestModelClassIsClassVar:
+    """model_class must be declared ClassVar on every orchestrator (issue #344).
+
+    Declaring `model_class` without ClassVar turns it into a pydantic *field*: pydantic then strips the
+    default from the class namespace, so class-level access falls back to the parent's `NDBaseModel`,
+    every pydantic version warns that the field shadows the parent attribute, and pydantic <2.10 refuses
+    to build the class at all (`model_` protected namespace).
+    """
+
+    @pytest.mark.parametrize("orchestrator_class", _all_orchestrator_classes(), ids=lambda cls: cls.__name__)
+    def test_model_class_is_not_a_pydantic_field(self, orchestrator_class):
+        """model_class is absent from model_fields on every orchestrator subclass."""
+        assert "model_class" not in orchestrator_class.model_fields, f"{orchestrator_class.__name__} declares model_class without ClassVar"
+
+    def test_fabric_orchestrators_resolve_model_class_at_class_level(self):
+        """Class-level model_class on the manage_fabric_* orchestrators is the declared feature model, not NDBaseModel."""
+        assert ManageEbgpFabricOrchestrator.model_class is FabricEbgpModel
+        assert ManageIbgpFabricOrchestrator.model_class is FabricIbgpModel
+        assert ManageExternalFabricOrchestrator.model_class is FabricExternalConnectivityModel
+
+    def test_base_orchestrator_narrows_protected_namespaces(self):
+        """NDBaseOrchestrator pins `protected_namespaces` to pydantic >=2.10's default so `model_class` stays legal on pydantic <2.10 runtimes.
+
+        pydantic <2.10 defaults `protected_namespaces` to the whole `model_` prefix and applies the check even to ClassVar
+        annotations, raising `NameError` at class construction. The collection pins pydantic 2.12.5, but module_utils execute
+        on user-controlled hosts where older pydantic 2.x may be installed. Pinning the modern default (rather than `()`)
+        keeps the collision guard for genuinely dangerous names like `model_dump_mode`.
+        """
+        assert NDBaseOrchestrator.model_config.get("protected_namespaces") == ("model_validate", "model_dump")

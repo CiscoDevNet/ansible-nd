@@ -80,7 +80,18 @@ class _FakeOrchestrator:
         self.supports_bulk_delete = supports_bulk_delete
         self.results = None
         self.fail_ops = set(fail_ops or set())
-        self.calls: dict = {"create": [], "update": [], "delete": [], "create_bulk": [], "delete_bulk": [], "preflight": []}
+        self.calls: dict = {
+            "create": [],
+            "update": [],
+            "delete": [],
+            "create_bulk": [],
+            "delete_bulk": [],
+            "preflight_create": [],
+            "preflight": [],
+        }
+
+    def preflight_create(self, model_instances) -> None:
+        self.calls["preflight_create"].append(list(model_instances))
 
     def preflight(self, model_instances) -> None:
         self.calls["preflight"].append(list(model_instances))

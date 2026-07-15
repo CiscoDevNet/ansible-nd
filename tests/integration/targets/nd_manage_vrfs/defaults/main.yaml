@@ -1,0 +1,22 @@
+---
+testcase: "*"
+nd_vrf_test_topology: ""
+
+nd_vrf_standalone_fabric: "{{ ansible_it_fabric | default('') }}"
+nd_vrf_standalone_switch: "{{ ansible_switch1 | default('') }}"
+
+nd_vrf_msd_parent_fabric: "{{ ansible_msd_parent_fabric | default('msd_p') }}"
+nd_vrf_msd_child_fabric: "{{ ansible_msd_child_fabric | default('AK-VXLAN') }}"
+nd_vrf_msd_switch: "{{ ansible_msd_switch1 | default(ansible_switch1 | default('')) }}"
+
+nd_vrf_mcfg_parent_fabric: "{{ ansible_mcfg_parent_fabric | default('') }}"
+nd_vrf_mcfg_child_fabric: "{{ ansible_mcfg_child_fabric | default('') }}"
+nd_vrf_mcfg_switch: "{{ ansible_mcfg_switch1 | default('') }}"
+
+nd_vrf_run_standalone: "{{ nd_vrf_standalone_fabric | length > 0 }}"
+nd_vrf_run_msd: "{{ nd_vrf_msd_parent_fabric | length > 0 and nd_vrf_msd_child_fabric | length > 0 }}"
+nd_vrf_run_mcfg: "{{ nd_vrf_mcfg_parent_fabric | length > 0 and nd_vrf_mcfg_child_fabric | length > 0 }}"
+nd_vrf_run_overridden: true
+
+nd_vrf_base_id: 9008800
+nd_vrf_base_vlan: 2800
