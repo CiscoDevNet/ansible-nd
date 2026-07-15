@@ -57,12 +57,28 @@ def _normalize_fabric_type_token(value: Any) -> str:
     return re.sub(r"[^a-z0-9]", "", value.strip().lower())
 
 
+def _first_line(value: Any) -> str:
+    """Return first non-empty line from value converted to string."""
+    text = str(value).strip()
+    if not text:
+        return "unknown error"
+    lines = text.splitlines()
+    return lines[0] if lines else "unknown error"
+
+
 def _resolve_fabric_type_token(nd_v2: NDModuleV2, fabric_name: str, module: Any) -> str:
     """
     Resolve and cache the normalized fabric-type token for current run.
 
-    Best-effort lookup from fabric details endpoint. Returns empty string when
-    fabric type cannot be determined.
+        The lookup is fail-open: when type cannot be determined, return empty string
+        and skip the VXLAN iBGP/eBGP vpc_pair_details block to avoid false
+        negatives caused by transient fabric-details lookup failures.
+
+        Candidate precedence is deterministic and favors top-level fabric type
+        fields over nested properties:
+            1. details.fabricType / fabricTechnology / type / category
+            2. details.management.type
+            3. details.properties.fabricType / fabricTechnology / type
     """
     cached = module.params.get("_fabric_type_token")
     if isinstance(cached, str) and cached:
@@ -72,7 +88,10 @@ def _resolve_fabric_type_token(nd_v2: NDModuleV2, fabric_name: str, module: Any)
     try:
         details = nd_v2.request(details_path, HttpVerbEnum.GET)
     except Exception as exc:
-        module.warn(f"Unable to determine fabric type for '{fabric_name}' while validating vpc_pair_details: " f"{str(exc).splitlines()[0]}")
+        module.warn(
+            f"Unable to determine fabric type for '{fabric_name}' while validating "
+            f"vpc_pair_details: {_first_line(exc)}"
+        )
         return ""
 
     if not isinstance(details, dict):
@@ -106,14 +125,16 @@ def _resolve_fabric_type_token(nd_v2: NDModuleV2, fabric_name: str, module: Any)
     return ""
 
 
-def _get_proposed_vpc_pair_details(proposed_config: Any) -> Any:
-    """Return proposed vpc_pair_details (snake_case or API key), if present."""
+def _get_proposed_vpc_pair_details(proposed_config: Any) -> dict[str, Any] | None:
+    """Return non-empty proposed vpc_pair_details (snake_case or API key)."""
     if not isinstance(proposed_config, dict):
         return None
 
     details = proposed_config.get("vpc_pair_details")
     if details is None:
         details = proposed_config.get(VpcFieldNames.VPC_PAIR_DETAILS)
+    if not isinstance(details, dict) or not details:
+        return None
     return details
 
 
@@ -131,7 +152,7 @@ def _validate_vpc_pair_details_fabric_support(
     supports the additional settings.
     """
     proposed_details = _get_proposed_vpc_pair_details(nrm.proposed_config)
-    if not proposed_details:
+    if proposed_details is None:
         return
 
     token = nrm.module.params.get("_fabric_type_token")
@@ -291,7 +312,10 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
     except VpcPairResourceError:
         raise
     except Exception as support_error:
-        nrm.module.warn(f"Pairing support check failed for switch {switch_id}: " f"{str(support_error).splitlines()[0]}. Continuing with create operation.")
+        nrm.module.warn(
+            f"Pairing support check failed for switch {switch_id}: "
+            f"{_first_line(support_error)}. Continuing with create operation."
+        )
 
     # Validate fabric peering support if virtual peer link is requested.
     _validate_fabric_peering_support(
