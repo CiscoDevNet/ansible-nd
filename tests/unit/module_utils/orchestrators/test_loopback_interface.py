@@ -87,7 +87,7 @@ def _build_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str
     if include_config:
         kwargs["config_data"] = LoopbackConfigDataModel(
             network_os=LoopbackNetworkOSModel(
-                policy=LoopbackPolicyModel(admin_state=True, ip="10.1.1.1/32"),
+                policy=LoopbackPolicyModel(policy_type="loopback", admin_state=True, ip="10.1.1.1/32"),
             ),
         )
     return LoopbackInterfaceModel(**kwargs)
@@ -908,6 +908,35 @@ def test_loopback_interface_00750() -> None:
     assert len(result) == 1
     assert result[0]["interfaceName"] == "loopback10"
     assert result[0]["switchIp"] == "192.168.12.151"
+
+
+def test_loopback_interface_00760() -> None:
+    """
+    # Summary
+
+    Verify `query_all` returns interfaces of all three managed policy types (`loopback`, `ipfmLoopback`, `mplsLoopback`)
+    and excludes `userDefined` and system-provisioned (`underlayLoopback`) interfaces.
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.query_all()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, state="overridden")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    returned = {item["configData"]["networkOS"]["policy"]["policyType"] for item in result}
+    assert returned == {"loopback", "ipfmLoopback", "mplsLoopback"}
 
 
 # =============================================================================

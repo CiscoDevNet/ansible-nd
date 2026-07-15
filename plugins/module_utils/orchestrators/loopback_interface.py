@@ -16,6 +16,9 @@ in bulk after all mutations are complete.
 Uses `FabricContext` for pre-flight validation (fabric existence, deployment-freeze check)
 and switch IP-to-serial resolution. The model structure mirrors the API payload, so the
 orchestrator only needs to inject `switchId` and filter `query_all` results by interface type.
+
+`query_all` manages all three NX-OS loopback policy types (`loopback`, `ipfmLoopback`, `mplsLoopback`) — see
+`LoopbackPolicyTypeEnum`. `userDefined` and system-provisioned policy types (e.g. `underlayLoopback`) are excluded.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesRemove,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import LoopbackPolicyTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -228,14 +232,14 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         """
         # Summary
 
-        Validate the fabric context and query interfaces, filtering for user-managed loopback interfaces only
-        (`policyType: "loopback"`).
+        Validate the fabric context and query interfaces, filtering for the loopback policy types managed by this
+        module - `loopback`, `ipfmLoopback`, and `mplsLoopback` (see `LoopbackPolicyTypeEnum`).
 
         The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
         and limited to switches named in the user config for all other states.
 
         System-provisioned loopbacks (e.g. Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) and
-        non-standard policy templates (`ipfmLoopback`, `userDefined`) are excluded - those will be managed by dedicated modules.
+        the `userDefined` policy type are excluded - those are out of scope for this module.
 
         Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
 
@@ -256,7 +260,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             for switch_ip, switch_id in self._switches_to_query().items():
                 interfaces = list(self._switch_interfaces(switch_id).values())
                 loopbacks = [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
-                managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") == "loopback"]
+                managed_policy_types = {policy_type.value for policy_type in LoopbackPolicyTypeEnum}
+                managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_policy_types]
                 for iface in managed:
                     iface["switchIp"] = switch_ip
                 all_loopbacks.extend(managed)
