@@ -524,12 +524,12 @@ def test_loopback_interface_00083():
     """
     # Summary
 
-    Verify `ip` rejects a bare IPv4 address without prefix length.
+    Verify `ip` accepts a bare IPv4 address (no prefix) and returns it unchanged in the bare host form.
 
     ## Test
 
     - Construct with ip="10.1.1.1" (no CIDR prefix)
-    - Value is accepted (ipaddress.IPv4Interface accepts bare addresses, defaulting to /32)
+    - Value is accepted and returned as the bare host form "10.1.1.1"
 
     ## Classes and Methods
 
