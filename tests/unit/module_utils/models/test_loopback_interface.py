@@ -1155,22 +1155,23 @@ def test_loopback_interface_00420():
     """
     # Summary
 
-    Verify from_response rejects non-"loopback" `policyType` values (this module's scope is `policyType: "loopback"` only).
+    Verify `from_response` rejects a `policyType` value that is not one of the three discriminated-union literals
+    (`loopback`, `ipfmLoopback`, `mplsLoopback`). `policyType="ipfmLoopback"` is a legitimate, supported discriminator
+    value (see `IpfmLoopbackPolicyModel`) so it is no longer part of this "rejected" set — only a value outside the
+    union (`userDefined`) still fails, because Pydantic cannot select a branch for it.
 
     ## Test
 
-    - API response with policyType="ipfmLoopback" raises ValidationError
     - API response with policyType="userDefined" raises ValidationError
 
     ## Classes and Methods
 
     - LoopbackInterfaceModel.from_response()
     """
-    for unsupported in ("ipfmLoopback", "userDefined"):
-        response = copy.deepcopy(SAMPLE_API_RESPONSE)
-        response["configData"]["networkOS"]["policy"]["policyType"] = unsupported
-        with pytest.raises(ValidationError):
-            LoopbackInterfaceModel.from_response(response)
+    response = copy.deepcopy(SAMPLE_API_RESPONSE)
+    response["configData"]["networkOS"]["policy"]["policyType"] = "userDefined"
+    with pytest.raises(ValidationError):
+        LoopbackInterfaceModel.from_response(response)
 
 
 def test_loopback_interface_00430():
@@ -1915,6 +1916,74 @@ def test_full_interface_round_trip_via_api_response():
     assert isinstance(model.config_data.network_os.policy, LoopbackPolicyModel)
     payload = model.to_payload()
     assert payload["configData"]["networkOS"]["policy"]["policyType"] == "loopback"
+
+
+# =============================================================================
+# Test: Fix A — read-path tolerates ND-injected policy keys under extra="forbid"
+# =============================================================================
+
+
+def test_from_response_tolerates_nd_injected_policy_key():
+    """
+    # Summary
+
+    Verify `LoopbackInterfaceModel.from_response()` tolerates a `policy` key that ND injects on read (e.g.
+    `linkStateRoutingTag`) but that is not declared on `LoopbackPolicyModel`, instead of aborting under `extra="forbid"`.
+
+    ## Test
+
+    - `from_response()` on a real captured GET shape (including `linkStateRoutingTag`) does not raise
+    - The resulting `policy` is a `LoopbackPolicyModel` and does not expose the injected key as an attribute
+    - `to_payload()` does not echo the injected key back out
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceModel.from_response()
+    - LoopbackPolicyBase.strip_none_valued_keys()
+    """
+    response = {
+        "switchIp": "192.168.1.1",
+        "interfaceName": "loopback0",
+        "interfaceType": "loopback",
+        "configData": {
+            "mode": "managed",
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {
+                    "policyType": "loopback",
+                    "adminState": True,
+                    "ip": "10.1.1.1",
+                    "description": "x",
+                    "linkStateRoutingTag": "UNDERLAY",
+                    "routeMapTag": 12345,
+                },
+            },
+        },
+    }
+    model = LoopbackInterfaceModel.from_response(response)
+    assert isinstance(model.config_data.network_os.policy, LoopbackPolicyModel)
+    assert not hasattr(model.config_data.network_os.policy, "link_state_routing_tag")
+    assert "linkStateRoutingTag" not in model.to_payload()["configData"]["networkOS"]["policy"]
+
+
+def test_write_path_still_rejects_wrong_branch_field():
+    """
+    # Summary
+
+    Verify the WRITE path (no read validation context) still hard-fails on a foreign field, so `extra="forbid"`
+    remains strict for user-supplied input even after the read-path tolerance added for Fix A.
+
+    ## Test
+
+    - Construct `LoopbackPolicyModel` directly (no `from_response`, so no read context) with a foreign field
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.__init__()
+    """
+    with pytest.raises(ValidationError):
+        LoopbackPolicyModel(policyType="loopback", dciRoutingTag="MPLS_UNDERLAY")
 
 
 def test_argument_spec_policy_options():

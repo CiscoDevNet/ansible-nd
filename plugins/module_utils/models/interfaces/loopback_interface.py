@@ -68,18 +68,24 @@ class LoopbackPolicyBase(NDNestedModel):
 
     @model_validator(mode="before")
     @classmethod
-    def strip_none_valued_keys(cls, data):
+    def strip_none_valued_keys(cls, data, info):
         """
         # Summary
 
-        Drop keys whose value is `None` before validation so unset flat-argspec options do not trip `extra="forbid"`.
+        Drop `None`-valued keys before validation so unset flat-argspec options do not trip `extra="forbid"`. On the read
+        path (validation `context={"mode": "read"}`, set by `from_response`), also drop keys not declared on this model so
+        ND-injected read-only keys (e.g. `linkStateRoutingTag`) do not trip `extra="forbid"` while write-side input stays strict.
 
         ## Raises
 
         None
         """
-        if isinstance(data, dict):
-            return {key: value for key, value in data.items() if value is not None}
+        if not isinstance(data, dict):
+            return data
+        data = {key: value for key, value in data.items() if value is not None}
+        if info.context and info.context.get("mode") == "read":
+            allowed = set(cls.model_fields) | {field.alias for field in cls.model_fields.values() if field.alias}
+            data = {key: value for key, value in data.items() if key in allowed}
         return data
 
 
@@ -242,6 +248,20 @@ class LoopbackInterfaceModel(NDBaseModel):
     interface_name: str = Field(alias="interfaceName")
     interface_type: Literal["loopback"] = Field(default="loopback", alias="interfaceType", frozen=True)
     config_data: LoopbackConfigDataModel | None = Field(default=None, alias="configData")
+
+    @classmethod
+    def from_response(cls, response, **kwargs):
+        """
+        # Summary
+
+        Build a `LoopbackInterfaceModel` from an ND GET response, tagging validation `context={"mode": "read"}` so branch
+        models tolerate ND-injected read-only policy keys (see `LoopbackPolicyBase.strip_none_valued_keys`).
+
+        ## Raises
+
+        None
+        """
+        return cls.model_validate(response, by_alias=True, context={"mode": "read"}, **kwargs)
 
     @field_validator("interface_name", mode="before")
     @classmethod
