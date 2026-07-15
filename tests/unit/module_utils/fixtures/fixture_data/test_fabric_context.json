@@ -82,6 +82,17 @@
             "ownerCluster": "cluster_a"
         }
     },
+    "test_fabric_context_00170a": {
+        "TEST_NOTES": ["#400: summary returns HTTP 200 but the body carries an embedded 'code' error key; fabric_summary must fail closed and raise"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "code": 404,
+            "message": "Fabric fabric_1 not found"
+        }
+    },
     "test_fabric_context_00200a": {
         "TEST_NOTES": ["Switch list: two switches in fabric"],
         "RETURN_CODE": 200,
@@ -153,6 +164,50 @@
                 }
             ]
         }
+    },
+    "test_fabric_context_00230a": {
+        "TEST_NOTES": [
+            "Switch list with additionalData.platformType for get_platform_type / switches.",
+            "sw1: nx-os, sw2: ios-xe, sw3: no additionalData (platform_type -> None)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC",
+                    "additionalData": {"platformType": "nx-os"}
+                },
+                {
+                    "fabricManagementIp": "192.168.12.152",
+                    "switchId": "FDO12345ABD",
+                    "additionalData": {"platformType": "ios-xe"}
+                },
+                {
+                    "fabricManagementIp": "192.168.12.153",
+                    "switchId": "FDO12345ABE"
+                }
+            ]
+        }
+    },
+    "test_fabric_context_00250a": {
+        "TEST_NOTES": ["#399: switches endpoint 404 (parent fabric missing). First call in _load_switch_maps."],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/switches",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+    "test_fabric_context_00250b": {
+        "TEST_NOTES": ["#399: summary endpoint 404, consulted by fabric_exists() to confirm the fabric is absent."],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
+        "MESSAGE": "Not Found",
+        "DATA": {}
     },
     "test_fabric_context_00300a": {
         "TEST_NOTES": ["Fabric summary: fabric exists, local=true, fabricStatus=default (validate_for_mutation success)"],
