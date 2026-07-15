@@ -11,7 +11,9 @@ discriminated union.
 
 **In scope (this session):** the `policy_type` discriminated union over the three NX-OS managed
 loopback templates — `loopback`, `ipfmLoopback`, `mplsLoopback` — with strict per-branch field
-validation, plus the set-based `query_all` filtering that lets one module own all three.
+validation, plus the set-based `query_all` filtering that lets one module own all three. Existing
+integration tasks are updated to add `policy_type: loopback` so they survive the now-required
+discriminator (see Tests).
 
 **Out of scope (explicit follow-ups):**
 
@@ -175,6 +177,11 @@ per-template fields (fuller docs arrive with the doc-fragment work, decision 2).
 - **Orchestrator unit test** (`tests/unit/module_utils/orchestrators/test_loopback_interface.py`):
   `query_all` returns interfaces of all three managed policy types and still excludes `userDefined` /
   system-provisioned ones. New fixture keys per existing conventions.
+- **Integration tasks** (`tests/integration/targets/nd_interface_loopback/`): every existing `policy:`
+  block must add `policy_type: loopback`, or the module hard-fails on the now-required discriminator.
+  Affected files: `vars/main.yaml` (×5), `tasks/replaced.yaml` (×2), `tasks/overridden.yaml` (×1),
+  `tasks/merged.yaml` (×1) — 9 blocks total. This session only adds `policy_type: loopback` to preserve
+  existing coverage; `ipfmLoopback` / `mplsLoopback` integration cases are a follow-up.
 
 ## Data flow
 
