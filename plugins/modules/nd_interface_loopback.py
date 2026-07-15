@@ -58,38 +58,103 @@ options:
               policy:
                 description:
                 - The policy configuration for the loopback interface.
+                - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
                 type: dict
                 suboptions:
+                  policy_type:
+                    description:
+                    - The loopback policy template to apply. This is a discriminator that determines which of the
+                      remaining C(policy) suboptions are applicable.
+                    - Use V(loopback) for a standard NX-OS loopback interface.
+                    - Use V(ipfmLoopback) for an IP Fabric for Media loopback interface.
+                    - Use V(mplsLoopback) for an MPLS loopback interface.
+                    type: str
+                    required: true
+                    choices: [ loopback, ipfmLoopback, mplsLoopback ]
                   admin_state:
                     description:
                     - The administrative state of the loopback interface.
                     - It defaults to C(true) when unset during creation.
+                    - Applies to all policy_type values (C(loopback), C(ipfmLoopback), C(mplsLoopback)).
                     type: bool
                   ip:
                     description:
                     - The IPv4 address of the loopback interface.
-                    type: str
-                  ipv6:
-                    description:
-                    - The IPv6 address of the loopback interface.
-                    type: str
-                  vrf:
-                    description:
-                    - The VRF to which the loopback interface belongs.
-                    - Maximum 32 characters.
-                    type: str
-                  route_map_tag:
-                    description:
-                    - The route-map tag associated with the interface IP address.
+                    - Applies to all policy_type values (C(loopback), C(ipfmLoopback), C(mplsLoopback)).
                     type: str
                   description:
                     description:
                     - The description of the loopback interface.
                     - Maximum 254 characters.
+                    - Applies to all policy_type values (C(loopback), C(ipfmLoopback), C(mplsLoopback)).
                     type: str
                   extra_config:
                     description:
                     - Additional CLI configuration commands to apply to the interface.
+                    - Applies to all policy_type values (C(loopback), C(ipfmLoopback), C(mplsLoopback)).
+                    type: str
+                  vrf:
+                    description:
+                    - The VRF to which the loopback interface belongs.
+                    - Maximum 32 characters.
+                    - Applies when policy_type is C(loopback) or C(ipfmLoopback).
+                    type: str
+                  ipv6:
+                    description:
+                    - The IPv6 address of the loopback interface.
+                    - Applies when policy_type is C(loopback).
+                    type: str
+                  route_map_tag:
+                    description:
+                    - The route-map tag associated with the interface IP address.
+                    - Applies when policy_type is C(loopback).
+                    type: str
+                  advertise_loopback:
+                    description:
+                    - Whether to advertise the loopback address via OSPF/IS-IS.
+                    - Applies when policy_type is C(ipfmLoopback).
+                    type: bool
+                  is_service_reflect:
+                    description:
+                    - Whether to use this loopback as the service-reflect source address.
+                    - Applies when policy_type is C(ipfmLoopback).
+                    type: bool
+                  routing_tag:
+                    description:
+                    - The routing tag associated with the interface IP address.
+                    - Applies when policy_type is C(ipfmLoopback).
+                    type: str
+                  secondary_ip_list:
+                    description:
+                    - A list of secondary IPv4 addresses configured on the loopback interface.
+                    - Applies when policy_type is C(ipfmLoopback).
+                    type: list
+                    elements: dict
+                    suboptions:
+                      ip:
+                        description:
+                        - The secondary IPv4 address.
+                        type: str
+                      prefix:
+                        description:
+                        - The subnet mask length for the secondary IPv4 address (4-32).
+                        type: int
+                  dci_routing_protocol:
+                    description:
+                    - The DCI (Data Center Interconnect) link-state routing protocol.
+                    - Applies when policy_type is C(mplsLoopback).
+                    type: str
+                    choices: [ ospf, isis ]
+                  dci_routing_tag:
+                    description:
+                    - The DCI (Data Center Interconnect) routing tag.
+                    - Applies when policy_type is C(mplsLoopback).
+                    type: str
+                  ospf_area_id:
+                    description:
+                    - The OSPF area identifier.
+                    - Maximum 15 characters.
+                    - Applies when policy_type is C(mplsLoopback).
                     type: str
   config_actions:
     description:
@@ -124,8 +189,10 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module currently supports NX-OS loopback interfaces only (interface_type C(loopback), policy_type C(loopback)).
-- The IP Fabric for Media (C(ipfmLoopback)) and user-defined (C(userDefined)) loopback policies will be managed by dedicated modules.
+- This module currently supports NX-OS loopback interfaces only (interface_type C(loopback)).
+- This module manages three loopback policy templates, selected via O(config[].config_data.network_os.policy.policy_type)
+  C(loopback), C(ipfmLoopback) (IP Fabric for Media), and C(mplsLoopback). The user-defined (C(userDefined)) loopback
+  policy is not yet supported.
 """
 
 EXAMPLES = r"""
@@ -138,6 +205,7 @@ EXAMPLES = r"""
         config_data:
           network_os:
             policy:
+              policy_type: loopback
               ip: 10.1.1.1
               admin_state: true
               description: Management loopback
@@ -157,6 +225,7 @@ EXAMPLES = r"""
         config_data:
           network_os:
             policy:
+              policy_type: loopback
               ip: 10.1.1.1
               description: Router ID loopback
       - switch_ip: 192.168.1.1
@@ -164,6 +233,7 @@ EXAMPLES = r"""
         config_data:
           network_os:
             policy:
+              policy_type: loopback
               ip: 10.2.1.1
               description: VTEP loopback
               route_map_tag: "12345"
@@ -172,6 +242,7 @@ EXAMPLES = r"""
         config_data:
           network_os:
             policy:
+              policy_type: loopback
               ip: 10.1.1.2
               description: Router ID loopback on switch 2
     config_actions:
@@ -187,6 +258,7 @@ EXAMPLES = r"""
         config_data:
           network_os:
             policy:
+              policy_type: loopback
               ip: 10.1.1.2
               description: Updated loopback description
     config_actions:
@@ -214,6 +286,7 @@ EXAMPLES = r"""
         config_data:
           network_os:
             policy:
+              policy_type: loopback
               ip: 10.1.1.1
               description: Router ID loopback
       - switch_ip: 192.168.1.2
@@ -221,6 +294,7 @@ EXAMPLES = r"""
         config_data:
           network_os:
             policy:
+              policy_type: loopback
               ip: 10.1.1.2
               description: Router ID loopback on switch 2
     config_actions:
@@ -236,6 +310,7 @@ EXAMPLES = r"""
         config_data:
           network_os:
             policy:
+              policy_type: loopback
               ip: 10.1.1.1
     config_actions:
       deploy: false
@@ -250,6 +325,7 @@ EXAMPLES = r"""
         config_data:
           network_os:
             policy:
+              policy_type: loopback
               ip: 10.1.1.1
               ipv6: 2001:db8::1/128
               description: Loopback with PIM and OSPF tuning
@@ -260,6 +336,42 @@ EXAMPLES = r"""
                 no ip redirects
     config_actions:
       deploy: true
+    state: merged
+
+- name: Create an IPFM loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: loopback11
+        config_data:
+          network_os:
+            policy:
+              policy_type: ipfmLoopback
+              ip: 10.2.2.2
+              vrf: default
+              advertise_loopback: true
+              is_service_reflect: false
+              routing_tag: "100"
+              secondary_ip_list:
+                - ip: 10.2.2.3
+                  prefix: 32
+    state: merged
+
+- name: Create an MPLS loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: loopback12
+        config_data:
+          network_os:
+            policy:
+              policy_type: mplsLoopback
+              ip: 10.3.3.3
+              dci_routing_protocol: ospf
+              dci_routing_tag: "200"
+              ospf_area_id: "0.0.0.0"
     state: merged
 """
 
