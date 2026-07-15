@@ -70,15 +70,13 @@ def _resolve_fabric_type_token(nd_v2: NDModuleV2, fabric_name: str, module: Any)
     """
     Resolve and cache the normalized fabric-type token for current run.
 
-        The lookup is fail-open: when type cannot be determined, return empty string
-        and skip the VXLAN iBGP/eBGP vpc_pair_details block to avoid false
-        negatives caused by transient fabric-details lookup failures.
+    The lookup is fail-open: when type cannot be determined, return empty string
+    and skip the VXLAN iBGP/eBGP vpc_pair_details block to avoid false
+    negatives caused by transient lookup failures.
 
-        Candidate precedence is deterministic and favors top-level fabric type
-        fields over nested properties:
-            1. details.fabricType / fabricTechnology / type / category
-            2. details.management.type
-            3. details.properties.fabricType / fabricTechnology / type
+        Candidate precedence is deterministic and based on observed response shapes:
+            1. /api/v1/manage/fabrics/<name> -> management.type
+            2. /api/v1/manage/fabrics/<name>/switches -> fabricType
     """
     cached = module.params.get("_fabric_type_token")
     if isinstance(cached, str) and cached:
@@ -94,27 +92,14 @@ def _resolve_fabric_type_token(nd_v2: NDModuleV2, fabric_name: str, module: Any)
     if not isinstance(details, dict):
         return ""
 
-    candidates: list[str] = []
-    for key in ("fabricType", "fabricTechnology", "type", "category"):
-        value = details.get(key)
-        if isinstance(value, str):
-            candidates.append(value)
+    token = _normalize_fabric_type_token(details.get("fabricType"))
+    if token:
+        module.params["_fabric_type_token"] = token
+        return token
 
     management = details.get("management")
     if isinstance(management, dict):
-        mgmt_type = management.get("type")
-        if isinstance(mgmt_type, str):
-            candidates.append(mgmt_type)
-
-    properties = details.get("properties")
-    if isinstance(properties, dict):
-        for key in ("fabricType", "fabricTechnology", "type"):
-            value = properties.get(key)
-            if isinstance(value, str):
-                candidates.append(value)
-
-    for candidate in candidates:
-        token = _normalize_fabric_type_token(candidate)
+        token = _normalize_fabric_type_token(management.get("type"))
         if token:
             module.params["_fabric_type_token"] = token
             return token
