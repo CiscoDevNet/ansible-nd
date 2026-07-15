@@ -1629,3 +1629,23 @@ def test_loopback_interface_00730():
     assert "network_os_type" not in network_os_options
     policy_options = network_os_options["policy"]["options"]
     assert "policy_type" not in policy_options
+
+
+def test_loopback_policy_type_enum_members():
+    """
+    # Summary
+
+    Verify LoopbackPolicyTypeEnum has the correct members with expected values.
+
+    ## Test
+
+    - LoopbackPolicyTypeEnum has exactly three members
+    - Values are: "loopback", "ipfmLoopback", "mplsLoopback"
+
+    ## Classes and Methods
+
+    - LoopbackPolicyTypeEnum
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import LoopbackPolicyTypeEnum
+
+    assert {e.value for e in LoopbackPolicyTypeEnum} == {"loopback", "ipfmLoopback", "mplsLoopback"}

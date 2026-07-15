@@ -242,3 +242,19 @@ class SubinterfaceUnmanagedPolicyTypeEnum(str, Enum):
     """
 
     MONITOR_SUBINTERFACE = "monitorSubinterface"
+
+
+class LoopbackPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed NX-OS loopback policy types owned by the `nd_interface_loopback` module. `userDefined` is intentionally excluded.
+
+    ## Raises
+
+    None
+    """
+
+    LOOPBACK = "loopback"
+    IPFM_LOOPBACK = "ipfmLoopback"
+    MPLS_LOOPBACK = "mplsLoopback"
