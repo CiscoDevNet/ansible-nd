@@ -1776,7 +1776,6 @@ def test_ipfm_loopback_strict_rejects_foreign_field():
     - IpfmLoopbackPolicyModel.__init__()
     """
     from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import IpfmLoopbackPolicyModel
-    from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
         IpfmLoopbackPolicyModel(policyType="ipfmLoopback", ospfAreaId="0")
@@ -1835,7 +1834,6 @@ def test_mpls_loopback_strict_rejects_foreign_field():
     - MplsLoopbackPolicyModel.__init__()
     """
     from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import MplsLoopbackPolicyModel
-    from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
         MplsLoopbackPolicyModel(policyType="mplsLoopback", routingTag="777")

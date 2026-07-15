@@ -917,6 +917,13 @@ def test_loopback_interface_00760() -> None:
     Verify `query_all` returns interfaces of all three managed policy types (`loopback`, `ipfmLoopback`, `mplsLoopback`)
     and excludes `userDefined` and system-provisioned (`underlayLoopback`) interfaces.
 
+    ## Test
+
+    - state is `overridden`, so the switch's interfaces are fetched (fabric-wide scope)
+    - Switch's interfaces list contains `loopback`, `ipfmLoopback`, and `mplsLoopback` entries, plus excluded
+      `userDefined` and `underlayLoopback` entries
+    - `query_all` returns exactly the three managed-type entries
+
     ## Classes and Methods
 
     - LoopbackInterfaceOrchestrator.query_all()
