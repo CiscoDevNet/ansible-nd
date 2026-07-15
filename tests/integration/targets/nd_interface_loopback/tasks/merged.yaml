@@ -141,3 +141,51 @@
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: loopback103
     state: deleted
+
+# --- MERGED WITH CIDR-format ip ---
+# Regression guard for #401: live ND 4.2.1 rejects a CIDR ip on a loopback create (400) and stores/returns the bare
+# host form. The model normalizes CIDR input to bare before the wire, so a CIDR ip must (a) create successfully with a
+# bare ip in the after-state and (b) be idempotent on re-apply against ND's bare wire form.
+
+- name: "MERGED CIDR: Create loopback104 with a CIDR-format ip (normal mode)"
+  cisco.nd.nd_interface_loopback: &merge_lb104_cidr
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback104
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: "10.100.104.1/32"
+              description: "CIDR normalization test loopback104"
+    state: merged
+  register: nm_merged_cidr
+
+- name: "MERGED CIDR: Verify create succeeded and the ip was normalized to bare in the after state"
+  vars:
+    lb104_after: "{{ nm_merged_cidr.after | selectattr('interface_name', 'equalto', 'loopback104') | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_cidr is changed
+      - lb104_after.config_data.network_os.policy.ip == "10.100.104.1"
+
+- name: "MERGED CIDR: Re-apply the same CIDR ip for idempotency"
+  cisco.nd.nd_interface_loopback: *merge_lb104_cidr
+  register: nm_merged_cidr_idem
+
+- name: "MERGED CIDR: Verify idempotency (CIDR input normalizes to ND's bare wire form)"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_cidr_idem is not changed
+
+# Clean up the CIDR normalization test interface
+- name: "CLEANUP: Remove loopback104"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback104
+    state: deleted
