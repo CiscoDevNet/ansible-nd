@@ -22,7 +22,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import inspect
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -172,6 +172,35 @@ def test_fabric_context_00110() -> None:
 
     assert summary is None
     assert exists is False
+
+
+def test_fabric_context_00170() -> None:
+    """
+    # Summary
+
+    Verify `fabric_summary` fails closed when a 200 response body carries an embedded `code` error key (issue #400).
+
+    ## Test
+
+    - GET (summary) returns 200 with DATA `{"code": 404, "message": "..."}`
+    - `fabric_summary` raises `RuntimeError` rather than accepting the payload as a valid summary
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_summary
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+    match = r"returned an embedded error instead of a fabric summary"
+    with pytest.raises(RuntimeError, match=match):
+        result = instance.fabric_summary  # pylint: disable=unused-variable
 
 
 # =============================================================================
@@ -474,6 +503,86 @@ def test_fabric_context_00220() -> None:
         "FDO12345ABC": "192.168.12.151",
         "FDO12345ABD": "192.168.12.152",
     }
+
+
+def test_fabric_context_00230() -> None:
+    """
+    # Summary
+
+    Verify `switches` retains the raw switch records and `get_platform_type` resolves each switch's `platformType`
+    (nested under `additionalData`) to a `PlatformTypeEnum`.
+
+    ## Test
+
+    - GET (switches) returns three switches: nx-os, ios-xe, and one with no `additionalData`
+    - `switches` returns the raw three-record list
+    - `get_platform_type` returns `PlatformTypeEnum.NX_OS` / `PlatformTypeEnum.IOS_XE` for the first two
+    - `get_platform_type` returns `None` for the switch that reports no `platformType`
+    - `get_platform_type` raises `RuntimeError` for an IP not in the fabric
+
+    ## Classes and Methods
+
+    - FabricContext.switches
+    - FabricContext.get_platform_type
+    - FabricContext._load_switch_maps
+    """
+    method_name = inspect.stack()[0][3]
+    key = f"{method_name}a"
+
+    def responses():
+        yield responses_fabric_context(key)
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+        switches = instance.switches
+
+    assert len(switches) == 3
+    assert switches[0]["switchId"] == "FDO12345ABC"
+    assert instance.get_platform_type("192.168.12.151") == PlatformTypeEnum.NX_OS
+    assert instance.get_platform_type("192.168.12.152") == PlatformTypeEnum.IOS_XE
+    # Switch exists but reports no platformType -> None (not a raise).
+    assert instance.get_platform_type("192.168.12.153") is None
+
+    match = r"No switch found with fabricManagementIp '10\.0\.0\.1' in fabric 'fabric_1'"
+    with pytest.raises(RuntimeError, match=match):
+        instance.get_platform_type("10.0.0.1")
+
+
+def test_fabric_context_00250() -> None:
+    """
+    # Summary
+
+    Verify a switches-endpoint 404 for a nonexistent fabric raises "fabric not found" rather than a misleading
+    "switch not found" (issue #399). The 404 is confirmed against `fabric_summary` before raising.
+
+    ## Test
+
+    - GET (switches) returns 404
+    - `_load_switch_maps` consults `fabric_summary` (also 404) and raises the fabric-level error
+    - The message matches `validate_for_mutation`'s "fabric not found" wording
+
+    ## Classes and Methods
+
+    - FabricContext.switch_map
+    - FabricContext._load_switch_maps
+    - FabricContext.fabric_exists
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")  # switches 404
+        yield responses_fabric_context(f"{method_name}b")  # summary 404 (fabric_exists confirmation)
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = FabricContext(rest_send=rest_send, fabric_name="missing_fabric")
+    match = r"Fabric 'missing_fabric' not found"
+    with pytest.raises(RuntimeError, match=match):
+        result = instance.switch_map  # pylint: disable=unused-variable
 
 
 # =============================================================================
