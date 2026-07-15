@@ -254,6 +254,9 @@ class FabricContext:
         Fetches the switch inventory on first access and caches it. Retaining the full records (rather than only the
         derived lookup maps) lets callers read per-switch attributes such as `platformType` without a second API call.
 
+        A shallow copy of the cached list is returned so a caller appending to or removing from it cannot corrupt the
+        cache or desync it from `switch_map` / `switch_map_by_id` (the per-record dicts are still shared references).
+
         ## Raises
 
         ### RuntimeError
@@ -264,7 +267,7 @@ class FabricContext:
         self._load_switch_maps()
         if self._switches is None:
             raise AssertionError("switches is None after _load_switch_maps()")
-        return self._switches
+        return list(self._switches)
 
     @property
     def switch_map(self) -> dict[str, str]:
@@ -361,7 +364,11 @@ class FabricContext:
         for switch in self.switches:
             if switch.get("fabricManagementIp") == switch_ip:
                 raw = (switch.get("additionalData") or {}).get("platformType")
-                return PlatformTypeEnum(raw) if raw in PlatformTypeEnum.values() else None
+                try:
+                    return PlatformTypeEnum(raw)
+                except ValueError:
+                    # Absent (None) or a value newer than PlatformTypeEnum -> no recognizable platform type.
+                    return None
         return None
 
     def validate_for_mutation(self) -> None:
