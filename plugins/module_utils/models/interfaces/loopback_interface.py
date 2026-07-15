@@ -195,7 +195,7 @@ class LoopbackNetworkOSModel(NDNestedModel):
     """
 
     network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
-    policy: LoopbackPolicyModel | None = Field(default=None, alias="policy")
+    policy: LoopbackPolicyModel | IpfmLoopbackPolicyModel | MplsLoopbackPolicyModel | None = Field(default=None, alias="policy", discriminator="policy_type")
 
 
 class LoopbackConfigDataModel(NDNestedModel):

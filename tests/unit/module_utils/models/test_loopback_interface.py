@@ -1741,9 +1741,13 @@ def test_ipfm_loopback_parses_and_round_trips():
     - IpfmLoopbackPolicyModel.to_payload()
     """
     from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import IpfmLoopbackPolicyModel
+
     model = IpfmLoopbackPolicyModel(
-        policyType="ipfmLoopback", ip="10.2.2.2", advertiseLoopback=True,
-        routingTag="777", secondaryIpList=[{"ip": "10.2.2.3", "prefix": 32}],
+        policyType="ipfmLoopback",
+        ip="10.2.2.2",
+        advertiseLoopback=True,
+        routingTag="777",
+        secondaryIpList=[{"ip": "10.2.2.3", "prefix": 32}],
     )
     payload = model.to_payload()
     assert payload["policyType"] == "ipfmLoopback"
@@ -1766,8 +1770,9 @@ def test_ipfm_loopback_strict_rejects_foreign_field():
 
     - IpfmLoopbackPolicyModel.__init__()
     """
-    from pydantic import ValidationError
     from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import IpfmLoopbackPolicyModel
+    from pydantic import ValidationError
+
     with pytest.raises(ValidationError):
         IpfmLoopbackPolicyModel(policyType="ipfmLoopback", ospfAreaId="0")
 
@@ -1795,9 +1800,13 @@ def test_mpls_loopback_parses_and_round_trips():
     - MplsLoopbackPolicyModel.to_payload()
     """
     from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import MplsLoopbackPolicyModel
+
     model = MplsLoopbackPolicyModel(
-        policyType="mplsLoopback", ip="10.3.3.3",
-        dciRoutingProtocol="isis", dciRoutingTag="MPLS_UNDERLAY", ospfAreaId="0",
+        policyType="mplsLoopback",
+        ip="10.3.3.3",
+        dciRoutingProtocol="isis",
+        dciRoutingTag="MPLS_UNDERLAY",
+        ospfAreaId="0",
     )
     payload = model.to_payload()
     assert payload["policyType"] == "mplsLoopback"
@@ -1820,7 +1829,86 @@ def test_mpls_loopback_strict_rejects_foreign_field():
 
     - MplsLoopbackPolicyModel.__init__()
     """
-    from pydantic import ValidationError
     from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import MplsLoopbackPolicyModel
+    from pydantic import ValidationError
+
     with pytest.raises(ValidationError):
         MplsLoopbackPolicyModel(policyType="mplsLoopback", routingTag="777")
+
+
+# =============================================================================
+# Test: LoopbackNetworkOSModel — policy discriminated union
+# =============================================================================
+
+
+def test_network_os_discriminator_selects_branch():
+    """
+    # Summary
+
+    Verify `LoopbackNetworkOSModel.policy` selects the correct branch model based on the `policyType` discriminator.
+
+    ## Test
+
+    - `policyType: "loopback"` selects `LoopbackPolicyModel`
+    - `policyType: "ipfmLoopback"` selects `IpfmLoopbackPolicyModel`
+    - `policyType: "mplsLoopback"` selects `MplsLoopbackPolicyModel`
+
+    ## Classes and Methods
+
+    - LoopbackNetworkOSModel.__init__()
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+        IpfmLoopbackPolicyModel,
+        LoopbackNetworkOSModel,
+        MplsLoopbackPolicyModel,
+    )
+
+    lo = LoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "loopback", "ip": "10.1.1.1/32"})
+    assert isinstance(lo.policy, LoopbackPolicyModel)
+    ipfm = LoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "ipfmLoopback", "advertiseLoopback": True})
+    assert isinstance(ipfm.policy, IpfmLoopbackPolicyModel)
+    mpls = LoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "mplsLoopback", "dciRoutingTag": "X"})
+    assert isinstance(mpls.policy, MplsLoopbackPolicyModel)
+
+
+def test_network_os_missing_discriminator_raises():
+    """
+    # Summary
+
+    Verify `LoopbackNetworkOSModel.policy` raises `ValidationError` when the `policy` dict omits the `policyType`
+    discriminator field, since Pydantic cannot select a branch without it.
+
+    ## Test
+
+    - Construct with a `policy` dict missing `policyType`
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - LoopbackNetworkOSModel.__init__()
+    """
+    with pytest.raises(ValidationError):
+        LoopbackNetworkOSModel(networkOSType="nx-os", policy={"ip": "10.1.1.1/32"})
+
+
+def test_full_interface_round_trip_via_api_response():
+    """
+    # Summary
+
+    Verify `LoopbackInterfaceModel.from_response()` and `to_payload()` survive the discriminated union plus
+    `extra="forbid"` branch models, using the existing `SAMPLE_API_RESPONSE` (`policyType: "loopback"`).
+
+    ## Test
+
+    - `from_response(SAMPLE_API_RESPONSE)` selects `LoopbackPolicyModel` for `config_data.network_os.policy`
+    - `to_payload()` round-trips `policyType: "loopback"` back out
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceModel.from_response()
+    - LoopbackInterfaceModel.to_payload()
+    """
+    model = LoopbackInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
+    assert isinstance(model.config_data.network_os.policy, LoopbackPolicyModel)
+    payload = model.to_payload()
+    assert payload["configData"]["networkOS"]["policy"]["policyType"] == "loopback"
