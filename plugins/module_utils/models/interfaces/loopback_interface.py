@@ -129,6 +129,41 @@ class LoopbackPolicyModel(LoopbackPolicyBase):
         return str(value)
 
 
+class SecondaryIpModel(NDNestedModel):
+    """
+    # Summary
+
+    A secondary IPv4 address entry for an IPFM loopback (`secondaryIpList` item).
+
+    ## Raises
+
+    None
+    """
+
+    ip: str | None = Field(default=None, alias="ip", description="Secondary IPv4 address")
+    prefix: int | None = Field(default=None, alias="prefix", ge=4, le=32, description="Subnet mask length (4-32)")
+
+
+class IpfmLoopbackPolicyModel(LoopbackPolicyBase):
+    """
+    # Summary
+
+    Policy fields for the NX-OS `ipfmLoopback` template (IP Fabric for Media). Maps to `configData.networkOS.policy` where
+    `policyType == "ipfmLoopback"`.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["ipfmLoopback"] = Field(alias="policyType", description="IPFM loopback policy template discriminator")
+    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+    advertise_loopback: bool | None = Field(default=None, alias="advertiseLoopback", description="Advertise loopback via OSPF/IS-IS")
+    is_service_reflect: bool | None = Field(default=None, alias="isServiceReflect", description="Use loopback as service-reflect source")
+    routing_tag: str | None = Field(default=None, alias="routingTag", description="Routing tag associated with the interface IP")
+    secondary_ip_list: list[SecondaryIpModel] | None = Field(default=None, alias="secondaryIpList", description="Secondary IPv4 addresses")
+
+
 class LoopbackNetworkOSModel(NDNestedModel):
     """
     # Summary

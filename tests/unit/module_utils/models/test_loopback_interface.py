@@ -1716,3 +1716,57 @@ def test_loopback_policy_type_enum_members():
     from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import LoopbackPolicyTypeEnum
 
     assert {e.value for e in LoopbackPolicyTypeEnum} == {"loopback", "ipfmLoopback", "mplsLoopback"}
+
+
+# =============================================================================
+# Test: IpfmLoopbackPolicyModel
+# =============================================================================
+
+
+def test_ipfm_loopback_parses_and_round_trips():
+    """
+    # Summary
+
+    Verify `IpfmLoopbackPolicyModel` parses and round-trips correctly.
+
+    ## Test
+
+    - Construct with camelCase aliases
+    - to_payload() converts to camelCase output with correct field names
+    - secondaryIpList is preserved as a list of secondary IP entries
+
+    ## Classes and Methods
+
+    - IpfmLoopbackPolicyModel.__init__()
+    - IpfmLoopbackPolicyModel.to_payload()
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import IpfmLoopbackPolicyModel
+    model = IpfmLoopbackPolicyModel(
+        policyType="ipfmLoopback", ip="10.2.2.2", advertiseLoopback=True,
+        routingTag="777", secondaryIpList=[{"ip": "10.2.2.3", "prefix": 32}],
+    )
+    payload = model.to_payload()
+    assert payload["policyType"] == "ipfmLoopback"
+    assert payload["advertiseLoopback"] is True
+    assert payload["secondaryIpList"] == [{"ip": "10.2.2.3", "prefix": 32}]
+
+
+def test_ipfm_loopback_strict_rejects_foreign_field():
+    """
+    # Summary
+
+    Verify `IpfmLoopbackPolicyModel` rejects a field belonging to a different `policy_type` branch.
+
+    ## Test
+
+    - Construct with a foreign field (e.g. `ospfAreaId` from SVI loopback)
+    - Raises ValidationError (`extra="forbid"`)
+
+    ## Classes and Methods
+
+    - IpfmLoopbackPolicyModel.__init__()
+    """
+    from pydantic import ValidationError
+    from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import IpfmLoopbackPolicyModel
+    with pytest.raises(ValidationError):
+        IpfmLoopbackPolicyModel(policyType="ipfmLoopback", ospfAreaId="0")
