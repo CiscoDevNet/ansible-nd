@@ -85,9 +85,7 @@ class NDStateMachine:
             # ``context={"state": ...}`` is threaded into pydantic validation so models can apply
             # state-aware validation (e.g. require certain fields for write states while accepting
             # identifier-only items for ``deleted``). Models that do not read the context ignore it.
-            self.proposed = NDConfigCollection.from_ansible_config(
-                data=raw_config, model_class=self.model_class, context={"state": self.state}
-            )
+            self.proposed = NDConfigCollection.from_ansible_config(data=raw_config, model_class=self.model_class, context={"state": self.state})
 
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
 
