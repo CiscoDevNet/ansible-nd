@@ -15,6 +15,7 @@ loopback_100:
   config_data:
     network_os:
       policy:
+        policy_type: loopback
         admin_state: true
         ip: "10.100.100.1"
         description: "Ansible integration test loopback100"
@@ -27,6 +28,7 @@ loopback_101:
   config_data:
     network_os:
       policy:
+        policy_type: loopback
         admin_state: true
         ip: "10.100.101.1"
         description: "Ansible integration test loopback101"
@@ -37,6 +39,7 @@ loopback_102:
   config_data:
     network_os:
       policy:
+        policy_type: loopback
         admin_state: true
         ip: "10.100.102.1"
         description: "Ansible integration test loopback102"
@@ -48,6 +51,7 @@ loopback_100_updated:
   config_data:
     network_os:
       policy:
+        policy_type: loopback
         admin_state: true
         ip: "10.100.100.2"
         description: "Updated loopback100 description"
@@ -60,6 +64,7 @@ loopback_101_updated:
   config_data:
     network_os:
       policy:
+        policy_type: loopback
         admin_state: false
         ip: "10.100.101.2"
         description: "Updated loopback101 description"

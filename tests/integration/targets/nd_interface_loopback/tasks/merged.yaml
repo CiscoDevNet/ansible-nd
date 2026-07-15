@@ -120,6 +120,7 @@
         config_data:
           network_os:
             policy:
+              policy_type: loopback
               admin_state: true
               ip: "10.100.103.1"
               description: "No-deploy test loopback103"
