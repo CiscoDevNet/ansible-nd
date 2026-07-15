@@ -88,10 +88,7 @@ def _resolve_fabric_type_token(nd_v2: NDModuleV2, fabric_name: str, module: Any)
     try:
         details = nd_v2.request(details_path, HttpVerbEnum.GET)
     except Exception as exc:
-        module.warn(
-            f"Unable to determine fabric type for '{fabric_name}' while validating "
-            f"vpc_pair_details: {_first_line(exc)}"
-        )
+        module.warn(f"Unable to determine fabric type for '{fabric_name}' while validating " f"vpc_pair_details: {_first_line(exc)}")
         return ""
 
     if not isinstance(details, dict):
@@ -312,10 +309,7 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
     except VpcPairResourceError:
         raise
     except Exception as support_error:
-        nrm.module.warn(
-            f"Pairing support check failed for switch {switch_id}: "
-            f"{_first_line(support_error)}. Continuing with create operation."
-        )
+        nrm.module.warn(f"Pairing support check failed for switch {switch_id}: " f"{_first_line(support_error)}. Continuing with create operation.")
 
     # Validate fabric peering support if virtual peer link is requested.
     _validate_fabric_peering_support(
