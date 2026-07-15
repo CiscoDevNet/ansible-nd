@@ -85,20 +85,20 @@ def test_loopback_interface_00010():
     """
     # Summary
 
-    Verify field defaults: user-facing fields default to None; `policy_type` is hardcoded to "loopback".
+    Verify field defaults: user-facing fields default to None; `policy_type` is required and must be passed explicitly.
 
     ## Test
 
-    - Instantiate with no arguments
+    - Instantiate with only `policy_type`
     - User-facing fields are None
-    - `policy_type` defaults to "loopback" (hardcoded scaffolding, not user-exposed)
+    - `policy_type` is "loopback" (required, no default)
 
     ## Classes and Methods
 
     - LoopbackPolicyModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel()
+        instance = LoopbackPolicyModel(policy_type="loopback")
     assert instance.admin_state is None
     assert instance.ip is None
     assert instance.ipv6 is None
@@ -204,15 +204,15 @@ def test_loopback_interface_00060():
 
     ## Test
 
-    - Only ip is set
+    - Only ip and policy_type are set
     - exclude_none=True omits all None fields
-    - `policy_type` defaults to "loopback" (not None) so it remains in output
+    - `policy_type` is not None so it remains in output
 
     ## Classes and Methods
 
     - LoopbackPolicyModel.model_dump()
     """
-    instance = LoopbackPolicyModel(ip="10.1.1.1/32")
+    instance = LoopbackPolicyModel(ip="10.1.1.1/32", policy_type="loopback")
     result = instance.model_dump(exclude_none=True)
     assert "ip" in result
     assert "admin_state" not in result
@@ -241,7 +241,7 @@ def test_loopback_interface_00065():
     - LoopbackPolicyModel.coerce_route_map_tag()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(route_map_tag=12345)
+        instance = LoopbackPolicyModel(route_map_tag=12345, policy_type="loopback")
     assert instance.route_map_tag == "12345"
     assert isinstance(instance.route_map_tag, str)
 
@@ -262,7 +262,7 @@ def test_loopback_interface_00066():
     - LoopbackPolicyModel.coerce_route_map_tag()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(route_map_tag="12345")
+        instance = LoopbackPolicyModel(route_map_tag="12345", policy_type="loopback")
     assert instance.route_map_tag == "12345"
 
 
@@ -282,7 +282,7 @@ def test_loopback_interface_00067():
     - LoopbackPolicyModel.coerce_route_map_tag()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(routeMapTag=12345)
+        instance = LoopbackPolicyModel(routeMapTag=12345, policyType="loopback")
     assert instance.route_map_tag == "12345"
     assert isinstance(instance.route_map_tag, str)
 
@@ -346,7 +346,7 @@ def test_loopback_interface_00072():
     - LoopbackPolicyModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(vrf="a" * 32)
+        instance = LoopbackPolicyModel(vrf="a" * 32, policy_type="loopback")
     assert instance.vrf == "a" * 32
 
 
@@ -430,7 +430,7 @@ def test_loopback_interface_00076(value, should_raise):
         with pytest.raises(ValidationError, match="description must contain only ASCII"):
             LoopbackPolicyModel(description=value)
     else:
-        instance = LoopbackPolicyModel(description=value)
+        instance = LoopbackPolicyModel(description=value, policy_type="loopback")
         assert instance.description == value
 
 
@@ -450,7 +450,7 @@ def test_loopback_interface_00075():
     - LoopbackPolicyModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(description="a" * 254)
+        instance = LoopbackPolicyModel(description="a" * 254, policy_type="loopback")
     assert instance.description == "a" * 254
 
 
@@ -476,7 +476,7 @@ def test_loopback_interface_00080():
     - LoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ip="10.1.1.1/32")
+        instance = LoopbackPolicyModel(ip="10.1.1.1/32", policy_type="loopback")
     assert instance.ip == "10.1.1.1"
 
 
@@ -497,7 +497,7 @@ def test_loopback_interface_00081():
     - LoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ip="10.1.1.0/24")
+        instance = LoopbackPolicyModel(ip="10.1.1.0/24", policy_type="loopback")
     assert instance.ip == "10.1.1.0"
 
 
@@ -536,7 +536,7 @@ def test_loopback_interface_00083():
     - LoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ip="10.1.1.1")
+        instance = LoopbackPolicyModel(ip="10.1.1.1", policy_type="loopback")
     assert instance.ip == "10.1.1.1"
 
 
@@ -599,7 +599,7 @@ def test_loopback_interface_00086():
     - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ipv6="2001:db8::1/128")
+        instance = LoopbackPolicyModel(ipv6="2001:db8::1/128", policy_type="loopback")
     assert instance.ipv6 == "2001:db8::1/128"
 
 
@@ -619,7 +619,7 @@ def test_loopback_interface_00087():
     - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ipv6="2001:db8::/64")
+        instance = LoopbackPolicyModel(ipv6="2001:db8::/64", policy_type="loopback")
     assert instance.ipv6 == "2001:db8::/64"
 
 
@@ -677,7 +677,7 @@ def test_loopback_interface_00090():
     - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ipv6="2001:db8::1")
+        instance = LoopbackPolicyModel(ipv6="2001:db8::1", policy_type="loopback")
     assert instance.ipv6 == "2001:db8::1"
 
 
@@ -702,7 +702,7 @@ def test_loopback_interface_00100():
     - LoopbackNetworkOSModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackNetworkOSModel(policy=LoopbackPolicyModel())
+        instance = LoopbackNetworkOSModel(policy=LoopbackPolicyModel(policy_type="loopback"))
     assert instance.network_os_type == "nx-os"
 
 
@@ -778,7 +778,7 @@ def test_loopback_interface_00150():
     - LoopbackConfigDataModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackConfigDataModel(network_os=LoopbackNetworkOSModel(policy=LoopbackPolicyModel()))
+        instance = LoopbackConfigDataModel(network_os=LoopbackNetworkOSModel(policy=LoopbackPolicyModel(policy_type="loopback")))
     assert instance.mode == "managed"
 
 
@@ -801,7 +801,7 @@ def test_loopback_interface_00160():
         instance = LoopbackConfigDataModel(
             mode="managed",
             network_os=LoopbackNetworkOSModel(
-                policy=LoopbackPolicyModel(ip="10.1.1.1/32", admin_state=True),
+                policy=LoopbackPolicyModel(ip="10.1.1.1/32", admin_state=True, policy_type="loopback"),
             ),
         )
     assert instance.mode == "managed"
@@ -1451,6 +1451,7 @@ def test_loopback_interface_00650():
             "network_os": {
                 "policy": {
                     "admin_state": True,
+                    "policy_type": "loopback",
                 },
             },
         },
@@ -1462,6 +1463,7 @@ def test_loopback_interface_00650():
             "network_os": {
                 "policy": {
                     "ip": "10.1.1.1/32",
+                    "policy_type": "loopback",
                 },
             },
         },
@@ -1509,7 +1511,7 @@ def test_loopback_interface_00670():
     """
     instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
     with pytest.raises(TypeError, match="Cannot merge"):
-        instance.merge(LoopbackPolicyModel())
+        instance.merge(LoopbackPolicyModel(policy_type="loopback"))
 
 
 def test_loopback_interface_00680():
@@ -1629,6 +1631,67 @@ def test_loopback_interface_00730():
     assert "network_os_type" not in network_os_options
     policy_options = network_os_options["policy"]["options"]
     assert "policy_type" not in policy_options
+
+
+def test_loopback_policy_strict_rejects_foreign_field():
+    """
+    # Summary
+
+    Verify `LoopbackPolicyModel` rejects a field belonging to a different `policy_type` branch (e.g. `dciRoutingTag`,
+    which belongs to the mpls loopback template, not this one).
+
+    ## Test
+
+    - Construct with an extra field not defined on `LoopbackPolicyModel`
+    - Raises ValidationError (`extra="forbid"`)
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.__init__()
+    """
+    with pytest.raises(ValidationError):
+        LoopbackPolicyModel(policyType="loopback", dciRoutingTag="MPLS_UNDERLAY")
+
+
+def test_loopback_policy_requires_policy_type():
+    """
+    # Summary
+
+    Verify `LoopbackPolicyModel` requires `policy_type` — it no longer defaults to "loopback".
+
+    ## Test
+
+    - Construct without `policy_type`
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.__init__()
+    """
+    with pytest.raises(ValidationError):
+        LoopbackPolicyModel(ip="10.1.1.1/32")
+
+
+def test_loopback_policy_strips_none_valued_keys():
+    """
+    # Summary
+
+    Verify `LoopbackPolicyBase.strip_none_valued_keys` drops `None`-valued keys before validation so unset flat-argspec
+    options are not rejected by `extra="forbid"`.
+
+    ## Test
+
+    - Construct with `routeMapTag=None` and `ipv6=None`
+    - Neither raises ValidationError; both remain None on the instance
+
+    ## Classes and Methods
+
+    - LoopbackPolicyBase.strip_none_valued_keys()
+    """
+    # Unset flat-argspec options arrive as None and must be dropped, not rejected by extra="forbid".
+    model = LoopbackPolicyModel(policyType="loopback", ip="10.1.1.1/32", routeMapTag=None, ipv6=None)
+    assert model.route_map_tag is None
+    assert model.ipv6 is None
 
 
 def test_loopback_policy_type_enum_members():

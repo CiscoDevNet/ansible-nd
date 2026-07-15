@@ -19,9 +19,9 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
         - `mode` (hardcoded: "managed")
         - `network_os` -> `LoopbackNetworkOSModel`
             - `network_os_type` (hardcoded: "nx-os")
-            - `policy` -> `LoopbackPolicyModel`
-                - `admin_state`, `ip`, `ipv6`, `vrf`, etc. (`policy_type` is hardcoded to "loopback";
-                  `ipfmLoopback` and `userDefined` policy types will get dedicated modules)
+            - `policy` -> `LoopbackPolicyModel` (`policy_type: loopback | ipfmLoopback | mplsLoopback`)
+                - `admin_state`, `ip`, `ipv6`, `vrf`, etc. (`policy_type` is required and discriminates the branch;
+                  `ipfmLoopback` and `mplsLoopback` policy types get dedicated models sharing `LoopbackPolicyBase`)
 """
 
 from __future__ import annotations
@@ -29,19 +29,65 @@ from __future__ import annotations
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
     Field,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv6CIDR
 
 
-class LoopbackPolicyModel(NDNestedModel):
+class LoopbackPolicyBase(NDNestedModel):
     """
     # Summary
 
-    Policy fields for a loopback interface. Maps directly to the `configData.networkOS.policy` object in the ND API.
+    Shared policy fields common to every managed NX-OS loopback template. Sets `extra="forbid"` so fields belonging to a
+    different `policy_type` are rejected, and strips `None`-valued keys first so unset flat-argspec options are not rejected.
+
+    ## Raises
+
+    None
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 echoes schema-declared template defaults for every field the user never set; the reverse pass of
+    # `get_diff` normalizes existing-side matches to absent so replaced/overridden removal detection (issue #410)
+    # stays idempotent against default echoes. `adminState` defaults to true on every loopback template.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+    }
+
+    admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_none_valued_keys(cls, data):
+        """
+        # Summary
+
+        Drop keys whose value is `None` before validation so unset flat-argspec options do not trip `extra="forbid"`.
+
+        ## Raises
+
+        None
+        """
+        if isinstance(data, dict):
+            return {key: value for key, value in data.items() if value is not None}
+        return data
+
+
+class LoopbackPolicyModel(LoopbackPolicyBase):
+    """
+    # Summary
+
+    Policy fields for the NX-OS `loopback` template. Maps to `configData.networkOS.policy` where `policyType == "loopback"`.
 
     ## Raises
 
@@ -49,28 +95,19 @@ class LoopbackPolicyModel(NDNestedModel):
     """
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
-    # ND 4.2.1 `int_loopback` template defaults (schema-sourced via nd-openapi `intLoopbackTemplate`). ND echoes these
-    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
-    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
-    # Values must be in the model's DUMPED form: the schema declares routeMapTag as integer 12345, but
-    # `coerce_route_map_tag` stores it as a string (ND 4.2.1 GET-side type drift), so the table holds "12345".
+    # ND 4.2.1 `int_loopback` template defaults (schema-sourced via nd-openapi `intLoopbackTemplate`). Values must be in
+    # the model's DUMPED form: the schema declares routeMapTag as integer 12345, but `coerce_route_map_tag` stores it as
+    # a string (ND 4.2.1 GET-side type drift), so the table holds "12345". ClassVar overrides replace the base table,
+    # so `adminState` is restated here.
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {
         "adminState": True,
         "routeMapTag": "12345",
     }
 
-    admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
+    policy_type: Literal["loopback"] = Field(alias="policyType", description="Loopback policy template discriminator")
     ipv6: IPv6CIDR = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
     route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
-    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    policy_type: Literal["loopback"] = Field(
-        default="loopback", alias="policyType", frozen=True, description="Loopback policy template (hardcoded for this module)"
-    )
-
-    # --- Validators ---
 
     # TODO(4.2.1): Remove coerce_route_map_tag once GET-side type drift is fixed.
     # ND 4.2.1 returns `routeMapTag` as an integer even though the template defines it as a string.
