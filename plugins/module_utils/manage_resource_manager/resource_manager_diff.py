@@ -432,7 +432,7 @@ class ResourceManagerDiffEngine:
             log.warning("No valid configurations found in input")
             return validated_configs
 
-        # Duplicate check: (entity_name, pool_name, scope_type, frozenset(switch), vrf_name)
+        # Duplicate check: (normalized_entity, normalized_pool, scope_type, frozenset(switch), vrf_name)
         seen_keys: set = set()
         duplicate_keys: set = set()
         log.debug(
@@ -440,21 +440,28 @@ class ResourceManagerDiffEngine:
             len(validated_configs),
         )
         for cfg_dup_idx, cfg in enumerate(validated_configs):
-            key = (
+            normalized_entity = ResourceManagerDiffEngine._normalize_entity_key(
                 cfg.entity_name,
-                cfg.pool_name,
+                log=log,
+                scope_type=cfg.scope_type,
+            )
+            normalized_pool = ResourceManagerDiffEngine._normalize_pool_name(cfg.pool_name, log=log)
+            key = (
+                normalized_entity,
+                normalized_pool,
                 cfg.scope_type,
                 frozenset(cfg.switches or []),
                 cfg.vrf_name or "default",
             )
             log.debug(
-                "validate_configs: duplicate-check [%s] — entity_name='%s', pool_name='%s', scope_type='%s', switches=%s, vrf_name='%s', key_seen_before=%s",
+                "validate_configs: duplicate-check [%s] — entity_name='%s', pool_name='%s', scope_type='%s', switches=%s, vrf_name='%s', key=%s, key_seen_before=%s",
                 cfg_dup_idx,
                 cfg.entity_name,
                 cfg.pool_name,
                 cfg.scope_type,
                 list(cfg.switches or []),
                 cfg.vrf_name,
+                key,
                 key in seen_keys,
             )
             if key in seen_keys:

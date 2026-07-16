@@ -565,6 +565,74 @@ def test_resource_manager_validate_configs_rejects_duplicate_entries():
         ResourceManagerDiffEngine.validate_configs([data, data], "merged", log=LOG)
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        pytest.param(
+            {
+                "entity_name": "SER1~SER2~PAIR",
+                "pool_type": "ID",
+                "pool_name": "VPC_ID",
+                "scope_type": "device_pair",
+                "switches": ["SER1", "SER2"],
+                "resource": "10",
+            },
+            {
+                "entity_name": "SER2~SER1~PAIR",
+                "pool_type": "ID",
+                "pool_name": "VPC_ID",
+                "scope_type": "device_pair",
+                "switches": ["SER2", "SER1"],
+                "resource": "10",
+            },
+            id="reversed-device-pair-with-label",
+        ),
+        pytest.param(
+            {
+                "entity_name": "SER1~Ethernet1/1~SER2~Ethernet1/2",
+                "pool_type": "SUBNET",
+                "pool_name": "SUBNET",
+                "scope_type": "link",
+                "switches": ["SER1", "SER2"],
+                "resource": "10.0.0.0/30",
+            },
+            {
+                "entity_name": "SER2~Ethernet1/2~SER1~Ethernet1/1",
+                "pool_type": "SUBNET",
+                "pool_name": "SUBNET",
+                "scope_type": "link",
+                "switches": ["SER2", "SER1"],
+                "resource": "10.0.0.0/30",
+            },
+            id="reversed-link",
+        ),
+        pytest.param(
+            {
+                "entity_name": "loopback0",
+                "pool_type": "ID",
+                "pool_name": "LOOPBACK_ID",
+                "scope_type": "device",
+                "switches": ["SER1"],
+                "resource": "10",
+            },
+            {
+                "entity_name": "loopback0",
+                "pool_type": "ID",
+                "pool_name": "loopbackId",
+                "scope_type": "device",
+                "switches": ["SER1"],
+                "resource": "10",
+            },
+            id="pool-alias",
+        ),
+    ],
+)
+def test_resource_manager_validate_configs_rejects_normalized_duplicate_entries(first, second):
+    """Reconciliation-equivalent desired resources are rejected before diffing."""
+    with pytest.raises(ValueError, match="Duplicate config entries"):
+        ResourceManagerDiffEngine.validate_configs([first, second], "merged", log=LOG)
+
+
 def test_resource_manager_diff_detects_idempotent_resource():
     """Diffing matches existing resources by normalized identity and switch ID."""
     changes = ResourceManagerDiffEngine.compute_changes([_config()], [_response()], log=LOG)
