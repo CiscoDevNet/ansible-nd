@@ -91,12 +91,15 @@ class ResourceManagerDiffEngine:
         Args:
             entity_name: Raw entity name string.
             log: Logger instance.
-            scope_type: Playbook-style scope type, when known.
+            scope_type: Playbook-style or API camelCase scope type, when known.
+                Both ``'device_pair'`` and ``'devicePair'`` are accepted and
+                treated identically.
 
         Returns:
             Hashable key suitable for equality checks and dict lookups.
         """
-        parts = entity_name.split("~")
+        raw_entity_name = str(entity_name).strip()
+        parts = [part.strip() for part in raw_entity_name.split("~")]
         inferred_scope_type = scope_type
         if inferred_scope_type is None:
             if len(parts) == 4:
@@ -104,13 +107,17 @@ class ResourceManagerDiffEngine:
             elif len(parts) in (2, 3):
                 inferred_scope_type = "device_pair"
 
+        # Normalize API camelCase scope type (e.g. "devicePair") to playbook
+        # snake_case (e.g. "device_pair") so callers may pass either format.
+        inferred_scope_type = API_SCOPE_TYPE_TO_PLAYBOOK.get(inferred_scope_type, inferred_scope_type)
+
         if inferred_scope_type == "device_pair" and len(parts) in (2, 3):
             label = parts[2] if len(parts) == 3 else None
             normalize_entity_name = ("device_pair", frozenset((parts[0], parts[1])), label)
         elif inferred_scope_type == "link" and len(parts) == 4:
             normalize_entity_name = ("link", frozenset(((parts[0], parts[1]), (parts[2], parts[3]))))
         else:
-            normalize_entity_name = ("exact", entity_name)
+            normalize_entity_name = ("exact", raw_entity_name)
 
         log.debug(
             "Returning normalized entity_name='%s' from raw='%s', scope_type='%s'",
@@ -676,7 +683,7 @@ class ResourceManagerDiffEngine:
                         changes["to_update"].append((cfg, sw, existing_res))
                     elif resource_value is None and desired_is_pre_allocated is False:
                         log.debug(
-                            "Resource (entity=%s, pool=%s, scope=%s, switch=%s) is idempotent (auto-allocated value=%s)",
+                            "Resource (entity=%s, pool=%s, scope=%s, switch=%s) is idempotent (auto-allocated or omitted value=%s)",
                             entity_name,
                             pool_name,
                             scope_type,

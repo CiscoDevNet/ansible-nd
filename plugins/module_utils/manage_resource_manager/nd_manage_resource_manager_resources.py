@@ -661,24 +661,6 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             self.fabric,
         )
 
-    def _entity_filter(self, entity_name, scope_type=None):
-        """Build the exact entityName Lucene filter used for safe gathered narrowing."""
-        if not entity_name:
-            filter_expr = None
-        elif scope_type in ("device_pair", "link"):
-            filter_expr = None
-        elif scope_type is None and str(entity_name).count("~") in (1, 2, 3):
-            filter_expr = None
-        else:
-            filter_expr = f"entityName:{entity_name}"
-        self.log.debug(
-            "_entity_filter: entity_name=%s, scope_type=%s, filter_expr=%s",
-            entity_name,
-            scope_type,
-            filter_expr,
-        )
-        return filter_expr
-
     def _resource_unique_key(self, resource):
         """Return a stable fallback key for deduplicating resources without IDs."""
         key = (
@@ -760,10 +742,10 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
     def _build_gathered_resource_criteria(self):
         """Build safe filtered GET criteria from gathered config filters.
 
-        The resources GET endpoint can narrow by poolName, switchId, and a Lucene
-        entityName filter. Other documented gathered filters are applied by the
-        final local predicate, so criteria with only local-only fields must still
-        fetch a candidate inventory instead of producing no API request.
+        The resources GET endpoint can narrow by poolName and switchId. Entity
+        names and other documented gathered filters are applied by the final local
+        predicate, so criteria with only local-only fields must still fetch a
+        candidate inventory instead of producing no API request.
         """
         self.log.debug(
             "_build_gathered_resource_criteria: building criteria from %s gathered filter item(s)",
@@ -776,7 +758,12 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 continue
 
             pool_name = filter_item.get("pool_name")
-            filter_expr = self._entity_filter(filter_item.get("entity_name"), scope_type=filter_item.get("scope_type"))
+            # Entity names are intentionally matched locally. ND may return canonical
+            # endpoint order for multi-switch resources, and some simple entity-only
+            # Lucene filters can exclude resources that should match after local
+            # normalization.
+            # Kept this filter_expr for future reference in case if we have any filter props with exact match
+            filter_expr = None
             filter_switches = filter_item.get("switches") or [None]
             for switch_id in filter_switches:
                 criteria.append((pool_name, switch_id, filter_expr))
