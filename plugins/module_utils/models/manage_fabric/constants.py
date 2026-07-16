@@ -42,9 +42,6 @@ To check whether *pool_name* is supported for *fabric_type* (enum or string)::
     is_supported = is_pool_supported("vxlanEbgp", pool_name)
 """
 
-from __future__ import annotations
-
-__metaclass__ = type
 
 import re
 import logging
