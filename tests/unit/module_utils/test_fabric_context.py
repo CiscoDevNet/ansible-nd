@@ -599,10 +599,12 @@ def test_fabric_context_00230() -> None:
 
     ## Test
 
-    - GET (switches) returns three switches: nx-os, ios-xe, and one with no `additionalData`
-    - `switches` returns the raw three-record list
+    - GET (switches) returns four switches: nx-os, ios-xe, one with no `additionalData`, and sonic
+    - `switches` returns the raw four-record list
     - `get_platform_type` returns `PlatformTypeEnum.NX_OS` / `PlatformTypeEnum.IOS_XE` for the first two
     - `get_platform_type` returns `None` for the switch that reports no `platformType`
+    - `get_platform_type` returns `PlatformTypeEnum.SONIC` for the sonic switch (guards the omitted-member defect:
+      an unrecognized value falls through `try/except ValueError` to `None`, silently hiding the platform)
     - `get_platform_type` raises `RuntimeError` for an IP not in the fabric
 
     ## Classes and Methods
@@ -624,15 +626,17 @@ def test_fabric_context_00230() -> None:
         instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
         switches = instance.switches
 
-    assert len(switches) == 3
+    assert len(switches) == 4
     assert switches[0]["switchId"] == "FDO12345ABC"
     # `switches` returns a shallow copy: mutating it must not corrupt the cache.
     switches.append({"fabricManagementIp": "10.0.0.9", "switchId": "BOGUS"})
-    assert len(instance.switches) == 3
+    assert len(instance.switches) == 4
     assert instance.get_platform_type("192.168.12.151") == PlatformTypeEnum.NX_OS
     assert instance.get_platform_type("192.168.12.152") == PlatformTypeEnum.IOS_XE
     # Switch exists but reports no platformType -> None (not a raise).
     assert instance.get_platform_type("192.168.12.153") is None
+    # SONIC must resolve rather than falling through to None (omitted-member defect).
+    assert instance.get_platform_type("192.168.12.154") == PlatformTypeEnum.SONIC
 
     match = r"No switch found with fabricManagementIp '10\.0\.0\.1' in fabric 'fabric_1'"
     with pytest.raises(RuntimeError, match=match):
