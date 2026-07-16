@@ -1290,17 +1290,25 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         # Validate that batch response is complete and all items succeeded
         self._validate_batch_create_response_for_failures(batch_response, len(pending_payloads))
 
-        # Build a normalised entity_name → cfg lookup for GAP-5 field validation.
-        # If two items share a normalised name (unusual), the last one wins; that is
-        # acceptable because validate_resource_api_fields uses order-insensitive comparison.
-        cfg_by_entity: dict[tuple, ResourceManagerConfigModel] = {}
+        # Build a full allocation-identity lookup for GAP-5 field validation.
+        # Entity name alone is not unique: Resource Manager supports allocating
+        # multiple pools to the same entity.
+        cfg_by_allocation_key: dict[tuple, ResourceManagerConfigModel] = {}
         for cfg, _payload in pending_payloads:
-            norm_key = ResourceManagerDiffEngine._normalize_entity_key(
-                cfg.entity_name,
+            allocation_key = ResourceManagerDiffEngine._make_resource_key_from_resource(
+                _payload,
                 log=self.log,
-                scope_type=cfg.scope_type,
             )
-            cfg_by_entity[norm_key] = cfg
+            if allocation_key is None:
+                self.log.debug(
+                    "manage_merged: skipping GAP-5 validation lookup for pending payload with incomplete identity "
+                    "(entity_name=%s, pool_name=%s, scope_type=%s)",
+                    cfg.entity_name,
+                    cfg.pool_name,
+                    cfg.scope_type,
+                )
+                continue
+            cfg_by_allocation_key[allocation_key] = cfg
 
         for resp_item in batch_response.resources:
             if isinstance(resp_item, dict):
@@ -1313,18 +1321,25 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item_data})
             # GAP-5: Validate that the API response fields match what we sent.
             if resp_item_entity_name is not None:
-                resp_scope_type = ResourceManagerDiffEngine._extract_scope_type(
-                    ResourceManagerDiffEngine._scope_details(resp_item),
+                allocation_key = ResourceManagerDiffEngine._make_resource_key_from_resource(
+                    resp_item,
                     log=self.log,
                 )
-                norm_key = ResourceManagerDiffEngine._normalize_entity_key(
-                    resp_item_entity_name,
-                    log=self.log,
-                    scope_type=resp_scope_type,
-                )
-                matched_cfg = cfg_by_entity.get(norm_key)
+                if allocation_key is None:
+                    self.log.debug(
+                        "manage_merged: skipping GAP-5 validation for response item with incomplete identity "
+                        "(entity_name=%s)",
+                        resp_item_entity_name,
+                    )
+                    continue
+                matched_cfg = cfg_by_allocation_key.get(allocation_key)
                 if matched_cfg is not None:
                     ResourceManagerDiffEngine.validate_resource_api_fields(self.nd, matched_cfg, resp_item, "Resource", log=self.log)
+                else:
+                    self.log.debug(
+                        "manage_merged: skipping GAP-5 validation for unmatched response allocation identity key=%s",
+                        allocation_key,
+                    )
 
         self.log.info(
             "manage_merged: Batch create successful — %s resource(s) created for fabric=%s",

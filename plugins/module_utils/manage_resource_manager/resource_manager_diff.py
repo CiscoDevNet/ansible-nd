@@ -341,6 +341,54 @@ class ResourceManagerDiffEngine:
         return key
 
     @staticmethod
+    def _make_resource_key_from_resource(resource, log: logging.Logger) -> tuple | None:
+        """Build a normalized allocation key from a payload or API resource.
+
+        Returns None when the resource does not expose enough identity fields to
+        safely correlate it with a sent configuration.
+        """
+        entity = ResourceManagerDiffEngine._resource_attr(resource, "entity_name", "entityName")
+        pool = ResourceManagerDiffEngine._resource_attr(resource, "pool_name", "poolName")
+        vrf_name = ResourceManagerDiffEngine._resource_attr(resource, "vrf_name", "vrfName") or "default"
+        scope_details = ResourceManagerDiffEngine._scope_details(resource)
+        scope_type = ResourceManagerDiffEngine._extract_scope_type(scope_details, log=log)
+
+        if not entity or not pool or not scope_type:
+            log.debug(
+                "_make_resource_key_from_resource: insufficient identity fields "
+                "(entity=%s, pool=%s, scope_type=%s)",
+                entity,
+                pool,
+                scope_type,
+            )
+            return None
+
+        switch_id = ResourceManagerDiffEngine._extract_scope_switch_key_val(
+            scope_details,
+            switch_key="switch_id",
+            src_switch_key="src_switch_id",
+            log=log,
+        )
+        if scope_type in ("device", "device_interface") and not switch_id:
+            log.debug(
+                "_make_resource_key_from_resource: insufficient switch identity "
+                "for scope_type=%s, entity=%s, pool=%s",
+                scope_type,
+                entity,
+                pool,
+            )
+            return None
+
+        return ResourceManagerDiffEngine._make_resource_key(
+            entity,
+            pool,
+            scope_type,
+            switch_id,
+            log=log,
+            vrf_name=vrf_name,
+        )
+
+    @staticmethod
     def validate_configs(
         config: dict[str, Any] | list[dict[str, Any]],
         state: str,

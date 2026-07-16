@@ -3577,12 +3577,7 @@ def test_manage_merged_validates_response_fields_for_matching_entity():
     module.proposed = [_config(entity_name="loopback99", resource="99")]
     module.existing = []
     nd.request.return_value = {"resources": [{"entityName": "loopback99"}]}
-
-    resp_item = MagicMock()
-    resp_item.entity_name = "loopback99"
-    resp_item.status = None
-    resp_item.message = None
-    resp_item.model_dump.return_value = {"entityName": "loopback99"}
+    resp_item = _response(entity_name="loopback99", resource_value="99")
     fake_batch_response = MagicMock(resources=[resp_item])
 
     with patch(
@@ -3600,6 +3595,51 @@ def test_manage_merged_validates_response_fields_for_matching_entity():
         module.manage_merged()
 
     assert validate_fields.called
+
+
+def test_manage_merged_correlates_batch_responses_by_full_allocation_identity():
+    """Batch validation matches same-entity resources by pool/scope/switch/VRF."""
+    module, nd = _resource_manager_with_nd(config=[])
+    cfg_loopback = _config(
+        entity_name="shared_entity",
+        pool_name="LOOPBACK_ID",
+        resource="10",
+        switches=["SER1"],
+    )
+    cfg_port_channel = _config(
+        entity_name="shared_entity",
+        pool_name="PORT_CHANNEL_ID",
+        resource="20",
+        switches=["SER1"],
+    )
+    module.proposed = [cfg_loopback, cfg_port_channel]
+    module.existing = []
+    nd.request.return_value = {
+        "resources": [
+            {
+                "entityName": "shared_entity",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": "10",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+                "vrfName": "default",
+            },
+            {
+                "entityName": "shared_entity",
+                "poolName": "PORT_CHANNEL_ID",
+                "resourceValue": "20",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+                "vrfName": "default",
+            },
+        ]
+    }
+
+    module.manage_merged()
+
+    assert len(module.api_responses) == 2
+    assert [item["DATA"]["poolName"] for item in module.api_responses] == [
+        "LOOPBACK_ID",
+        "PORT_CHANNEL_ID",
+    ]
 
 
 def test_manage_merged_raises_on_partial_create_response():
