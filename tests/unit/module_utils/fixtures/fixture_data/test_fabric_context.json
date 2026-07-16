@@ -199,7 +199,9 @@
     "test_fabric_context_00230a": {
         "TEST_NOTES": [
             "Switch list with additionalData.platformType for get_platform_type / switches.",
-            "sw1: nx-os, sw2: ios-xe, sw3: no additionalData (platform_type -> None)."
+            "sw1: nx-os, sw2: ios-xe, sw3: no additionalData (platform_type -> None), sw4: sonic.",
+            "sw4 guards the SONIC member: PlatformTypeEnum originally omitted it, so get_platform_type resolved a",
+            "SONiC switch to None (the try/except ValueError fall-through) instead of its platform."
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
@@ -220,6 +222,13 @@
                 {
                     "fabricManagementIp": "192.168.12.153",
                     "switchId": "FDO12345ABE"
+                },
+                {
+                    "fabricManagementIp": "192.168.12.154",
+                    "switchId": "FDO12345ABF",
+                    "additionalData": {
+                        "platformType": "sonic"
+                    }
                 }
             ]
         }
