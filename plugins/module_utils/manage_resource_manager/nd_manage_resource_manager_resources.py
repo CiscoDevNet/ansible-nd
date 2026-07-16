@@ -195,10 +195,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             validated_count += 1
 
         if unsupported_pools:
-            unsupported_details = ", ".join(
-                "config index {0}: '{1}'".format(item["index"], item["pool_name"])
-                for item in unsupported_pools
-            )
+            unsupported_details = ", ".join("config index {0}: '{1}'".format(item["index"], item["pool_name"]) for item in unsupported_pools)
             error_msg = "Unsupported pool_name values for fabric type '{0}': {1}".format(
                 self.fabric_type,
                 unsupported_details,

@@ -787,9 +787,7 @@ class ResourceManagerDiffEngine:
         if resource_cfg.entity_name is not None:
             cfg_norm = ResourceManagerDiffEngine._normalize_entity_key(resource_cfg.entity_name, log=log, scope_type=resource_cfg.scope_type)
             api_norm = (
-                ResourceManagerDiffEngine._normalize_entity_key(api_entity_name, log=log, scope_type=resource_cfg.scope_type)
-                if api_entity_name
-                else None
+                ResourceManagerDiffEngine._normalize_entity_key(api_entity_name, log=log, scope_type=resource_cfg.scope_type) if api_entity_name else None
             )
 
             log.debug(
@@ -888,9 +886,7 @@ class ResourceManagerDiffEngine:
                 api_is_pre_allocated,
             )
             if api_is_pre_allocated != resource_cfg.is_pre_allocated:
-                mismatches.append(
-                    f"is_pre_allocated: provided '{resource_cfg.is_pre_allocated}', API reports '{api_is_pre_allocated}'"
-                )
+                mismatches.append(f"is_pre_allocated: provided '{resource_cfg.is_pre_allocated}', API reports '{api_is_pre_allocated}'")
 
         if mismatches:
             raise ValueError(

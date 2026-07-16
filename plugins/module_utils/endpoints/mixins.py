@@ -170,6 +170,7 @@ class NodeNameMixin(BaseModel):
 
     node_name: str | None = Field(default=None, min_length=1, description="Node name")
 
+
 class PolicyIdMixin(BaseModel):
     """Mixin for endpoints that require policy_id parameter."""
 

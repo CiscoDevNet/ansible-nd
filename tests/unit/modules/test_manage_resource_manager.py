@@ -1520,6 +1520,7 @@ def test_apply_gathered_filters_multiple_filters_with_dedup():
     # Both filters match same resource; dedup should return only one
     assert len(gathered) == 1
 
+
 @pytest.mark.parametrize(
     ("resource_value", "expected_pool_type"),
     [
