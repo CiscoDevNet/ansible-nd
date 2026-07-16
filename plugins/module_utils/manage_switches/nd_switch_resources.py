@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
@@ -81,6 +81,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils imp
     query_bootstrap_switches,
     build_bootstrap_index,
     build_poap_data_block,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.fabric_capabilities import (
+    SwitchFabricCapabilityError,
+    validate_switch_configs_for_fabric,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
     EpManageFabricsSwitchesPost,
@@ -369,7 +373,7 @@ class SwitchDiffEngine:
 
     @staticmethod
     def validate_configs(
-        config: Union[dict[str, Any], list[dict[str, Any]]],
+        config: dict[str, Any] | list[dict[str, Any]],
         state: str,
         nd: NDModule,
         log: logging.Logger,
@@ -1355,6 +1359,26 @@ class SwitchFabricOps:
 
         log.debug("EXIT: bulk_update_roles()")
 
+    def _register_fabric_operation(
+        self,
+        *,
+        endpoint: Any,
+        payload: dict[str, Any] | None,
+        response: dict[str, Any],
+        action: str,
+    ) -> None:
+        """Record a fabric helper API call in the shared module results."""
+        registered_response = self.ctx.nd.rest_send.response_current or response
+        self.ctx.results.action = action
+        self.ctx.results.operation_type = OperationType.UPDATE
+        self.ctx.results.response_current = registered_response
+        self.ctx.results.result_current = self.ctx.nd.rest_send.result_current
+        self.ctx.results.diff_current = payload or {}
+        self.ctx.results.path_current = endpoint.path
+        self.ctx.results.verb_current = endpoint.verb
+        self.ctx.results.payload_current = payload
+        self.ctx.results.register_api_call()
+
     def finalize(self, serial_numbers: list[str] | None = None) -> None:
         """Run optional save and deploy actions for the fabric.
 
@@ -1374,17 +1398,36 @@ class SwitchFabricOps:
 
         if self.ctx.save_config:
             self.ctx.log.info("Saving fabric configuration")
-            self.fabric_utils.save_config()
+            response = self.fabric_utils.save_config()
+            self._register_fabric_operation(
+                endpoint=self.fabric_utils.ep_config_save,
+                payload=None,
+                response=response,
+                action="config_save",
+            )
 
         if self.ctx.deploy_config:
             if self.ctx.deploy_type == "switch" and serial_numbers:
                 self.ctx.log.info("Switch-level deploy for: %s", serial_numbers)
-                self.fabric_utils.deploy_switches(serial_numbers)
+                payload = {"switchIds": serial_numbers}
+                response = self.fabric_utils.deploy_switches(serial_numbers)
+                self._register_fabric_operation(
+                    endpoint=self.fabric_utils.ep_switch_deploy,
+                    payload=payload,
+                    response=response,
+                    action="deploy_switches",
+                )
             else:
                 if self.ctx.deploy_type == "switch" and not serial_numbers:
                     self.ctx.log.warning("Switch-level deploy requested but no serial numbers provided — falling back to global deploy")
                 self.ctx.log.info("Deploying fabric configuration (global)")
-                self.fabric_utils.deploy_config()
+                response = self.fabric_utils.deploy_config()
+                self._register_fabric_operation(
+                    endpoint=self.fabric_utils.ep_config_deploy,
+                    payload=None,
+                    response=response,
+                    action="deploy_config",
+                )
 
     def post_add_processing(
         self,
@@ -2608,6 +2651,27 @@ class NDSwitchResourceModule:
                 self.log.warning("Could not convert config %s for output: %s", cfg.seed_ip, exc)
         return result
 
+    def _validate_fabric_capabilities(self, configs: list["SwitchConfigModel"]) -> None:
+        """Validate desired switches against the target fabric support matrix."""
+        if not configs:
+            return
+        try:
+            fabric_info = self.fabric_utils.get_fabric_info()
+            capability = validate_switch_configs_for_fabric(self.fabric, fabric_info, configs)
+            self.log.debug(
+                "Switch capability validation passed for fabric %s using %s matrix",
+                self.fabric,
+                capability.family,
+            )
+        except SwitchFabricCapabilityError as exc:
+            msg = str(exc)
+            self.log.error(msg)
+            self.nd.module.fail_json(msg=msg)
+        except _FABRIC_OPERATION_ERRORS as exc:
+            msg = f"Failed to query fabric '{self.fabric}' capabilities: {exc}"
+            self.log.error(msg)
+            self.nd.module.fail_json(msg=msg)
+
     def _build_check_mode_output(self) -> dict[str, Any]:
         """Build before/after/diff/changed output for check mode.
 
@@ -2849,8 +2913,12 @@ class NDSwitchResourceModule:
             self.log.info("Overridden state with no config — deleting all switches from fabric")
             return self._handle_deleted_state(None)
 
+        if self.state not in ("merged", "replaced", "overridden"):
+            self.nd.module.fail_json(msg=f"Unsupported state: {self.state}")
+
         # --- Validate & classify ------------------------------------------------
         proposed_config = SwitchDiffEngine.validate_configs(self.config, self.state, self.nd, self.log)
+        self._validate_fabric_capabilities(proposed_config)
 
         # Enforce state constraints
         rma_configs = [c for c in proposed_config if c.operation_type == "rma"]

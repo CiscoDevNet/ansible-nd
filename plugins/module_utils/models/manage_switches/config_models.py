@@ -503,7 +503,10 @@ class SwitchConfigModel(NDBaseModel):
     @classmethod
     def normalize_platform_type(cls, v: str | PlatformType | None) -> PlatformType:
         """Normalize platform_type for case-insensitive matching (NX_OS, nx-os, etc.)."""
-        return PlatformType.normalize(v)
+        platform_type = PlatformType.normalize(v)
+        if platform_type in (PlatformType.SONIC, PlatformType.APIC):
+            raise ValueError(f"platform_type '{platform_type.value}' is not supported. " "Supported platform_type values: nx-os, ios-xe, ios-xr, other.")
+        return platform_type
 
     def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
@@ -601,6 +604,19 @@ class SwitchConfigModel(NDBaseModel):
                             "MD5_AES",
                             "SHA_DES",
                             "SHA_AES",
+                            "SHA_AES_256",
+                            "SHA_224",
+                            "SHA_224_AES",
+                            "SHA_224_AES_256",
+                            "SHA_256",
+                            "SHA_256_AES",
+                            "SHA_256_AES_256",
+                            "SHA_384",
+                            "SHA_384_AES",
+                            "SHA_384_AES_256",
+                            "SHA_512",
+                            "SHA_512_AES",
+                            "SHA_512_AES_256",
                         ],
                     ),
                     role=dict(
@@ -621,9 +637,20 @@ class SwitchConfigModel(NDBaseModel):
                             "edge_router",
                             "core_router",
                             "tor",
+                            "tier2_leaf",
                         ],
                     ),
                     preserve_config=dict(type="bool", default=False),
+                    platform_type=dict(
+                        type="str",
+                        default="nx-os",
+                        choices=[
+                            "nx-os",
+                            "ios-xe",
+                            "ios-xr",
+                            "other",
+                        ],
+                    ),
                     poap=dict(
                         type="dict",
                         options=dict(

@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     PayloadUtils,
     SwitchWaitUtils,
@@ -44,6 +44,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch
     SwitchPlan,
     SwitchServiceContext,
     _request_with_retry_policy,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.fabric_capabilities import (
+    SwitchFabricCapabilityError,
+    validate_switch_configs_for_fabric,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -240,6 +244,28 @@ class RecordingFabricOps:
         self.bulk_adds.append(spec)
 
 
+class RecordingFinalizeFabricUtils:
+    """FabricUtils stand-in that exposes endpoint metadata for finalize calls."""
+
+    def __init__(self, calls):
+        self.calls = calls
+        self.ep_config_save = SimpleNamespace(path="/config-save", verb=HttpVerbEnum.POST)
+        self.ep_switch_deploy = SimpleNamespace(path="/switch-deploy", verb=HttpVerbEnum.POST)
+        self.ep_config_deploy = SimpleNamespace(path="/config-deploy", verb=HttpVerbEnum.POST)
+
+    def save_config(self):
+        self.calls.append(("save", None))
+        return {"DATA": {}, "MESSAGE": "saved", "RETURN_CODE": 200}
+
+    def deploy_switches(self, serials):
+        self.calls.append(("deploy_switches", list(serials)))
+        return {"DATA": {}, "MESSAGE": "deployed-switches", "RETURN_CODE": 200}
+
+    def deploy_config(self):
+        self.calls.append(("deploy_config", None))
+        return {"DATA": {}, "MESSAGE": "deployed-config", "RETURN_CODE": 200}
+
+
 class StaticBootstrapCache:
     """Bootstrap cache stand-in with optional refresh data."""
 
@@ -315,6 +341,7 @@ def _resource(state="merged", *, config=None, check_mode=False, existing=None, o
     resource.output.assign(before=resource.before, after=resource.existing)
 
     resource.discovery = SimpleNamespace(discover=lambda configs: {}, build_proposed=lambda configs, discovered, existing_items: [])
+    resource.fabric_utils = SimpleNamespace(get_fabric_info=lambda: {"management": {"type": "vxlan"}})
     resource.fabric_ops = RecordingFabricOps()
     resource.poap_handler = SimpleNamespace(handle=lambda configs, existing_items=None: None)
     resource.rma_handler = SimpleNamespace(handle=lambda configs, existing_items: None)
@@ -394,6 +421,38 @@ def test_validate_configs_accepts_dict_and_rejects_duplicates():
     assert len(configs) == 1
     assert configs[0].role == "leaf"
 
+    sha512_config = SwitchDiffEngine.validate_configs(
+        {"seed_ip": "192.0.2.11", "username": "admin", "password": "password", "auth_proto": "SHA_512_AES_256"},
+        "merged",
+        nd,
+        log,
+    )
+    assert sha512_config[0].auth_proto == "sha-512-aes-256"
+
+    ios_xe_config = SwitchDiffEngine.validate_configs(
+        {"seed_ip": "192.0.2.12", "username": "admin", "password": "password", "platform_type": "IOS_XE"},
+        "merged",
+        nd,
+        log,
+    )
+    assert ios_xe_config[0].platform_type == "ios-xe"
+
+    with pytest.raises(FailJsonError, match="platform_type 'sonic' is not supported"):
+        SwitchDiffEngine.validate_configs(
+            {"seed_ip": "192.0.2.13", "username": "admin", "password": "password", "platform_type": "sonic"},
+            "merged",
+            nd,
+            log,
+        )
+
+    with pytest.raises(FailJsonError, match="platform_type 'apic' is not supported"):
+        SwitchDiffEngine.validate_configs(
+            {"seed_ip": "192.0.2.14", "username": "admin", "password": "password", "platform_type": "apic"},
+            "merged",
+            nd,
+            log,
+        )
+
     with pytest.raises(FailJsonError, match="Duplicate seed_ip"):
         SwitchDiffEngine.validate_configs(
             [
@@ -404,6 +463,71 @@ def test_validate_configs_accepts_dict_and_rejects_duplicates():
             nd,
             log,
         )
+
+
+def test_switch_argument_spec_exposes_supported_platform_type_choices():
+    """Playbook argspec exposes platform_type while excluding unsupported enum values."""
+    platform_spec = SwitchConfigModel.get_argument_spec()["config"]["options"]["platform_type"]
+
+    assert platform_spec["default"] == "nx-os"
+    assert platform_spec["choices"] == ["nx-os", "ios-xe", "ios-xr", "other"]
+
+
+def test_fabric_capability_validation_rejects_campus_leaf_before_writes():
+    """Campus VXLAN rejects leaf role before discovery/add/config-save can start."""
+    config = [{"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf", "preserve_config": False}]
+    resource = _resource(state="merged", config=config)
+    resource.fabric_utils = SimpleNamespace(get_fabric_info=lambda: {"management": {"type": "vxlanCampus"}})
+    resource.discovery = SimpleNamespace(
+        discover=lambda configs: raise_assertion("discovery should not run after capability validation failure"),
+        build_proposed=lambda configs, discovered, existing: [],
+    )
+    resource.fabric_ops = SimpleNamespace(save_config=lambda: raise_assertion("configSave should not run after capability validation failure"))
+
+    with pytest.raises(FailJsonError, match="role 'leaf' is not supported for Campus VXLAN"):
+        resource.manage_state()
+
+
+def test_fabric_capability_validation_allows_campus_border_gateway():
+    """Campus VXLAN accepts the supported border-gateway role with preserve_config=false."""
+    capability = validate_switch_configs_for_fabric(
+        "Campus_AK",
+        {"management": {"type": "vxlanCampus"}},
+        [_cfg(role="border_gateway", preserve_config=False)],
+    )
+
+    assert capability.family == "Campus VXLAN"
+
+
+def test_fabric_capability_validation_rejects_external_without_preserve_config():
+    """External fabrics require brownfield preserve_config=true."""
+    with pytest.raises(SwitchFabricCapabilityError, match="preserve_config 'false' is not supported for External"):
+        validate_switch_configs_for_fabric(
+            "EXT1",
+            {"management": {"type": "externalConnectivity"}},
+            [_cfg(preserve_config=False)],
+        )
+
+
+def test_fabric_capability_validation_rejects_routed_non_nxos():
+    """Routed fabrics reject non-NX-OS platform types."""
+    with pytest.raises(SwitchFabricCapabilityError, match="platform_type 'ios-xe' is not supported for Routed"):
+        validate_switch_configs_for_fabric(
+            "ROUTED1",
+            {"management": {"type": "routed"}},
+            [_cfg(platform_type="ios-xe")],
+        )
+
+
+def test_fabric_capability_validation_allows_ipfm_tier2_leaf():
+    """IPFM exposes tier2_leaf as a supported user-facing role."""
+    capability = validate_switch_configs_for_fabric(
+        "IPFM1",
+        {"management": {"type": "ipfm"}},
+        [_cfg(role="tier2_leaf", preserve_config=False)],
+    )
+
+    assert capability.family == "IPFM"
 
 
 def test_compute_changes_classifies_normal_switches():
@@ -698,7 +822,9 @@ def test_discover_groups_credentials_and_build_proposed_fallbacks(monkeypatch):
 def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
     """Post-add processing covers wait kwargs, role update, finalize, and failure branches."""
     ctx = _ctx()
-    ops = SwitchFabricOps(ctx, fabric_utils=SimpleNamespace(save_config=lambda: None, deploy_switches=lambda serials: None, deploy_config=lambda: None))
+    ctx.save_config = True
+    ctx.deploy_config = True
+    ops = SwitchFabricOps(ctx, fabric_utils=RecordingFinalizeFabricUtils([]))
     wait = RecordingWait()
     ops.post_add_processing(
         PostAddProcessingSpec(
@@ -711,7 +837,8 @@ def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
         )
     )
     assert wait.manageable_calls == [(["SERIAL1"], {"all_preserve_config": True, "skip_greenfield_check": True})]
-    assert [entry["action"] for entry in ctx.results.metadata] == ["save_credentials", "update_role"]
+    assert [entry["action"] for entry in ctx.results.metadata] == ["save_credentials", "update_role", "config_save", "deploy_switches"]
+    assert ctx.results.payload[-1] == {"switchIds": ["SERIAL1"]}
 
     failing_wait = RecordingWait(manageable=False)
     with pytest.raises(FailJsonError, match="failed to become manageable"):
@@ -733,19 +860,28 @@ def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
 def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
     """Finalize chooses save, switch deploy, global deploy, and check-mode no-op correctly."""
     calls = []
-    fabric_utils = SimpleNamespace(
-        save_config=lambda: calls.append(("save", None)),
-        deploy_switches=lambda serials: calls.append(("deploy_switches", list(serials))),
-        deploy_config=lambda: calls.append(("deploy_config", None)),
-    )
-    ctx = SwitchServiceContext(FakeND(), Results(), "FAB1", ListLogger(), save_config=True, deploy_config=True, deploy_type="switch")
+    fabric_utils = RecordingFinalizeFabricUtils(calls)
+    results = Results()
+    ctx = SwitchServiceContext(FakeND(), results, "FAB1", ListLogger(), save_config=True, deploy_config=True, deploy_type="switch")
+    ctx.nd.rest_send.response_current = {"RETURN_CODE": 200, "MESSAGE": "full response"}
+    ctx.nd.rest_send.result_current = {"success": True, "changed": True}
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
     assert calls == [("save", None), ("deploy_switches", ["SERIAL1"])]
+    assert [entry["action"] for entry in results.metadata] == ["config_save", "deploy_switches"]
+    assert results.path == ["/config-save", "/switch-deploy"]
+    assert results.payload == [None, {"switchIds": ["SERIAL1"]}]
+    assert [response["RETURN_CODE"] for response in results.responses] == [200, 200]
 
     calls.clear()
+    results = Results()
     ctx.deploy_type = "global"
+    ctx.results = results
+    ctx.nd.rest_send.response_current = {"RETURN_CODE": 200, "MESSAGE": "full response"}
+    ctx.nd.rest_send.result_current = {"success": True, "changed": True}
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
     assert calls == [("save", None), ("deploy_config", None)]
+    assert [entry["action"] for entry in results.metadata] == ["config_save", "deploy_config"]
+    assert results.path == ["/config-save", "/config-deploy"]
 
     calls.clear()
     ctx.nd.module.check_mode = True

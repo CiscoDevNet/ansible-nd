@@ -87,7 +87,9 @@ options:
                 - For POAP and RMA, should be C(MD5).
                 type: str
                 default: MD5
-                choices: ['MD5', 'SHA', 'MD5_DES', 'MD5_AES', 'SHA_DES', 'SHA_AES']
+                choices: ['MD5', 'SHA', 'MD5_DES', 'MD5_AES', 'SHA_DES', 'SHA_AES', 'SHA_AES_256', 'SHA_224',
+                          'SHA_224_AES', 'SHA_224_AES_256', 'SHA_256', 'SHA_256_AES', 'SHA_256_AES_256',
+                          'SHA_384', 'SHA_384_AES', 'SHA_384_AES_256', 'SHA_512', 'SHA_512_AES', 'SHA_512_AES_256']
             username:
                 description:
                 - Login username for the switch.
@@ -100,6 +102,7 @@ options:
             role:
                 description:
                 - Role to assign to the switch in the fabric.
+                - Supported values depend on the target fabric type. See C(notes).
                 type: str
                 default: leaf
                 choices:
@@ -117,11 +120,24 @@ options:
                 - edge_router
                 - core_router
                 - tor
+                - tier2_leaf
             preserve_config:
                 description:
                 - Set to C(false) for greenfield deployment, C(true) for brownfield.
+                - Supported values depend on the target fabric type. See C(notes).
                 type: bool
                 default: false
+            platform_type:
+                description:
+                - Platform type of the switch.
+                - Supported values depend on the target fabric type. See C(notes).
+                type: str
+                default: nx-os
+                choices:
+                - nx-os
+                - ios-xe
+                - ios-xr
+                - other
             poap:
                 description:
                 - Bootstrap POAP config for the switch.
@@ -268,6 +284,22 @@ notes:
 - Idempotence for B(normal discovery) - A switch is considered idempotent when
   its C(seed_ip) already exists in the fabric inventory with no configuration
   drift (same role).
+- The module validates switch platform, C(role), and C(preserve_config) against
+  the resolved fabric type before discovery or write operations.
+- 'NX-OS only fabrics: Routed, DataCenter VXLAN, Enhanced Classic LAN, AI VXLAN,
+  AI Routed, and IPFM.'
+- 'NX-OS and IOS-XE fabrics: Campus VXLAN.'
+- 'NX-OS, IOS-XE, IOS-XR, and other platform fabrics: External.'
+- C(preserve_config) must be C(false) for Routed, Campus VXLAN, AI VXLAN,
+  AI Routed, and IPFM fabrics.
+- C(preserve_config) must be C(true) for External fabrics.
+- C(preserve_config) can be C(true) or C(false) for DataCenter VXLAN and
+  Enhanced Classic LAN fabrics.
+- Campus VXLAN supports only C(border_gateway), C(border_gateway_spine), and
+  C(border_gateway_super_spine) switch roles.
+- IPFM supports C(leaf), C(spine), and C(tier2_leaf) switch roles.
+- Validation failures include the exact supported platform, C(role), and
+  C(preserve_config) values for the target fabric type.
 """
 
 EXAMPLES = """
