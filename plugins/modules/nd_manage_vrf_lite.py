@@ -83,13 +83,6 @@ options:
         type: int
         default: 10
 
-  force:
-    description:
-    - Reserved for delete workflows.
-    - Currently accepted for interface parity with other ND manage modules.
-    type: bool
-    default: false
-
   config:
     description:
     - List of VRF Lite entries.

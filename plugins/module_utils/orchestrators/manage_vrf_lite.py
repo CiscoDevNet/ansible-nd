@@ -108,12 +108,6 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         if config_actions.get("deploy") and not config_actions.get("save"):
             module.fail_json(msg="Invalid config_actions: config_actions.deploy=true requires config_actions.save=true")
 
-        if module_config.force and state != "deleted":
-            append_runtime_warning(
-                module.params,
-                "Parameter 'force' only applies to state 'deleted'. Ignoring force for state '{0}'.".format(state),
-            )
-
         module.params["config"] = normalized_config
         module.params["_vrf_lite_nested_config"] = list(normalized_config)
         module.params["config_actions"] = config_actions

@@ -316,7 +316,6 @@ class VrfLitePlaybookConfigModel(BaseModel):
     state: Literal["merged", "replaced", "deleted", "overridden", "gathered"] = Field(default="merged")
     # TODO: Replace with the shared fabric_name Field once the collection adds it.
     fabric_name: str = Field(min_length=1)
-    force: bool = Field(default=False)
     verify: VerifyConfigModel | None = Field(default=None)
     config_actions: ConfigActionsModel | None = Field(default=None)
     config: list[VrfLitePlaybookItemModel] | None = Field(default=None)
@@ -330,7 +329,6 @@ class VrfLitePlaybookConfigModel(BaseModel):
         return dict(
             state=dict(type="str", default="merged", choices=["merged", "replaced", "deleted", "overridden", "gathered"]),
             fabric_name=dict(type="str", required=True),
-            force=dict(type="bool", default=False),
             verify=dict(
                 type="dict",
                 required=False,
