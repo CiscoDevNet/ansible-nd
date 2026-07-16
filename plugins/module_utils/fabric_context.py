@@ -14,10 +14,34 @@ the `local` and `fabricStatus` fields used by the pre-flight checks.
 
 from __future__ import annotations
 
+from enum import Enum
+from typing import Literal
+
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsSummaryGet
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+
+
+class _Sentinel(Enum):
+    """
+    # Summary
+
+    Single-member enum used as a typed "not yet fetched" sentinel for lazily-cached values whose fetched value may
+    legitimately be `None`.
+
+    A plain `object()` sentinel cannot be narrowed by a type checker, which forces the cached attribute to be typed
+    `object` and leaks that type into every read. Declaring the sentinel as a single-member `Enum` lets it be spelled
+    `Literal[_Sentinel.UNSET]` in a union, so `is _Sentinel.UNSET` narrows the attribute to its real type.
+
+    Kept module-private: promote to a shared module if a second consumer needs it.
+
+    ## Raises
+
+    None
+    """
+
+    UNSET = 0
 
 
 class FabricContext:
@@ -54,9 +78,8 @@ class FabricContext:
         """
         self._rest_send = rest_send
         self._fabric_name = fabric_name
-        # `_fabric_summary_fetched` distinguishes "not yet fetched" from "fetched but the fabric does not exist" (None).
-        self._fabric_summary: dict | None = None
-        self._fabric_summary_fetched = False
+        # `_Sentinel.UNSET` distinguishes "not yet fetched" from "fetched but the fabric does not exist" (None).
+        self._fabric_summary: dict | None | Literal[_Sentinel.UNSET] = _Sentinel.UNSET
         self._switches: list[dict] | None = None
         self._switch_map: dict[str, str] | None = None
         self._switch_map_by_id: dict[str, str] | None = None
@@ -127,14 +150,13 @@ class FabricContext:
 
         - If the summary payload carries an embedded `code` error key instead of a fabric summary.
         """
-        if not self._fabric_summary_fetched:
+        if self._fabric_summary is _Sentinel.UNSET:
             ep = EpManageFabricsSummaryGet()
             ep.fabric_name = self._fabric_name
             result = self._query_get(ep.path)
             if result and "code" in result:
                 raise RuntimeError(f"GET {ep.path} returned an embedded error instead of a fabric summary: {result.get('message', result)}")
             self._fabric_summary = result if result else None
-            self._fabric_summary_fetched = True
         return self._fabric_summary
 
     def fabric_exists(self) -> bool:
@@ -210,8 +232,7 @@ class FabricContext:
 
         None
         """
-        self._fabric_summary = None
-        self._fabric_summary_fetched = False
+        self._fabric_summary = _Sentinel.UNSET
         self._switches = None
         self._switch_map = None
         self._switch_map_by_id = None

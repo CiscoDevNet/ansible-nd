@@ -23,7 +23,7 @@ import inspect
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformTypeEnum
-from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext, _Sentinel
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -201,6 +201,93 @@ def test_fabric_context_00170() -> None:
     match = r"returned an embedded error instead of a fabric summary"
     with pytest.raises(RuntimeError, match=match):
         result = instance.fabric_summary  # pylint: disable=unused-variable
+
+
+def test_fabric_context_00180() -> None:
+    """
+    # Summary
+
+    Verify a fetched-but-absent (`None`) fabric summary is cached, so repeated reads do not re-issue the GET.
+
+    `None` is a legitimate fetched value here ("the fabric does not exist"), so `_fabric_summary` cannot use `None` to
+    mean "not yet fetched" — it is initialized to the `_Sentinel.UNSET` sentinel instead. Without that sentinel every
+    `fabric_exists()` call against a nonexistent fabric re-queries the controller.
+
+    ## Test
+
+    - GET (summary) returns 404 exactly once; the fixture supplies a single response
+    - `fabric_summary` and `fabric_exists` are read repeatedly
+    - Every read is served from cache; a second GET would exhaust the response generator and fail the test
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_summary
+    - FabricContext.fabric_exists
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="missing_fabric")
+        assert instance._fabric_summary is _Sentinel.UNSET  # pylint: disable=protected-access
+        first = instance.fabric_summary
+        # The cached value is now None (fetched, absent) -- these reads must not re-query.
+        second = instance.fabric_summary
+        exists_first = instance.fabric_exists()
+        exists_second = instance.fabric_exists()
+
+    assert first is None
+    assert second is None
+    assert exists_first is False
+    assert exists_second is False
+    assert instance._fabric_summary is None  # pylint: disable=protected-access
+
+
+def test_fabric_context_00190() -> None:
+    """
+    # Summary
+
+    Verify `invalidate` clears a cached-absent (`None`) fabric summary rather than pinning it, so a fabric created
+    after the first read is observed on the next access.
+
+    Guards the sentinel's reset path: `invalidate` must restore `_Sentinel.UNSET`, not `None`, or the summary would be
+    treated as already-fetched-and-absent forever.
+
+    ## Test
+
+    - GET (summary) returns 404; `fabric_summary` caches `None`
+    - `invalidate` is called
+    - GET (summary) returns 200; `fabric_summary` re-fetches and returns the new summary
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_summary
+    - FabricContext.invalidate
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+        yield responses_fabric_context(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="missing_fabric")
+        before = instance.fabric_summary
+        instance.invalidate()
+        assert instance._fabric_summary is _Sentinel.UNSET  # pylint: disable=protected-access
+        after = instance.fabric_summary
+
+    assert before is None
+    assert after is not None
+    assert after.get("name") == "missing_fabric"
 
 
 # =============================================================================
