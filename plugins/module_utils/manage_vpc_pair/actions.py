@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
@@ -49,50 +48,75 @@ _BLOCKED_FABRIC_TYPES_FOR_VPC_PAIR_DETAILS = {
 }
 
 
-def _first_line(value: Any) -> str:
-    """Return first non-empty line from value converted to string."""
-    text = str(value).strip()
-    if not text:
-        return "unknown error"
-    lines = text.splitlines()
-    return lines[0] if lines else "unknown error"
+def _first_exception_line(error: Exception) -> str:
+    """Return the first message line for an exception."""
+    if not isinstance(error, Exception):
+        raise TypeError("error must be an exception")
+    text = str(error).strip()
+    return text.splitlines()[0] if text else type(error).__name__
 
 
-def _resolve_fabric_type(nd_v2: NDModuleV2, fabric_name: str, module: Any) -> str:
+def _resolve_fabric_type(nd_v2: NDModuleV2, fabric_name: str) -> str:
     """
-    Resolve and cache the canonical fabric type for the current run.
+    Resolve the canonical fabric type from the authoritative fabric endpoint.
 
-    Nexus Dashboard returns the fabric type in ``management.type``. The lookup
-    is fail-open: when the type cannot be determined, return an empty string
-    and skip the VXLAN iBGP/eBGP vpc_pair_details block to avoid false
-    negatives caused by transient lookup failures.
-
-    Candidate precedence is deterministic and based on observed response shapes:
-      1. /api/v1/manage/fabrics/<name> -> management.type
-      2. /api/v1/manage/fabrics/<name>/switches -> fabricType
+    Nexus Dashboard returns the fabric type in ``management.type`` from
+    ``GET /api/v1/manage/fabrics/<name>``. Failure to determine the type is
+    fatal because callers use it to reject unsupported ``vpc_pair_details``
+    before attempting a write.
     """
-    cached = module.params.get("_fabric_type")
-    if isinstance(cached, str) and cached:
-        return cached
-
-    details_path = f"/api/v1/manage/fabrics/{quote(fabric_name, safe='')}"
+    details_path: str | None = None
     try:
+        details_path = VpcPairEndpoints.fabric_details(fabric_name)
         details = nd_v2.request(details_path, HttpVerbEnum.GET)
-    except Exception as exc:
-        module.warn(f"Unable to determine fabric type for '{fabric_name}' while validating " f"vpc_pair_details: {_first_line(exc)}")
-        return ""
+    except NDModuleError as error:
+        _raise_vpc_error(
+            msg=(f"Unable to determine fabric type for '{fabric_name}' while validating " f"vpc_pair_details: {_first_exception_line(error)}"),
+            fabric=fabric_name,
+            path=details_path,
+            status=error.status,
+            exception_type=type(error).__name__,
+        )
+    except (TypeError, ValueError) as error:
+        _raise_vpc_error(
+            msg=(f"Unable to determine fabric type for '{fabric_name}' while validating " f"vpc_pair_details: {_first_exception_line(error)}"),
+            fabric=fabric_name,
+            path=details_path,
+            exception_type=type(error).__name__,
+        )
 
     if not isinstance(details, dict):
-        return ""
+        _raise_vpc_error(
+            msg=(
+                f"Unable to determine fabric type for '{fabric_name}' while validating "
+                f"vpc_pair_details: expected a dictionary response, got {type(details).__name__}"
+            ),
+            fabric=fabric_name,
+            path=details_path,
+            response_type=type(details).__name__,
+        )
 
     management = details.get("management")
-    if isinstance(management, dict):
-        fabric_type = management.get("type")
-        if isinstance(fabric_type, str) and fabric_type:
-            module.params["_fabric_type"] = fabric_type
-            return fabric_type
+    if not isinstance(management, dict):
+        _raise_vpc_error(
+            msg=(f"Unable to determine fabric type for '{fabric_name}' while validating " "vpc_pair_details: response does not contain 'management.type'"),
+            fabric=fabric_name,
+            path=details_path,
+            missing_field="management.type",
+        )
 
-    return ""
+    fabric_type = management.get("type")
+    if not isinstance(fabric_type, str) or not fabric_type.strip():
+        _raise_vpc_error(
+            msg=(
+                f"Unable to determine fabric type for '{fabric_name}' while validating "
+                "vpc_pair_details: response does not contain a non-empty 'management.type'"
+            ),
+            fabric=fabric_name,
+            path=details_path,
+            missing_field="management.type",
+        )
+    return fabric_type.strip()
 
 
 def _get_proposed_vpc_pair_details(proposed_config: Any) -> dict[str, Any] | None:
@@ -112,7 +136,6 @@ def _validate_vpc_pair_details_fabric_support(
     nrm: Any,
     nd_v2: NDModuleV2,
     fabric_name: str,
-    allow_lookup: bool = True,
 ) -> None:
     """
     Block vpc_pair_details on fabrics where it is not supported.
@@ -125,11 +148,10 @@ def _validate_vpc_pair_details_fabric_support(
     if proposed_details is None:
         return
 
-    fabric_type = nrm.module.params.get("_fabric_type")
-    if not isinstance(fabric_type, str) or not fabric_type:
-        if not allow_lookup:
-            return
-        fabric_type = _resolve_fabric_type(nd_v2, fabric_name, nrm.module)
+    fabric_type = nrm.fabric_type
+    if fabric_type is None:
+        fabric_type = _resolve_fabric_type(nd_v2, fabric_name)
+        nrm.fabric_type = fabric_type
 
     if fabric_type in _BLOCKED_FABRIC_TYPES_FOR_VPC_PAIR_DETAILS:
         _raise_vpc_error(
@@ -228,7 +250,6 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
         nrm=nrm,
         nd_v2=nd_v2,
         fabric_name=fabric_name,
-        allow_lookup=not nrm.module.check_mode,
     )
 
     if nrm.module.check_mode:
@@ -281,7 +302,7 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
     except VpcPairResourceError:
         raise
     except Exception as support_error:
-        nrm.module.warn(f"Pairing support check failed for switch {switch_id}: " f"{_first_line(support_error)}. Continuing with create operation.")
+        nrm.module.warn(f"Pairing support check failed for switch {switch_id}: " f"{_first_exception_line(support_error)}. Continuing with create operation.")
 
     # Validate fabric peering support if virtual peer link is requested.
     _validate_fabric_peering_support(
@@ -371,7 +392,6 @@ def custom_vpc_update(nrm: Any) -> dict[str, Any] | None:
         nrm=nrm,
         nd_v2=nd_v2,
         fabric_name=fabric_name,
-        allow_lookup=not nrm.module.check_mode,
     )
 
     if nrm.module.check_mode:

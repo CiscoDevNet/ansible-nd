@@ -59,6 +59,7 @@ class VpcPairStateMachine(NDStateMachine):
         Args:
             module: AnsibleModule instance with validated params
         """
+        self.fabric_type: str | None = None
         super().__init__(module=module, model_orchestrator=VpcPairOrchestrator)
         self.model_orchestrator.bind_state_machine(self)
 
