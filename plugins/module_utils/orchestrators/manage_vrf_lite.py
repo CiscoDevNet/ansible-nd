@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from typing import Any, ClassVar
 
@@ -60,6 +61,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vr
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     NDBaseOrchestrator,
 )
+
+logger = logging.getLogger("nd.ManageVrfLiteOrchestrator")
 
 
 class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
@@ -181,6 +184,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
     def query_all(self, **kwargs: Any) -> list[dict[str, Any]]:
         current = self._query_current_state(flat=True)
+        logger.debug("query_all: loaded %d current VRF Lite attachment row(s)", len(current))
         self._prepare_state_machine_config(current)
         return current
 
@@ -215,6 +219,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             rows = rows_by_vrf[vrf_name]
             if not rows:
                 continue
+            logger.debug("_post_grouped_rows: posting %d attachment row(s) for VRF %s", len(rows), vrf_name)
             responses.append(
                 {
                     "vrf_name": vrf_name,
@@ -228,8 +233,10 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             return {}
         module = self._module()
         if module.check_mode:
+            logger.debug("_post_attach_entries: check_mode, planning %d attach entry(ies)", len(entries))
             return {"planned": [entry.to_config() for entry in entries]}
 
+        logger.info("_post_attach_entries: attaching %d entry(ies) across VRF(s) %s", len(entries), sorted({entry.vrf_name for entry in entries}))
         self._validate_attach_entries(entries)
         rows_by_vrf: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for entry in entries:
@@ -245,8 +252,10 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             return {}
         module = self._module()
         if module.check_mode:
+            logger.debug("_post_detach_entries: check_mode, planning %d detach entry(ies)", len(entries))
             return {"planned": [entry.to_config() for entry in entries]}
 
+        logger.info("_post_detach_entries: detaching %d entry(ies) across VRF(s) %s", len(entries), sorted({entry.vrf_name for entry in entries}))
         rows_by_vrf: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for entry in entries:
             rows_by_vrf[entry.vrf_name].append(build_detach_payload_for_entry(module, entry))
@@ -255,6 +264,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
     def gather(self) -> dict[str, Any]:
         flat_gathered = self._query_current_state(flat=True)
         gathered = group_attachment_entries_to_vrfs(flat_gathered, module=self._module(), include_vrfs=self._public_scope_vrfs())
+        logger.info("gather: returning %d VRF(s) with VRF Lite attachments", len(gathered))
         output = {
             "output_level": self._module().params.get("output_level", "normal"),
             "changed": False,
@@ -273,8 +283,15 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         config_actions = get_config_actions(module.params)
 
         if not config_actions.get("save", False) and not config_actions.get("deploy", False):
+            logger.debug("deploy_pending: save/deploy both disabled, skipping config actions")
             return None
 
+        logger.info(
+            "deploy_pending: executing config actions (save=%s, deploy=%s, type=%s)",
+            config_actions.get("save"),
+            config_actions.get("deploy"),
+            config_actions.get("type"),
+        )
         return self._execute_config_actions(result)
 
     def refresh_verified_state(self, result: dict[str, Any]) -> dict[str, Any]:
@@ -285,6 +302,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         if module.check_mode or not result.get("changed"):
             return result
 
+        logger.debug("refresh_verified_state: re-querying fabric to verify post-deploy state")
         refreshed = self._query_current_state(flat=True)
         result["after"] = group_attachment_entries_to_vrfs(refreshed, module=module, include_vrfs=self._public_scope_vrfs())
         result["current"] = result["after"]
@@ -334,6 +352,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                 flat=True,
             )
         except NDModuleError as error:
+            logger.error("Failed to query VRF Lite state for fabric %s: %s", fabric_name, error.msg)
             error_dict = error.to_dict()
             if "msg" in error_dict:
                 error_dict["api_error_msg"] = error_dict.pop("msg")
@@ -349,6 +368,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
         module.params["_have"] = have
         module.params["_have_loaded"] = True
+        logger.debug("_query_current_state: queried %d attachment row(s) for fabric %s", len(have), fabric_name)
         return have if flat else group_attachment_entries_to_vrfs(have, module=module, include_vrfs=self._public_scope_vrfs())
 
     def _execute_config_actions(self, result: dict[str, Any]) -> dict[str, Any]:
@@ -372,6 +392,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
         deployment_needed = _needs_deployment(result, module)
         if not deployment_needed:
+            logger.info("_execute_config_actions: no changes or out-of-sync attachments, skipping save/deploy")
             return {
                 "msg": "No changes or out-of-sync VRF Lite attachments detected, skipping config actions",
                 "deployment_needed": False,
@@ -385,6 +406,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         # ensures we never push a VRF that the user asked to skip (deploy: false) and
         # also prevents deploying stale VRFs that the run did not actually touch.
         target_vrfs = sorted(set(module.params.get("_changed_vrfs") or []) & requested_deploy_vrfs)
+        logger.info("_execute_config_actions: save=%s deploy=%s target_vrfs=%s", save_enabled, deploy_enabled, target_vrfs)
 
         planned_actions = []
         if save_enabled:
@@ -426,6 +448,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             save_payload = {}
             try:
                 save_resp = request_with_rest_send(module, self.rest_send, VrfLiteEndpoints.config_save(fabric_name), HttpVerbEnum.POST, save_payload)
+                logger.debug("config_save POST succeeded for fabric %s", fabric_name)
                 responses.append(
                     {
                         "operation": "config_save",
@@ -437,6 +460,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                 )
             except NDModuleError as error:
                 if deploy_enabled and _is_non_fatal_config_save_error(error):
+                    logger.warning("config_save returned known non-fatal error: %s; continuing with deploy", error.msg)
                     append_runtime_warning(
                         module.params,
                         "Config save returned a known non-fatal platform error: {0}. Continuing with deploy.".format(error.msg),
@@ -465,6 +489,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                 deploy_payload["switchIds"] = target_switch_ids
             try:
                 deploy_resp = request_with_rest_send(module, self.rest_send, VrfLiteEndpoints.vrf_deployments(fabric_name), HttpVerbEnum.POST, deploy_payload)
+                logger.info("vrf_deploy POST succeeded for VRF(s) %s", target_vrfs)
                 responses.append(
                     {
                         "operation": "vrf_deploy",

@@ -282,10 +282,12 @@ deployment:
 """
 
 import json
+import logging
 
 from ansible.module_utils.basic import AnsibleModule
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
     require_pydantic,
@@ -320,6 +322,9 @@ def main() -> None:
     )
     require_pydantic(module)
 
+    setup_logging(module)
+    log = logging.getLogger("nd.nd_manage_vrf_lite")
+
     try:
         module_config = VrfLitePlaybookConfigModel.model_validate(module.params, by_alias=True, by_name=True)
     except ValidationError as error:
@@ -338,11 +343,13 @@ def main() -> None:
         )
 
     state = module_config.state
+    log.info("nd_manage_vrf_lite invoked: state=%s, fabric=%s, check_mode=%s", state, module_config.fabric_name, module.check_mode)
 
     ManageVrfLiteOrchestrator.prepare_module_params(module, module_config)
 
     try:
         if state == "gathered":
+            log.debug("Dispatching read-only gathered workflow for fabric %s", module_config.fabric_name)
             nd_state_machine = NDStateMachine(module=module, model_orchestrator=ManageVrfLiteOrchestrator)
             result = nd_state_machine.model_orchestrator.gather()
             module.exit_json(**result)
@@ -353,6 +360,7 @@ def main() -> None:
         module.params["state"] = state
 
         module.params["_changed_vrfs"] = sorted({item.vrf_name for item in nd_state_machine.sent})
+        log.info("state=%s: reconciliation complete, changed_vrfs=%s", state, module.params["_changed_vrfs"])
 
         result = nd_state_machine.output.format()
         result.setdefault("current", result.get("after", []))
@@ -360,6 +368,12 @@ def main() -> None:
 
         deploy_result = nd_state_machine.model_orchestrator.deploy_pending(result)
         if deploy_result:
+            log.info(
+                "state=%s: config actions executed, deployment_needed=%s, changed=%s",
+                state,
+                deploy_result.get("deployment_needed", False),
+                deploy_result.get("changed", False),
+            )
             result["deployment"] = deploy_result
             result["deployment_needed"] = deploy_result.get("deployment_needed", False)
             if deploy_result.get("changed"):
@@ -371,9 +385,11 @@ def main() -> None:
 
     except VrfLiteResourceError as error:
         module.params["state"] = state
+        log.error("nd_manage_vrf_lite failed (state=%s): %s", state, error.msg)
         module.fail_json(msg=error.msg, **error.details)
     except Exception as error:
         module.params["state"] = state
+        log.exception("nd_manage_vrf_lite unexpected error (state=%s)", state)
         module.fail_json(msg=str(error))
 
 
