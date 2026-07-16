@@ -23,6 +23,37 @@
         "MESSAGE": "Not Found",
         "DATA": {}
     },
+    "test_fabric_context_00180a": {
+        "TEST_NOTES": [
+            "Fabric summary: 404 not found.",
+            "Single response for the whole test: the fetched-but-absent (None) summary must be cached, so only one GET is issued",
+            "across repeated fabric_summary / fabric_exists reads. A second GET exhausts the generator and fails the test."
+        ],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+    "test_fabric_context_00190a": {
+        "TEST_NOTES": ["Fabric summary: 404 not found (pre-invalidate read for the invalidate-refetch test)"],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+    "test_fabric_context_00190b": {
+        "TEST_NOTES": ["Fabric summary: 200 after the fabric is created; proves invalidate() cleared the cached None rather than pinning it"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "missing_fabric",
+            "ownerCluster": "cluster_a"
+        }
+    },
     "test_fabric_context_00120a": {
         "TEST_NOTES": ["Deployment freeze: enabled (fabricStatus=frozen in summary)"],
         "RETURN_CODE": 200,
