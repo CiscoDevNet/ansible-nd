@@ -1461,6 +1461,38 @@ def test_resource_matches_filter_by_switches():
     assert module._resource_matches_filter(resource, {"switches": ["SER2"]}) is False  # pylint: disable=protected-access
 
 
+@pytest.mark.parametrize("scope_type", ["devicePair", "link"])
+@pytest.mark.parametrize(("src_switch_id", "dst_switch_id"), [("SER1", "SER2"), ("SER2", "SER1")])
+@pytest.mark.parametrize("filter_switch_id", ["SER1", "SER2"])
+def test_resource_matches_filter_by_multi_endpoint_switch(scope_type, src_switch_id, dst_switch_id, filter_switch_id):
+    """Multi-endpoint switch filters match either endpoint in controller order."""
+    module = _resource_manager()
+    resource = _response(
+        scopeDetails={
+            "scopeType": scope_type,
+            "srcSwitchId": src_switch_id,
+            "dstSwitchId": dst_switch_id,
+        }
+    )
+
+    assert module._resource_matches_filter(resource, {"switches": [filter_switch_id]}) is True  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, {"switches": ["SER3"]}) is False  # pylint: disable=protected-access
+
+
+def test_get_switch_ids_supports_raw_multi_endpoint_resource():
+    """_get_switch_ids extracts both endpoint IDs from a raw API dictionary."""
+    module = _resource_manager()
+    resource = {
+        "scopeDetails": {
+            "scopeType": "devicePair",
+            "srcSwitchId": "SER1",
+            "dstSwitchId": "SER2",
+        }
+    }
+
+    assert module._get_switch_ids(resource) == ("SER1", "SER2")  # pylint: disable=protected-access
+
+
 def test_resource_matches_filter_by_resource_value():
     """_resource_matches_filter checks documented resource filters."""
     module = _resource_manager()

@@ -460,6 +460,27 @@ class ResourceManagerResourceHelpersMixin:
             log=self.log,
         )
 
+    def _get_switch_ids(self, resource):
+        """Return all switch IDs from scopeDetails for gathered filtering."""
+        scope_details = ResourceManagerDiffEngine._scope_details(resource)
+        if scope_details is None:
+            return ()
+
+        switch_ids = []
+        primary_switch_id = self._get_switch_id(resource)
+        if primary_switch_id:
+            switch_ids.append(primary_switch_id)
+
+        if self._get_scope_type(resource) in ("device_pair", "link"):
+            if isinstance(scope_details, dict):
+                destination_switch_id = scope_details.get("dstSwitchId")
+            else:
+                destination_switch_id = getattr(scope_details, "dst_switch_id", None)
+            if destination_switch_id and destination_switch_id not in switch_ids:
+                switch_ids.append(destination_switch_id)
+
+        return tuple(switch_ids)
+
     @staticmethod
     def _filter_has_active_criteria(filter_item):
         """Return True when a gathered filter item has at least one criterion."""
@@ -483,7 +504,7 @@ class ResourceManagerResourceHelpersMixin:
         resource_value = self._get_resource_value(resource)
         resource_scope_type = self._get_scope_type(resource)
         resource_pool_type = self._determine_pool_type(resource_value)
-        resource_switch_id = self._get_switch_id(resource)
+        resource_switch_ids = self._get_switch_ids(resource)
 
         filter_entity = filter_item.get("entity_name")
         filter_pool = filter_item.get("pool_name")
@@ -542,25 +563,25 @@ class ResourceManagerResourceHelpersMixin:
             )
             return False
 
-        if filter_switches and resource_switch_id not in filter_switches:
+        if filter_switches and not any(switch_id in filter_switches for switch_id in resource_switch_ids):
             self.log.debug(
-                "manage_gathered: skipping resource id='%s', switchId not in filter: resource_switch='%s', filter_switches=%s",
+                "manage_gathered: skipping resource id='%s', switchIds not in filter: resource_switches=%s, filter_switches=%s",
                 resource_id,
-                resource_switch_id,
+                resource_switch_ids,
                 filter_switches,
             )
             return False
 
         self.log.debug(
             "manage_gathered: resource id='%s' matched filter "
-            "(entity_name='%s', pool_name='%s', resource='%s', scope_type='%s', pool_type='%s', switch_id='%s')",
+            "(entity_name='%s', pool_name='%s', resource='%s', scope_type='%s', pool_type='%s', switch_ids=%s)",
             resource_id,
             resource_entity,
             resource_pool,
             resource_value,
             resource_scope_type,
             resource_pool_type,
-            resource_switch_id,
+            resource_switch_ids,
         )
         return True
 
