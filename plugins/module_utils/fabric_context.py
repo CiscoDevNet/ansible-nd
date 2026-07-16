@@ -145,7 +145,9 @@ class FabricContext:
 
         ## Raises
 
-        None
+        ### RuntimeError
+
+        - If the summary payload carries an embedded `code` error key instead of a fabric summary (via `fabric_summary`).
         """
         return self.fabric_summary is not None
 
@@ -164,7 +166,9 @@ class FabricContext:
 
         ## Raises
 
-        None
+        ### RuntimeError
+
+        - If the summary payload carries an embedded `code` error key instead of a fabric summary (via `fabric_summary`).
         """
         summary = self.fabric_summary
         if summary is None:
@@ -186,7 +190,9 @@ class FabricContext:
 
         ## Raises
 
-        None
+        ### RuntimeError
+
+        - If the summary payload carries an embedded `code` error key instead of a fabric summary (via `fabric_summary`).
         """
         summary = self.fabric_summary
         if summary is None:
@@ -283,6 +289,7 @@ class FabricContext:
         ### RuntimeError
 
         - If the switches API query fails.
+        - If the fabric does not exist.
         """
         self._load_switch_maps()
         if self._switch_map is None:
@@ -303,6 +310,7 @@ class FabricContext:
         ### RuntimeError
 
         - If the switches API query fails.
+        - If the fabric does not exist.
         """
         self._load_switch_maps()
         if self._switch_map_by_id is None:
