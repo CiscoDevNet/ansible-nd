@@ -51,76 +51,104 @@ class TestFabricSupportedPools(unittest.TestCase):
     """Tests for FABRIC_SUPPORTED_POOLS constant."""
 
     def test_vxlan_ibgp_pool_count(self):
-        """Test VXLAN_IBGP has 24 supported pools."""
-        assert len(FABRIC_SUPPORTED_POOLS[FabricTypeEnum.VXLAN_IBGP]) == 24
+        """Test VXLAN_IBGP has 26 supported pools."""
+        assert len(FABRIC_SUPPORTED_POOLS[FabricTypeEnum.VXLAN_IBGP]) == 26
 
     def test_vxlan_ebgp_pool_count(self):
-        """Test VXLAN_EBGP has 21 supported pools."""
-        assert len(FABRIC_SUPPORTED_POOLS[FabricTypeEnum.VXLAN_EBGP]) == 21
+        """Test VXLAN_EBGP has 23 supported pools."""
+        assert len(FABRIC_SUPPORTED_POOLS[FabricTypeEnum.VXLAN_EBGP]) == 23
 
     def test_external_connectivity_pool_count(self):
-        """Test EXTERNAL_CONNECTIVITY has 17 supported pools."""
-        assert len(FABRIC_SUPPORTED_POOLS[FabricTypeEnum.EXTERNAL_CONNECTIVITY]) == 17
+        """Test EXTERNAL_CONNECTIVITY has 18 supported pools."""
+        assert len(FABRIC_SUPPORTED_POOLS[FabricTypeEnum.EXTERNAL_CONNECTIVITY]) == 18
 
     def test_vxlan_ibgp_contains_expected_pools(self):
         """Test VXLAN_IBGP contains expected pool names."""
         pools = FABRIC_SUPPORTED_POOLS[FabricTypeEnum.VXLAN_IBGP]
         expected = {
-            "LOOPBACK_ID",
-            "LOOPBACK0_IP_POOL",
+            "ANYCAST_RP_IP_POOL",
+            "BGP_ASN_ID",
+            "DCI subnet pool",
+            "HYPERSHIELD_HA_PEER_LINK_SUBNET_POOL",
+            "HYPERSHIELD_HA_SOURCE_IP_POOL",
+            "IPv6 DCI subnet pool",
             "L2_VNI",
             "L3_VNI",
-            "VPC_ID",
-            "VPC_DOMAIN_ID",
-            "VPC_PEER_LINK_VLAN",
-            "PORT_CHANNEL_ID",
-            "FEX_ID",
-            "TOP_DOWN_L3_DOT1Q",
-            "TOP_DOWN_NETWORK_VLAN",
-            "TOP_DOWN_VRF_VLAN",
-            "BGP_ASN_ID",
+            "LOOPBACK0_IP_POOL",
+            "LOOPBACK1_IP_POOL",
             "MCAST_IP_POOL",
+            "MPLS_LOOPBACK_IP_POOL",
+            "OBJECT_TRACKING_NUMBER_POOL",
+            "ROUTE_MAP_SEQUENCE_NUMBER_POOL",
+            "SLA_ID",
+            "SUBNET",
+            "VPC_DOMAIN_ID",
+            "fexId",
+            "loopbackId",
+            "networkVlan",
+            "portChannelId",
+            "serviceNetworkVlan",
+            "topDownL3Dot1q",
+            "vpcId",
+            "vpcPeerLinkVlan",
+            "vrfVlan",
         }
-        assert expected.issubset(pools)
+        assert pools == expected
 
     def test_vxlan_ebgp_contains_expected_pools(self):
         """Test VXLAN_EBGP contains expected pool names."""
         pools = FABRIC_SUPPORTED_POOLS[FabricTypeEnum.VXLAN_EBGP]
         expected = {
-            "LOOPBACK_ID",
-            "LOOPBACK0_IP_POOL",
-            "L2_VNI",
-            "VPC_ID",
-            "VPC_DOMAIN_ID",
-            "VPC_PEER_LINK_VLAN",
-            "PORT_CHANNEL_ID",
-            "FEX_ID",
-            "TOP_DOWN_L3_DOT1Q",
-            "TOP_DOWN_NETWORK_VLAN",
+            "ANYCAST_RP_IP_POOL",
+            "DCI subnet pool",
             "DEVICE_BGP_ASN",
+            "HYPERSHIELD_HA_PEER_LINK_SUBNET_POOL",
+            "HYPERSHIELD_HA_SOURCE_IP_POOL",
+            "IPv6 DCI subnet pool",
+            "L2_VNI",
+            "L3_VNI",
+            "LOOPBACK0_IP_POOL",
+            "LOOPBACK1_IP_POOL",
+            "MCAST_IP_POOL",
             "ROUTER_ID_POOL",
+            "ROUTE_MAP_SEQUENCE_NUMBER_POOL",
+            "SUBNET",
+            "VPC_DOMAIN_ID",
+            "fexId",
+            "loopbackId",
+            "networkVlan",
+            "portChannelId",
+            "topDownL3Dot1q",
+            "vpcId",
+            "vpcPeerLinkVlan",
+            "vrfVlan",
         }
-        assert expected.issubset(pools)
+        assert pools == expected
 
     def test_external_connectivity_contains_expected_pools(self):
         """Test EXTERNAL_CONNECTIVITY contains expected pool names."""
         pools = FABRIC_SUPPORTED_POOLS[FabricTypeEnum.EXTERNAL_CONNECTIVITY]
         expected = {
-            "LOOPBACK_ID",
-            "LOOPBACK0_IP_POOL",
+            "DCI subnet pool",
+            "HYPERSHIELD_HA_PEER_LINK_SUBNET_POOL",
+            "HYPERSHIELD_HA_SOURCE_IP_POOL",
+            "INSTANCE_ID",
+            "IPv6 DCI subnet pool",
             "L2_VNI",
             "L3_VNI",
-            "VPC_ID",
-            "VPC_DOMAIN_ID",
-            "PORT_CHANNEL_ID",
-            "FEX_ID",
-            "TOP_DOWN_L3_DOT1Q",
-            "TOP_DOWN_NETWORK_VLAN",
+            "LOOPBACK0_IP_POOL",
+            "LOOPBACK_IPV6_POOL",
+            "ROUTE_MAP_SEQUENCE_NUMBER_POOL",
             "TUNNEL_ID_IOS_XE",
-            "PORT_CHANNEL_ID_IOS_XE",
-            "INSTANCE_ID",
+            "VPC_DOMAIN_ID",
+            "fexId",
+            "loopbackId",
+            "networkVlan",
+            "portChannelId",
+            "topDownL3Dot1q",
+            "vpcId",
         }
-        assert expected.issubset(pools)
+        assert pools == expected
 
     def test_supported_pools_are_frozensets(self):
         """Test all supported pools are immutable frozensets."""
@@ -183,37 +211,37 @@ class TestGetSupportedPoolsFunction(unittest.TestCase):
     def test_get_supported_pools_with_enum_vxlan_ibgp(self):
         """Test get_supported_pools with FabricTypeEnum.VXLAN_IBGP."""
         pools = get_supported_pools(FabricTypeEnum.VXLAN_IBGP)
-        assert len(pools) == 24
-        assert "LOOPBACK_ID" in pools
+        assert len(pools) == 26
+        assert "loopbackId" in pools
 
     def test_get_supported_pools_with_enum_vxlan_ebgp(self):
         """Test get_supported_pools with FabricTypeEnum.VXLAN_EBGP."""
         pools = get_supported_pools(FabricTypeEnum.VXLAN_EBGP)
-        assert len(pools) == 21
+        assert len(pools) == 23
         assert "ROUTER_ID_POOL" in pools
 
     def test_get_supported_pools_with_enum_external(self):
         """Test get_supported_pools with FabricTypeEnum.EXTERNAL_CONNECTIVITY."""
         pools = get_supported_pools(FabricTypeEnum.EXTERNAL_CONNECTIVITY)
-        assert len(pools) == 17
+        assert len(pools) == 18
         assert "TUNNEL_ID_IOS_XE" in pools
 
     def test_get_supported_pools_with_string_vxlan_ibgp(self):
         """Test get_supported_pools with 'vxlanIbgp' string."""
         pools = get_supported_pools("vxlanIbgp")
-        assert len(pools) == 24
-        assert "LOOPBACK_ID" in pools
+        assert len(pools) == 26
+        assert "loopbackId" in pools
 
     def test_get_supported_pools_with_string_vxlan_ebgp_old(self):
         """Test get_supported_pools with 'vxlanEbgp' (old) string."""
         pools = get_supported_pools("vxlanEbgp")
-        assert len(pools) == 21
+        assert len(pools) == 23
         assert "ROUTER_ID_POOL" in pools
 
     def test_get_supported_pools_with_string_external(self):
         """Test get_supported_pools with 'externalConnectivity' string."""
         pools = get_supported_pools("externalConnectivity")
-        assert len(pools) == 17
+        assert len(pools) == 18
         assert "TUNNEL_ID_IOS_XE" in pools
 
     def test_get_supported_pools_with_invalid_string(self):
@@ -270,23 +298,23 @@ class TestIsPoolSupportedFunction(unittest.TestCase):
 
     def test_is_pool_supported_exact_vxlan_ibgp_enum(self):
         """Test is_pool_supported with exact-match VXLAN_IBGP pool (enum)."""
-        assert is_pool_supported(FabricTypeEnum.VXLAN_IBGP, "LOOPBACK_ID")
+        assert is_pool_supported(FabricTypeEnum.VXLAN_IBGP, "loopbackId")
         assert is_pool_supported(FabricTypeEnum.VXLAN_IBGP, "L2_VNI")
         assert is_pool_supported(FabricTypeEnum.VXLAN_IBGP, "MCAST_IP_POOL")
 
     def test_is_pool_supported_exact_vxlan_ibgp_string(self):
         """Test is_pool_supported with exact-match VXLAN_IBGP pool (string)."""
-        assert is_pool_supported("vxlanIbgp", "LOOPBACK_ID")
+        assert is_pool_supported("vxlanIbgp", "loopbackId")
         assert is_pool_supported("vxlanIbgp", "L2_VNI")
 
     def test_is_pool_supported_exact_vxlan_ebgp_enum(self):
         """Test is_pool_supported with exact-match VXLAN_EBGP pool (enum)."""
-        assert is_pool_supported(FabricTypeEnum.VXLAN_EBGP, "LOOPBACK_ID")
+        assert is_pool_supported(FabricTypeEnum.VXLAN_EBGP, "loopbackId")
         assert is_pool_supported(FabricTypeEnum.VXLAN_EBGP, "ROUTER_ID_POOL")
 
     def test_is_pool_supported_exact_vxlan_ebgp_old_string(self):
         """Test is_pool_supported with exact-match VXLAN_EBGP pool ('vxlanEbgp')."""
-        assert is_pool_supported("vxlanEbgp", "LOOPBACK_ID")
+        assert is_pool_supported("vxlanEbgp", "loopbackId")
         assert is_pool_supported("vxlanEbgp", "ROUTER_ID_POOL")
 
     def test_is_pool_supported_exact_external_enum(self):
@@ -360,7 +388,7 @@ class TestIsPoolSupportedFunction(unittest.TestCase):
     def test_is_pool_supported_combination_vxlan_ebgp(self):
         """Test is_pool_supported with mix of exact and dynamic pools for VXLAN_EBGP."""
         # Exact matches
-        assert is_pool_supported("vxlanEbgp", "LOOPBACK_ID")
+        assert is_pool_supported("vxlanEbgp", "loopbackId")
         assert is_pool_supported("vxlanEbgp", "DCI subnet pool")
         # Dynamic matches
         assert is_pool_supported("vxlanEbgp", "10.4.0.0/30")
@@ -371,13 +399,14 @@ class TestIsPoolSupportedFunction(unittest.TestCase):
 
     def test_is_pool_supported_case_sensitive(self):
         """Test is_pool_supported is case-sensitive for pool names."""
-        assert is_pool_supported("vxlanEbgp", "LOOPBACK_ID")
+        assert is_pool_supported("vxlanEbgp", "loopbackId")
+        assert not is_pool_supported("vxlanEbgp", "LOOPBACK_ID")
         assert not is_pool_supported("vxlanEbgp", "loopback_id")
-        assert not is_pool_supported("vxlanEbgp", "Loopback_Id")
+        assert not is_pool_supported("vxlanEbgp", "LoopbackId")
 
     def test_is_pool_supported_invalid_fabric_type(self):
         """Test is_pool_supported returns False for invalid fabric type."""
-        assert not is_pool_supported("invalid_type", "LOOPBACK_ID")
+        assert not is_pool_supported("invalid_type", "loopbackId")
         assert not is_pool_supported("invalid_type", "10.4.0.0/30")
 
     def test_is_pool_supported_empty_pool_name(self):
@@ -390,8 +419,8 @@ class TestIntegration(unittest.TestCase):
     """Integration tests combining multiple functions."""
 
     def test_all_fabrics_have_supported_pools(self):
-        """Test all fabric types have supported pools defined."""
-        for fabric_type in FabricTypeEnum:
+        """Test all mapped fabric types have supported pools defined."""
+        for fabric_type in FABRIC_SUPPORTED_POOLS:
             pools = get_supported_pools(fabric_type)
             assert len(pools) > 0, f"{fabric_type} has no supported pools"
 

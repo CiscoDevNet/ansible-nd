@@ -384,11 +384,14 @@ class ResourceManagerResourceHelpersMixin:
             resource_value = self._get_resource_value(res)
             scope_type = self._get_scope_type(res)
             switch_ip = self._get_switch_ip(res)
+            vrf_name = self._get_vrf_name(res)
+            is_pre_allocated = self._get_is_pre_allocated(res)
             pool_type = self._determine_pool_type(resource_value)
             self.log.debug(
                 "translate_gathered_results: [%s] resolved fields — "
                 "entity_name='%s', pool_name='%s', scope_type='%s', "
-                "pool_type='%s', resource_value='%s', switch_ip='%s'",
+                "pool_type='%s', resource_value='%s', switch_ip='%s', "
+                "vrf_name='%s', is_pre_allocated='%s'",
                 res_idx,
                 entity_name,
                 pool_name,
@@ -396,6 +399,8 @@ class ResourceManagerResourceHelpersMixin:
                 pool_type,
                 resource_value,
                 switch_ip,
+                vrf_name,
+                is_pre_allocated,
             )
 
             item = {
@@ -405,6 +410,10 @@ class ResourceManagerResourceHelpersMixin:
                 "scope_type": scope_type,
                 "resource": resource_value,
             }
+            if vrf_name is not None:
+                item["vrf_name"] = vrf_name
+            if is_pre_allocated is not None:
+                item["is_pre_allocated"] = is_pre_allocated
             if scope_type != "fabric" and switch_ip:
                 item["switches"] = [switch_ip]
                 self.log.debug(

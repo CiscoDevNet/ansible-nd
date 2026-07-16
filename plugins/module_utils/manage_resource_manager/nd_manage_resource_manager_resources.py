@@ -666,6 +666,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             self._get_resource_value(resource),
             self._get_scope_type(resource),
             self._get_switch_id(resource),
+            self._get_vrf_name(resource) or "default",
         )
         self.log.debug("_resource_unique_key: key=%s", key)
         return key
@@ -1084,9 +1085,10 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         classify each proposed resource as ``to_add`` (new) or ``to_update`` (value
         changed).  Idempotent resources (already matching) are skipped.
 
-        In check mode, logs what would be created without issuing any API calls.
-        Otherwise, sends a single batch POST request containing all pending payloads and
-        validates each item in the response against the sent config via
+        In check mode, logs what would be deleted and created without issuing any
+        API calls. Otherwise, removes existing resources for updates before sending
+        a batch POST request containing all pending payloads, and validates each
+        item in the response against the sent config via
         ``ResourceManagerDiffEngine.validate_resource_api_fields``.
 
         Raises:
@@ -1104,13 +1106,40 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         # Propagate partial-match mismatch diagnostics to the output diff (GAP-7).
         self.changed_dict[0]["debugs"].extend(changes["debugs"])
 
-        # Resources that need to be created: new (to_add) or value changed (to_update).
-        pending_items: list[tuple[ResourceManagerConfigModel, str, ResourceManagerResponse]] = changes["to_add"] + changes["to_update"]
+        # Resources that need to be created: new (to_add) or replacement after delete (to_update).
+        to_add_items: list[tuple[ResourceManagerConfigModel, str, ResourceManagerResponse]] = changes["to_add"]
+        to_update_items: list[tuple[ResourceManagerConfigModel, str, ResourceManagerResponse]] = changes["to_update"]
+        pending_items: list[tuple[ResourceManagerConfigModel, str, ResourceManagerResponse]] = to_add_items + to_update_items
 
         if not pending_items:
             self.log.debug("manage_merged: No resources to create (all idempotent).")
             self._register_result("merge", OperationType.QUERY, "all resources idempotent", changed=False)
             return
+
+        update_resource_ids = []
+        for cfg, sw, existing_res in to_update_items:
+            rid = self._get_resource_id(existing_res)
+            if rid is None:
+                raise ValueError(
+                    "manage_merged: Cannot update resource entity_name={0}, pool_name={1}, scope_type={2}, switch_ip={3}: "
+                    "matched existing resource has no resourceId, so the current allocation cannot be released before replacement".format(
+                        cfg.entity_name,
+                        cfg.pool_name,
+                        cfg.scope_type,
+                        sw,
+                    )
+                )
+            if rid not in update_resource_ids:
+                update_resource_ids.append(rid)
+                self.log.debug(
+                    "manage_merged: Queuing resource ID '%s' for update deletion (entity_name=%s, pool_name=%s, switch_ip=%s)",
+                    rid,
+                    cfg.entity_name,
+                    cfg.pool_name,
+                    sw,
+                )
+            else:
+                self.log.debug("manage_merged: Resource ID '%s' already queued for update deletion, skipping duplicate", rid)
 
         # Build payload list alongside a cfg reference for post-create validation (GAP-5).
         pending_payloads = []
@@ -1126,15 +1155,31 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             )
 
         # Track diff BEFORE the API call so --check mode also shows what would change (GAP-3).
+        self.changed_dict[0]["deleted"].extend(str(r) for r in update_resource_ids)
         self.changed_dict[0]["merged"].extend(p for _cfg, p in pending_payloads)
 
-        ep = EpManageFabricResourcesPost(fabric_name=self.fabric)
+        create_ep = EpManageFabricResourcesPost(fabric_name=self.fabric)
         if self.nd.module.check_mode:
             self.log.info(
-                "Check mode: would create %s resource(s) for fabric=%s",
+                "Check mode: would delete %s resource(s) and create %s resource(s) for fabric=%s",
+                len(update_resource_ids),
                 len(pending_payloads),
                 self.fabric,
             )
+
+            if update_resource_ids:
+                remove_ep = EpManageFabricResourcesActionsRemovePost(fabric_name=self.fabric)
+                remove_req = RemoveResourcesByIdsRequest(resource_ids=update_resource_ids)
+                self._register_result(
+                    "merge",
+                    OperationType.DELETE,
+                    "check mode — skipped update delete",
+                    changed=True,
+                    diff={"deleted": update_resource_ids},
+                    verb=HttpVerbEnum.POST,
+                    path=remove_ep.path,
+                    payload=remove_req.to_payload(),
+                )
 
             payloads_only = [p for _cfg, p in pending_payloads]
             batch_payload = ResourceManagerBatchRequest.model_validate({"resources": payloads_only}).to_payload()
@@ -1145,10 +1190,65 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 changed=True,
                 diff={"merged": payloads_only},
                 verb=HttpVerbEnum.POST,
-                path=ep.path,
+                path=create_ep.path,
                 payload=batch_payload,
             )
             return
+
+        if update_resource_ids:
+            remove_ep = EpManageFabricResourcesActionsRemovePost(fabric_name=self.fabric)
+            remove_req = RemoveResourcesByIdsRequest(resource_ids=update_resource_ids)
+            self.log.info(
+                "manage_merged: Removing %s existing resource(s) before replacement for fabric=%s",
+                len(update_resource_ids),
+                self.fabric,
+            )
+            api_start = time.monotonic()
+            try:
+                remove_resp_data = self.nd.request(remove_ep.path, remove_ep.verb, data=remove_req.to_payload())
+            except Exception:
+                self.log.exception(
+                    "manage_merged: Update delete API call failed after %.3f second(s) (path=%s, resource_count=%s)",
+                    time.monotonic() - api_start,
+                    remove_ep.path,
+                    len(update_resource_ids),
+                )
+                raise ValueError(
+                    f"manage_merged: Update delete API call failed {time.monotonic() - api_start:.3f} second(s) "
+                    f"(path={remove_ep.path}, resource_count={len(update_resource_ids)})"
+                )
+            api_elapsed = time.monotonic() - api_start
+            self.log.info(
+                "manage_merged: Update delete API response time %.3f second(s) (path=%s, resource_count=%s)",
+                api_elapsed,
+                remove_ep.path,
+                len(update_resource_ids),
+            )
+
+            remove_response = RemoveResourcesByIdsResponse.from_response(remove_resp_data)
+            self.log.debug(
+                "manage_merged: Update delete API response parsed — %s item(s) returned",
+                len(remove_response.resources),
+            )
+            self._validate_remove_response_for_failures(remove_response, len(update_resource_ids))
+
+            for resp_item in remove_response.resources:
+                if isinstance(resp_item, dict):
+                    resp_item_data = resp_item
+                else:
+                    resp_item_data = resp_item.model_dump(by_alias=True, exclude_none=True)
+                self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item_data})
+
+            self._register_result(
+                "merge",
+                OperationType.DELETE,
+                f"deleted {len(update_resource_ids)} resource(s) before update replacement",
+                changed=True,
+                diff={"deleted": update_resource_ids},
+                verb=HttpVerbEnum.POST,
+                path=remove_ep.path,
+                payload=remove_req.to_payload(),
+            )
 
         self.log.info(
             "manage_merged: Making batch API call with %s resource(s) for fabric=%s",
@@ -1160,23 +1260,23 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         batch = ResourceManagerBatchRequest.model_validate({"resources": payloads_only})
         api_start = time.monotonic()
         try:
-            resp_data = self.nd.request(ep.path, ep.verb, data=batch.to_payload())
+            resp_data = self.nd.request(create_ep.path, create_ep.verb, data=batch.to_payload())
         except Exception:
             self.log.exception(
                 "manage_merged: Batch create API call failed after %.3f second(s) (path=%s, resource_count=%s)",
                 time.monotonic() - api_start,
-                ep.path,
+                create_ep.path,
                 len(pending_payloads),
             )
             raise ValueError(
                 f"manage_merged: Batch create API call failed {time.monotonic() - api_start:.3f} second(s)"
-                f" (path={ep.path}, resource_count={len(pending_payloads)})"
+                f" (path={create_ep.path}, resource_count={len(pending_payloads)})"
             )
         api_elapsed = time.monotonic() - api_start
         self.log.info(
             "manage_merged: Batch create API response time %.3f second(s) (path=%s, resource_count=%s)",
             api_elapsed,
-            ep.path,
+            create_ep.path,
             len(pending_payloads),
         )
 
@@ -1240,7 +1340,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             changed=True,
             diff={"merged": [p for _cfg, p in pending_payloads]},
             verb=HttpVerbEnum.POST,
-            path=ep.path,
+            path=create_ep.path,
             payload=batch.to_payload(),
         )
 

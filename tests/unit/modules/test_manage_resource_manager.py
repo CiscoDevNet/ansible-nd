@@ -412,6 +412,34 @@ def test_resource_manager_config_rejects_unknown_id_pool_name():
         )
 
 
+@pytest.mark.parametrize(
+    ("pool_name", "resource"),
+    [
+        ("SLA_ID", "10300"),
+        ("DEVICE_BGP_ASN", "5200"),
+    ],
+)
+def test_resource_manager_config_accepts_fabric_specific_device_id_pools(pool_name, resource):
+    """Fabric-specific ID pools validate with device scope."""
+    if not HAS_PYDANTIC:
+        pytest.skip("Strict validator behavior requires pydantic runtime")
+
+    model = ResourceManagerConfigModel.model_validate(
+        {
+            "entity_name": "{0}_load_1".format(pool_name.lower()),
+            "pool_type": "ID",
+            "pool_name": pool_name,
+            "scope_type": "device",
+            "switches": ["SER1"],
+            "resource": resource,
+        },
+        context={"state": "merged"},
+    )
+
+    assert model.pool_name == pool_name
+    assert model.scope_type == "device"
+
+
 def test_resource_manager_config_allows_partial_gathered_filter():
     """Gathered filters may provide partial criteria without switches."""
     model = ResourceManagerConfigModel.model_validate({"scope_type": "device"}, context={"state": "gathered"})
@@ -614,6 +642,8 @@ def test_resource_manager_gathered_filter_matches_switch_id_and_translates_switc
             "pool_name": "LOOPBACK_ID",
             "scope_type": "device",
             "resource": "10",
+            "vrf_name": "default",
+            "is_pre_allocated": False,
             "switches": ["192.0.2.10"],
         }
     ]
@@ -1445,6 +1475,29 @@ def test_apply_gathered_filters_single_filter():
     assert gathered[0]["entity_name"] == "loopback0"
 
 
+def test_apply_gathered_filters_matches_fabric_entity_only_filter():
+    """Entity-only gathered filters match fabric resources from local candidates."""
+    module = _resource_manager()
+    module.config = [{"entity_name": "ibgp_all_vpc_domain_fabric"}]
+    module._all_resources = [  # pylint: disable=protected-access
+        _response(
+            resourceId=101,
+            entityName="ibgp_all_vpc_domain_fabric",
+            poolName="VPC_DOMAIN_ID",
+            scopeDetails={
+                "scopeType": "fabric",
+                "fabricName": "fabric-1",
+            },
+        ),
+        _response(resourceId=102, entityName="ibgp_all_l3_vni_fabric", poolName="L3_VNI"),
+    ]
+
+    gathered = module._apply_gathered_filters()  # pylint: disable=protected-access
+
+    assert len(gathered) == 1
+    assert gathered[0]["entity_name"] == "ibgp_all_vpc_domain_fabric"
+
+
 def test_apply_gathered_filters_matches_reversed_device_pair_entity_name():
     """Gathered entity filters match device-pair serials in either order."""
     module = _resource_manager()
@@ -1466,6 +1519,29 @@ def test_apply_gathered_filters_matches_reversed_device_pair_entity_name():
 
     assert len(gathered) == 1
     assert gathered[0]["entity_name"] == "SER1~SER2"
+
+
+def test_apply_gathered_filters_infers_reversed_device_pair_entity_name():
+    """Gathered entity filters infer device-pair matching when scope_type is omitted."""
+    module = _resource_manager()
+    module.config = [{"entity_name": "SER2~SER1~PAIR"}]
+    module._all_resources = [  # pylint: disable=protected-access
+        _response(
+            entityName="SER1~SER2~PAIR",
+            poolName="VPC_ID",
+            scopeDetails={
+                "scopeType": "devicePair",
+                "srcSwitchId": "SER1",
+                "dstSwitchId": "SER2",
+            },
+        ),
+        _response(resourceId=102, entityName="SER1~SER2~OTHER"),
+    ]
+
+    gathered = module._apply_gathered_filters()  # pylint: disable=protected-access
+
+    assert len(gathered) == 1
+    assert gathered[0]["entity_name"] == "SER1~SER2~PAIR"
 
 
 def test_apply_gathered_filters_matches_reversed_link_entity_name():
@@ -1494,17 +1570,50 @@ def test_apply_gathered_filters_matches_reversed_link_entity_name():
     assert gathered[0]["entity_name"] == "SER1~Ethernet1/6~SER2~Ethernet1/10"
 
 
-def test_build_gathered_resource_criteria_omits_entity_filter_for_multi_endpoint_names():
-    """Multi-endpoint gathered filters use local entity matching instead of exact API filtering."""
+def test_apply_gathered_filters_infers_reversed_link_entity_name():
+    """Gathered entity filters infer link matching when scope_type is omitted."""
+    module = _resource_manager()
+    module.config = [{"entity_name": "SER2~Ethernet1/10~SER1~Ethernet1/6"}]
+    module._all_resources = [  # pylint: disable=protected-access
+        _response(
+            entityName="SER1~Ethernet1/6~SER2~Ethernet1/10",
+            poolName="SUBNET",
+            resourceValue="fd00:333:4:2::/64",
+            scopeDetails={
+                "scopeType": "link",
+                "srcSwitchId": "SER1",
+                "srcInterfaceName": "Ethernet1/6",
+                "dstSwitchId": "SER2",
+                "dstInterfaceName": "Ethernet1/10",
+            },
+        ),
+        _response(resourceId=102, entityName="SER2~Ethernet1/6~SER1~Ethernet1/10"),
+    ]
+
+    gathered = module._apply_gathered_filters()  # pylint: disable=protected-access
+
+    assert len(gathered) == 1
+    assert gathered[0]["entity_name"] == "SER1~Ethernet1/6~SER2~Ethernet1/10"
+
+
+def test_build_gathered_resource_criteria_omits_entity_filter_for_entity_names():
+    """Gathered filters use local entity matching instead of exact API filtering."""
     module = _resource_manager()
     module.config = [
+        {"entity_name": "ibgp_all_vpc_domain_fabric"},
+        {"entity_name": "loopback0", "pool_name": "LOOPBACK_ID"},
         {"entity_name": "SER2~SER1", "scope_type": "device_pair"},
         {"entity_name": "SER2~Ethernet1/10~SER1~Ethernet1/6", "scope_type": "link"},
     ]
 
     criteria = module._build_gathered_resource_criteria()  # pylint: disable=protected-access
 
-    assert criteria == [(None, None, None), (None, None, None)]
+    assert criteria == [
+        (None, None, None),
+        ("LOOPBACK_ID", None, None),
+        (None, None, None),
+        (None, None, None),
+    ]
 
 
 def test_apply_gathered_filters_multiple_filters_with_dedup():
@@ -1638,6 +1747,46 @@ def test_normalize_entity_key_device_pair_preserves_label_and_ignores_serial_ord
     assert result != different_label
 
 
+def test_normalize_entity_key_strips_entity_and_parts():
+    """_normalize_entity_key trims exact names and tilde-separated parts."""
+    exact = ResourceManagerDiffEngine._normalize_entity_key(" loopback0 ", LOG)
+    pair = ResourceManagerDiffEngine._normalize_entity_key(
+        " SER2 ~ SER1 ~ PAIR ",
+        LOG,
+        scope_type="device_pair",
+    )
+    reversed_pair = ResourceManagerDiffEngine._normalize_entity_key(
+        "SER1~SER2~PAIR",
+        LOG,
+        scope_type="device_pair",
+    )
+
+    assert exact == ("exact", "loopback0")
+    assert pair == reversed_pair
+
+
+def test_normalize_entity_key_device_pair_matches_nd_reordered_entity_name():
+    """_normalize_entity_key matches ND device-pair names when ND reverses serial order."""
+    requested = ResourceManagerDiffEngine._normalize_entity_key(
+        "9CODD3GJCC6~9CNJ9CWP24C~base_vpc_id_pair",
+        LOG,
+        scope_type="device_pair",
+    )
+    nd_response = ResourceManagerDiffEngine._normalize_entity_key(
+        "9CNJ9CWP24C~9CODD3GJCC6~base_vpc_id_pair",
+        LOG,
+        scope_type="devicePair",
+    )
+    different_label = ResourceManagerDiffEngine._normalize_entity_key(
+        "9CNJ9CWP24C~9CODD3GJCC6~other_vpc_id_pair",
+        LOG,
+        scope_type="devicePair",
+    )
+
+    assert requested == nd_response
+    assert requested != different_label
+
+
 def test_normalize_entity_key_link_preserves_serial_interface_pairs():
     """_normalize_entity_key compares links as unordered endpoint pairs."""
     result = ResourceManagerDiffEngine._normalize_entity_key(
@@ -1766,7 +1915,7 @@ def test_manage_state_merged_fetches_full_inventory_before_diffing():
         {
             "entity_name": "loopback0",
             "pool_type": "ID",
-            "pool_name": "LOOPBACK_ID",
+            "pool_name": "loopbackId",
             "scope_type": "device",
             "switches": ["192.0.2.10"],
             "resource": "10",
@@ -1776,10 +1925,10 @@ def test_manage_state_merged_fetches_full_inventory_before_diffing():
     nd.request.return_value = {
         "resources": [
             {
-                "resourceId": 101,
-                "entityName": "loopback0",
-                "poolName": "LOOPBACK_ID",
-                "resourceValue": "10",
+                    "resourceId": 101,
+                    "entityName": "loopback0",
+                    "poolName": "loopbackId",
+                    "resourceValue": "10",
                 "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
                 "status": None,
             }
@@ -1812,7 +1961,7 @@ def test_manage_state_deleted_fetches_full_inventory_before_matching():
         {
             "entity_name": "loopback0",
             "pool_type": "ID",
-            "pool_name": "LOOPBACK_ID",
+            "pool_name": "loopbackId",
             "scope_type": "device",
             "switches": ["192.0.2.10"],
         }
@@ -1841,11 +1990,11 @@ def test_manage_state_deleted_fetches_full_inventory_before_matching():
 
 
 def test_manage_state_gathered_uses_filtered_candidate_get():
-    """Gathered state pushes pool, switch, and entity filters to resource GET."""
+    """Gathered state pushes pool and switch filters to resource GET."""
     config = [
         {
             "entity_name": "loopback0",
-            "pool_name": "LOOPBACK_ID",
+            "pool_name": "loopbackId",
             "switches": ["192.0.2.10"],
         }
     ]
@@ -1855,7 +2004,7 @@ def test_manage_state_gathered_uses_filtered_candidate_get():
             {
                 "resourceId": 101,
                 "entityName": "loopback0",
-                "poolName": "LOOPBACK_ID",
+                "poolName": "loopbackId",
                 "resourceValue": "10",
                 "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
             }
@@ -1875,9 +2024,9 @@ def test_manage_state_gathered_uses_filtered_candidate_get():
     resource_paths = [path for path in paths if "/resources" in path]
     assert resource_paths
     path = resource_paths[0]
-    assert "poolName=LOOPBACK_ID" in path
+    assert "poolName=loopbackId" in path
     assert "switchId=SER1" in path
-    assert "filter=entityName:loopback0" in path
+    assert "filter=entityName:loopback0" not in path
     assert module.changed_dict[0]["gathered"]  # pylint: disable=protected-access
 
 
@@ -2051,7 +2200,7 @@ def test_manage_resource_manager_reports_all_unsupported_pools_for_fabric_type()
             {
                 "entity_name": "loopback_id",
                 "pool_type": "ID",
-                "pool_name": "LOOPBACK_ID",
+                "pool_name": "loopbackId",
                 "scope_type": "fabric",
                 "resource": "101",
             },
@@ -2072,7 +2221,7 @@ def test_manage_resource_manager_reports_all_unsupported_pools_for_fabric_type()
     assert "Unsupported pool_name values for fabric type 'vxlanIbgp'" in error_msg
     assert "config index 0: 'ROUTER_ID_POOL'" in error_msg
     assert "config index 2: 'INSTANCE_ID'" in error_msg
-    assert "LOOPBACK_ID" not in error_msg
+    assert "loopbackId" not in error_msg
 
 
 def test_manage_resource_manager_external_connectivity_rejects_subnet_pool():
@@ -2406,6 +2555,80 @@ def test_translate_gathered_results_with_single_switch():
     assert result[0]["pool_name"] == "LOOPBACK_ID"
 
 
+def test_translate_gathered_results_preserves_vrf_and_auto_allocation():
+    """Gathered output keeps VRF and is_pre_allocated for replayable config."""
+    module = _resource_manager()
+    resource = _response(
+        resourceValue=None,
+        isPreAllocated=False,
+        vrfName="blue",
+    )
+
+    result = module.translate_gathered_results([resource])  # pylint: disable=protected-access
+
+    assert result == [
+        {
+            "entity_name": "loopback0",
+            "pool_type": "ID",
+            "pool_name": "LOOPBACK_ID",
+            "scope_type": "device",
+            "resource": None,
+            "vrf_name": "blue",
+            "is_pre_allocated": False,
+            "switches": ["192.0.2.10"],
+        }
+    ]
+
+
+def test_gathered_round_trip_accepts_non_default_vrf_auto_allocation():
+    """Translated auto-allocated non-default VRF output validates for merged replay."""
+    module = _resource_manager()
+    resource = _response(
+        resourceValue=None,
+        isPreAllocated=False,
+        vrfName="blue",
+    )
+
+    translated = module.translate_gathered_results([resource])[0]  # pylint: disable=protected-access
+    replay_model = ResourceManagerConfigModel.model_validate(translated, context={"state": "merged"})
+
+    assert replay_model.vrf_name == "blue"
+    assert replay_model.is_pre_allocated is False
+    assert replay_model.resource is None
+
+
+def test_deduplicate_resources_keeps_fallback_entries_with_different_vrfs():
+    """Fallback dedupe keys include VRF when API resources have no resourceId."""
+    module = _resource_manager()
+    resources = [
+        {
+            "entityName": "loopback0",
+            "poolName": "LOOPBACK_ID",
+            "resourceValue": "10",
+            "vrfName": "blue",
+            "scopeDetails": {
+                "scopeType": "device",
+                "switchId": "SER1",
+            },
+        },
+        {
+            "entityName": "loopback0",
+            "poolName": "LOOPBACK_ID",
+            "resourceValue": "10",
+            "vrfName": "red",
+            "scopeDetails": {
+                "scopeType": "device",
+                "switchId": "SER1",
+            },
+        },
+    ]
+
+    deduped = module._deduplicate_resources(resources)  # pylint: disable=protected-access
+
+    assert len(deduped) == 2
+    assert [item["vrfName"] for item in deduped] == ["blue", "red"]
+
+
 def test_translate_gathered_results_with_missing_fields():
     """translate_gathered_results handles resources with missing fields."""
     module = _resource_manager()
@@ -2491,27 +2714,66 @@ def test_compute_changes_device_pair_endpoint_normalization():
     """compute_changes normalizes device_pair endpoints regardless of order."""
     proposed = [
         _config(
-            entity_name="SER2~SER1",
+            entity_name="9CODD3GJCC6~9CNJ9CWP24C~base_vpc_id_pair",
             scope_type="device_pair",
             pool_name="VPC_ID",
-            switches=["SER1", "SER2"],
+            switches=["9CODD3GJCC6", "9CNJ9CWP24C"],
         )
     ]  # Reversed order
     existing = [
         _response(
-            entityName="SER1~SER2",
+            entityName="9CNJ9CWP24C~9CODD3GJCC6~base_vpc_id_pair",
             poolName="VPC_ID",
             scopeDetails={
                 "scopeType": "devicePair",
-                "srcSwitchId": "SER1",
-                "dstSwitchId": "SER2",
+                "srcSwitchId": "9CNJ9CWP24C",
+                "dstSwitchId": "9CODD3GJCC6",
             },  # Normal order
         )
     ]
 
     changes = ResourceManagerDiffEngine.compute_changes(proposed, existing, log=LOG)
     # Should match despite different order (tilde-normalization)
-    assert len(changes["idempotent"]) >= 0
+    assert len(changes["idempotent"]) == 1
+    assert changes["to_add"] == []
+
+
+def test_compute_changes_device_pair_omitted_resource_accepts_nd_allocated_value():
+    """compute_changes keeps ND-allocated vpcId idempotent when resource is omitted."""
+    proposed = ResourceManagerDiffEngine.validate_configs(
+        [
+            {
+                "entity_name": "9CODD3GJCC6~9CNJ9CWP24C~base_vpc_id_pair",
+                "pool_type": "ID",
+                "pool_name": "vpcId",
+                "scope_type": "device_pair",
+                "switches": ["9CODD3GJCC6", "9CNJ9CWP24C"],
+                "resource": None,
+                "is_pre_allocated": False,
+            }
+        ],
+        "deleted",
+        log=LOG,
+    )
+    existing = [
+        _response(
+            entityName="9CNJ9CWP24C~9CODD3GJCC6~base_vpc_id_pair",
+            poolName="vpcId",
+            resourceValue="51",
+            isPreAllocated=False,
+            scopeDetails={
+                "scopeType": "devicePair",
+                "srcSwitchId": "9CNJ9CWP24C",
+                "dstSwitchId": "9CODD3GJCC6",
+            },
+        )
+    ]
+
+    changes = ResourceManagerDiffEngine.compute_changes(proposed, existing, log=LOG)
+
+    assert len(changes["idempotent"]) == 1
+    assert changes["to_add"] == []
+    assert changes["to_update"] == []
 
 
 def test_validate_configs_single_valid_config():
@@ -2656,8 +2918,8 @@ def test_manage_gathered_with_pool_name_filter():
     """manage_gathered filters by pool_name."""
     module, unused_nd = _resource_manager_with_nd(
         state="gathered",
-        config=[{"pool_name": "LOOPBACK_ID"}],
-        all_resources=[_response()],
+        config=[{"pool_name": "loopbackId"}],
+        all_resources=[_response(poolName="loopbackId")],
     )
 
     # Run manage_gathered
@@ -2855,11 +3117,11 @@ def test_resource_matches_filter_with_one_nonmatching_criterion():
 def test_apply_gathered_filters_matches_multiple_resources():
     """_apply_gathered_filters matches all resources meeting criteria."""
     module, unused_nd = _resource_manager_with_nd(
-        config=[{"pool_name": "LOOPBACK_ID"}],
+        config=[{"pool_name": "loopbackId"}],
         all_resources=[
-            _response(entityName="loopback0"),
-            _response(entityName="loopback1"),
-            _response(entityName="loopback0"),
+            _response(entityName="loopback0", poolName="loopbackId"),
+            _response(entityName="loopback1", poolName="loopbackId"),
+            _response(entityName="loopback0", poolName="loopbackId"),
         ],  # Duplicate entity
     )
 
@@ -3175,6 +3437,127 @@ def test_manage_merged_check_mode_registers_diff_without_post_call():
     last_diff = module.results.diffs[-1]
     assert "merged" in last_diff
     assert len(last_diff["merged"]) == 1
+
+
+def test_manage_merged_update_removes_existing_id_before_create():
+    """Merged updates release the existing allocation before creating the replacement."""
+    module, nd = _resource_manager_with_nd(config=[])
+    cfg = _config(resource="20")
+    module.proposed = [cfg]
+    module.existing = [_response(resource_value="10")]
+
+    fake_changes = {
+        "idempotent": [],
+        "to_update": [(cfg, "SER1", {"resourceId": 101, "resourceValue": "10"})],
+        "to_add": [],
+        "to_delete": [],
+        "debugs": [],
+    }
+
+    nd.request.reset_mock()
+    nd.request.side_effect = [
+        {"resources": [{"resourceValue": "10", "status": "deleted"}]},
+        {"resources": [{"entityName": "loopback0", "status": "created"}]},
+    ]
+
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
+        (
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+            "nd_manage_resource_manager_resources.ResourceManagerDiffEngine.validate_resource_api_fields"
+        ),
+    ):
+        module.manage_merged()
+
+    assert nd.request.call_count == 2
+    first_call = nd.request.call_args_list[0]
+    second_call = nd.request.call_args_list[1]
+    assert first_call.args[0].endswith("/resources/actions/remove")
+    assert first_call.kwargs["data"] == {"resourceIds": [101]}
+    assert second_call.args[0].endswith("/resources")
+    assert second_call.kwargs["data"]["resources"][0]["resourceValue"] == "20"
+    assert module.changed_dict[0]["deleted"] == ["101"]
+    assert len(module.changed_dict[0]["merged"]) == 1
+
+
+def test_manage_merged_update_delete_validation_failure_prevents_create():
+    """Merged update replacement does not create when remove response validation fails."""
+    module, nd = _resource_manager_with_nd(config=[])
+    cfg = _config(resource="20")
+    module.proposed = [cfg]
+    module.existing = [_response(resource_value="10")]
+
+    fake_changes = {
+        "idempotent": [],
+        "to_update": [(cfg, "SER1", {"resourceId": 101, "resourceValue": "10"})],
+        "to_add": [],
+        "to_delete": [],
+        "debugs": [],
+    }
+
+    nd.request.reset_mock()
+    nd.request.return_value = {"resources": [{"resourceValue": "10", "status": "failed", "message": "still in use"}]}
+
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes):
+        with pytest.raises(ValueError, match="Partial success in batch delete"):
+            module.manage_merged()
+
+    assert nd.request.call_count == 1
+    assert nd.request.call_args.args[0].endswith("/resources/actions/remove")
+
+
+def test_manage_merged_update_check_mode_reports_delete_and_create_without_api_calls():
+    """Merged update check mode reports both replacement phases without mutating."""
+    module, nd = _resource_manager_with_nd(config=[], check_mode=True)
+    cfg = _config(resource="20")
+    module.proposed = [cfg]
+    module.existing = [_response(resource_value="10")]
+
+    fake_changes = {
+        "idempotent": [],
+        "to_update": [(cfg, "SER1", {"resourceId": 101, "resourceValue": "10"})],
+        "to_add": [],
+        "to_delete": [],
+        "debugs": [],
+    }
+
+    nd.request.reset_mock()
+
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes):
+        module.manage_merged()
+
+    assert nd.request.call_count == 0
+    assert module.changed_dict[0]["deleted"] == ["101"]
+    assert len(module.changed_dict[0]["merged"]) == 1
+    assert module.results.diffs[-2]["deleted"] == [101]
+    assert module.results.diffs[-1]["merged"][0]["resourceValue"] == "20"
+    assert module.results.payload[-2] == {"resourceIds": [101]}
+    assert module.results.payload[-1]["resources"][0]["resourceValue"] == "20"
+
+
+def test_manage_merged_update_missing_resource_id_raises_before_mutation():
+    """Merged updates fail clearly when the existing resource has no ID to release."""
+    module, nd = _resource_manager_with_nd(config=[])
+    cfg = _config(resource="20")
+    module.proposed = [cfg]
+    module.existing = [_response(resource_value="10")]
+
+    fake_changes = {
+        "idempotent": [],
+        "to_update": [(cfg, "SER1", {"resourceValue": "10"})],
+        "to_add": [],
+        "to_delete": [],
+        "debugs": [],
+    }
+
+    nd.request.reset_mock()
+
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes):
+        with pytest.raises(ValueError, match="resourceId"):
+            module.manage_merged()
+
+    assert nd.request.call_count == 0
+    assert module.changed_dict[0]["deleted"] == []
+    assert module.changed_dict[0]["merged"] == []
 
 
 def test_manage_merged_post_exception_is_wrapped_with_value_error():

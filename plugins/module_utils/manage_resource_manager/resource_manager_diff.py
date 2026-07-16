@@ -459,10 +459,10 @@ class ResourceManagerDiffEngine:
 
         Returns:
             dict mapping change buckets to item lists:
-              - ``to_add``:     ``(ResourceManagerConfigModel, switch_ip)`` tuples
-              - ``to_update``:  ``(ResourceManagerConfigModel, switch_ip)`` tuples
+              - ``to_add``:     ``(ResourceManagerConfigModel, switch_ip, existing_res)`` tuples
+              - ``to_update``:  ``(ResourceManagerConfigModel, switch_ip, existing_res)`` tuples
               - ``to_delete``:  ``ResourceManagerResponse`` items
-              - ``idempotent``: ``(ResourceManagerConfigModel, switch_ip)`` tuples
+              - ``idempotent``: ``(ResourceManagerConfigModel, switch_ip, existing_res)`` tuples
         """
         log.debug("ENTER: compute_changes()")
         log.debug(
