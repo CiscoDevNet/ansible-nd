@@ -15,9 +15,7 @@ and switches list endpoints, surfaces 404s as "fabric not found", parses the
 
 # pylint: disable=disallowed-name,protected-access,redefined-outer-name,too-many-lines
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 import inspect
 
