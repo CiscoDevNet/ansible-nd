@@ -466,5 +466,51 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
         "MESSAGE": "OK",
         "DATA": []
+    },
+    "test_subinterface_unmanaged_interface_00705a": {
+        "TEST_NOTES": ["query_all config-scoped: fabric summary (local + default) for validate_prerequisites"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "ownerCluster": "cluster_a", "local": true, "fabricStatus": "default"}
+    },
+    "test_subinterface_unmanaged_interface_00705b": {
+        "TEST_NOTES": [
+            "query_all config-scoped: switches list (2 switches), but config names only 192.168.12.151.",
+            "Expect: query_all (state!=overridden) scopes to the config switch and never GETs FDO12345ABD's interfaces."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"},
+                {"fabricManagementIp": "192.168.12.152", "switchId": "FDO12345ABD"}
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00705c": {
+        "TEST_NOTES": [
+            "query_all config-scoped: interfaces for the config-named switch FDO12345ABC - one unmanaged subinterface.",
+            "If query_all were NOT config-scoped it would also GET FDO12345ABD and exhaust the response generator."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/3.20",
+                    "interfaceType": "subInterface",
+                    "configData": {
+                        "mode": "unmanaged",
+                        "networkOS": {"policy": {"policyType": "monitorSubinterface"}}
+                    }
+                }
+            ]
+        }
     }
 }

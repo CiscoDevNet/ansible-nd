@@ -68,7 +68,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         # Summary
 
         Initialize mutable private state after Pydantic model construction. Pydantic disallows `Field()` on
-        underscore-prefixed names, so these are set here to ensure each instance gets its own list.
+        underscore-prefixed names, so these are set here to ensure each instance gets its own container: the
+        deploy/remove queues and the per-switch interface cache read by `_switch_interfaces`.
 
         ## Raises
 
@@ -76,6 +77,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         self._pending_deploys: list[tuple[str, str]] = []
         self._pending_removes: list[tuple[str, str]] = []
+        self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
 
     @property
     def fabric_name(self) -> str:
@@ -119,6 +121,56 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         return self.fabric_context.get_switch_id(switch_ip)
 
+    def _switch_interfaces(self, switch_id: str) -> dict[str, dict]:
+        """
+        # Summary
+
+        Return every interface on `switch_id`, keyed by lower-cased interface name. The underlying
+        `interfaceList` GET is issued at most once per switch per module run; the result is cached so
+        that `query_all` and any other per-interface lookups (e.g. ethernet's port-channel membership
+        check) share a single fetch per switch rather than each querying the controller independently.
+
+        Requires the subclass's `query_all_endpoint` to be the per-switch interfaces-list GET
+        (`EpManageInterfacesListGet`). Subclasses whose `query_all_endpoint` targets a different
+        resource (e.g. `MaintenanceModeOrchestrator`, which lists switches) must not call this method.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_request` if the interface-list API request fails with a non-404 status.
+        """
+        if switch_id not in self._switch_interfaces_cache:
+            api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
+            self._switch_interfaces_cache[switch_id] = {iface["interfaceName"].lower(): iface for iface in interfaces if iface.get("interfaceName")}
+        return self._switch_interfaces_cache[switch_id]
+
+    def _switches_to_query(self) -> dict[str, str]:
+        """
+        # Summary
+
+        Return the `{switch_ip: switch_id}` subset that `query_all` should scan.
+
+        For `state: overridden` the scope is fabric-wide, so the full switch map is returned. For every other state
+        the state machine only consults existing interfaces identified by `switch_ip` values present in the user
+        config, so only those switches are returned. This keeps the interface-list request count proportional to
+        config size rather than fabric size (CLAUDE.md performance rule: no per-switch fan-out over the whole fabric).
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `FabricContext.switch_map` if the switches API query fails.
+        """
+        switch_map = self.fabric_context.switch_map
+        if self.rest_send.params.get("state") == "overridden":
+            return switch_map
+        config_items = self.rest_send.params.get("config") or []
+        config_ips = {item.get("switch_ip") for item in config_items if item.get("switch_ip")}
+        return {ip: sid for ip, sid in switch_map.items() if ip in config_ips}
+
     @property
     def capability_preflight(self) -> InterfaceCapabilityPreflight:
         """
@@ -155,6 +207,42 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - Propagated from `validate_switches_capable` (see its docstring).
         """
         self.validate_switches_capable(model_instances)
+
+    def preflight_create(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Require a policy on every interface being created. ND rejects a policy-less create per-interface (`mode is
+        required` / `invalid policyType ''`) and never creates an empty interface, but the failure surfaces as
+        `interface[0] '<name>'` inside a generic create error after a round-trip. This guard is local-only and fails
+        fast — before the API-backed capability preflight and before any mutation, in check mode too — naming the
+        offending `(switch_ip, interface_name)` in module terms (issue #350). Only the initial inventory fetch
+        precedes it.
+
+        Invoked by `NDStateMachine` with only the proposed items not present in the existing inventory (the create
+        subset), so a `merged`/`replaced` update that legitimately omits a policy already present on the switch is
+        never affected. A config item with no `config_data` (identifier only) is correct for `state: deleted`, which
+        does not route through this hook. Offenders are aggregated into a single `RuntimeError` so one message names
+        every policy-less create item.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If any create item has no `config_data.network_os.policy`.
+        """
+        offenders: list[str] = []
+        for model_instance in model_instances:
+            config_data = getattr(model_instance, "config_data", None)
+            network_os = getattr(config_data, "network_os", None) if config_data is not None else None
+            policy = getattr(network_os, "policy", None) if network_os is not None else None
+            if policy is None:
+                offenders.append(f"(switch_ip={model_instance.switch_ip}, interface_name={model_instance.interface_name})")
+        if offenders:
+            raise RuntimeError(
+                f"Cannot create interface(s) without a policy (config_data.network_os.policy is required to create an interface) "
+                f"in fabric '{self.fabric_name}': {', '.join(offenders)}. Supply a policy, or use state: deleted to remove an interface."
+            )
 
     def validate_switches_capable(self, model_instances: Sequence[ModelType]) -> None:
         """

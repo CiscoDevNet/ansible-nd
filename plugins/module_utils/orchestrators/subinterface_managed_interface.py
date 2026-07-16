@@ -250,9 +250,12 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
         """
         # Summary
 
-        Validate the fabric context and query all interfaces across ALL switches in the fabric, filtering for
-        subinterfaces with `interfaceType: "subInterface"` and `policyType: "subinterface"` (managed variant). The
+        Validate the fabric context and query interfaces, filtering for subinterfaces with
+        `interfaceType: "subInterface"` and `policyType: "subinterface"` (managed variant). The
         unmanaged variant (`monitorSubinterface`) is managed by a separate orchestrator and is excluded here.
+
+        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
+        and limited to switches named in the user config for all other states.
 
         Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning
         any data.
@@ -273,12 +276,8 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
         try:
             self.validate_prerequisites()
             all_subifs = []
-            for switch_ip, switch_id in self.fabric_context.switch_map.items():
-                api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-                if not isinstance(result, dict):
-                    continue
-                interfaces = result.get("interfaces", []) or []
+            for switch_ip, switch_id in self._switches_to_query().items():
+                interfaces = list(self._switch_interfaces(switch_id).values())
                 subifs = [iface for iface in interfaces if iface.get("interfaceType") == "subInterface"]
                 managed = [
                     iface for iface in subifs if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_policy_types
