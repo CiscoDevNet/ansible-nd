@@ -41,6 +41,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsSwitchActionsDeployPost,
     EpManageFabricsSwitchActionsRediscoverPost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import (
+    DiscoveryStatus,
+    ShallowDiscoveryStatus,
+    SystemMode,
+)
 
 _REQUEST_ERRORS = (NDModuleError, TypeError, ValueError, AttributeError)
 
@@ -584,7 +589,8 @@ class SwitchWaitUtils:
     DEFAULT_WAIT_INTERVAL: int = 10  # seconds
 
     # Status values indicating the switch is ready
-    MANAGEABLE_STATUSES = frozenset({"ok", "manageable"})
+    MANAGEABLE_STATUSES = frozenset({DiscoveryStatus.OK.value, ShallowDiscoveryStatus.MANAGEABLE.value})
+    READY_SYSTEM_MODES = frozenset({SystemMode.NORMAL.value.lower(), SystemMode.NOT_APPLICABLE.value.lower()})
 
     # Status values indicating an operation is still in progress
     IN_PROGRESS_STATUSES = frozenset(
@@ -743,6 +749,134 @@ class SwitchWaitUtils:
 
         # Phase 2: wait for ok discovery status.
         return self._wait_for_discovery_state(serial_numbers, "ok")
+
+    def wait_for_post_add_switches(
+        self,
+        *,
+        nxos_reload: list[str],
+        nxos_preserve: list[str],
+        ready_without_reload: list[str],
+        skip_greenfield_check: bool = False,
+    ) -> bool:
+        """Wait for mixed post-add switches with one poll loop.
+
+        NX-OS greenfield switches must still pass through the historical
+        ``normal -> unreachable -> ok`` sequence because they can briefly
+        report ``ok`` before the reload begins.  Non-NX platforms and
+        preserve-config switches are evaluated against their final expected
+        state in the same controller GET loop, avoiding multiple sequential
+        polling passes for mixed-platform adds.
+
+        Args:
+            nxos_reload: NX-OS greenfield serial numbers that must be seen
+                unreachable before final ok.
+            nxos_preserve: NX-OS preserve-config serial numbers.
+            ready_without_reload: Non-NX serial numbers that are not expected
+                to enter the NX-OS reload transition.
+            skip_greenfield_check: Bypass greenfield debug shortcut for POAP
+                bootstrap/swap flows.
+
+        Returns:
+            ``True`` when all switch sets satisfy their policy, otherwise
+            ``False`` on timeout or API failure.
+        """
+        policy_by_serial: dict[str, str] = {}
+        for serial_number in nxos_reload:
+            policy_by_serial[serial_number] = "nxos_reload"
+        for serial_number in nxos_preserve:
+            policy_by_serial[serial_number] = "nxos_preserve"
+        for serial_number in ready_without_reload:
+            policy_by_serial[serial_number] = "ready_without_reload"
+
+        all_serials = list(policy_by_serial)
+        if not all_serials:
+            return True
+
+        greenfield_debug_enabled = False
+        if nxos_reload and not skip_greenfield_check:
+            greenfield_debug_enabled = self._is_greenfield_debug_enabled()
+            if greenfield_debug_enabled:
+                self.log.info("Greenfield debug flag enabled — NX-OS reload detection will be skipped after normal system mode")
+        elif skip_greenfield_check and nxos_reload:
+            self.log.info("Greenfield debug check skipped (POAP/bootstrap path — NX-OS device is expected to reboot)")
+
+        self.log.info(
+            "Waiting for post-add switch readiness: nxos_reload=%s, nxos_preserve=%s, ready_without_reload=%s",
+            nxos_reload,
+            nxos_preserve,
+            ready_without_reload,
+        )
+
+        saw_unreachable: set[str] = set()
+
+        for attempt in range(1, self.max_attempts + 1):
+            switch_data = self._fetch_switch_data()
+            if switch_data is None:
+                return False
+
+            switch_index = {sw.get("serialNumber"): sw for sw in switch_data}
+            pending: list[str] = []
+            rediscover: list[str] = []
+
+            for serial_number in all_serials:
+                sw = switch_index.get(serial_number)
+                if sw is None:
+                    pending.append(serial_number)
+                    continue
+
+                additional_data = sw.get("additionalData", {})
+                status = additional_data.get("discoveryStatus", "").lower()
+                system_mode = additional_data.get("systemMode", "").lower()
+                policy = policy_by_serial[serial_number]
+
+                if policy == "nxos_preserve":
+                    if system_mode != "normal":
+                        pending.append(serial_number)
+                    continue
+
+                if policy == "ready_without_reload":
+                    if status not in self.MANAGEABLE_STATUSES or system_mode not in self.READY_SYSTEM_MODES:
+                        pending.append(serial_number)
+                        rediscover.append(serial_number)
+                    continue
+
+                if system_mode != "normal":
+                    pending.append(serial_number)
+                    continue
+
+                if greenfield_debug_enabled:
+                    continue
+
+                if status == "unreachable":
+                    saw_unreachable.add(serial_number)
+                    pending.append(serial_number)
+                    continue
+
+                if serial_number in saw_unreachable and status == "ok":
+                    continue
+
+                pending.append(serial_number)
+                rediscover.append(serial_number)
+
+            if not pending:
+                self.log.info(
+                    "All post-add switches reached expected readiness (attempt %s)",
+                    attempt,
+                )
+                return True
+
+            self._trigger_rediscovery(rediscover)
+            self.log.debug(
+                "Attempt %s/%s: %s post-add switch(es) still pending: %s",
+                attempt,
+                self.max_attempts,
+                len(pending),
+                pending,
+            )
+            time.sleep(self.wait_interval * self._REDISCOVERY_SLEEP_FACTOR)
+
+        self.log.warning("Timeout waiting for post-add switches to become ready: %s", pending)
+        return False
 
     def wait_for_discovery(
         self,

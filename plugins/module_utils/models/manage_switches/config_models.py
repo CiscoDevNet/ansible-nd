@@ -24,6 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
     model_validator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import PlatformType
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
@@ -31,7 +32,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
 )
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import (
-    PlatformType,
     SnmpV3AuthProtocol,
     SwitchRole,
 )
@@ -503,10 +503,24 @@ class SwitchConfigModel(NDBaseModel):
     @classmethod
     def normalize_platform_type(cls, v: str | PlatformType | None) -> PlatformType:
         """Normalize platform_type for case-insensitive matching (NX_OS, nx-os, etc.)."""
-        platform_type = PlatformType.normalize(v)
+        platform_type = cls._normalize_config_platform_type(v)
         if platform_type in (PlatformType.SONIC, PlatformType.APIC):
             raise ValueError(f"platform_type '{platform_type.value}' is not supported. " "Supported platform_type values: nx-os, ios-xe, ios-xr, other.")
         return platform_type
+
+    @staticmethod
+    def _normalize_config_platform_type(value: str | PlatformType | None) -> PlatformType:
+        """Normalize user-facing platform_type values for switch config input."""
+        if value is None:
+            return PlatformType.NX_OS
+        if isinstance(value, PlatformType):
+            return value
+        if isinstance(value, str):
+            normalized = value.lower().replace("_", "-")
+            for platform_type in PlatformType:
+                if platform_type.value == normalized:
+                    return platform_type
+        raise ValueError(f"Invalid platform_type: {value}. Valid options: {PlatformType.choices()}")
 
     def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""

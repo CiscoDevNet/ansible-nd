@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.config_models import SwitchConfigModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import PlatformType, SwitchRole
+from ansible_collections.cisco.nd.plugins.module_utils.enums import PlatformType
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import SwitchRole
 
 
 class SwitchFabricCapabilityError(ValueError):
@@ -224,7 +225,7 @@ def validate_switch_configs_for_fabric(
     errors: list[str] = []
     for cfg in configs:
         prefix = f"{cfg.seed_ip}"
-        platform_type = PlatformType.normalize(cfg.platform_type)
+        platform_type = cfg.platform_type
         role = SwitchRole.normalize(cfg.role) if cfg.role else None
         if platform_type not in capability.platform_types:
             errors.append(

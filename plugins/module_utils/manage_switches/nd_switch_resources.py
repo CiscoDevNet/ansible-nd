@@ -24,7 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 )
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType, PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
     NDConfigCollection,
 )
@@ -33,7 +33,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Resul
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import (
     SwitchRole,
     SnmpV3AuthProtocol,
-    PlatformType,
     DiscoveryStatus,
     SystemMode,
     ConfigSyncStatus,
@@ -178,6 +177,15 @@ class PostAddProcessingSpec:
     all_preserve_config: bool = False
     skip_greenfield_check: bool = False
     update_roles: bool = False
+
+
+@dataclass
+class SwitchWaitSets:
+    """Post-add switch wait groups split by reload behavior."""
+
+    nxos_reload: list[tuple[str, "SwitchConfigModel"]]
+    nxos_preserve: list[tuple[str, "SwitchConfigModel"]]
+    ready_without_reload: list[tuple[str, "SwitchConfigModel"]]
 
 
 @dataclass
@@ -1449,6 +1457,7 @@ class SwitchFabricOps:
         nd = self.ctx.nd
         log = self.ctx.log
         all_serials = [sn for sn, _cfg in spec.switch_actions]
+        wait_sets = self._split_post_add_wait_sets(spec.switch_actions)
 
         log.info(
             "Waiting for %s %s switch(es) to become manageable: %s",
@@ -1457,18 +1466,14 @@ class SwitchFabricOps:
             all_serials,
         )
 
-        wait_kwargs: dict[str, Any] = {}
-        if spec.all_preserve_config:
-            wait_kwargs["all_preserve_config"] = True
-        if spec.skip_greenfield_check:
-            wait_kwargs["skip_greenfield_check"] = True
-
-        success = spec.wait_utils.wait_for_switch_manageable(
-            all_serials,
-            **wait_kwargs,
+        success = spec.wait_utils.wait_for_post_add_switches(
+            nxos_reload=[sn for sn, _cfg in wait_sets.nxos_reload],
+            nxos_preserve=[sn for sn, _cfg in wait_sets.nxos_preserve],
+            ready_without_reload=[sn for sn, _cfg in wait_sets.ready_without_reload],
+            skip_greenfield_check=spec.skip_greenfield_check,
         )
         if not success:
-            msg = f"One or more {spec.context} switches failed to become " f"manageable in fabric '{self.ctx.fabric}'. " f"Switches: {all_serials}"
+            msg = self._post_add_wait_failure_message(spec.context, spec.switch_actions)
             log.error(msg)
             nd.module.fail_json(msg=msg)
 
@@ -1483,6 +1488,39 @@ class SwitchFabricOps:
             msg = f"Failed to finalize (config-save/deploy) for " f"{spec.context} switches {all_serials}: {e}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
+
+    @staticmethod
+    def _split_post_add_wait_sets(
+        switch_actions: list[tuple[str, "SwitchConfigModel"]],
+    ) -> SwitchWaitSets:
+        """Split post-add wait sets by platform reload behavior."""
+        nxos_reload: list[tuple[str, SwitchConfigModel]] = []
+        nxos_preserve: list[tuple[str, SwitchConfigModel]] = []
+        ready_without_reload: list[tuple[str, SwitchConfigModel]] = []
+
+        for serial_number, cfg in switch_actions:
+            if cfg.platform_type == PlatformType.NX_OS:
+                if cfg.preserve_config:
+                    nxos_preserve.append((serial_number, cfg))
+                else:
+                    nxos_reload.append((serial_number, cfg))
+            else:
+                ready_without_reload.append((serial_number, cfg))
+
+        return SwitchWaitSets(
+            nxos_reload=nxos_reload,
+            nxos_preserve=nxos_preserve,
+            ready_without_reload=ready_without_reload,
+        )
+
+    def _post_add_wait_failure_message(
+        self,
+        context: str,
+        switch_actions: list[tuple[str, "SwitchConfigModel"]],
+    ) -> str:
+        """Build a standard post-add wait failure message."""
+        serials = [sn for sn, _cfg in switch_actions]
+        return f"One or more {context} switches failed to become manageable in fabric '{self.ctx.fabric}'. Switches: {serials}"
 
 
 # =========================================================================

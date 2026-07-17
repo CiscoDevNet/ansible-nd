@@ -115,44 +115,6 @@ class SystemMode(str, Enum):
         return [e.value for e in cls]
 
 
-class PlatformType(str, Enum):
-    """
-    Switch platform type enumeration.
-
-    Used for POST /fabrics/{fabricName}/switches (AddSwitches).
-    Includes all platform types supported by the add-switches endpoint.
-    Based on: components/schemas
-    """
-
-    NX_OS = "nx-os"
-    OTHER = "other"
-    IOS_XE = "ios-xe"
-    IOS_XR = "ios-xr"
-    SONIC = "sonic"
-    APIC = "apic"
-
-    @classmethod
-    def choices(cls) -> list[str]:
-        return [e.value for e in cls]
-
-    @classmethod
-    def normalize(cls, value: str | "PlatformType" | None) -> "PlatformType":
-        """
-        Normalize input to enum value (case-insensitive).
-        Accepts: NX_OS, nx-os, NX-OS, ios_xe, ios-xe, etc.
-        """
-        if value is None:
-            return cls.NX_OS
-        if isinstance(value, cls):
-            return value
-        if isinstance(value, str):
-            v_normalized = value.lower().replace("_", "-")
-            for pt in cls:
-                if pt.value == v_normalized:
-                    return pt
-        raise ValueError(f"Invalid PlatformType: {value}. Valid: {cls.choices()}")
-
-
 class ShallowDiscoveryPlatformType(str, Enum):
     """
     Platform type for shallow discovery.
@@ -259,6 +221,24 @@ class DiscoveryStatus(str, Enum):
     UNKNOWN_USER_PASSWORD = "unknownUserPassword"
     CONNECTION_ERROR = "connectionError"
     NOT_APPLICABLE = "notApplicable"
+
+    @classmethod
+    def choices(cls) -> list[str]:
+        return [e.value for e in cls]
+
+
+class ShallowDiscoveryStatus(str, Enum):
+    """
+    Switch shallow discovery status.
+
+    Based on: components/schemas/switchShallowDiscoveredData.status
+    """
+
+    NOT_REACHABLE = "notReacheable"
+    NOT_AUTHORIZED = "notAuthorized"
+    NOT_MANAGEABLE = "notManageable"
+    MANAGEABLE = "manageable"
+    ALREADY_MANAGED = "alreadyManaged"
 
     @classmethod
     def choices(cls) -> list[str]:

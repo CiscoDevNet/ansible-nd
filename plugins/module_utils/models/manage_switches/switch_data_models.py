@@ -17,6 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     Field,
     field_validator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
     NDNestedModel,
@@ -27,7 +28,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     AnomalyLevel,
     ConfigSyncStatus,
     DiscoveryStatus,
-    PlatformType,
     RemoteCredentialStore,
     SwitchRole,
     SystemMode,

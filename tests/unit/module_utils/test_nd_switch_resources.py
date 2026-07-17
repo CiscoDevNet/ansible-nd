@@ -200,6 +200,7 @@ class RecordingWait:
         self.rma_ready = rma_ready
         self.manageable_calls = []
         self.rma_calls = []
+        self.post_add_calls = []
 
     def wait_for_switch_manageable(self, serial_numbers, **kwargs):
         self.manageable_calls.append((list(serial_numbers), kwargs))
@@ -208,6 +209,10 @@ class RecordingWait:
     def wait_for_rma_switch_ready(self, serial_numbers):
         self.rma_calls.append(list(serial_numbers))
         return self.rma_ready
+
+    def wait_for_post_add_switches(self, **kwargs):
+        self.post_add_calls.append(kwargs)
+        return self.manageable
 
 
 class RecordingFabricOps:
@@ -836,7 +841,14 @@ def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
             update_roles=True,
         )
     )
-    assert wait.manageable_calls == [(["SERIAL1"], {"all_preserve_config": True, "skip_greenfield_check": True})]
+    assert wait.post_add_calls == [
+        {
+            "nxos_reload": [],
+            "nxos_preserve": ["SERIAL1"],
+            "ready_without_reload": [],
+            "skip_greenfield_check": True,
+        }
+    ]
     assert [entry["action"] for entry in ctx.results.metadata] == ["save_credentials", "update_role", "config_save", "deploy_switches"]
     assert ctx.results.payload[-1] == {"switchIds": ["SERIAL1"]}
 
@@ -855,6 +867,39 @@ def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
     bad_finalize_ops.ctx.save_config = True
     with pytest.raises(FailJsonError, match="Failed to finalize"):
         bad_finalize_ops.post_add_processing(PostAddProcessingSpec([("SERIAL3", _cfg("192.0.2.12"))], RecordingWait(), "merged"))
+
+
+def test_post_add_processing_splits_reload_waits_by_platform():
+    """Mixed post-add batches keep NX-OS reload detection away from non-NX switches."""
+    ctx = _ctx()
+    ctx.save_config = True
+    ctx.deploy_config = True
+    ops = SwitchFabricOps(ctx, fabric_utils=RecordingFinalizeFabricUtils([]))
+    wait = RecordingWait()
+
+    ops.post_add_processing(
+        PostAddProcessingSpec(
+            switch_actions=[
+                ("NXOS1", _cfg("192.0.2.10", platform_type="nx-os", preserve_config=False)),
+                ("NXOS2", _cfg("192.0.2.11", platform_type="nx-os", preserve_config=True)),
+                ("IOSXE1", _cfg("192.0.2.12", platform_type="ios-xe", preserve_config=False)),
+                ("IOSXR1", _cfg("192.0.2.13", platform_type="ios-xr", preserve_config=False)),
+            ],
+            wait_utils=wait,
+            context="merged",
+            skip_greenfield_check=True,
+        )
+    )
+
+    assert wait.post_add_calls == [
+        {
+            "nxos_reload": ["NXOS1"],
+            "nxos_preserve": ["NXOS2"],
+            "ready_without_reload": ["IOSXE1", "IOSXR1"],
+            "skip_greenfield_check": True,
+        }
+    ]
+    assert ctx.results.payload[-1] == {"switchIds": ["NXOS1", "NXOS2", "IOSXE1", "IOSXR1"]}
 
 
 def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
@@ -1475,12 +1520,54 @@ def test_switch_wait_utils_public_wait_shortcuts_and_polling(monkeypatch):
     wait._fetch_switch_data = lambda: [{"serialNumber": "OTHER", "additionalData": {"systemMode": "migration", "discoveryStatus": "unreachable"}}]
     assert wait._wait_for_switches_in_fabric(["SERIAL1"]) is False
     assert wait._wait_for_discovery_state(["SERIAL1"], "ok") is False
+    assert wait._poll_system_mode(["SERIAL1"], "normal", expect_match=False) is None
+
+
+def test_switch_wait_utils_combined_post_add_wait(monkeypatch):
+    """Combined post-add wait polls once per attempt across mixed platform policies."""
+    monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils.time.sleep", lambda _seconds: None)
+    rediscovered = []
+    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=3, wait_interval=1, fabric_utils=SimpleNamespace())
+    responses = iter(
+        [
+            [
+                {"serialNumber": "NXOS1", "additionalData": {"systemMode": "normal", "discoveryStatus": "ok"}},
+                {"serialNumber": "NXOS2", "additionalData": {"systemMode": "normal", "discoveryStatus": "ok"}},
+                {"serialNumber": "IOSXE1", "additionalData": {"systemMode": "notApplicable", "discoveryStatus": "ok"}},
+                {"serialNumber": "IOSXR1", "additionalData": {"systemMode": "waiting", "discoveryStatus": "discovering"}},
+            ],
+            [
+                {"serialNumber": "NXOS1", "additionalData": {"systemMode": "normal", "discoveryStatus": "unreachable"}},
+                {"serialNumber": "NXOS2", "additionalData": {"systemMode": "normal", "discoveryStatus": "ok"}},
+                {"serialNumber": "IOSXE1", "additionalData": {"systemMode": "notApplicable", "discoveryStatus": "ok"}},
+                {"serialNumber": "IOSXR1", "additionalData": {"systemMode": "normal", "discoveryStatus": "ok"}},
+            ],
+            [
+                {"serialNumber": "NXOS1", "additionalData": {"systemMode": "normal", "discoveryStatus": "ok"}},
+                {"serialNumber": "NXOS2", "additionalData": {"systemMode": "normal", "discoveryStatus": "ok"}},
+                {"serialNumber": "IOSXE1", "additionalData": {"systemMode": "notApplicable", "discoveryStatus": "ok"}},
+                {"serialNumber": "IOSXR1", "additionalData": {"systemMode": "normal", "discoveryStatus": "ok"}},
+            ],
+        ]
+    )
+    wait._fetch_switch_data = lambda: next(responses)
+    wait._trigger_rediscovery = lambda serials: rediscovered.append(list(serials)) if serials else None
+
+    assert (
+        wait.wait_for_post_add_switches(
+            nxos_reload=["NXOS1"],
+            nxos_preserve=["NXOS2"],
+            ready_without_reload=["IOSXE1", "IOSXR1"],
+            skip_greenfield_check=True,
+        )
+        is True
+    )
+    assert rediscovered == [["NXOS1", "IOSXR1"]]
 
     wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
     wait._fetch_switch_data = lambda: []
-    assert wait._wait_for_switches_in_fabric(["SERIAL1"]) is False
-    assert wait._wait_for_discovery_state(["SERIAL1"], "ok") is False
-    assert wait._poll_system_mode(["SERIAL1"], "normal", expect_match=False) is None
+    wait._trigger_rediscovery = lambda serials: None
+    assert wait.wait_for_post_add_switches(nxos_reload=[], nxos_preserve=[], ready_without_reload=["SERIAL1"]) is False
 
 
 def test_switch_wait_utils_wait_for_discovery_success_failure_and_timeout(monkeypatch):

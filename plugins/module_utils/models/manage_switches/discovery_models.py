@@ -17,10 +17,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     Field,
     field_validator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import (
-    PlatformType,
     RemoteCredentialStore,
     ShallowDiscoveryPlatformType,
     SnmpV3AuthProtocol,
@@ -207,9 +207,3 @@ class AddSwitchesRequestModel(NDBaseModel):
     def normalize_snmp_auth(cls, v: str | SnmpV3AuthProtocol | None) -> SnmpV3AuthProtocol:
         """Normalize SNMP auth protocol (case-insensitive: MD5, md5, etc.)."""
         return SnmpV3AuthProtocol.normalize(v)
-
-    @field_validator("platform_type", mode="before")
-    @classmethod
-    def normalize_platform_type(cls, v: str | PlatformType | None) -> PlatformType:
-        """Normalize platform type (case-insensitive: NX_OS, nx-os, etc.)."""
-        return PlatformType.normalize(v)
