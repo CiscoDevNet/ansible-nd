@@ -29,6 +29,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types impor
 # not surface as spurious errors. Mirrors the ACL orchestrator's denylist approach.
 _FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 
+# camelCase wrapper key used in route-map list responses and bulk-create request bodies.
+_LIST_KEY = "routeMaps"
+
 
 class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
     """
@@ -50,6 +53,8 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
 
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    query_all_page_size: ClassVar[int] = 100
+    query_all_max_pages: ClassVar[int] = 10000
 
     # Standard endpoint references (single-item operations)
     create_endpoint: type[NDEndpointBaseModel] = EpManageRouteMapsPost
@@ -124,13 +129,42 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
         """
         List all route maps for the configured fabric.
 
-        The API response is wrapped under the ``"routeMaps"`` key; this method
-        extracts and returns the list directly.
+        The list endpoint paginates, so this walks the collection with
+        ``max``/``offset`` until a page arrives short or empty. A ``seen`` set
+        de-duplicates by route-map name so an ignored offset cannot loop
+        forever, and ``query_all_max_pages`` bounds the walk as a final safety
+        net.
         """
         try:
-            api_endpoint = self._configure_endpoint(self.query_all_endpoint())
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-            return result.get("routeMaps", []) or []
+            page_size = self.query_all_page_size
+            collected: list[dict] = []
+            seen: set[str] = set()
+            offset = 0
+            pages_fetched = 0
+            while pages_fetched < self.query_all_max_pages:
+                pages_fetched += 1
+                api_endpoint = self._configure_endpoint(self.query_all_endpoint())
+                api_endpoint.lucene_params.max = page_size
+                api_endpoint.lucene_params.offset = offset
+                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+                page = result.get(_LIST_KEY, []) or [] if isinstance(result, dict) else (result or [])
+                if not page:
+                    break
+
+                new_rows = 0
+                for row in page:
+                    name = row.get("name") if isinstance(row, dict) else None
+                    if name is not None:
+                        if name in seen:
+                            continue
+                        seen.add(name)
+                    collected.append(row)
+                    new_rows += 1
+
+                if len(page) < page_size or new_rows == 0:
+                    break
+                offset += page_size
+            return collected
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
 
@@ -191,7 +225,7 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
         """
         try:
             api_endpoint = self._configure_endpoint(self.create_bulk_endpoint())
-            payload = {"routeMaps": [item.to_payload() for item in model_instances]}
+            payload = {_LIST_KEY: [item.to_payload() for item in model_instances]}
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.CREATE)
             self._raise_on_bulk_errors(result, "create")
             return result

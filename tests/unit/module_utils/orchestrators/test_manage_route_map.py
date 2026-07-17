@@ -153,7 +153,38 @@ def test_manage_route_map_orchestrator_00100() -> None:
         result = instance.query_all()
 
     assert result == [_route_map_model().to_payload()]
-    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps"
+    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps?max=100&offset=0"
+    assert rest_send.verb == HttpVerbEnum.GET
+
+
+def test_manage_route_map_orchestrator_00105(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify query_all walks paginated route-map list responses.
+
+    ## Classes and Methods
+
+    - ManageRouteMapOrchestrator.query_all()
+    """
+    route_map_1 = _route_map_model("RM_PAGE_1").to_payload()
+    route_map_2 = _route_map_model("RM_PAGE_2").to_payload()
+    route_map_3 = _route_map_model("RM_PAGE_3").to_payload()
+
+    def responses():
+        yield _response({"routeMaps": [route_map_1, route_map_2]})
+        yield _response({"routeMaps": [route_map_2, route_map_3]})
+        yield _response({"routeMaps": []})
+
+    monkeypatch.setattr(ManageRouteMapOrchestrator, "query_all_page_size", 2)
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageRouteMapOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert result == [route_map_1, route_map_2, route_map_3]
+    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps?max=2&offset=4"
     assert rest_send.verb == HttpVerbEnum.GET
 
 
@@ -204,7 +235,7 @@ def test_manage_route_map_orchestrator_00120() -> None:
     instance = ManageRouteMapOrchestrator(rest_send=rest_send)
 
     instance.query_all()
-    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps?clusterName=CLUSTER-1"
+    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps?clusterName=CLUSTER-1&max=100&offset=0"
 
     instance.query_one(model)
     assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps/RM_ONE?clusterName=CLUSTER-1"
