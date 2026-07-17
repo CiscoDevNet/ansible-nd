@@ -2025,10 +2025,10 @@ def test_manage_state_merged_fetches_full_inventory_before_diffing():
     nd.request.return_value = {
         "resources": [
             {
-                    "resourceId": 101,
-                    "entityName": "loopback0",
-                    "poolName": "loopbackId",
-                    "resourceValue": "10",
+                "resourceId": 101,
+                "entityName": "loopback0",
+                "poolName": "loopbackId",
+                "resourceValue": "10",
                 "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
                 "status": None,
             }

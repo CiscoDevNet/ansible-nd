@@ -1327,8 +1327,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 )
                 if allocation_key is None:
                     self.log.debug(
-                        "manage_merged: skipping GAP-5 validation for response item with incomplete identity "
-                        "(entity_name=%s)",
+                        "manage_merged: skipping GAP-5 validation for response item with incomplete identity (entity_name=%s)",
                         resp_item_entity_name,
                     )
                     continue

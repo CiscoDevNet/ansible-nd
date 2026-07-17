@@ -45,6 +45,7 @@ To check whether *pool_name* is supported for *fabric_type* (enum or string)::
 
 import re
 import logging
+from typing import Union
 
 from .enums import FabricTypeEnum
 
@@ -187,7 +188,7 @@ FABRIC_TYPE_STRING_MAP: dict[str, FabricTypeEnum] = {
 # Helper Functions
 # =============================================================================
 def get_supported_pools(
-    fabric_type: FabricTypeEnum | str,
+    fabric_type: Union[FabricTypeEnum, str],
 ) -> frozenset[str]:
     """
     Get the frozenset of standard (exact-match) pool names for a fabric type.
@@ -212,7 +213,7 @@ def get_supported_pools(
 
 
 def get_dynamic_patterns(
-    fabric_type: FabricTypeEnum | str,
+    fabric_type: Union[FabricTypeEnum, str],
 ) -> tuple[re.Pattern[str], ...]:
     """
     Get the tuple of regex patterns for dynamic pool names in a fabric type.
@@ -238,7 +239,7 @@ def get_dynamic_patterns(
 
 
 def is_pool_supported(
-    fabric_type: FabricTypeEnum | str,
+    fabric_type: Union[FabricTypeEnum, str],
     pool_name: str,
 ) -> bool:
     """

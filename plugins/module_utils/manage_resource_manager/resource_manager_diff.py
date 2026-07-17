@@ -355,8 +355,7 @@ class ResourceManagerDiffEngine:
 
         if not entity or not pool or not scope_type:
             log.debug(
-                "_make_resource_key_from_resource: insufficient identity fields "
-                "(entity=%s, pool=%s, scope_type=%s)",
+                "_make_resource_key_from_resource: insufficient identity fields (entity=%s, pool=%s, scope_type=%s)",
                 entity,
                 pool,
                 scope_type,
@@ -371,8 +370,7 @@ class ResourceManagerDiffEngine:
         )
         if scope_type in ("device", "device_interface") and not switch_id:
             log.debug(
-                "_make_resource_key_from_resource: insufficient switch identity "
-                "for scope_type=%s, entity=%s, pool=%s",
+                "_make_resource_key_from_resource: insufficient switch identity for scope_type=%s, entity=%s, pool=%s",
                 scope_type,
                 entity,
                 pool,
@@ -454,7 +452,8 @@ class ResourceManagerDiffEngine:
                 cfg.vrf_name or "default",
             )
             log.debug(
-                "validate_configs: duplicate-check [%s] — entity_name='%s', pool_name='%s', scope_type='%s', switches=%s, vrf_name='%s', key=%s, key_seen_before=%s",
+                "validate_configs: duplicate-check [%s] — entity_name='%s', pool_name='%s', scope_type='%s', "
+                "switches=%s, vrf_name='%s', key=%s, key_seen_before=%s",
                 cfg_dup_idx,
                 cfg.entity_name,
                 cfg.pool_name,
