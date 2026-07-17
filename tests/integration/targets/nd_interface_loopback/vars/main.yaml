@@ -14,6 +14,7 @@ loopback_100:
   interface_name: loopback100
   config_data:
     network_os:
+      network_os_type: nx-os
       policy:
         policy_type: loopback
         admin_state: true
@@ -27,6 +28,7 @@ loopback_101:
   interface_name: loopback101
   config_data:
     network_os:
+      network_os_type: nx-os
       policy:
         policy_type: loopback
         admin_state: true
@@ -38,6 +40,7 @@ loopback_102:
   interface_name: loopback102
   config_data:
     network_os:
+      network_os_type: nx-os
       policy:
         policy_type: loopback
         admin_state: true
@@ -50,6 +53,7 @@ loopback_100_updated:
   interface_name: loopback100
   config_data:
     network_os:
+      network_os_type: nx-os
       policy:
         policy_type: loopback
         admin_state: true
@@ -63,6 +67,7 @@ loopback_101_updated:
   interface_name: loopback101
   config_data:
     network_os:
+      network_os_type: nx-os
       policy:
         policy_type: loopback
         admin_state: false

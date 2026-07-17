@@ -19,6 +19,7 @@
         interface_name: loopback100
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: loopback
               admin_state: true
