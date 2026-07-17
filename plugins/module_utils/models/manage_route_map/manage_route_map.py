@@ -438,8 +438,7 @@ class RouteMapRuleEntryModel(NDNestedModel):
         ordering_flags = self._enabled_next_hop_fields(_NEXT_HOP_ORDERING_FLAG_FIELDS)
         if restricted_modes and ordering_flags:
             raise ValueError(
-                "Cannot mix use_peer_address, redistribute_unchanged, or unchanged with "
-                "drop_on_fail, load_share, or enforce_order next-hop configurations."
+                "Cannot mix use_peer_address, redistribute_unchanged, or unchanged with " "drop_on_fail, load_share, or enforce_order next-hop configurations."
             )
 
         use_peer_conflicts = self._enabled_next_hop_fields(_USE_PEER_ADDRESS_COMPANION_DENY_FIELDS)
