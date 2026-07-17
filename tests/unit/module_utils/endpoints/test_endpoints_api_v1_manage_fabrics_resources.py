@@ -27,10 +27,7 @@ def test_manage_fabric_resources_get_url_encodes_fabric_and_pool_names():
     endpoint = EpManageFabricResourcesGet(fabric_name="DCI /?#&% fabric")
     endpoint.endpoint_params.pool_name = "DCI subnet pool"
 
-    assert endpoint.path == (
-        "/api/v1/manage/fabrics/DCI%20%2F%3F%23%26%25%20fabric/resources"
-        "?poolName=DCI%20subnet%20pool"
-    )
+    assert endpoint.path == ("/api/v1/manage/fabrics/DCI%20%2F%3F%23%26%25%20fabric/resources" "?poolName=DCI%20subnet%20pool")
 
 
 @pytest.mark.parametrize(
