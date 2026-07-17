@@ -206,27 +206,53 @@ def test_manage_route_map_model_00050() -> None:
 @pytest.mark.parametrize(
     "rule_config",
     [
-        {"rule_type": "setIpv4NextHop", "next_hop_ip_collection": ["192.0.2.10"], "drop_on_fail": False, "verify_availability": True, "track_id": 10},
+        {
+            "rule_type": "setIpv4NextHop",
+            "next_hop_ip_collection": ["192.0.2.10"],
+            "drop_on_fail": False,
+            "verify_availability": True,
+            "track_id": 10,
+        },
         {"rule_type": "setIpv4NextHop", "use_peer_address": True},
-        {"rule_type": "setIpv4NextHop", "use_peer_address": True, "verify_availability": True},
+        {"rule_type": "setIpv4NextHop", "next_hop_ip_collection": ["192.0.2.10"], "use_peer_address": True},
+        {
+            "rule_type": "setIpv4NextHop",
+            "next_hop_ip_collection": ["192.0.2.10"],
+            "use_peer_address": True,
+            "verify_availability": True,
+            "track_id": 10,
+        },
+        {"rule_type": "setIpv4NextHop", "drop_on_fail": True, "load_share": True, "enforce_order": True},
+        {"rule_type": "setIpv4NextHop", "redistribute_unchanged": True, "unchanged": True},
         {"rule_type": "setIpv4NextHop", "unchanged": True},
         {"rule_type": "setIpv4NextHop", "redistribute_unchanged": True},
         {"rule_type": "setIpv6NextHop", "next_hop_ip_collection": ["2001:db8::10"]},
+        {
+            "rule_type": "setIpv6NextHop",
+            "next_hop_ip_collection": ["2001:db8::10"],
+            "use_peer_address": True,
+            "verify_availability": True,
+            "track_id": 10,
+        },
     ],
     ids=[
         "ipv4-addresses",
         "use-peer-address",
-        "use-peer-address-with-verify",
+        "ipv4-addresses-with-use-peer",
+        "ipv4-addresses-with-use-peer-verify-track",
+        "drop-load-enforce",
+        "redistribute-and-unchanged",
         "unchanged",
         "redistribute-unchanged",
         "ipv6-addresses",
+        "ipv6-addresses-with-use-peer-verify-track",
     ],
 )
 def test_manage_route_map_model_00060(rule_config: dict) -> None:
     """
     # Summary
 
-    Verify next-hop rules accept one explicit next-hop mode.
+    Verify next-hop rules accept UI-compatible option combinations.
 
     ## Classes and Methods
 
@@ -241,21 +267,49 @@ def test_manage_route_map_model_00060(rule_config: dict) -> None:
 @pytest.mark.parametrize(
     "rule_config, error",
     [
-        ({"rule_type": "setIpv4NextHop"}, "exactly one next-hop mode"),
-        ({"rule_type": "setIpv4NextHop", "next_hop_ip_collection": ["192.0.2.10"], "use_peer_address": True}, "exactly one next-hop mode"),
+        ({"rule_type": "setIpv4NextHop"}, "at least one next-hop IP option"),
+        ({"rule_type": "setIpv4NextHop", "verify_availability": True}, "verify_availability requires next_hop_ip_collection"),
+        (
+            {"rule_type": "setIpv4NextHop", "next_hop_ip_collection": ["192.0.2.10"], "track_id": 10},
+            "track_id requires next_hop_ip_collection and verify_availability",
+        ),
         ({"rule_type": "setIpv4NextHop", "next_hop_ip_collection": ["2001:db8::10"]}, "expects IPv4"),
         ({"rule_type": "setIpv6NextHop", "next_hop_ip_collection": ["192.0.2.10"]}, "expects IPv6"),
-        ({"rule_type": "setIpv4NextHop", "use_peer_address": True, "track_id": 10}, "track_id requires next_hop_ip_collection"),
+        (
+            {"rule_type": "setIpv4NextHop", "use_peer_address": True, "track_id": 10},
+            "track_id requires next_hop_ip_collection and verify_availability",
+        ),
+        (
+            {"rule_type": "setIpv4NextHop", "use_peer_address": True, "redistribute_unchanged": True},
+            "use_peer_address cannot be mixed",
+        ),
+        (
+            {"rule_type": "setIpv4NextHop", "use_peer_address": True, "drop_on_fail": True},
+            "Cannot mix use_peer_address, redistribute_unchanged, or unchanged",
+        ),
+        (
+            {"rule_type": "setIpv4NextHop", "redistribute_unchanged": True, "load_share": True},
+            "Cannot mix use_peer_address, redistribute_unchanged, or unchanged",
+        ),
+        (
+            {"rule_type": "setIpv6NextHop", "unchanged": True, "enforce_order": True},
+            "Cannot mix use_peer_address, redistribute_unchanged, or unchanged",
+        ),
         ({"rule_type": "setIpv4NextHop", "next_hop_ip_collection": ["192.0.2.10"], "track_id": 0}, "track_id"),
         ({"rule_type": "matchTag", "tags": [-1]}, "tags"),
         ({"rule_type": "setLocalPreference", "value": 4294967296}, "value"),
     ],
     ids=[
-        "missing-mode",
-        "multiple-modes",
+        "missing-option",
+        "verify-without-addresses",
+        "track-without-verify",
         "ipv4-rule-ipv6-address",
         "ipv6-rule-ipv4-address",
         "track-id-with-peer-mode",
+        "use-peer-with-redistribute",
+        "use-peer-with-drop",
+        "redistribute-with-load-share",
+        "ipv6-unchanged-with-enforce-order",
         "track-id-out-of-range",
         "tag-out-of-range",
         "local-preference-out-of-range",

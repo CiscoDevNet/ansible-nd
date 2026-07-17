@@ -114,6 +114,24 @@ _NEXT_HOP_RULE_TYPES = {
     RuleTypeEnum.SET_IPV4_NEXT_HOP.value,
     RuleTypeEnum.SET_IPV6_NEXT_HOP.value,
 }
+_NEXT_HOP_BOOLEAN_OPTION_FIELDS = (
+    "drop_on_fail",
+    "enforce_order",
+    "load_share",
+    "redistribute_unchanged",
+    "unchanged",
+    "use_peer_address",
+    "verify_availability",
+)
+_NEXT_HOP_RESTRICTED_MODE_FIELDS = ("use_peer_address", "redistribute_unchanged", "unchanged")
+_NEXT_HOP_ORDERING_FLAG_FIELDS = ("drop_on_fail", "enforce_order", "load_share")
+_USE_PEER_ADDRESS_COMPANION_DENY_FIELDS = (
+    "drop_on_fail",
+    "enforce_order",
+    "load_share",
+    "redistribute_unchanged",
+    "unchanged",
+)
 _NEXT_HOP_FALSE_DEFAULT_FIELDS = (
     "dropOnFail",
     "enforceOrder",
@@ -155,8 +173,8 @@ class RouteMapRuleEntryModel(NDNestedModel):
                                    ``loadShare``, ``enforceOrder``,
                                    ``verifyAvailability``, ``usePeerAddress``,
                                    ``redistributeUnchanged``, ``unchanged``,
-                                   ``trackId``. Exactly one next-hop mode is
-                                   required.
+                                   ``trackId``. UI/controller next-hop option
+                                   rules are enforced locally.
     - ``setIpv6NextHop``         - same optional fields as ``setIpv4NextHop``
     """
 
@@ -373,22 +391,17 @@ class RouteMapRuleEntryModel(NDNestedModel):
             raise ValueError(f"rule_type '{self.rule_type}' does not allow: {', '.join(unexpected)}")
 
     def _validate_next_hop(self) -> None:
-        """Validate next-hop rule mode and address-family combinations."""
+        """Validate next-hop address family and UI/controller option combinations."""
         if self.rule_type not in _NEXT_HOP_RULE_TYPES:
             return
 
-        selected_modes = [
-            bool(self.next_hop_ip_collection),
-            self.use_peer_address is True,
-            self.unchanged is True,
-            self.redistribute_unchanged is True,
-        ]
-        if sum(selected_modes) != 1:
-            raise ValueError(
-                f"rule_type '{self.rule_type}' requires exactly one next-hop mode: "
-                "next_hop_ip_collection, use_peer_address, unchanged, or redistribute_unchanged."
-            )
+        self._validate_next_hop_address_family()
+        self._validate_next_hop_dependencies()
+        self._validate_next_hop_option_presence()
+        self._validate_next_hop_option_compatibility()
 
+    def _validate_next_hop_address_family(self) -> None:
+        """Validate that next-hop addresses match the IPv4/IPv6 rule type."""
         if self.next_hop_ip_collection:
             expected_version = 4 if self.rule_type == RuleTypeEnum.SET_IPV4_NEXT_HOP.value else 6
             for address in self.next_hop_ip_collection:
@@ -396,8 +409,44 @@ class RouteMapRuleEntryModel(NDNestedModel):
                 if parsed_address.version != expected_version:
                     raise ValueError(f"rule_type '{self.rule_type}' expects IPv{expected_version} next-hop addresses.")
 
-        if self.track_id is not None and self._is_missing(self.next_hop_ip_collection):
-            raise ValueError("track_id requires next_hop_ip_collection.")
+    def _validate_next_hop_dependencies(self) -> None:
+        """Validate next-hop dependencies confirmed through ND UI/controller behavior."""
+        if self.verify_availability is True and self._is_missing(self.next_hop_ip_collection):
+            raise ValueError("verify_availability requires next_hop_ip_collection.")
+
+        if self.track_id is not None and (self._is_missing(self.next_hop_ip_collection) or self.verify_availability is not True):
+            raise ValueError("track_id requires next_hop_ip_collection and verify_availability.")
+
+    def _validate_next_hop_option_presence(self) -> None:
+        """Validate that each next-hop rule selects at least one IP next-hop option."""
+        has_next_hop_addresses = not self._is_missing(self.next_hop_ip_collection)
+        has_boolean_option = bool(self._enabled_next_hop_fields(_NEXT_HOP_BOOLEAN_OPTION_FIELDS))
+        if not has_next_hop_addresses and not has_boolean_option:
+            raise ValueError(f"rule_type '{self.rule_type}' requires at least one next-hop IP option.")
+
+    def _validate_next_hop_option_compatibility(self) -> None:
+        """
+        Validate UI/controller-only next-hop option combinations.
+
+        OpenAPI defines the available next-hop fields, but it does not fully
+        encode the controller compatibility matrix for these flat Ansible
+        fields. These checks mirror verified UI behavior for IPv4 and IPv6.
+        """
+        restricted_modes = self._enabled_next_hop_fields(_NEXT_HOP_RESTRICTED_MODE_FIELDS)
+        ordering_flags = self._enabled_next_hop_fields(_NEXT_HOP_ORDERING_FLAG_FIELDS)
+        if restricted_modes and ordering_flags:
+            raise ValueError(
+                "Cannot mix use_peer_address, redistribute_unchanged, or unchanged with "
+                "drop_on_fail, load_share, or enforce_order next-hop configurations."
+            )
+
+        use_peer_conflicts = self._enabled_next_hop_fields(_USE_PEER_ADDRESS_COMPANION_DENY_FIELDS)
+        if self.use_peer_address is True and use_peer_conflicts:
+            raise ValueError(f"use_peer_address cannot be mixed with: {', '.join(use_peer_conflicts)}.")
+
+    def _enabled_next_hop_fields(self, field_names: tuple[str, ...]) -> list[str]:
+        """Return next-hop boolean field names explicitly enabled by the rule."""
+        return [field_name for field_name in field_names if getattr(self, field_name) is True]
 
 
 class RouteMapEntryModel(NDNestedModel):
