@@ -125,7 +125,8 @@ class EndpointQueryParams(BaseModel):
             else:
                 api_value = str(field_value)
 
-            params.append(f"{api_key}={api_value}")
+            encoded_value = quote(str(api_value), safe="")
+            params.append(f"{api_key}={encoded_value}")
         return "&".join(params)
 
     @staticmethod

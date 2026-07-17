@@ -11,6 +11,7 @@ in the ND Manage API.
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -73,7 +74,8 @@ class _EpManageFabricResourcesBase(FabricNameMixin, NDEndpointBaseModel):
         """Build the fabric resources endpoint path."""
         if self.fabric_name is None:
             raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.path("fabrics", self.fabric_name, "resources")
+        encoded_fabric_name = quote(self.fabric_name, safe="")
+        return BasePath.path("fabrics", encoded_fabric_name, "resources")
 
 
 class EpManageFabricResourcesGet(_EpManageFabricResourcesBase):
@@ -287,7 +289,7 @@ class EpManageFabricResourcesActionsRemovePost(_EpManageFabricResourcesBase):
         - Complete endpoint path string
         """
 
-        base_path = BasePath.path("fabrics", self.fabric_name, "resources", "actions", "remove")
+        base_path = f"{self._base_path}/actions/remove"
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
