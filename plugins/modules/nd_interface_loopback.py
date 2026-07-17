@@ -55,6 +55,14 @@ options:
             - Network OS specific configuration.
             type: dict
             suboptions:
+              network_os_type:
+                description:
+                - The network OS (platform) type of the target switch. This is a discriminator that determines which
+                  policy templates are applicable, and is required by the ND API schema.
+                - Only V(nx-os) is currently supported. C(ios-xe) is planned but not yet implemented.
+                type: str
+                required: true
+                choices: [ nx-os ]
               policy:
                 description:
                 - The policy configuration for the loopback interface.
@@ -204,6 +212,7 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: loopback
               ip: 10.1.1.1
@@ -224,6 +233,7 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: loopback
               ip: 10.1.1.1
@@ -232,6 +242,7 @@ EXAMPLES = r"""
         interface_name: loopback1
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: loopback
               ip: 10.2.1.1
@@ -241,6 +252,7 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: loopback
               ip: 10.1.1.2
@@ -257,6 +269,7 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: loopback
               ip: 10.1.1.2
@@ -285,6 +298,7 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: loopback
               ip: 10.1.1.1
@@ -293,6 +307,7 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: loopback
               ip: 10.1.1.2
@@ -309,6 +324,7 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: loopback
               ip: 10.1.1.1
@@ -324,6 +340,7 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: loopback
               ip: 10.1.1.1
@@ -346,6 +363,7 @@ EXAMPLES = r"""
         interface_name: loopback11
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: ipfmLoopback
               ip: 10.2.2.2
@@ -366,6 +384,7 @@ EXAMPLES = r"""
         interface_name: loopback12
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
               policy_type: mplsLoopback
               ip: 10.3.3.3
