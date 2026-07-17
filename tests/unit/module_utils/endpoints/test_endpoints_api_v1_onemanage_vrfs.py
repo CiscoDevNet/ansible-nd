@@ -149,5 +149,5 @@ def test_endpoints_api_v1_onemanage_vrfs_00080():
         endpoint.endpoint_params.max = 10000
         endpoint.endpoint_params.filter = "vrfName:MyVRF_50000"
         result = endpoint.path
-    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks?max=10000&filter=vrfName:MyVRF_50000"
+    assert result == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks?max=10000&filter=vrfName%3AMyVRF_50000"
     assert endpoint.verb == HttpVerbEnum.GET

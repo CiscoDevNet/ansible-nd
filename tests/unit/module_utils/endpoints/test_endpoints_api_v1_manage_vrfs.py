@@ -55,7 +55,7 @@ def test_manage_vrfs_00020() -> None:
     endpoint.endpoint_params.sort = "vrfName:asc"
 
     assert endpoint.class_name == "EpManageFabricsVrfsGet"
-    assert endpoint.path == "/api/v1/manage/fabrics/fab1/vrfs?offset=10&max=25&sort=vrfName:asc"
+    assert endpoint.path == "/api/v1/manage/fabrics/fab1/vrfs?offset=10&max=25&sort=vrfName%3Aasc"
     assert endpoint.verb == HttpVerbEnum.GET
 
 
