@@ -135,6 +135,29 @@ def test_manage_route_maps_endpoint_00060() -> None:
     assert instance.path == "/api/v1/manage/fabrics/SITE1/routeMaps?clusterName=cluster1&filter=name:RM%20SALES&max=100"
 
 
+@pytest.mark.parametrize(
+    "lucene_config, error",
+    [
+        ({"max": 10001}, "10000"),
+        ({"sort": "name:sideways"}, "Sort direction"),
+    ],
+    ids=["max-upper-bound", "sort-direction"],
+)
+def test_manage_route_maps_endpoint_00070(lucene_config: dict, error: str) -> None:
+    """
+    # Summary
+
+    Verify list endpoints use shared Lucene query parameter validation.
+
+    ## Classes and Methods
+
+    - LuceneQueryParams.model_validate()
+    - EpManageRouteMapsListGet.__init__()
+    """
+    with pytest.raises(ValueError, match=error):
+        EpManageRouteMapsListGet(lucene_params=LuceneQueryParams(**lucene_config))
+
+
 def test_manage_route_maps_endpoint_00100() -> None:
     """
     # Summary
