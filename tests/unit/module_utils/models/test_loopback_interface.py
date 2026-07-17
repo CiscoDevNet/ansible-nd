@@ -690,20 +690,20 @@ def test_loopback_interface_00100():
     """
     # Summary
 
-    Verify network_os_type defaults to "nx-os".
+    Verify network_os_type is required — construction without it raises. Mirrors the ND API schema, where `networkOSType`
+    is a required discriminator on the create schema (`createInterfaceLoopbackManagedDiscriminator`).
 
     ## Test
 
-    - Construct with only required policy field
-    - network_os_type defaults to "nx-os"
+    - Construct with only the policy field, omitting network_os_type
+    - Raises ValidationError
 
     ## Classes and Methods
 
     - LoopbackNetworkOSModel.__init__()
     """
-    with does_not_raise():
-        instance = LoopbackNetworkOSModel(policy=LoopbackPolicyModel(policy_type="loopback"))
-    assert instance.network_os_type == "nx-os"
+    with pytest.raises(ValidationError):
+        result = LoopbackNetworkOSModel(policy=LoopbackPolicyModel(policy_type="loopback"))  # pylint: disable=unused-variable
 
 
 def test_loopback_interface_00110():
@@ -714,16 +714,16 @@ def test_loopback_interface_00110():
 
     ## Test
 
-    - Construct without policy field
+    - Construct with only the required network_os_type field
     - policy is None
-    - network_os_type has default value
+    - network_os_type is populated
 
     ## Classes and Methods
 
     - LoopbackNetworkOSModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackNetworkOSModel()
+        instance = LoopbackNetworkOSModel(network_os_type="nx-os")
     assert instance.policy is None
     assert instance.network_os_type == "nx-os"
 
@@ -757,6 +757,26 @@ def test_loopback_interface_00120():
     assert instance.policy.policy_type == "loopback"
 
 
+def test_loopback_interface_00130():
+    """
+    # Summary
+
+    Verify network_os_type rejects values other than "nx-os". The ND API schema enum is `["nx-os", "ios-xe"]`, but only
+    NX-OS loopback policy models are implemented; `ios-xe` support widens this Literal when it lands.
+
+    ## Test
+
+    - Construct with networkOSType "ios-xe"
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - LoopbackNetworkOSModel.__init__()
+    """
+    with pytest.raises(ValidationError):
+        result = LoopbackNetworkOSModel(networkOSType="ios-xe")  # pylint: disable=unused-variable
+
+
 # =============================================================================
 # Test: LoopbackConfigDataModel
 # =============================================================================
@@ -778,7 +798,7 @@ def test_loopback_interface_00150():
     - LoopbackConfigDataModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackConfigDataModel(network_os=LoopbackNetworkOSModel(policy=LoopbackPolicyModel(policy_type="loopback")))
+        instance = LoopbackConfigDataModel(network_os=LoopbackNetworkOSModel(network_os_type="nx-os", policy=LoopbackPolicyModel(policy_type="loopback")))
     assert instance.mode == "managed"
 
 
@@ -801,6 +821,7 @@ def test_loopback_interface_00160():
         instance = LoopbackConfigDataModel(
             mode="managed",
             network_os=LoopbackNetworkOSModel(
+                network_os_type="nx-os",
                 policy=LoopbackPolicyModel(ip="10.1.1.1/32", admin_state=True, policy_type="loopback"),
             ),
         )
@@ -1450,6 +1471,7 @@ def test_loopback_interface_00650():
         "interface_name": "loopback0",
         "config_data": {
             "network_os": {
+                "network_os_type": "nx-os",
                 "policy": {
                     "admin_state": True,
                     "policy_type": "loopback",
@@ -1462,6 +1484,7 @@ def test_loopback_interface_00650():
         "interface_name": "loopback0",
         "config_data": {
             "network_os": {
+                "network_os_type": "nx-os",
                 "policy": {
                     "ip": "10.1.1.1/32",
                     "policy_type": "loopback",
@@ -1610,15 +1633,17 @@ def test_loopback_interface_00730():
     """
     # Summary
 
-    Verify scaffolding fields (`interface_type`, `mode`, `network_os_type`) are NOT exposed in the argument spec, but
-    `policy_type` IS exposed as a required discriminator field.
+    Verify scaffolding fields (`interface_type`, `mode`) are NOT exposed in the argument spec, while `network_os_type`
+    and `policy_type` ARE exposed as required discriminator fields.
 
-    `policy_type` is now exposed because the module supports a discriminated union of three policy types (`loopback`,
-    `ipfmLoopback`, `mplsLoopback`), allowing playbook users to specify which template they want.
+    `policy_type` is exposed because the module supports a discriminated union of three policy types (`loopback`,
+    `ipfmLoopback`, `mplsLoopback`), allowing playbook users to specify which template they want. `network_os_type` is
+    exposed because the ND API schema requires the `networkOSType` discriminator; only `nx-os` is implemented today.
 
     ## Test
 
-    - `interface_type`, `mode`, `network_os_type` are not present anywhere in the argument spec
+    - `interface_type`, `mode` are not present anywhere in the argument spec
+    - `network_os_type` IS present in the network_os options as a required field with choices ["nx-os"]
     - `policy_type` IS present in the policy options as a required field with the three choices
 
     ## Classes and Methods
@@ -1631,7 +1656,10 @@ def test_loopback_interface_00730():
     config_data_options = config_options["config_data"]["options"]
     assert "mode" not in config_data_options
     network_os_options = config_data_options["network_os"]["options"]
-    assert "network_os_type" not in network_os_options
+    # network_os_type IS now exposed as the required platform discriminator
+    assert "network_os_type" in network_os_options
+    assert network_os_options["network_os_type"]["required"] is True
+    assert network_os_options["network_os_type"]["choices"] == ["nx-os"]
     policy_options = network_os_options["policy"]["options"]
     # policy_type IS now exposed as the required discriminator
     assert "policy_type" in policy_options

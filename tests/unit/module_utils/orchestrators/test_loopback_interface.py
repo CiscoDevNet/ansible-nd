@@ -87,6 +87,7 @@ def _build_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str
     if include_config:
         kwargs["config_data"] = LoopbackConfigDataModel(
             network_os=LoopbackNetworkOSModel(
+                network_os_type="nx-os",
                 policy=LoopbackPolicyModel(policy_type="loopback", admin_state=True, ip="10.1.1.1/32"),
             ),
         )

@@ -18,7 +18,7 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
     - `config_data` -> `LoopbackConfigDataModel`
         - `mode` (hardcoded: "managed")
         - `network_os` -> `LoopbackNetworkOSModel`
-            - `network_os_type` (hardcoded: "nx-os")
+            - `network_os_type` (required, user-supplied; only "nx-os" today)
             - `policy` -> `LoopbackPolicyModel` (`policy_type: loopback | ipfmLoopback | mplsLoopback`)
                 - `admin_state`, `ip`, `ipv6`, `vrf`, etc. (`policy_type` is required and discriminates the branch;
                   `ipfmLoopback` and `mplsLoopback` policy types get dedicated models sharing `LoopbackPolicyBase`)
@@ -200,7 +200,12 @@ class LoopbackNetworkOSModel(NDNestedModel):
     None
     """
 
-    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
+    # Not frozen: NDBaseModel.merge() assigns every explicitly-set field, and required fields are always
+    # explicitly set. The Literal constrains the value; same pattern as the policy_type discriminator.
+    network_os_type: Literal["nx-os"] = Field(
+        alias="networkOSType",
+        description="Network OS (platform) type discriminator; required by the ND API schema. Only nx-os is implemented today",
+    )
     policy: LoopbackPolicyModel | IpfmLoopbackPolicyModel | MplsLoopbackPolicyModel | None = Field(default=None, alias="policy", discriminator="policy_type")
 
 
@@ -307,6 +312,7 @@ class LoopbackInterfaceModel(NDBaseModel):
                             network_os=dict(
                                 type="dict",
                                 options=dict(
+                                    network_os_type=dict(type="str", required=True, choices=["nx-os"]),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
