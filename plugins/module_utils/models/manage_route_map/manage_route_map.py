@@ -132,6 +132,8 @@ _USE_PEER_ADDRESS_COMPANION_DENY_FIELDS = (
     "redistribute_unchanged",
     "unchanged",
 )
+# TODO(4.2.1) TBD: ND echoes these next-hop booleans as false on GET even when
+# the module never sent them, so diff normalization treats false as absent.
 _NEXT_HOP_FALSE_DEFAULT_FIELDS = (
     "dropOnFail",
     "enforceOrder",
@@ -573,6 +575,8 @@ class RouteMapModel(NDBaseModel):
             for rule_entry in entry.get("ruleEntries") or []:
                 if rule_entry.get("ruleType") not in _NEXT_HOP_RULE_TYPES:
                     continue
+                # TODO(4.2.1) TBD: Strip false values that ND adds on read for
+                # unsent next-hop booleans so create/read diffs stay idempotent.
                 for field_name in _NEXT_HOP_FALSE_DEFAULT_FIELDS:
                     if rule_entry.get(field_name) is False:
                         rule_entry.pop(field_name)
