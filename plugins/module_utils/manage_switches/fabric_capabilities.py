@@ -221,6 +221,15 @@ def validate_switch_configs_for_fabric(
     if not fabric_type:
         raise SwitchFabricCapabilityError(f"Unable to determine fabric type for fabric '{fabric_name}' from controller fabric details.")
 
+    return validate_switch_configs_for_fabric_type(fabric_name, fabric_type, configs)
+
+
+def validate_switch_configs_for_fabric_type(
+    fabric_name: str,
+    fabric_type: str,
+    configs: list[SwitchConfigModel],
+) -> FabricSwitchCapability:
+    """Validate switch configs against the support matrix for a canonical fabric type."""
     capability = capability_for_fabric_type(fabric_type)
     errors: list[str] = []
     for cfg in configs:

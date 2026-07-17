@@ -23,7 +23,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
     EpManageFabricConfigDeployPost,
-    EpManageFabricsGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions import (
     EpManageFabricsActionsConfigSavePost,
@@ -46,6 +45,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     ShallowDiscoveryStatus,
     SystemMode,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.utils import FabricUtils
 
 _REQUEST_ERRORS = (NDModuleError, TypeError, ValueError, AttributeError)
 
@@ -132,8 +132,8 @@ class ApiDataChecker:
 # =========================================================================
 
 
-class FabricUtils:
-    """Fabric-level operations: config save, deploy, and info retrieval."""
+class SwitchFabricUtils:
+    """Switch-specific fabric-level save and deploy operations."""
 
     def __init__(
         self,
@@ -141,16 +141,16 @@ class FabricUtils:
         fabric: str,
         logger: logging.Logger | None = None,
     ):
-        """Initialize FabricUtils.
+        """Initialize SwitchFabricUtils.
 
         Args:
             nd_module: NDModule or NDNetworkResourceModule instance.
             fabric:    Fabric name.
-            logger:    Optional logger; defaults to ``nd.FabricUtils``.
+            logger:    Optional logger; defaults to ``nd.SwitchFabricUtils``.
         """
         self.nd = nd_module
         self.fabric = fabric
-        self.log = logger or logging.getLogger("nd.FabricUtils")
+        self.log = logger or logging.getLogger("nd.SwitchFabricUtils")
 
         # Pre-configure endpoints
         self.ep_config_save = EpManageFabricsActionsConfigSavePost()
@@ -161,9 +161,6 @@ class FabricUtils:
 
         self.ep_switch_deploy = EpManageFabricsSwitchActionsDeployPost()
         self.ep_switch_deploy.fabric_name = fabric
-
-        self.ep_fabric_get = EpManageFabricsGet()
-        self.ep_fabric_get.fabric_name = fabric
 
     # -----------------------------------------------------------------
     # Public API
@@ -268,17 +265,6 @@ class FabricUtils:
         except Exception as e:
             self.log.error("Switch-level deploy failed for fabric %s: %s", self.fabric, e)
             raise SwitchOperationError(f"Switch-level deploy failed for fabric {self.fabric}: {e}") from e
-
-    def get_fabric_info(self) -> dict[str, Any]:
-        """Retrieve fabric information.
-
-        Returns:
-            Fabric information dict.
-
-        Raises:
-            SwitchOperationError: If the request fails.
-        """
-        return self._request_endpoint(self.ep_fabric_get, action="Get fabric info")
 
     # -----------------------------------------------------------------
     # Internal helpers
@@ -630,7 +616,7 @@ class SwitchWaitUtils:
         *,
         max_attempts: int | None = None,
         wait_interval: int | None = None,
-        fabric_utils: "FabricUtils" | None = None,
+        fabric_utils: FabricUtils | None = None,
     ):
         """Initialize SwitchWaitUtils.
 
@@ -640,7 +626,7 @@ class SwitchWaitUtils:
             logger:        Optional logger; defaults to ``nd.SwitchWaitUtils``.
             max_attempts:  Max polling iterations (default ``300``).
             wait_interval: Override interval in seconds (default ``5``).
-            fabric_utils:  Optional ``FabricUtils`` instance for fabric
+            fabric_utils:  Optional global ``FabricUtils`` instance for fabric
                            info queries. Created internally if not provided.
         """
         self.nd = nd_module.nd
@@ -648,7 +634,7 @@ class SwitchWaitUtils:
         self.log = logger or logging.getLogger("nd.SwitchWaitUtils")
         self.max_attempts = max_attempts or self.DEFAULT_MAX_ATTEMPTS
         self.wait_interval = wait_interval or self.DEFAULT_WAIT_INTERVAL
-        self.fabric_utils = fabric_utils or FabricUtils(nd_module, fabric, self.log)
+        self.fabric_utils = fabric_utils or FabricUtils(self.nd, fabric)
 
         # Pre-configure endpoints
         self.ep_switches_get = EpManageFabricsSwitchesGet()

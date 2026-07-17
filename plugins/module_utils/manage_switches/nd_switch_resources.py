@@ -71,7 +71,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     ApiDataChecker,
-    FabricUtils,
+    SwitchFabricUtils,
     SwitchWaitUtils,
     SwitchOperationError,
     mask_password,
@@ -83,8 +83,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils imp
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.fabric_capabilities import (
     SwitchFabricCapabilityError,
-    validate_switch_configs_for_fabric,
+    validate_switch_configs_for_fabric_type,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.utils import FabricUtils
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
     EpManageFabricsSwitchesPost,
     EpManageFabricsSwitchProvisionRMAPost,
@@ -1080,7 +1081,7 @@ class SwitchDiscoveryService:
 class SwitchFabricOps:
     """Run fabric mutation operations for add, delete, credentials, and roles."""
 
-    def __init__(self, ctx: SwitchServiceContext, fabric_utils: FabricUtils):
+    def __init__(self, ctx: SwitchServiceContext, fabric_utils: SwitchFabricUtils):
         """Initialize the fabric operation service.
 
         Args:
@@ -2638,14 +2639,15 @@ class NDSwitchResourceModule:
         self.output: NDOutput = NDOutput(output_level=self.module.params.get("output_level", "normal"))
         self.output.assign(before=self.before, after=self.existing)
 
-        # Utility instances (SwitchWaitUtils / FabricUtils depend on self)
-        self.fabric_utils = FabricUtils(self.nd, self.fabric, log)
+        # Utility instances: global FabricUtils handles metadata; SwitchFabricUtils handles switch-specific fabric actions.
+        self.fabric_utils = FabricUtils(self.nd, self.fabric)
+        self.switch_fabric_utils = SwitchFabricUtils(self.nd, self.fabric, log)
         self.wait_utils = SwitchWaitUtils(self, self.fabric, log, fabric_utils=self.fabric_utils)
         self.bootstrap_cache = BootstrapCache(self.nd, self.fabric, log)
 
         # Service instances (Dependency Injection)
         self.discovery = SwitchDiscoveryService(self.ctx)
-        self.fabric_ops = SwitchFabricOps(self.ctx, self.fabric_utils)
+        self.fabric_ops = SwitchFabricOps(self.ctx, self.switch_fabric_utils)
         self.poap_handler = POAPHandler(self.ctx, self.fabric_ops, self.wait_utils, self.bootstrap_cache)
         self.rma_handler = RMAHandler(self.ctx, self.fabric_ops, self.wait_utils, self.bootstrap_cache)
 
@@ -2694,8 +2696,8 @@ class NDSwitchResourceModule:
         if not configs:
             return
         try:
-            fabric_info = self.fabric_utils.get_fabric_info()
-            capability = validate_switch_configs_for_fabric(self.fabric, fabric_info, configs)
+            fabric_type = self.fabric_utils.get_fabric_type()
+            capability = validate_switch_configs_for_fabric_type(self.fabric, fabric_type, configs)
             self.log.debug(
                 "Switch capability validation passed for fabric %s using %s matrix",
                 self.fabric,

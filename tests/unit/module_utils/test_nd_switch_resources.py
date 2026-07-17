@@ -346,7 +346,7 @@ def _resource(state="merged", *, config=None, check_mode=False, existing=None, o
     resource.output.assign(before=resource.before, after=resource.existing)
 
     resource.discovery = SimpleNamespace(discover=lambda configs: {}, build_proposed=lambda configs, discovered, existing_items: [])
-    resource.fabric_utils = SimpleNamespace(get_fabric_info=lambda: {"management": {"type": "vxlan"}})
+    resource.fabric_utils = SimpleNamespace(get_fabric_type=lambda: "vxlan")
     resource.fabric_ops = RecordingFabricOps()
     resource.poap_handler = SimpleNamespace(handle=lambda configs, existing_items=None: None)
     resource.rma_handler = SimpleNamespace(handle=lambda configs, existing_items: None)
@@ -482,7 +482,7 @@ def test_fabric_capability_validation_rejects_campus_leaf_before_writes():
     """Campus VXLAN rejects leaf role before discovery/add/config-save can start."""
     config = [{"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf", "preserve_config": False}]
     resource = _resource(state="merged", config=config)
-    resource.fabric_utils = SimpleNamespace(get_fabric_info=lambda: {"management": {"type": "vxlanCampus"}})
+    resource.fabric_utils = SimpleNamespace(get_fabric_type=lambda: "vxlanCampus")
     resource.discovery = SimpleNamespace(
         discover=lambda configs: raise_assertion("discovery should not run after capability validation failure"),
         build_proposed=lambda configs, discovered, existing: [],
