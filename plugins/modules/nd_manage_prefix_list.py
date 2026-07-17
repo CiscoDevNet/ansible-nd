@@ -243,6 +243,87 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed, or in check mode would change, the fabric configuration.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The existing prefix-list configuration before the module ran, structured the same as the O(config) parameter.
+  - An empty list when no matching prefix-list configuration existed.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - ip_version: ipv4
+    name: PL-IPV4-BORDERS
+    description: Border router IPv4 prefixes
+    entries:
+    - sequence_number: 10
+      action: permit
+      prefix: 10.0.0.0/8
+after:
+  description:
+  - The prefix-list configuration after the module ran, structured the same as the O(config) parameter.
+  - In check mode, the configuration that would result had the module run outside of check mode.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - ip_version: ipv4
+    name: PL-IPV4-BORDERS
+    description: Updated border router IPv4 prefixes
+    entries:
+    - sequence_number: 10
+      action: permit
+      prefix: 10.0.0.0/8
+    - sequence_number: 20
+      action: deny
+      prefix: 0.0.0.0/0
+diff:
+  description: The per-prefix-list difference between C(before) and C(after).
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - ip_version: ipv4
+    name: PL-IPV4-BORDERS
+    description: Updated border router IPv4 prefixes
+    entries:
+    - sequence_number: 20
+      action: deny
+      prefix: 0.0.0.0/0
+proposed:
+  description: The configuration the module proposed to apply, before reconciliation with the controller.
+  returned: when O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+  - ip_version: ipv6
+    tenant_name: tenant-a
+    name: PL-IPV6-DATACENTER
+    entries:
+    - sequence_number: 10
+      action: permit
+      prefix: 2001:db8::/32
+logs:
+  description: Internal diagnostic log messages collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample:
+  - "Querying existing prefix-list configuration"
+msg:
+  description: A human-readable error message, present only when the module fails.
+  returned: on failure
+  type: str
+  sample: "Module execution failed: prefix-list validation failed"
 """
 
 import logging
