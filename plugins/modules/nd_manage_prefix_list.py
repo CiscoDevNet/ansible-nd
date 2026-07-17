@@ -97,9 +97,8 @@ options:
           action:
             description:
             - The action to take when the prefix matches.
-            - Defaults to C(permit), matching the Nexus Dashboard UI default.
+            - It defaults to C(permit) when unset during creation.
             type: str
-            default: permit
             choices: [ permit, deny ]
           prefix:
             description:

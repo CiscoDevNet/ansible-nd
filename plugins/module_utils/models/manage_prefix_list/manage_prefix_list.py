@@ -428,7 +428,6 @@ class PrefixListModel(NDBaseModel):
                             action=dict(
                                 type="str",
                                 required=False,
-                                default="permit",
                                 choices=["permit", "deny"],
                             ),
                             prefix=dict(

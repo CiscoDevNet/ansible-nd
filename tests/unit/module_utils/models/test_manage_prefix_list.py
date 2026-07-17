@@ -642,8 +642,9 @@ def test_manage_prefix_list_00170() -> None:
     assert entries["type"] == "list"
     assert entries["elements"] == "dict"
     assert entries["required"] is False
-    assert entries["options"]["action"]["default"] == "permit"
     assert entries["options"]["action"]["required"] is False
+    assert "default" not in entries["options"]["action"]
+    assert PrefixListEntryModel(sequence_number=10, prefix="10.0.0.0/8").action == "permit"
 
 
 def test_manage_prefix_list_00175() -> None:
