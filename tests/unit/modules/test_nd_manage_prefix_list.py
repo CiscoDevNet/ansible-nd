@@ -4,7 +4,6 @@ import re
 
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_prefix_list
 
-
 EXPECTED_RETURN_KEYS = (
     "changed",
     "output_level",
