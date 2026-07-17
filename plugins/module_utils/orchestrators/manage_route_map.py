@@ -24,6 +24,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_route_map.m
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
+# Per-item ``status`` values in a 207 Multi-Status body that count as a failure. Anything else --
+# ``success``, missing, empty, or future progress tokens -- is tolerated so informational rows do
+# not surface as spurious errors. Mirrors the ACL orchestrator's denylist approach.
+_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
+
 
 class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
     """
@@ -94,7 +99,13 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
         """Raise when a 207 bulk response contains failed per-item results."""
         if not isinstance(result, dict):
             return
-        failures = [item for item in result.get("results", []) if isinstance(item, dict) and item.get("status") not in (None, "", "success")]
+        failures = []
+        for item in result.get("results", []):
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "").lower()
+            if status in _FAILURE_STATUSES:
+                failures.append(item)
         if not failures:
             return
         details = []

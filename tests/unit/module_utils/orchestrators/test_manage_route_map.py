@@ -260,6 +260,39 @@ def test_manage_route_map_orchestrator_00210() -> None:
     assert rest_send.committed_payload == {"routeMaps": [model.to_payload()]}
 
 
+def test_manage_route_map_orchestrator_00215() -> None:
+    """
+    # Summary
+
+    Verify create_bulk tolerates non-failure per-item 207 statuses.
+
+    ## Classes and Methods
+
+    - ManageRouteMapOrchestrator.create_bulk()
+    - ManageRouteMapOrchestrator._raise_on_bulk_errors()
+    """
+    model = _route_map_model("RM_CREATE_ONE")
+
+    def responses():
+        yield _response(
+            {
+                "results": [
+                    {"name": "RM_CREATE_ONE", "status": "accepted", "message": "queued"},
+                    {"name": "RM_CREATE_TWO", "status": "", "message": "no status"},
+                    {"name": "RM_CREATE_THREE", "message": "status omitted"},
+                ]
+            },
+            return_code=207,
+            message="Multi-Status",
+        )
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageRouteMapOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.create_bulk([model])
+
+
 def test_manage_route_map_orchestrator_00220() -> None:
     """
     # Summary
