@@ -280,10 +280,20 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         """Raise if ND's 207 multi-status body reports any per-item failures.
 
         ND treats 207 as success at the HTTP layer, so partial failures only show
-        up in the body. The exact wrapper differs across operations, so we scan
-        the known result containers and flag an item on any recognized failure
-        signal. The precise create/delete 207 shape should be confirmed against a
-        live response and this guard tightened if a narrower contract is known.
+        up in the body. The OpenAPI contract for bulk create (POST /links) and
+        delete (POST /linkActions/remove) is ``{"links": [{"linkId", "message",
+        "status"}]}`` with ``status`` in ``{"success", "failure"}`` -- the
+        ``links`` + ``status`` path below matches that exactly. The remaining
+        containers/signals are a defensive superset kept until the shape is
+        confirmed against a broader set of live responses.
+
+        # TODO(4.2.1) TBD
+        # Workaround for an ND API discrepancy: bulk link create/delete returns
+        # HTTP 207 with per-item failures only in the body, but ResponseHandler
+        # classifies 207 as success. Remove this body scan once the central
+        # NdV1Strategy multi-status detector (PR #398) covers the links envelope;
+        # that detector needs "links" added to _MULTISTATUS_ITEM_KEYS and "linkId"
+        # to _MULTISTATUS_ITEM_LABEL_KEYS ("failure"/"message" already covered).
         """
         if not isinstance(response, dict):
             return

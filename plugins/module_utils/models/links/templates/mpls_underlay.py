@@ -11,6 +11,7 @@ from .base import (
     InterfaceDescriptionsMixin,
     LinkTemplateBase,
     TtagMixin,
+    pd,
 )
 
 
@@ -25,14 +26,14 @@ class MplsUnderlayTemplateInputs(
 
     mpls_fabric_type: str | None = Field(default=None, alias="mplsFabricType")
     dci_routing_protocol: str | None = Field(default=None, alias="dciRoutingProtocol")
-    dci_routing_tag: str | None = Field(default=None, alias="dciRoutingTag")
+    dci_routing_tag: str | None = Field(default=None, alias="dciRoutingTag", json_schema_extra=pd("MPLS_UNDERLAY"))
     ospf_area_id: str | None = Field(default=None, alias="ospfAreaId")
 
-    sr_global_block_range: str | None = Field(default=None, alias="srGlobalBlockRange")
+    sr_global_block_range: str | None = Field(default=None, alias="srGlobalBlockRange", json_schema_extra=pd("16000-23999"))
     src_sr_index: int | None = Field(default=None, alias="srcSrIndex")
     dst_sr_index: int | None = Field(default=None, alias="dstSrIndex")
 
     src_ip_address_mask: str | None = Field(default=None, alias="srcIpAddressMask")
     dst_ip_address: str | None = Field(default=None, alias="dstIpAddress")
 
-    link_mtu: int | None = Field(default=None, alias="linkMtu")
+    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216))

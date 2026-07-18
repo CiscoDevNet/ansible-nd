@@ -14,6 +14,7 @@ from .base import (
     NetflowMixin,
     QkdMixin,
     TtagMixin,
+    pd,
 )
 
 
@@ -37,9 +38,9 @@ class Layer3DciVrfLiteTemplateInputs(
     src_vrf_name: str | None = Field(default=None, alias="srcVrfName")
     dst_vrf_name: str | None = Field(default=None, alias="dstVrfName")
 
-    link_mtu: int | None = Field(default=None, alias="linkMtu")
-    speed: str | None = Field(default=None, alias="speed")
+    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216))
+    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto"))
 
-    ip_redirects: bool | None = Field(default=None, alias="ipRedirects")
-    ipv4_pim: bool | None = Field(default=None, alias="ipv4Pim")
-    ipv6_pim: bool | None = Field(default=None, alias="ipv6Pim")
+    ip_redirects: bool | None = Field(default=None, alias="ipRedirects", json_schema_extra=pd(False))
+    ipv4_pim: bool | None = Field(default=None, alias="ipv4Pim", json_schema_extra=pd(False))
+    ipv6_pim: bool | None = Field(default=None, alias="ipv6Pim", json_schema_extra=pd(False))

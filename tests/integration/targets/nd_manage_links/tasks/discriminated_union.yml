@@ -160,7 +160,7 @@
           - policy_change_to_vrflite is failed
           - policy_change_to_vrflite.msg is search("policy_type")
 
-    - name: Attempt to change policy_type from numbered to preprovision in place (should fail)
+    - name: Reapply the original preprovision declaration over a realized (numbered) link
       cisco.nd.nd_manage_links:
         config:
           - src_fabric_name: '{{ test_fabric_numbered }}'
@@ -174,14 +174,14 @@
               template_inputs:
                 src_interface_description: should not switch policy in place
         state: merged
-      register: policy_change_to_preprovision
-      ignore_errors: true
+      register: preprovision_over_realized
 
-    - name: Verify numbered → preprovision policy change rejected
+    - name: Verify the realized preprovision link is recognized and left as numbered (idempotent, no error)
       ansible.builtin.assert:
         that:
-          - policy_change_to_preprovision is failed
-          - policy_change_to_preprovision.msg is search("policy_type")
+          - preprovision_over_realized is not failed
+          - preprovision_over_realized.changed == false
+          - (preprovision_over_realized.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "numbered"
 
     - name: Clean up baseline numbered link
       cisco.nd.nd_manage_links:

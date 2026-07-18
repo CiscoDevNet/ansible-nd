@@ -7,7 +7,7 @@ from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 
-from .base import InterfaceDescriptionsMixin, LinkTemplateBase
+from .base import InterfaceDescriptionsMixin, LinkTemplateBase, pd
 
 
 class VpcPeerKeepaliveTemplateInputs(
@@ -25,5 +25,5 @@ class VpcPeerKeepaliveTemplateInputs(
 
     interface_vrf: str | None = Field(default=None, alias="interfaceVrf")
 
-    interface_admin_state: bool | None = Field(default=None, alias="interfaceAdminState")
-    mtu: int | None = Field(default=None, alias="mtu")
+    interface_admin_state: bool | None = Field(default=None, alias="interfaceAdminState", json_schema_extra=pd(True))
+    mtu: int | None = Field(default=None, alias="mtu", json_schema_extra=pd(9216))

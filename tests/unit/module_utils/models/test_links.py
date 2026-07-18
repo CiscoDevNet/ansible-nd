@@ -75,6 +75,41 @@ def test_user_defined_allows_extra_fields():
     assert type(link.config_data.template_inputs).__name__ == "UserDefinedTemplateInputs"
 
 
+def _user_defined_config(template_name=None):
+    config = {
+        "src_fabric_name": "f1",
+        "dst_fabric_name": "f1",
+        "src_switch_name": "a",
+        "dst_switch_name": "b",
+        "src_interface_name": "Ethernet1/1",
+        "dst_interface_name": "Ethernet1/1",
+        "config_data": {"policy_type": "userDefined", "template_inputs": {"custom_setting": "x"}},
+    }
+    if template_name is not None:
+        config["config_data"]["template_name"] = template_name
+    return config
+
+
+def test_user_defined_requires_template_name_on_write():
+    """On a write state, userDefined without template_name is rejected locally
+    (ND schema requires it) rather than failing later at the controller."""
+    with pytest.raises(ValidationError):
+        NDLinkModel.from_config(_user_defined_config(), context={"state": "merged"})
+
+
+def test_user_defined_accepts_template_name_on_write():
+    """userDefined with template_name validates on a write state."""
+    link = NDLinkModel.from_config(_user_defined_config(template_name="custom_tmpl"), context={"state": "merged"})
+    assert link.config_data.template_name == "custom_tmpl"
+
+
+def test_user_defined_missing_template_name_tolerated_on_read():
+    """A controller read (no state context) is not blocked if template_name is absent,
+    so query_all never aborts on an odd userDefined response."""
+    link = NDLinkModel.from_config(_user_defined_config())
+    assert type(link.config_data.template_inputs).__name__ == "UserDefinedTemplateInputs"
+
+
 def test_policy_marker_injection_does_not_mutate_input():
     """The internal policy_type_marker is not written back into the caller's dict
     (which is module.params), so it never leaks into the invocation echo."""
@@ -89,6 +124,43 @@ def test_policy_marker_injection_does_not_mutate_input():
     }
     NDLinkModel.from_config(config_item)
     assert "policy_type_marker" not in config_item["config_data"]["template_inputs"]
+
+
+def test_caller_supplied_marker_cannot_override_policy_type():
+    """policy_type is the sole schema authority; a caller-injected marker is ignored,
+    so an invalid field for the real policy is still rejected."""
+    config_item = {
+        "src_fabric_name": "f1",
+        "dst_fabric_name": "f2",
+        "src_switch_name": "a",
+        "dst_switch_name": "b",
+        "src_interface_name": "Ethernet1/30",
+        "dst_interface_name": "Ethernet1/30",
+        "config_data": {
+            "policy_type": "numbered",
+            "template_inputs": {"policy_type_marker": "userDefined", "unexpected": "value"},
+        },
+    }
+    with pytest.raises(ValidationError):
+        NDLinkModel.from_config(config_item)
+
+
+@pytest.mark.parametrize("template_inputs_key", ["template_inputs", "templateInputs"])
+def test_empty_template_inputs_consistent_across_spellings(template_inputs_key):
+    """An explicit empty template_inputs resolves the same under either spelling
+    (the snake_case empty dict used to fall through and fail to inject the marker)."""
+    link = NDLinkModel.from_config(
+        {
+            "src_fabric_name": "f1",
+            "dst_fabric_name": "f2",
+            "src_switch_name": "a",
+            "dst_switch_name": "b",
+            "src_interface_name": "Ethernet1/30",
+            "dst_interface_name": "Ethernet1/30",
+            "config_data": {"policy_type": "numbered", template_inputs_key: {}},
+        }
+    )
+    assert type(link.config_data.template_inputs).__name__ == "NumberedTemplateInputs"
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +196,40 @@ def test_non_secret_fields_survive_in_config():
     assert config_ti["default_vrf_ebgp_neighbor_password"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
 
 
+def test_minimal_numbered_payload_sends_documented_defaults():
+    """A minimal numbered create sends ND's documented defaults for defaulted fields
+    (mtu 9216, admin_state true, fec auto, speed auto) instead of schema-violating
+    typed empties, while keeping every other known field present (ND's template
+    references each key, so a missing key fails template execution)."""
+    link = _link("numbered", {"srcIp": "10.99.30.1", "dstIp": "10.99.30.2"})
+    ti = link.to_payload()["configData"]["templateInputs"]
+    # documented defaults, not typed empties
+    assert ti["mtu"] == 9216
+    assert ti["interfaceAdminState"] is True
+    assert ti["fec"] == "auto"
+    assert ti["speed"] == "auto"
+    assert ti["macsec"] is False
+    # user-supplied values preserved
+    assert ti["srcIp"] == "10.99.30.1"
+    assert ti["dstIp"] == "10.99.30.2"
+    # no-default fields stay present as typed empties so ND's template has the keys
+    assert ti["srcIpv6"] == ""
+    assert ti["srcInterfaceDescription"] == ""
+
+
+def test_unset_secret_sent_empty_but_excluded_from_diff():
+    """An unset secret is sent as an empty key (ND's template requires the key to be
+    present) but is excluded from the diff, so a secret-only change never triggers an
+    update. Documented defaults still flow for the other fields."""
+    link = _link("multisiteUnderlay", {"srcEbgpAsn": "1", "dstEbgpAsn": "2"})
+    payload_ti = link.to_payload()["configData"]["templateInputs"]
+    diff_ti = link.to_diff_dict()["configData"]["templateInputs"]
+    assert payload_ti["ebgpPassword"] == ""
+    assert "ebgpPassword" not in diff_ti
+    assert payload_ti["ebgpMaximumPaths"] == 64
+    assert payload_ti["enableEbgpPassword"] is True
+
+
 def test_collect_secret_values_finds_free_form_template_input_secrets():
     """collect_secret_values surfaces free-form template_inputs secrets for no_log."""
     config_item = {
@@ -140,6 +246,236 @@ def test_collect_secret_values_empty_when_no_secrets():
     """No secrets (e.g. gathered/empty config) yields an empty set, no error."""
     assert NDLinkModel.collect_secret_values({}) == set()
     assert NDLinkModel.collect_secret_values({"config_data": {"template_inputs": {"link_mtu": 9216}}}) == set()
+
+
+# ---------------------------------------------------------------------------
+# Unsupported policy tolerance (read fallback)
+# ---------------------------------------------------------------------------
+
+
+def _response_link(policy_type, template_inputs, link_id="LINK-UUID-1", iface="Ethernet1/1"):
+    return {
+        "srcClusterName": "c1",
+        "dstClusterName": "c1",
+        "srcFabricName": "f1",
+        "dstFabricName": "f1",
+        "srcSwitchName": "a",
+        "dstSwitchName": "b",
+        "srcInterfaceName": iface,
+        "dstInterfaceName": iface,
+        "linkId": link_id,
+        "configData": {"policyType": policy_type, "templateInputs": template_inputs},
+    }
+
+
+def test_iosxe_numbered_is_supported():
+    """iosXeNumbered is first-class (Campus requirement), not a fallback."""
+    link = NDLinkModel.from_response(_response_link("iosXeNumbered", {"srcIp": "1.1.1.1", "dstIp": "1.1.1.2", "mtu": 9198}))
+    assert type(link.config_data.template_inputs).__name__ == "IosXeNumberedTemplateInputs"
+    assert link.is_unsupported_policy is False
+
+
+def test_unsupported_policy_read_does_not_raise_and_is_flagged():
+    """A valid but unmodeled controller policy is preserved as an opaque record."""
+    link = NDLinkModel.from_response(_response_link("ipfmNumbered", {"srcIp": "9.9.9.9", "interfaceVrf": "default", "mtu": 1500}))
+    assert link.is_unsupported_policy is True
+    assert link.config_data.policy_type == "ipfmNumbered"
+    raw = link.config_data.template_inputs.model_dump(by_alias=True)
+    assert raw.get("srcIp") == "9.9.9.9"
+    assert raw.get("interfaceVrf") == "default"
+
+
+def test_supported_policy_with_unknown_field_falls_back_on_read():
+    """A supported policy carrying a field absent from its model is tolerated on read
+    (extra=forbid would otherwise abort the whole query)."""
+    link = NDLinkModel.from_response(_response_link("numbered", {"srcIp": "1.1.1.1", "someBrandNewField": "x"}))
+    assert link.is_unsupported_policy is True
+    assert link.config_data.policy_type == "numbered"
+
+
+def test_unsupported_policy_rejected_on_write():
+    """User input for an unmodeled policy type is strictly rejected (not tolerated)."""
+    with pytest.raises(ValidationError):
+        NDLinkModel.from_config(
+            {
+                "src_fabric_name": "f1",
+                "dst_fabric_name": "f1",
+                "src_switch_name": "a",
+                "dst_switch_name": "b",
+                "src_interface_name": "Ethernet1/1",
+                "dst_interface_name": "Ethernet1/1",
+                "config_data": {"policy_type": "ipfmNumbered", "template_inputs": {"srcIp": "9.9.9.9"}},
+            },
+            context={"state": "merged"},
+        )
+
+
+def test_describe_unsupported_policy_message():
+    link = NDLinkModel.from_response(_response_link("routedFabric", {"srcEbgpAsn": "1"}, link_id="LINK-UUID-77"))
+    msg = link.describe_unsupported_policy()
+    assert "LINK-UUID-77" in msg and "routedFabric" in msg
+
+
+def test_collection_read_tolerates_unsupported_alongside_supported():
+    """A full-fabric read with one unsupported link still parses every link and
+    flags only the unsupported one (no abort)."""
+    from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+
+    response = [
+        _response_link("numbered", {"srcIp": "1.1.1.1", "dstIp": "1.1.1.2"}, link_id="L1", iface="Ethernet1/1"),
+        _response_link("ipfmNumbered", {"srcIp": "9.9.9.9"}, link_id="L2", iface="Ethernet1/2"),
+    ]
+    coll = NDConfigCollection.from_api_response(response_data=response, model_class=NDLinkModel)
+    items = list(coll)
+    assert len(items) == 2
+    unsupported = [i for i in items if i.is_unsupported_policy]
+    assert [i.link_id for i in unsupported] == ["L2"]
+
+
+# ---------------------------------------------------------------------------
+# Orientation independence (intra-fabric physical links)
+# ---------------------------------------------------------------------------
+
+
+def _phys_link(src_sw, src_if, dst_sw, dst_if, template_inputs=None, src_fabric="f1", dst_fabric="f1"):
+    return NDLinkModel.from_response(
+        {
+            "srcClusterName": "c1",
+            "dstClusterName": "c1",
+            "srcFabricName": src_fabric,
+            "dstFabricName": dst_fabric,
+            "srcSwitchName": src_sw,
+            "dstSwitchName": dst_sw,
+            "srcInterfaceName": src_if,
+            "dstInterfaceName": dst_if,
+            "configData": {"policyType": "numbered", "templateInputs": template_inputs or {}},
+        }
+    )
+
+
+def test_intra_fabric_identity_is_orientation_independent():
+    """The same physical intra-fabric cable has one identity in either orientation."""
+    fwd = _phys_link("LEAF1", "Ethernet1/49", "SPINE1", "Ethernet1/1")
+    rev = _phys_link("SPINE1", "Ethernet1/1", "LEAF1", "Ethernet1/49")
+    assert fwd.get_identifier_value() == rev.get_identifier_value()
+
+
+def test_reversed_intra_fabric_link_compares_equal():
+    """A reversed link with correspondingly swapped directional values -- including
+    the asymmetric DHCP relay / BFD echo per-interface toggles -- shows no diff, so
+    merged stays idempotent instead of trying to recreate/update it."""
+    fwd = _phys_link(
+        "LEAF1",
+        "Ethernet1/49",
+        "SPINE1",
+        "Ethernet1/1",
+        {
+            "srcIp": "10.0.0.1",
+            "dstIp": "10.0.0.2",
+            "dhcpRelayOnSrcInterface": True,
+            "dhcpRelayOnDstInterface": False,
+            "bfdEchoOnSrcInterface": True,
+            "bfdEchoOnDstInterface": False,
+        },
+    )
+    rev = _phys_link(
+        "SPINE1",
+        "Ethernet1/1",
+        "LEAF1",
+        "Ethernet1/49",
+        {
+            "srcIp": "10.0.0.2",
+            "dstIp": "10.0.0.1",
+            "dhcpRelayOnSrcInterface": False,
+            "dhcpRelayOnDstInterface": True,
+            "bfdEchoOnSrcInterface": False,
+            "bfdEchoOnDstInterface": True,
+        },
+    )
+    assert fwd.to_diff_dict() == rev.to_diff_dict()
+
+
+def test_reversed_link_with_unswapped_toggle_still_diffs():
+    """The other failure mode: a reversed link whose directional toggle was NOT
+    correspondingly swapped is a genuine asymmetric change and must still diff, so
+    canonicalization never masks a real per-interface difference."""
+    fwd = _phys_link(
+        "LEAF1",
+        "Ethernet1/49",
+        "SPINE1",
+        "Ethernet1/1",
+        {"srcIp": "10.0.0.1", "dstIp": "10.0.0.2", "dhcpRelayOnSrcInterface": True, "dhcpRelayOnDstInterface": False},
+    )
+    # Endpoints reversed and IPs swapped, but the DHCP toggle left on the src end:
+    # after canonicalization this leaves dhcp_relay on the wrong interface.
+    rev = _phys_link(
+        "SPINE1",
+        "Ethernet1/1",
+        "LEAF1",
+        "Ethernet1/49",
+        {"srcIp": "10.0.0.2", "dstIp": "10.0.0.1", "dhcpRelayOnSrcInterface": True, "dhcpRelayOnDstInterface": False},
+    )
+    assert fwd.to_diff_dict() != rev.to_diff_dict()
+
+
+def test_payload_keeps_user_orientation():
+    """Canonicalization is comparison-only; the payload keeps the user's orientation."""
+    rev = _phys_link("SPINE1", "Ethernet1/1", "LEAF1", "Ethernet1/49", {"srcIp": "10.0.0.2", "dstIp": "10.0.0.1"})
+    payload = rev.to_payload()
+    assert payload["srcSwitchName"] == "SPINE1"
+    assert payload["configData"]["templateInputs"]["srcIp"] == "10.0.0.2"
+
+
+def test_inter_fabric_identity_keeps_orientation():
+    """Inter-fabric links (distinct fabric roles) are not collapsed by orientation."""
+    a = _phys_link("X", "Ethernet1/1", "Y", "Ethernet1/1", src_fabric="f1", dst_fabric="f2")
+    b = _phys_link("Y", "Ethernet1/1", "X", "Ethernet1/1", src_fabric="f2", dst_fabric="f1")
+    assert a.get_identifier_value() != b.get_identifier_value()
+
+
+# ---------------------------------------------------------------------------
+# Realized preprovision -> numbered lifecycle
+# ---------------------------------------------------------------------------
+
+
+def _proposed_preprovision():
+    return NDLinkModel.from_config(
+        {
+            "src_fabric_name": "f1",
+            "dst_fabric_name": "f1",
+            "src_switch_name": "LEAF1",
+            "dst_switch_name": "SPINE1",
+            "src_interface_name": "Ethernet1/1",
+            "dst_interface_name": "Ethernet1/1",
+            "config_data": {"policy_type": "preprovision", "template_inputs": {"src_interface_description": "planned"}},
+        },
+        context={"state": "merged"},
+    )
+
+
+def test_realized_preprovision_numbered_is_treated_as_unchanged():
+    """An existing numbered link (ND-realized) vs the original preprovision
+    declaration is no diff, so the module is idempotent and preserves ND values."""
+    existing = _phys_link("LEAF1", "Ethernet1/1", "SPINE1", "Ethernet1/1", {"srcIp": "10.4.0.1", "dstIp": "10.4.0.2"})
+    assert existing.get_diff(_proposed_preprovision()) is True
+
+
+def test_non_realized_policy_difference_still_diffs():
+    """A genuine policy difference (numbered vs unnumbered) is still a change."""
+    existing = _phys_link("LEAF1", "Ethernet1/1", "SPINE1", "Ethernet1/1", {"srcIp": "10.4.0.1", "dstIp": "10.4.0.2"})
+    proposed_unnumbered = NDLinkModel.from_config(
+        {
+            "src_fabric_name": "f1",
+            "dst_fabric_name": "f1",
+            "src_switch_name": "LEAF1",
+            "dst_switch_name": "SPINE1",
+            "src_interface_name": "Ethernet1/1",
+            "dst_interface_name": "Ethernet1/1",
+            "config_data": {"policy_type": "unnumbered", "template_inputs": {}},
+        },
+        context={"state": "merged"},
+    )
+    assert existing.get_diff(proposed_unnumbered) is False
 
 
 # ---------------------------------------------------------------------------
@@ -185,3 +521,29 @@ def test_argument_spec_template_inputs_not_blanket_no_log():
     spec = NDLinkModel.get_argument_spec()
     template_inputs = spec["config"]["options"]["config_data"]["options"]["template_inputs"]
     assert template_inputs.get("no_log") is not True
+
+
+def test_argument_spec_omits_read_only_link_type():
+    """link_type is a read-only response field (ND schema: readOnly, absent from
+    linkPost) so it is not a settable option."""
+    spec = NDLinkModel.get_argument_spec()
+    assert "link_type" not in spec["config"]["options"]
+
+
+def test_link_type_still_read_from_response():
+    """link_type remains a model field populated on read (e.g. gathered/before/after)."""
+    link = NDLinkModel.from_response(
+        {
+            "srcFabricName": "f1",
+            "dstFabricName": "f1",
+            "srcSwitchName": "a",
+            "dstSwitchName": "b",
+            "srcInterfaceName": "Ethernet1/1",
+            "dstInterfaceName": "Ethernet1/1",
+            "linkType": "lan_planned_link",
+            "configData": {"policyType": "numbered", "templateInputs": {}},
+        }
+    )
+    assert link.link_type == "lan_planned_link"
+    # ...but it is never sent back to the controller.
+    assert "linkType" not in link.to_payload()

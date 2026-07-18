@@ -13,6 +13,7 @@ from .base import (
     MacsecFullMixin,
     QkdMixin,
     TtagMixin,
+    pd,
 )
 
 
@@ -30,7 +31,7 @@ class Layer2DciTemplateInputs(
     trunk_allowed_vlans: str | None = Field(default=None, alias="trunkAllowedVlans")
     native_vlan: int | None = Field(default=None, alias="nativeVlan")
     bpdu_guard: str | None = Field(default=None, alias="bpduGuard")
-    port_type_fast: bool | None = Field(default=None, alias="portTypeFast")
+    port_type_fast: bool | None = Field(default=None, alias="portTypeFast", json_schema_extra=pd(True))
 
     mtu_type: str | None = Field(default=None, alias="mtuType")
-    speed: str | None = Field(default=None, alias="speed")
+    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto"))

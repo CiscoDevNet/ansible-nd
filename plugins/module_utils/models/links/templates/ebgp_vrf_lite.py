@@ -13,6 +13,7 @@ from .base import (
     MacsecFullMixin,
     QkdMixin,
     TtagMixin,
+    pd,
 )
 
 
@@ -35,16 +36,19 @@ class EbgpVrfLiteTemplateInputs(
     dst_ip_address: str | None = Field(default=None, alias="dstIpAddress")
     dst_ipv6_address: str | None = Field(default=None, alias="dstIpv6Address")
 
-    link_mtu: int | None = Field(default=None, alias="linkMtu")
+    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216))
     routing_tag: str | None = Field(default=None, alias="routingTag")
 
-    auto_gen_config_default_vrf: bool | None = Field(default=None, alias="autoGenConfigDefaultVrf")
-    auto_gen_config_nx_peer_default_vrf: bool | None = Field(default=None, alias="autoGenConfigNxPeerDefaultVrf")
-    auto_gen_config_peer: bool | None = Field(default=None, alias="autoGenConfigPeer")
+    auto_gen_config_default_vrf: bool | None = Field(default=None, alias="autoGenConfigDefaultVrf", json_schema_extra=pd(False))
+    auto_gen_config_nx_peer_default_vrf: bool | None = Field(default=None, alias="autoGenConfigNxPeerDefaultVrf", json_schema_extra=pd(False))
+    auto_gen_config_peer: bool | None = Field(default=None, alias="autoGenConfigPeer", json_schema_extra=pd(False))
 
-    dci_tracking: bool | None = Field(default=None, alias="dciTracking")
+    dci_tracking: bool | None = Field(default=None, alias="dciTracking", json_schema_extra=pd(False))
 
     default_vrf_ebgp_neighbor_password: str | None = Field(default=None, alias="defaultVrfEbgpNeighborPassword", json_schema_extra={"secret": True})
+    default_vrf_ebgp_password_key_encryption_type: str | None = Field(
+        default=None, alias="defaultVrfEbgpPasswordKeyEncryptionType", json_schema_extra=pd("3des")
+    )
     redistrib_ebgp_route_map_name: str | None = Field(default=None, alias="redistribEbgpRouteMapName")
-    template_config_gen_peer: str | None = Field(default=None, alias="templateConfigGenPeer")
+    template_config_gen_peer: str | None = Field(default=None, alias="templateConfigGenPeer", json_schema_extra=pd("Ext_VRF_Lite_Jython"))
     vrf_name_nx_peer_switch: str | None = Field(default=None, alias="vrfNameNxPeerSwitch")

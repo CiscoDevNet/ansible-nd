@@ -5,9 +5,11 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, model_validator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, ValidationError, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.base import LinkTemplateBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.discriminated_union import LinkTemplateInputs, all_secret_template_input_keys
+from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.unsupported import UnsupportedTemplateInputs
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.utils import NO_LOG_PLACEHOLDER
 
@@ -30,31 +32,93 @@ class LinkConfigDataModel(NDNestedModel):
             )
         return super().merge(other)
 
+    @model_validator(mode="wrap")
+    @classmethod
+    def _tolerate_unsupported_on_read(cls, data: Any, handler: Any, info: Any) -> LinkConfigDataModel:
+        """Preserve unsupported/odd controller links instead of aborting the read.
+
+        Strict parsing (discriminated union + ``extra="forbid"``) is kept for user
+        input -- write states thread ``context["state"]`` through validation -- so
+        bad config still fails fast. On a controller read (no state), a policy type
+        this module does not model, or a supported policy carrying a field absent
+        from its local model, is captured as an opaque ``UnsupportedTemplateInputs``
+        record rather than raising ``ValidationError`` and aborting ``query_all``.
+        """
+        try:
+            return handler(data)
+        except ValidationError:
+            context = info.context or {}
+            # Tolerate only controller reads (from_response marks source="response").
+            # User input -- and any direct construction -- stays strictly validated.
+            if context.get("source") != "response" or not isinstance(data, dict):
+                raise
+            return cls._build_unsupported(data)
+
+    @classmethod
+    def _build_unsupported(cls, data: dict[str, Any]) -> LinkConfigDataModel:
+        """Build a fallback config_data preserving the raw policy type and inputs."""
+        policy_type = data.get("policy_type") or data.get("policyType")
+        template_name = data.get("template_name") or data.get("templateName")
+        raw = data.get("template_inputs")
+        if raw is None:
+            raw = data.get("templateInputs")
+        template_inputs = dict(raw) if isinstance(raw, dict) else {}
+        template_inputs.pop("policy_type_marker", None)
+        fallback = UnsupportedTemplateInputs.model_validate(template_inputs)
+        return cls.model_construct(policy_type=policy_type, template_name=template_name, template_inputs=fallback)
+
+    @model_validator(mode="after")
+    def _require_template_name_for_user_defined(self, info: Any) -> LinkConfigDataModel:
+        """userDefined requires template_name (ND schema / OpenAPI).
+
+        Enforced only on user-supplied config -- write states thread
+        ``context["state"]`` through validation -- so a controller read that
+        somehow omits it is tolerated rather than aborting ``query_all``.
+        """
+        context = info.context or {}
+        if context.get("state") and self.policy_type == "userDefined" and not self.template_name:
+            raise ValueError("template_name is required when config_data.policy_type is 'userDefined'.")
+        return self
+
     @model_validator(mode="before")
     @classmethod
     def _inject_policy_marker(cls, data: Any) -> Any:
-        """Copy policy_type into template_inputs so the discriminated union resolves.
+        """Copy the public ``policy_type`` into ``template_inputs`` as the internal
+        discriminator so the discriminated union resolves.
 
-        Returns a shallow copy rather than mutating the input in place: ``data``
-        is a reference into ``module.params``, so an in-place ``setdefault`` would
-        leak the internal marker back into the invocation echo.
+        The documented ``policy_type`` is the sole authority for schema selection:
+        any caller-supplied ``policy_type_marker`` is overwritten, so free-form
+        input cannot select a different template model than the declared policy.
+        ``template_inputs`` is located by key presence (not truthiness) so an
+        explicit empty dict validates identically under the snake_case and the
+        API-alias spelling.
+
+        Returns a shallow copy rather than mutating in place: ``data`` is a
+        reference into ``module.params``, so an in-place write would leak the
+        internal marker back into the invocation echo.
         """
         if not isinstance(data, dict):
             return data
         policy_type = data.get("policy_type") or data.get("policyType")
-        template_inputs = data.get("template_inputs") or data.get("templateInputs")
-        if policy_type and isinstance(template_inputs, dict) and "policy_type_marker" not in template_inputs:
-            key = "template_inputs" if data.get("template_inputs") is not None else "templateInputs"
-            data = {**data, key: {**template_inputs, "policy_type_marker": policy_type}}
-        return data
+        if not policy_type:
+            return data
+        key = "template_inputs" if "template_inputs" in data else "templateInputs" if "templateInputs" in data else None
+        if key is None:
+            return data
+        template_inputs = data.get(key)
+        if not isinstance(template_inputs, dict):
+            return data
+        return {**data, key: {**template_inputs, "policy_type_marker": policy_type}}
 
 
 class NDLinkModel(NDBaseModel):
     """Nexus Dashboard Link configuration model.
 
     Identity is the composite (src_cluster, dst_cluster, src_fabric, dst_fabric,
-    src_switch, dst_switch, src_intf, dst_intf). For single-cluster scope, the
-    module swaps in MANAGE_SCOPE_IDENTIFIERS (no cluster names) at runtime.
+    src_switch, dst_switch, src_intf, dst_intf). The module overwrites
+    ``identifiers`` at runtime from the active strategy's ``identifier_fields``
+    (see ``nd_manage_links.main``); single-cluster (manage) scope drops the
+    cluster-name keys.
     """
 
     identifiers: ClassVar[list[str] | None] = [
@@ -68,15 +132,6 @@ class NDLinkModel(NDBaseModel):
         "dst_interface_name",
     ]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
-
-    MANAGE_SCOPE_IDENTIFIERS: ClassVar[list[str]] = [
-        "src_fabric_name",
-        "dst_fabric_name",
-        "src_switch_name",
-        "dst_switch_name",
-        "src_interface_name",
-        "dst_interface_name",
-    ]
 
     unwanted_keys: ClassVar[list] = [
         ["linkId"],
@@ -123,6 +178,125 @@ class NDLinkModel(NDBaseModel):
 
     config_data: LinkConfigDataModel | None = Field(default=None, alias="configData")
 
+    @property
+    def is_unsupported_policy(self) -> bool:
+        """True when this link uses a policy type the module does not model.
+
+        Such links are read from ND as opaque records (see
+        ``LinkConfigDataModel._tolerate_unsupported_on_read``); the module keeps
+        them visible but never modifies or implicitly deletes them.
+        """
+        template_inputs = getattr(self.config_data, "template_inputs", None)
+        return isinstance(template_inputs, UnsupportedTemplateInputs)
+
+    def describe_unsupported_policy(self) -> str:
+        """Human-readable identity + policy type for an unsupported link."""
+        policy_type = getattr(self.config_data, "policy_type", None)
+        identity = self.link_id or self.get_identifier_value()
+        return "Link {0} uses unsupported policy type '{1}'".format(identity, policy_type)
+
+    # --- Orientation independence (intra-fabric physical links) ---------------
+    # A physical intra-fabric link has no inherent direction: ND can return it
+    # with the endpoints reversed relative to the playbook. For such links the
+    # identity is made order-independent and the diff view is canonicalized, so a
+    # reversed link is matched (not duplicated on merged, found on deleted, not
+    # delete+recreated on overridden) and compares equal. Inter-fabric links
+    # (VRF lite, DCI, multisite) keep their orientation -- there src/dst are
+    # distinct fabric roles and some directional fields are asymmetric.
+
+    _IDENTITY_ALIAS_PAIRS: ClassVar[list] = [
+        ("srcClusterName", "dstClusterName"),
+        ("srcFabricName", "dstFabricName"),
+        ("srcSwitchName", "dstSwitchName"),
+        ("srcInterfaceName", "dstInterfaceName"),
+    ]
+    _TEMPLATE_DIRECTIONAL_ALIAS_PAIRS: ClassVar[list] = [
+        ("srcIp", "dstIp"),
+        ("srcIpv6", "dstIpv6"),
+        ("srcInterfaceDescription", "dstInterfaceDescription"),
+        ("srcInterfaceConfig", "dstInterfaceConfig"),
+        ("dhcpRelayOnSrcInterface", "dhcpRelayOnDstInterface"),
+        ("bfdEchoOnSrcInterface", "bfdEchoOnDstInterface"),
+    ]
+
+    def _is_intra_fabric(self) -> bool:
+        return bool(self.src_fabric_name) and self.src_fabric_name == self.dst_fabric_name
+
+    def _endpoints(self) -> tuple:
+        ids = self.identifiers or []
+        src = tuple(getattr(self, f, None) for f in ids if f.startswith("src_"))
+        dst = tuple(getattr(self, f, None) for f in ids if f.startswith("dst_"))
+        return src, dst
+
+    @staticmethod
+    def _endpoint_key(endpoint: tuple) -> tuple:
+        return tuple("" if value is None else str(value) for value in endpoint)
+
+    def get_identifier_value(self) -> Any:
+        """Composite identity, made orientation-independent for intra-fabric links."""
+        if not self._is_intra_fabric():
+            return super().get_identifier_value()
+        src, dst = self._endpoints()
+        low, high = sorted((src, dst), key=self._endpoint_key)
+        return low + high
+
+    @staticmethod
+    def _swap_keys(data: dict[str, Any], first: str, second: str) -> None:
+        """Swap two keys in place, preserving exclude_none (drop None results)."""
+        if first not in data and second not in data:
+            return
+        first_value, second_value = data.get(first), data.get(second)
+        data.pop(first, None)
+        data.pop(second, None)
+        if second_value is not None:
+            data[first] = second_value
+        if first_value is not None:
+            data[second] = first_value
+
+    def _canonicalize_orientation(self, data: dict[str, Any]) -> None:
+        """Reorient a diff dict to a canonical endpoint order (intra-fabric only).
+
+        Comparison-only: payloads keep the user's orientation. Because both
+        existing and proposed links canonicalize identically, a reversed physical
+        link compares equal instead of showing a spurious change.
+        """
+        if not self._is_intra_fabric():
+            return
+        src, dst = self._endpoints()
+        if self._endpoint_key(src) <= self._endpoint_key(dst):
+            return  # already in canonical order
+        for first, second in self._IDENTITY_ALIAS_PAIRS:
+            self._swap_keys(data, first, second)
+        template_inputs = (data.get("configData") or {}).get("templateInputs")
+        if isinstance(template_inputs, dict):
+            for first, second in self._TEMPLATE_DIRECTIONAL_ALIAS_PAIRS:
+                self._swap_keys(template_inputs, first, second)
+
+    def _is_realized_preprovision_of(self, other: Any) -> bool:
+        """True when ``self`` (existing, from ND) is the realized ``numbered`` form
+        of ``other`` (proposed, a ``preprovision`` declaration).
+
+        After a planned ``preprovision`` link comes up and ND runs
+        Save/Recalculate, ND converts it to a ``numbered`` link with
+        controller-assigned addresses. Reapplying the unchanged ``preprovision``
+        source must recognise this expected lifecycle rather than treating it as a
+        policy change.
+        """
+        self_policy = getattr(self.config_data, "policy_type", None)
+        other_policy = getattr(getattr(other, "config_data", None), "policy_type", None)
+        return self_policy == "numbered" and other_policy == "preprovision"
+
+    def get_diff(self, other: Any, exclude_unset: bool = False) -> bool:
+        """Diff comparison, treating a realized preprovision->numbered link as unchanged.
+
+        Returns True (no diff) so the module keeps ND's realized ``numbered`` link
+        and its assigned values, stays idempotent, and never tries to convert it
+        back to ``preprovision``.
+        """
+        if self._is_realized_preprovision_of(other):
+            return True
+        return super().get_diff(other, exclude_unset=exclude_unset)
+
     @classmethod
     def collect_secret_values(cls, config_item: dict[str, Any]) -> set[str]:
         """Secret values for no_log masking, including free-form template_inputs.
@@ -154,6 +328,7 @@ class NDLinkModel(NDBaseModel):
         for key_path in self.unwanted_keys:
             self._remove_nested_key(data, key_path)
         self._strip_secret_template_inputs(data, by_alias=True)
+        self._canonicalize_orientation(data)
         return data
 
     def to_config(self, **kwargs: Any) -> dict[str, Any]:
@@ -203,18 +378,22 @@ class NDLinkModel(NDBaseModel):
             del current[key_path[-1]]
 
     def to_payload(self, **kwargs: Any) -> dict[str, Any]:
-        """Serialize for POST/PUT with every declared template field present.
-
-        ND's template engine rejects payloads that omit known fields; the UI
-        works around this by sending type-appropriate empties for anything
-        the user didn't set. We mirror that after normal serialization.
-        """
+        """Serialize for POST/PUT, sending ND's documented defaults for unset template fields."""
         data = super().to_payload(**kwargs)
         self._fill_template_inputs_defaults(data)
         return data
 
     def _fill_template_inputs_defaults(self, data: dict[str, Any]) -> None:
-        """Restore template fields stripped by exclude_none with typed empties."""
+        """Fill every unset template field so the payload carries all keys.
+
+        ND's Jython template engine references every declared field by key, so a
+        missing key raises during template execution. Each field the user did not
+        set is sent with its documented ND default when it has one (``mtu 9216``,
+        ``speed auto``), otherwise as a typed empty (``""`` / ``0`` / ``false``).
+        Secrets have no documented default, so an unset secret is sent as ``""``;
+        it is still excluded from the diff, so a secret-only change never triggers
+        an update. Re-supply a secret when updating a link, or it is written empty.
+        """
         if self.config_data is None or self.config_data.template_inputs is None:
             return
         config_data = data.get("configData")
@@ -224,32 +403,7 @@ class NDLinkModel(NDBaseModel):
         if not isinstance(template_inputs, dict):
             return
         tmpl_cls = type(self.config_data.template_inputs)
-        for field_name, field_info in tmpl_cls.model_fields.items():
-            if field_info.exclude:
-                continue
-            alias = field_info.alias or field_name
-            if template_inputs.get(alias) is None:
-                template_inputs[alias] = self._empty_for_annotation(field_info.annotation)
-
-    @staticmethod
-    def _empty_for_annotation(annotation: Any) -> Any:
-        """Pick an empty value matching an Optional[...] field's underlying type."""
-        import types
-        from typing import Union, get_args, get_origin
-
-        # Under ``from __future__ import annotations`` Pydantic resolves ``X | None``
-        # fields to ``types.UnionType`` rather than ``typing.Union``; accept both.
-        if get_origin(annotation) in (Union, types.UnionType):
-            non_none = [a for a in get_args(annotation) if a is not type(None)]
-            if non_none:
-                annotation = non_none[0]
-        if annotation is bool:
-            return False
-        if annotation is int:
-            return 0
-        if annotation is float:
-            return 0.0
-        return ""
+        LinkTemplateBase.apply_payload_defaults(template_inputs, tmpl_cls)
 
     @classmethod
     def get_argument_spec(cls) -> dict:
@@ -272,7 +426,6 @@ class NDLinkModel(NDBaseModel):
                     dst_switch_id=dict(type="str"),
                     src_switch_ip=dict(type="str"),
                     dst_switch_ip=dict(type="str"),
-                    link_type=dict(type="str", default="multi_cluster_planned_link"),
                     config_data=dict(
                         type="dict",
                         options=dict(
@@ -283,6 +436,7 @@ class NDLinkModel(NDBaseModel):
                                     "unnumbered",
                                     "ipv6LinkLocal",
                                     "ebgpVrfLite",
+                                    "iosXeNumbered",
                                     "layer2Dci",
                                     "layer3DciVrfLite",
                                     "multisiteOverlay",

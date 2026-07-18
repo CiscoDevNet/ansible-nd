@@ -10,11 +10,12 @@ literal field during parsing, giving per policy field validation for free.
 
 from __future__ import annotations
 
-from typing import Annotated, Union
+from typing import Annotated
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 
 from .ebgp_vrf_lite import EbgpVrfLiteTemplateInputs
+from .ios_xe_numbered import IosXeNumberedTemplateInputs
 from .ipv6_link_local import Ipv6LinkLocalTemplateInputs
 from .layer2_dci import Layer2DciTemplateInputs
 from .layer3_dci_vrf_lite import Layer3DciVrfLiteTemplateInputs
@@ -28,24 +29,49 @@ from .unnumbered import UnnumberedTemplateInputs
 from .user_defined import UserDefinedTemplateInputs
 from .vpc_peer_keepalive import VpcPeerKeepaliveTemplateInputs
 
+# ``A | B`` here is a runtime union over pydantic model classes, not a deferred
+# annotation, so ``from __future__ import annotations`` does not defer it. It works
+# (pydantic's metaclass supports ``__or__``), but pylint's static check cannot see
+# that, so scope-disable ``unsupported-binary-operation`` for just this assignment.
+# pylint: disable=unsupported-binary-operation
 LinkTemplateInputs = Annotated[
-    Union[
-        NumberedTemplateInputs,
-        UnnumberedTemplateInputs,
-        Ipv6LinkLocalTemplateInputs,
-        EbgpVrfLiteTemplateInputs,
-        Layer2DciTemplateInputs,
-        Layer3DciVrfLiteTemplateInputs,
-        MultisiteOverlayTemplateInputs,
-        MultisiteUnderlayTemplateInputs,
-        MplsOverlayTemplateInputs,
-        MplsUnderlayTemplateInputs,
-        PreprovisionTemplateInputs,
-        UserDefinedTemplateInputs,
-        VpcPeerKeepaliveTemplateInputs,
-    ],
+    NumberedTemplateInputs
+    | UnnumberedTemplateInputs
+    | Ipv6LinkLocalTemplateInputs
+    | EbgpVrfLiteTemplateInputs
+    | IosXeNumberedTemplateInputs
+    | Layer2DciTemplateInputs
+    | Layer3DciVrfLiteTemplateInputs
+    | MultisiteOverlayTemplateInputs
+    | MultisiteUnderlayTemplateInputs
+    | MplsOverlayTemplateInputs
+    | MplsUnderlayTemplateInputs
+    | PreprovisionTemplateInputs
+    | UserDefinedTemplateInputs
+    | VpcPeerKeepaliveTemplateInputs,
     Field(discriminator="policy_type_marker"),
 ]
+# pylint: enable=unsupported-binary-operation
+
+# Policy types this module strictly models and can create/update. Reads of any
+# other (valid) ND policy type fall back to a permissive opaque record so the
+# full-fabric query is never aborted by an unrelated, unsupported link.
+SUPPORTED_POLICY_TYPES = (
+    "numbered",
+    "unnumbered",
+    "ipv6LinkLocal",
+    "ebgpVrfLite",
+    "iosXeNumbered",
+    "layer2Dci",
+    "layer3DciVrfLite",
+    "multisiteOverlay",
+    "multisiteUnderlay",
+    "mplsOverlay",
+    "mplsUnderlay",
+    "preprovision",
+    "userDefined",
+    "vpcPeerKeepalive",
+)
 
 # Every policy-type model in the union, used to enumerate secret keys across all
 # of them without knowing which one a given link resolves to.
@@ -54,6 +80,7 @@ _LINK_TEMPLATE_INPUT_MODELS = (
     UnnumberedTemplateInputs,
     Ipv6LinkLocalTemplateInputs,
     EbgpVrfLiteTemplateInputs,
+    IosXeNumberedTemplateInputs,
     Layer2DciTemplateInputs,
     Layer3DciVrfLiteTemplateInputs,
     MultisiteOverlayTemplateInputs,
@@ -82,11 +109,13 @@ def all_secret_template_input_keys(by_alias: bool = False) -> set[str]:
 
 __all__ = [
     "LinkTemplateInputs",
+    "SUPPORTED_POLICY_TYPES",
     "all_secret_template_input_keys",
     "NumberedTemplateInputs",
     "UnnumberedTemplateInputs",
     "Ipv6LinkLocalTemplateInputs",
     "EbgpVrfLiteTemplateInputs",
+    "IosXeNumberedTemplateInputs",
     "Layer2DciTemplateInputs",
     "Layer3DciVrfLiteTemplateInputs",
     "MultisiteOverlayTemplateInputs",

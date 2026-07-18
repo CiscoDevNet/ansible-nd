@@ -107,11 +107,6 @@ options:
         description:
         - The name of the destination interface, for example C(Ethernet1/1).
         type: str
-      link_type:
-        description:
-        - The type of the link.
-        type: str
-        default: multi_cluster_planned_link
       config_data:
         description:
         - The link policy configuration.
@@ -124,6 +119,7 @@ options:
             - V(unnumbered) is an unnumbered link that borrows its address from another interface.
             - V(ipv6LinkLocal) uses automatic C(fe80::/10) link-local addressing.
             - V(ebgpVrfLite) is an eBGP peering over a VRF Lite link.
+            - V(iosXeNumbered) is an IOS-XE intra-fabric numbered link (for example a Campus C(vxlanCampus) intra-fabric link).
             - V(layer2Dci) is a Layer 2 trunk between data centers.
             - V(layer3DciVrfLite) is a VRF Lite stitched Layer 3 DCI link.
             - V(multisiteOverlay) is a Border Gateway overlay eBGP session.
@@ -139,6 +135,7 @@ options:
             - unnumbered
             - ipv6LinkLocal
             - ebgpVrfLite
+            - iosXeNumbered
             - layer2Dci
             - layer3DciVrfLite
             - multisiteOverlay
@@ -159,11 +156,18 @@ options:
             - This is a free-form dictionary validated per policy type by the module. It is intentionally not modeled as static suboptions because the
               valid keys differ by O(config.config_data.policy_type); the supported keys for each policy type are enumerated below.
             - The accepted keys depend on O(config.config_data.policy_type). Keys that do not belong to the selected policy type are rejected.
+            - ND's template engine requires every declared key to be present, so for any documented field you omit the module sends ND's documented
+              default (for example C(mtu) 9216, C(interface_admin_state) C(true), C(fec) C(auto)); fields with no documented default are sent as a
+              typed empty value (C("") / C(0) / C(false)), including secrets. See the note on secret fields below.
+            - This module can create and update the policy types listed below. Other valid ND policy types (for example C(ipfmNumbered) or
+              C(routedFabric)) are still read back by O(state=gathered) and preserved as opaque records; the module warns about them and never
+              modifies or deletes them.
             - 'In the lists below, a key shown as C(name) (int) or C(name) (bool) takes that type; all other keys are strings.'
             - 'Secret fields - C(ebgp_password), C(default_vrf_ebgp_neighbor_password), C(macsec_primary_key_string) and C(macsec_fallback_key_string)
               are sent to the controller but their values are masked as C(VALUE_SPECIFIED_IN_NO_LOG_PARAMETER) in this module''s output and excluded
-              from diffs. A change to only a secret value is therefore not detected as a change. Because O(config.config_data.template_inputs) is a
-              free-form dict these values are not individually marked no_log, so they may appear in task invocation logs at high verbosity.'
+              from diffs. A change to only a secret value is therefore not detected as a change. Nexus Dashboard does not return secret values on
+              read, so re-supply a secret whenever you update a link, otherwise it is written empty. Because O(config.config_data.template_inputs) is
+              a free-form dict these values are not individually marked no_log, so they may appear in task invocation logs at high verbosity.'
             - 'Common interface fields, available on V(numbered), V(unnumbered) and V(ipv6LinkLocal) - C(interface_admin_state) (bool), C(mtu) (int),
               C(speed), C(fec), C(src_interface_description), C(dst_interface_description), C(src_interface_config), C(dst_interface_config)
               and C(macsec) (bool).'
@@ -171,10 +175,13 @@ options:
               C(dhcp_relay_on_dst_interface) (bool), C(bfd_echo_on_src_interface) (bool) and C(bfd_echo_on_dst_interface) (bool).'
             - 'V(unnumbered) - the common interface fields plus C(dhcp_relay_on_src_interface) (bool) and C(dhcp_relay_on_dst_interface) (bool).'
             - 'V(ipv6LinkLocal) - the common interface fields only.'
+            - 'V(iosXeNumbered) - C(interface_admin_state) (bool), C(src_ip), C(dst_ip), C(speed), C(mtu) (int, IOS-XE default 9198)
+              and the interface description fields.'
             - 'V(ebgpVrfLite) - C(src_ebgp_asn), C(dst_ebgp_asn), C(src_ip_address_mask), C(src_ipv6_address_mask), C(dst_ip_address), C(dst_ipv6_address),
               C(link_mtu) (int), C(routing_tag), C(auto_gen_config_default_vrf) (bool), C(auto_gen_config_nx_peer_default_vrf) (bool),
-              C(auto_gen_config_peer) (bool), C(dci_tracking) (bool), C(default_vrf_ebgp_neighbor_password), C(redistrib_ebgp_route_map_name),
-              C(template_config_gen_peer), C(vrf_name_nx_peer_switch), the interface description fields, the full MACsec fields, the QKD fields
+              C(auto_gen_config_peer) (bool), C(dci_tracking) (bool), C(default_vrf_ebgp_neighbor_password),
+              C(default_vrf_ebgp_password_key_encryption_type), C(redistrib_ebgp_route_map_name), C(template_config_gen_peer),
+              C(vrf_name_nx_peer_switch), the interface description fields, the full MACsec fields, the QKD fields
               and C(inherit_ttag_fabric_setting) (bool).'
             - 'V(layer2Dci) - C(trunk_allowed_vlans), C(native_vlan) (int), C(bpdu_guard), C(port_type_fast) (bool), C(mtu_type), C(speed),
               the interface description fields, the full MACsec fields, the QKD fields and C(inherit_ttag_fabric_setting) (bool).'
@@ -202,8 +209,8 @@ options:
             - 'Full MACsec fields - C(macsec) (bool), C(macsec_cipher_suite), C(macsec_primary_cryptographic_algorithm), C(macsec_primary_key_string),
               C(macsec_fallback_cryptographic_algorithm), C(macsec_fallback_key_string) and C(override_fabric_macsec) (bool).'
             - 'QKD (Quantum Key Distribution) fields - C(qkd) (bool), C(ignore_certificate) (bool), C(src_kme_server_ip), C(dst_kme_server_ip),
-              C(src_macsec_key_chain_prefix), C(dst_macsec_key_chain_prefix), C(src_qkd_profile_name), C(dst_qkd_profile_name), C(src_trustpoint_label)
-              and C(dst_trustpoint_label).'
+              C(src_kme_server_port_number) (int), C(dst_kme_server_port_number) (int), C(src_macsec_key_chain_prefix), C(dst_macsec_key_chain_prefix),
+              C(src_qkd_profile_name), C(dst_qkd_profile_name), C(src_trustpoint_label) and C(dst_trustpoint_label).'
             - 'Netflow fields - C(netflow_on_src_interface) (bool), C(netflow_on_dst_interface) (bool), C(src_netflow_monitor_name)
               and C(dst_netflow_monitor_name).'
             type: dict
@@ -493,7 +500,6 @@ EXAMPLES = r"""
         dst_switch_name: v1-bgw1
         src_interface_name: Ethernet1/12
         dst_interface_name: Ethernet1/12
-        link_type: multi_cluster_planned_link
         config_data:
           policy_type: multisiteUnderlay
           template_inputs:
@@ -572,6 +578,119 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed, or in check mode would change, the link configuration.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The existing links matching O(config) before the module ran, structured the same as the O(config) parameter.
+  - An empty list when no matching link existed.
+  returned: when O(state) is V(merged), V(replaced), V(overridden) or V(deleted)
+  type: list
+  elements: dict
+  sample:
+  - src_fabric_name: fabric1
+    dst_fabric_name: fabric1
+    src_switch_name: leaf-1
+    dst_switch_name: spine-1
+    src_interface_name: Ethernet1/1
+    dst_interface_name: Ethernet1/1
+    config_data:
+      policy_type: numbered
+      template_inputs:
+        src_ip: 10.0.0.1
+        dst_ip: 10.0.0.2
+after:
+  description:
+  - The link configuration after the module ran, structured the same as the O(config) parameter.
+  - In check mode, the configuration that would result had the module run outside of check mode.
+  returned: when O(state) is V(merged), V(replaced), V(overridden) or V(deleted)
+  type: list
+  elements: dict
+  sample:
+  - src_fabric_name: fabric1
+    dst_fabric_name: fabric1
+    src_switch_name: leaf-1
+    dst_switch_name: spine-1
+    src_interface_name: Ethernet1/1
+    dst_interface_name: Ethernet1/1
+    config_data:
+      policy_type: numbered
+      template_inputs:
+        src_ip: 10.0.0.1
+        dst_ip: 10.0.0.2
+diff:
+  description: The per-link difference between C(before) and C(after).
+  returned: when O(state) is V(merged), V(replaced), V(overridden) or V(deleted)
+  type: list
+  elements: dict
+  sample:
+  - src_fabric_name: fabric1
+    dst_fabric_name: fabric1
+    src_switch_name: leaf-1
+    dst_switch_name: spine-1
+    src_interface_name: Ethernet1/1
+    dst_interface_name: Ethernet1/1
+    config_data:
+      template_inputs:
+        dst_ip: 10.0.0.2
+proposed:
+  description:
+  - The link configuration as sent to Nexus Dashboard, derived from O(config).
+  - Secret template inputs (for example C(ebgp_password)) are masked as C(VALUE_SPECIFIED_IN_NO_LOG_PARAMETER).
+  returned: when O(state) is V(merged), V(replaced), V(overridden) or V(deleted)
+  type: list
+  elements: dict
+  sample:
+  - src_fabric_name: fabric1
+    dst_fabric_name: fabric1
+    src_switch_name: leaf-1
+    dst_switch_name: spine-1
+    src_interface_name: Ethernet1/1
+    dst_interface_name: Ethernet1/1
+    config_data:
+      policy_type: numbered
+      template_inputs:
+        src_ip: 10.0.0.1
+        dst_ip: 10.0.0.2
+gathered:
+  description:
+  - The links read from Nexus Dashboard, structured so the list can be copied back into the O(config) parameter.
+  - Read-only response keys (for example the link identifier) are pruned and secret template inputs are masked.
+  returned: when O(state) is V(gathered)
+  type: list
+  elements: dict
+  sample:
+  - src_fabric_name: fabric1
+    dst_fabric_name: fabric1
+    src_switch_name: leaf-1
+    dst_switch_name: spine-1
+    src_interface_name: Ethernet1/1
+    dst_interface_name: Ethernet1/1
+    config_data:
+      policy_type: numbered
+      template_inputs:
+        src_ip: 10.0.0.1
+        dst_ip: 10.0.0.2
+logs:
+  description: Ordered list of the operations the module performed against Nexus Dashboard.
+  returned: when O(output_level=debug)
+  type: list
+  elements: str
+  sample:
+  - "Created link leaf-1:Ethernet1/1 <-> spine-1:Ethernet1/1"
+msg:
+  description: The error message describing why the module failed.
+  returned: on failure
+  type: str
+  sample: "Initialization failed: ..."
 """
 
 from ansible.module_utils.basic import AnsibleModule
@@ -662,7 +781,11 @@ def main() -> None:
 
         orchestrator = NDLinkOrchestrator(rest_send=rest_send, strategy=strategy)
 
-        state_machine = NDStateMachine(module=module, model_orchestrator=orchestrator)
+        # Resolve switch identities (name/ip/id backfill) on a copy so the raw
+        # user config in module.params -- and thus the invocation echo -- stays
+        # untouched, then hand the prepared list to the state machine directly.
+        prepared_config = orchestrator.prepare_config_data(module.params.get("config") or [])
+        state_machine = NDStateMachine(module=module, model_orchestrator=orchestrator, config=prepared_config)
         state_machine.manage_state()
 
         result = state_machine.output.format()

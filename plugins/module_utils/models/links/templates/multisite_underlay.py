@@ -12,6 +12,7 @@ from .base import (
     InterfaceDescriptionsMixin,
     LinkTemplateBase,
     TtagMixin,
+    pd,
 )
 
 
@@ -27,18 +28,18 @@ class MultisiteUnderlayTemplateInputs(
 
     src_ebgp_asn: str | None = Field(default=None, alias="srcEbgpAsn")
     dst_ebgp_asn: str | None = Field(default=None, alias="dstEbgpAsn")
-    ebgp_bfd: bool | None = Field(default=None, alias="ebgpBfd")
-    ebgp_log_neighbor_change: bool | None = Field(default=None, alias="ebgpLogNeighborChange")
-    ebgp_maximum_paths: int | None = Field(default=None, alias="ebgpMaximumPaths")
-    ebgp_send_comboth: bool | None = Field(default=None, alias="ebgpSendComboth")
+    ebgp_bfd: bool | None = Field(default=None, alias="ebgpBfd", json_schema_extra=pd(False))
+    ebgp_log_neighbor_change: bool | None = Field(default=None, alias="ebgpLogNeighborChange", json_schema_extra=pd(False))
+    ebgp_maximum_paths: int | None = Field(default=None, alias="ebgpMaximumPaths", json_schema_extra=pd(64))
+    ebgp_send_comboth: bool | None = Field(default=None, alias="ebgpSendComboth", json_schema_extra=pd(False))
 
     src_ip_address_mask: str | None = Field(default=None, alias="srcIpAddressMask")
     src_ipv6_address_mask: str | None = Field(default=None, alias="srcIpv6AddressMask")
     dst_ip_address: str | None = Field(default=None, alias="dstIpAddress")
     dst_ipv6_address: str | None = Field(default=None, alias="dstIpv6Address")
 
-    link_mtu: int | None = Field(default=None, alias="linkMtu")
-    speed: str | None = Field(default=None, alias="speed")
+    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216))
+    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto"))
     routing_tag: str | None = Field(default=None, alias="routingTag")
 
-    dci_tracking_enable_flag: bool | None = Field(default=None, alias="dciTrackingEnableFlag")
+    dci_tracking_enable_flag: bool | None = Field(default=None, alias="dciTrackingEnableFlag", json_schema_extra=pd(False))

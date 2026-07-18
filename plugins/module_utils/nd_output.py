@@ -2,9 +2,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
-from typing import Dict, Any, Optional, List, Union
+from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.utils import prune_to_spec
@@ -15,17 +15,17 @@ class NDOutput:
         self._output_level: str = output_level
         self._state: str = state
         self._changed: bool = False
-        self._before: Union[NDConfigCollection, List] = []
-        self._after: Union[NDConfigCollection, List] = []
-        self._diff: Union[NDConfigCollection, List] = []
-        self._proposed: Union[NDConfigCollection, List] = []
-        self._logs: List = []
-        self._extra: Dict[str, Any] = {}
+        self._before: NDConfigCollection | list = []
+        self._after: NDConfigCollection | list = []
+        self._diff: NDConfigCollection | list = []
+        self._proposed: NDConfigCollection | list = []
+        self._logs: list = []
+        self._extra: dict[str, Any] = {}
         # Argument-spec ``config.options`` mapping used to prune gathered output
         # down to valid module arguments so it round-trips as ``config``.
-        self._gathered_spec: Dict[str, Any] = {}
+        self._gathered_spec: dict[str, Any] = {}
 
-    def format(self, **kwargs) -> Dict[str, Any]:
+    def format(self, **kwargs) -> dict[str, Any]:
         # Read-only gathered state follows the Ansible resource-module
         # convention: return the fetched objects under a ``gathered`` key and
         # omit the change-oriented before/after/diff/proposed keys.
@@ -68,7 +68,7 @@ class NDOutput:
 
         return output
 
-    def format_with_verbosity(self, verbosity: int, results: Optional[Results] = None, **kwargs) -> Dict[str, Any]:
+    def format_with_verbosity(self, verbosity: int, results: Results | None = None, **kwargs) -> dict[str, Any]:
         """
         Build output dict filtered by CLI verbosity level.
 
@@ -119,13 +119,13 @@ class NDOutput:
 
     def assign(
         self,
-        after: Optional[NDConfigCollection] = None,
-        before: Optional[NDConfigCollection] = None,
-        diff: Optional[NDConfigCollection] = None,
-        proposed: Optional[NDConfigCollection] = None,
-        logs: Optional[List] = None,
-        gathered_spec: Optional[Dict[str, Any]] = None,
-        **kwargs
+        after: NDConfigCollection | None = None,
+        before: NDConfigCollection | None = None,
+        diff: NDConfigCollection | None = None,
+        proposed: NDConfigCollection | None = None,
+        logs: list | None = None,
+        gathered_spec: dict[str, Any] | None = None,
+        **kwargs,
     ) -> None:
         if isinstance(after, NDConfigCollection):
             self._after = after
@@ -135,7 +135,7 @@ class NDOutput:
             self._diff = diff
         if isinstance(proposed, NDConfigCollection):
             self._proposed = proposed
-        if isinstance(logs, List):
+        if isinstance(logs, list):
             self._logs = logs
         if isinstance(gathered_spec, dict):
             self._gathered_spec = gathered_spec

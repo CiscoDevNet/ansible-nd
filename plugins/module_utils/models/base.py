@@ -118,7 +118,7 @@ class NDBaseModel(BaseModel, ABC):
         return result
 
     @classmethod
-    def secret_field_keys(cls, by_alias: bool = False) -> Set[str]:
+    def secret_field_keys(cls, by_alias: bool = False) -> set[str]:
         """Names of fields tagged ``json_schema_extra={"secret": True}``.
 
         Aliases when ``by_alias`` is True (payload shape), else Python field
@@ -126,7 +126,7 @@ class NDBaseModel(BaseModel, ABC):
         are secret, used both to keep them out of output and to register their
         values for ``no_log`` masking.
         """
-        keys: Set[str] = set()
+        keys: set[str] = set()
         for field_name, field_info in cls.model_fields.items():
             extra = field_info.json_schema_extra
             if isinstance(extra, dict) and extra.get("secret"):
@@ -134,7 +134,7 @@ class NDBaseModel(BaseModel, ABC):
         return keys
 
     @classmethod
-    def collect_secret_values(cls, config_item: Dict[str, Any]) -> Set[str]:
+    def collect_secret_values(cls, config_item: dict[str, Any]) -> set[str]:
         """Secret string values in a raw Ansible config item, for no_log masking.
 
         Ansible auto-masks ``no_log`` argument-spec params, but not values in
@@ -145,7 +145,7 @@ class NDBaseModel(BaseModel, ABC):
         Default: top-level fields tagged secret. Models with secrets nested in a
         free-form dict (e.g. links ``template_inputs``) override to add those.
         """
-        values: Set[str] = set()
+        values: set[str] = set()
         if not isinstance(config_item, dict):
             return values
         for key in cls.secret_field_keys(by_alias=False):
@@ -189,13 +189,19 @@ class NDBaseModel(BaseModel, ABC):
     # --- Core Deserialization ---
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any], **kwargs) -> "NDBaseModel":
-        """Create model instance from API response dict (validation context ``mode=response``)."""
-        context = {"mode": "response", **(kwargs.pop("context", None) or {})}
+    def from_response(cls, response: dict[str, Any], **kwargs) -> "NDBaseModel":
+        """Create model instance from API response dict.
+
+        Marks the validation context with both ``mode="response"`` (resource-manager
+        convention) and ``source="response"`` (links tolerant-read convention) so
+        models can be lenient about controller-only shapes (e.g. links tolerate
+        policy types they cannot model) without relaxing validation of user input.
+        """
+        context = {"mode": "response", **(kwargs.pop("context", None) or {}), "source": "response"}
         return cls.model_validate(response, by_alias=True, context=context, **kwargs)
 
     @classmethod
-    def from_config(cls, ansible_config: Dict[str, Any], **kwargs) -> "NDBaseModel":
+    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "NDBaseModel":
         """Create model instance from Ansible config dict.
 
         Strips None values recursively before validation so that Ansible's

@@ -211,7 +211,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             raise ValueError(f"'{self.__class__.__name__}' has 'supports_bulk_delete=True' but 'delete_bulk_endpoint' is not defined.")
         return self
 
-    def _post_bulk(self, endpoint: NDEndpointBaseModel, items: list[Any], operation_type: OperationType = OperationType.QUERY) -> Dict[str, Any]:
+    def _post_bulk(self, endpoint: NDEndpointBaseModel, items: list[Any], operation_type: OperationType = OperationType.QUERY) -> dict[str, Any]:
         """POST a bulk payload as a single request through the RestSend pipeline.
 
         Wraps ``items`` under ``bulk_payload_key`` and sends one POST so the
