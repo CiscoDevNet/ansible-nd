@@ -1,0 +1,197 @@
+---
+# IOS-XE loopback tests for nd_interface_loopback
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Requires nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name) to be
+# set via inventory/extra-vars; tasks/main.yaml gates inclusion of this file
+# on nd_test_xe_switch_ip being defined. Exercises all four states plus
+# idempotency against a real IOS-XE switch, and (when the XE fabric matches
+# the NX test fabric) a mixed NX-OS + IOS-XE overridden pass to prove
+# cross-OS convergence in query_all.
+
+# --- XE PRE-CLEAN ---
+
+- name: "XE SETUP: Remove test loopback interfaces before XE state tests"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ xe_loopback_105.switch_ip }}"
+        interface_name: "{{ xe_loopback_105.interface_name }}"
+      - switch_ip: "{{ xe_loopback_106.switch_ip }}"
+        interface_name: "{{ xe_loopback_106.interface_name }}"
+    state: deleted
+
+# --- XE MERGED CREATE ---
+
+- name: "XE MERGED CREATE: Create loopback105 (iosXeLoopback) and loopback106 (csrLoopback) (check mode)"
+  cisco.nd.nd_interface_loopback: &xe_merge_105_106
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_loopback_105 }}"
+      - "{{ xe_loopback_106 }}"
+    state: merged
+  check_mode: true
+  register: cm_xe_merged_create
+
+- name: "XE MERGED CREATE: Create loopback105 (iosXeLoopback) and loopback106 (csrLoopback) (normal mode)"
+  cisco.nd.nd_interface_loopback: *xe_merge_105_106
+  register: nm_xe_merged_create
+
+- name: "XE MERGED CREATE: Verify loopback105 and loopback106 creation"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_merged_create is changed
+      - nm_xe_merged_create is changed
+      - nm_xe_merged_create.after | selectattr('interface_name', 'equalto', 'loopback105') | list | length == 1
+      - nm_xe_merged_create.after | selectattr('interface_name', 'equalto', 'loopback106') | list | length == 1
+
+# --- XE MERGED IDEMPOTENCY ---
+# loopback106 (csrLoopback) is the CSR drift case: ND reads the policyType
+# back as "csrIntLoopback" rather than "csrLoopback". The model must
+# normalize this on read so the idempotency compare below does not see a
+# spurious diff.
+
+- name: "XE MERGED IDEMPOTENT: Re-apply loopback105/loopback106 creation (check mode)"
+  cisco.nd.nd_interface_loopback: *xe_merge_105_106
+  check_mode: true
+  register: cm_xe_merged_idem
+
+- name: "XE MERGED IDEMPOTENT: Re-apply loopback105/loopback106 creation (normal mode)"
+  cisco.nd.nd_interface_loopback: *xe_merge_105_106
+  register: nm_xe_merged_idem
+
+- name: "XE MERGED IDEMPOTENT: Verify no change on second run (csrLoopback/csrIntLoopback normalization holds)"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_merged_idem is not changed
+      - nm_xe_merged_idem is not changed
+
+# --- XE REPLACED ---
+
+- name: "XE REPLACED: Replace loopback105 config entirely (check mode)"
+  cisco.nd.nd_interface_loopback: &xe_replace_105
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_loopback_105_updated }}"
+    state: replaced
+  check_mode: true
+  register: cm_xe_replaced_105
+
+- name: "XE REPLACED: Replace loopback105 config entirely (normal mode)"
+  cisco.nd.nd_interface_loopback: *xe_replace_105
+  register: nm_xe_replaced_105
+
+- name: "XE REPLACED: Verify loopback105 was replaced"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_replaced_105 is changed
+      - nm_xe_replaced_105 is changed
+
+- name: "XE REPLACED: Verify replaced values"
+  vars:
+    lb105_after: "{{ nm_xe_replaced_105.after | selectattr('interface_name', 'equalto', 'loopback105') | first }}"
+  ansible.builtin.assert:
+    that:
+      - lb105_after.config_data.network_os.policy.ip == "10.100.105.2"
+      - lb105_after.config_data.network_os.policy.description == "Updated loopback105 description"
+
+# --- XE OVERRIDDEN ---
+# When the XE fabric equals the NX test fabric, override with a mix of an
+# NX-OS loopback (loopback_100) and an IOS-XE loopback (xe_loopback_105) to
+# prove cross-OS convergence in query_all. On the real lab the XE fabric
+# (ISN) differs from the NX test fabric, so this path is normally skipped in
+# favor of the XE-only variant below; both are written so either topology is
+# covered.
+
+- name: "XE OVERRIDDEN MIXED: Override to loopback100 (NX-OS) and loopback105 (IOS-XE)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ loopback_100 }}"
+      - "{{ xe_loopback_105 }}"
+    state: overridden
+  register: nm_xe_overridden_mixed
+  when: test_xe_fabric_name == test_fabric_name
+
+- name: "XE OVERRIDDEN XE-ONLY: Override to loopback105 (IOS-XE) only"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_loopback_105 }}"
+    state: overridden
+  register: nm_xe_overridden_xe_only
+  when: test_xe_fabric_name != test_fabric_name
+
+- name: "XE OVERRIDDEN: Verify exactly one override variant ran and reported changed"
+  ansible.builtin.assert:
+    that:
+      - (nm_xe_overridden_mixed is skipped) or (nm_xe_overridden_mixed is changed)
+      - (nm_xe_overridden_xe_only is skipped) or (nm_xe_overridden_xe_only is changed)
+      - not (nm_xe_overridden_mixed is skipped and nm_xe_overridden_xe_only is skipped)
+
+# --- XE DELETED ---
+
+- name: "XE DELETED: Delete loopback105 and loopback106 (check mode)"
+  cisco.nd.nd_interface_loopback: &xe_delete_105_106
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ xe_loopback_105.switch_ip }}"
+        interface_name: "{{ xe_loopback_105.interface_name }}"
+      - switch_ip: "{{ xe_loopback_106.switch_ip }}"
+        interface_name: "{{ xe_loopback_106.interface_name }}"
+    state: deleted
+  check_mode: true
+  register: cm_xe_deleted
+
+- name: "XE DELETED: Delete loopback105 and loopback106 (normal mode)"
+  cisco.nd.nd_interface_loopback: *xe_delete_105_106
+  register: nm_xe_deleted
+
+- name: "XE DELETED: Verify loopback105 and loopback106 were deleted"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_deleted is changed
+      - nm_xe_deleted is changed
+      - nm_xe_deleted.after | selectattr('interface_name', 'equalto', 'loopback105') | list | length == 0
+      - nm_xe_deleted.after | selectattr('interface_name', 'equalto', 'loopback106') | list | length == 0
+
+- name: "XE DELETED: Delete NX loopback100 (only if the mixed override ran)"
+  cisco.nd.nd_interface_loopback: &xe_delete_nx_100
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback100
+    state: deleted
+  register: nm_xe_deleted_nx_100
+  when: test_xe_fabric_name == test_fabric_name
+
+- name: "XE DELETED: Verify NX loopback100 cleanup reported changed when it ran"
+  ansible.builtin.assert:
+    that:
+      - (nm_xe_deleted_nx_100 is skipped) or (nm_xe_deleted_nx_100 is changed)
+
+# --- XE DELETED: IDEMPOTENCY ---
+
+- name: "XE DELETED IDEMPOTENT: Re-delete loopback105 and loopback106"
+  cisco.nd.nd_interface_loopback: *xe_delete_105_106
+  register: nm_xe_deleted_idem
+
+- name: "XE DELETED IDEMPOTENT: Re-delete NX loopback100 (only if the mixed override ran)"
+  cisco.nd.nd_interface_loopback: *xe_delete_nx_100
+  register: nm_xe_deleted_nx_100_idem
+  when: test_xe_fabric_name == test_fabric_name
+
+- name: "XE DELETED IDEMPOTENT: Verify no change when already absent"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_deleted_idem is not changed
+      - (nm_xe_deleted_nx_100_idem is skipped) or (nm_xe_deleted_nx_100_idem is not changed)

@@ -73,3 +73,42 @@ loopback_101_updated:
         admin_state: false
         ip: "10.100.101.2"
         description: "Updated loopback101 description"
+
+# IOS-XE coverage — set nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name)
+# in inventory/extra-vars to enable; xe.yaml is skipped when unset.
+test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
+
+xe_loopback_105:
+  switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+  interface_name: loopback105
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeLoopback
+        admin_state: true
+        ip: "10.100.105.1"
+        description: "Ansible integration test loopback105"
+
+xe_loopback_105_updated:
+  switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+  interface_name: loopback105
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeLoopback
+        admin_state: true
+        ip: "10.100.105.2"
+        description: "Updated loopback105 description"
+
+xe_loopback_106:
+  switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+  interface_name: loopback106
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: csrLoopback
+        admin_state: true
+        ip: "10.100.106.1"
