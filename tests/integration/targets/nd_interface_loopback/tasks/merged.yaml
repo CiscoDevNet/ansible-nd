@@ -6,35 +6,35 @@
 
 # --- MERGED CREATE ---
 
-- name: "MERGED CREATE: Create loopback100 with full config (check mode)"
+- name: "MERGED CREATE: Create loopback200 with full config (check mode)"
   cisco.nd.nd_interface_loopback: &merge_lb100
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - "{{ loopback_100 }}"
+      - "{{ loopback_200 }}"
     state: merged
   check_mode: true
   register: cm_merged_create_100
 
-- name: "MERGED CREATE: Create loopback100 with full config (normal mode)"
+- name: "MERGED CREATE: Create loopback200 with full config (normal mode)"
   cisco.nd.nd_interface_loopback: *merge_lb100
   register: nm_merged_create_100
 
-- name: "MERGED CREATE: Verify loopback100 creation"
+- name: "MERGED CREATE: Verify loopback200 creation"
   ansible.builtin.assert:
     that:
       - cm_merged_create_100 is changed
       - nm_merged_create_100 is changed
       - nm_merged_create_100.after | length >= 1
-      - nm_merged_create_100.after | selectattr('interface_name', 'equalto', 'loopback100') | list | length == 1
+      - nm_merged_create_100.after | selectattr('interface_name', 'equalto', 'loopback200') | list | length == 1
 
 - name: "MERGED CREATE: Create multiple loopbacks in a single task (check mode)"
   cisco.nd.nd_interface_loopback: &merge_lb101_102
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - "{{ loopback_101 }}"
-      - "{{ loopback_102 }}"
+      - "{{ loopback_201 }}"
+      - "{{ loopback_202 }}"
     state: merged
   check_mode: true
   register: cm_merged_create_multi
@@ -48,17 +48,17 @@
     that:
       - cm_merged_create_multi is changed
       - nm_merged_create_multi is changed
-      - nm_merged_create_multi.after | selectattr('interface_name', 'equalto', 'loopback101') | list | length == 1
-      - nm_merged_create_multi.after | selectattr('interface_name', 'equalto', 'loopback102') | list | length == 1
+      - nm_merged_create_multi.after | selectattr('interface_name', 'equalto', 'loopback201') | list | length == 1
+      - nm_merged_create_multi.after | selectattr('interface_name', 'equalto', 'loopback202') | list | length == 1
 
 # --- MERGED IDEMPOTENCY ---
 
-- name: "MERGED IDEMPOTENT: Re-apply loopback100 creation (check mode)"
+- name: "MERGED IDEMPOTENT: Re-apply loopback200 creation (check mode)"
   cisco.nd.nd_interface_loopback: *merge_lb100
   check_mode: true
   register: cm_merged_idem_100
 
-- name: "MERGED IDEMPOTENT: Re-apply loopback100 creation (normal mode)"
+- name: "MERGED IDEMPOTENT: Re-apply loopback200 creation (normal mode)"
   cisco.nd.nd_interface_loopback: *merge_lb100
   register: nm_merged_idem_100
 
@@ -70,21 +70,21 @@
 
 # --- MERGED UPDATE ---
 
-- name: "MERGED UPDATE: Update loopback100 IP and description (check mode)"
+- name: "MERGED UPDATE: Update loopback200 IP and description (check mode)"
   cisco.nd.nd_interface_loopback: &merge_lb100_updated
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - "{{ loopback_100_updated }}"
+      - "{{ loopback_200_updated }}"
     state: merged
   check_mode: true
   register: cm_merged_update_100
 
-- name: "MERGED UPDATE: Update loopback100 IP and description (normal mode)"
+- name: "MERGED UPDATE: Update loopback200 IP and description (normal mode)"
   cisco.nd.nd_interface_loopback: *merge_lb100_updated
   register: nm_merged_update_100
 
-- name: "MERGED UPDATE: Verify loopback100 was updated"
+- name: "MERGED UPDATE: Verify loopback200 was updated"
   ansible.builtin.assert:
     that:
       - cm_merged_update_100 is changed
@@ -92,11 +92,11 @@
 
 - name: "MERGED UPDATE: Verify updated values in after state"
   vars:
-    lb100_after: "{{ nm_merged_update_100.after | selectattr('interface_name', 'equalto', 'loopback100') | first }}"
+    lb100_after: "{{ nm_merged_update_100.after | selectattr('interface_name', 'equalto', 'loopback200') | first }}"
   ansible.builtin.assert:
     that:
-      - lb100_after.config_data.network_os.policy.ip == "10.100.100.2"
-      - lb100_after.config_data.network_os.policy.description == "Updated loopback100 description"
+      - lb100_after.config_data.network_os.policy.ip == "10.100.200.2"
+      - lb100_after.config_data.network_os.policy.description == "Updated loopback200 description"
       - lb100_after.config_data.network_os.policy.route_map_tag == "54321"
 
 - name: "MERGED UPDATE: Re-apply update for idempotency"
@@ -116,7 +116,7 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback103
+        interface_name: loopback203
         config_data:
           network_os:
             network_os_type: nx-os
@@ -124,7 +124,7 @@
               policy_type: loopback
               admin_state: true
               ip: "10.100.103.1"
-              description: "No-deploy test loopback103"
+              description: "No-deploy test loopback203"
     config_actions:
       deploy: false
     state: merged
@@ -136,13 +136,13 @@
       - nm_merged_no_deploy is changed
 
 # Clean up the no-deploy test interface
-- name: "CLEANUP: Remove loopback103"
+- name: "CLEANUP: Remove loopback203"
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback103
+        interface_name: loopback203
     state: deleted
 
 # --- MERGED WITH CIDR-format ip ---

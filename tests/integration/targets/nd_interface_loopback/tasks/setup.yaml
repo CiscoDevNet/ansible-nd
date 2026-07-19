@@ -14,14 +14,14 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback100
+        interface_name: loopback200
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback101
+        interface_name: loopback201
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback102
+        interface_name: loopback202
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback103
+        interface_name: loopback203
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback199
+        interface_name: loopback299
     state: deleted
   tags: always

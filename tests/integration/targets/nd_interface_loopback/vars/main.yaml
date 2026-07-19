@@ -8,107 +8,107 @@ test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
 
 # Loopback interface configs used across tests.
-# Loopback IDs 100-109 are reserved for these integration tests.
-loopback_100:
+# Loopback IDs 200-209 (and 299 as the never-exists probe) are reserved for these integration tests.
+loopback_200:
   switch_ip: "{{ test_switch_ip }}"
-  interface_name: loopback100
+  interface_name: loopback200
   config_data:
     network_os:
       network_os_type: nx-os
       policy:
         policy_type: loopback
         admin_state: true
-        ip: "10.100.100.1"
-        description: "Ansible integration test loopback100"
+        ip: "10.100.200.1"
+        description: "Ansible integration test loopback200"
         vrf: default
         route_map_tag: "12345"
 
-loopback_101:
+loopback_201:
   switch_ip: "{{ test_switch_ip }}"
-  interface_name: loopback101
+  interface_name: loopback201
   config_data:
     network_os:
       network_os_type: nx-os
       policy:
         policy_type: loopback
         admin_state: true
-        ip: "10.100.101.1"
-        description: "Ansible integration test loopback101"
+        ip: "10.100.201.1"
+        description: "Ansible integration test loopback201"
 
-loopback_102:
+loopback_202:
   switch_ip: "{{ test_switch_ip }}"
-  interface_name: loopback102
+  interface_name: loopback202
   config_data:
     network_os:
       network_os_type: nx-os
       policy:
         policy_type: loopback
         admin_state: true
-        ip: "10.100.102.1"
-        description: "Ansible integration test loopback102"
+        ip: "10.100.202.1"
+        description: "Ansible integration test loopback202"
 
 # Updated versions for merge/replace tests
-loopback_100_updated:
+loopback_200_updated:
   switch_ip: "{{ test_switch_ip }}"
-  interface_name: loopback100
+  interface_name: loopback200
   config_data:
     network_os:
       network_os_type: nx-os
       policy:
         policy_type: loopback
         admin_state: true
-        ip: "10.100.100.2"
-        description: "Updated loopback100 description"
+        ip: "10.100.200.2"
+        description: "Updated loopback200 description"
         vrf: default
         route_map_tag: "54321"
 
-loopback_101_updated:
+loopback_201_updated:
   switch_ip: "{{ test_switch_ip }}"
-  interface_name: loopback101
+  interface_name: loopback201
   config_data:
     network_os:
       network_os_type: nx-os
       policy:
         policy_type: loopback
         admin_state: false
-        ip: "10.100.101.2"
-        description: "Updated loopback101 description"
+        ip: "10.100.201.2"
+        description: "Updated loopback201 description"
 
 # IOS-XE coverage — set nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name)
 # in inventory/extra-vars to enable; xe.yaml is skipped when unset.
 test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
 
-xe_loopback_105:
+xe_loopback_205:
   switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
-  interface_name: loopback105
+  interface_name: loopback205
   config_data:
     network_os:
       network_os_type: ios-xe
       policy:
         policy_type: iosXeLoopback
         admin_state: true
-        ip: "10.100.105.1"
-        description: "Ansible integration test loopback105"
+        ip: "10.100.205.1"
+        description: "Ansible integration test loopback205"
 
-xe_loopback_105_updated:
+xe_loopback_205_updated:
   switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
-  interface_name: loopback105
+  interface_name: loopback205
   config_data:
     network_os:
       network_os_type: ios-xe
       policy:
         policy_type: iosXeLoopback
         admin_state: true
-        ip: "10.100.105.2"
-        description: "Updated loopback105 description"
+        ip: "10.100.205.2"
+        description: "Updated loopback205 description"
 
-xe_loopback_106:
+xe_loopback_206:
   switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
-  interface_name: loopback106
+  interface_name: loopback206
   config_data:
     network_os:
       network_os_type: ios-xe
       policy:
         policy_type: csrLoopback
         admin_state: true
-        ip: "10.100.106.1"
+        ip: "10.100.206.1"
