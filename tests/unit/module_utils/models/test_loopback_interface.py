@@ -21,9 +21,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopbac
     CsrLoopbackPolicyModel,
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
-    LoopbackNetworkOSModel,
     LoopbackPolicyModel,
+    NexusLoopbackNetworkOSModel,
     XeInternalLoopbackPolicyModel,
+    XeLoopbackNetworkOSModel,
     XeLoopbackPolicyModel,
     XeLoopbackShutNoshutPolicyModel,
     XeUnderlayLoopbackPolicyModel,
@@ -688,7 +689,7 @@ def test_loopback_interface_00090():
 
 
 # =============================================================================
-# Test: LoopbackNetworkOSModel
+# Test: NexusLoopbackNetworkOSModel
 # =============================================================================
 
 
@@ -706,10 +707,10 @@ def test_loopback_interface_00100():
 
     ## Classes and Methods
 
-    - LoopbackNetworkOSModel.__init__()
+    - NexusLoopbackNetworkOSModel.__init__()
     """
     with pytest.raises(ValidationError):
-        result = LoopbackNetworkOSModel(policy=LoopbackPolicyModel(policy_type="loopback"))  # pylint: disable=unused-variable
+        result = NexusLoopbackNetworkOSModel(policy=LoopbackPolicyModel(policy_type="loopback"))  # pylint: disable=unused-variable
 
 
 def test_loopback_interface_00110():
@@ -726,10 +727,10 @@ def test_loopback_interface_00110():
 
     ## Classes and Methods
 
-    - LoopbackNetworkOSModel.__init__()
+    - NexusLoopbackNetworkOSModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackNetworkOSModel(network_os_type="nx-os")
+        instance = NexusLoopbackNetworkOSModel(network_os_type="nx-os")
     assert instance.policy is None
     assert instance.network_os_type == "nx-os"
 
@@ -747,7 +748,7 @@ def test_loopback_interface_00120():
 
     ## Classes and Methods
 
-    - LoopbackNetworkOSModel.__init__()
+    - NexusLoopbackNetworkOSModel.__init__()
     """
     data = {
         "networkOSType": "nx-os",
@@ -757,7 +758,7 @@ def test_loopback_interface_00120():
         },
     }
     with does_not_raise():
-        instance = LoopbackNetworkOSModel(**data)
+        instance = NexusLoopbackNetworkOSModel(**data)
     assert instance.network_os_type == "nx-os"
     assert instance.policy.admin_state is True
     assert instance.policy.policy_type == "loopback"
@@ -767,20 +768,20 @@ def test_loopback_interface_00130():
     """
     # Summary
 
-    Verify network_os_type rejects values other than "nx-os". The ND API schema enum is `["nx-os", "ios-xe"]`, but only
-    NX-OS loopback policy models are implemented; `ios-xe` support widens this Literal when it lands.
+    Verify network_os_type rejects an unknown OS discriminator value. `NexusLoopbackNetworkOSModel.network_os_type` is a
+    `Literal["nx-os"]`, so any other value (including a value absent from the outer union entirely) raises directly.
 
     ## Test
 
-    - Construct with networkOSType "ios-xe"
+    - Construct with networkOSType "junos" (not a member of the outer union)
     - Raises ValidationError
 
     ## Classes and Methods
 
-    - LoopbackNetworkOSModel.__init__()
+    - NexusLoopbackNetworkOSModel.__init__()
     """
     with pytest.raises(ValidationError):
-        result = LoopbackNetworkOSModel(networkOSType="ios-xe")  # pylint: disable=unused-variable
+        result = NexusLoopbackNetworkOSModel(networkOSType="junos")  # pylint: disable=unused-variable
 
 
 # =============================================================================
@@ -804,7 +805,7 @@ def test_loopback_interface_00150():
     - LoopbackConfigDataModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackConfigDataModel(network_os=LoopbackNetworkOSModel(network_os_type="nx-os", policy=LoopbackPolicyModel(policy_type="loopback")))
+        instance = LoopbackConfigDataModel(network_os=NexusLoopbackNetworkOSModel(network_os_type="nx-os", policy=LoopbackPolicyModel(policy_type="loopback")))
     assert instance.mode == "managed"
 
 
@@ -826,7 +827,7 @@ def test_loopback_interface_00160():
     with does_not_raise():
         instance = LoopbackConfigDataModel(
             mode="managed",
-            network_os=LoopbackNetworkOSModel(
+            network_os=NexusLoopbackNetworkOSModel(
                 network_os_type="nx-os",
                 policy=LoopbackPolicyModel(ip="10.1.1.1/32", admin_state=True, policy_type="loopback"),
             ),
@@ -1875,7 +1876,7 @@ def test_mpls_loopback_strict_rejects_foreign_field():
 
 
 # =============================================================================
-# Test: LoopbackNetworkOSModel — policy discriminated union
+# Test: NexusLoopbackNetworkOSModel — policy discriminated union
 # =============================================================================
 
 
@@ -1883,7 +1884,7 @@ def test_network_os_discriminator_selects_branch():
     """
     # Summary
 
-    Verify `LoopbackNetworkOSModel.policy` selects the correct branch model based on the `policyType` discriminator.
+    Verify `NexusLoopbackNetworkOSModel.policy` selects the correct branch model based on the `policyType` discriminator.
 
     ## Test
 
@@ -1893,19 +1894,18 @@ def test_network_os_discriminator_selects_branch():
 
     ## Classes and Methods
 
-    - LoopbackNetworkOSModel.__init__()
+    - NexusLoopbackNetworkOSModel.__init__()
     """
     from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
         IpfmLoopbackPolicyModel,
-        LoopbackNetworkOSModel,
         MplsLoopbackPolicyModel,
     )
 
-    lo = LoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "loopback", "ip": "10.1.1.1/32"})
+    lo = NexusLoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "loopback", "ip": "10.1.1.1/32"})
     assert isinstance(lo.policy, LoopbackPolicyModel)
-    ipfm = LoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "ipfmLoopback", "advertiseLoopback": True})
+    ipfm = NexusLoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "ipfmLoopback", "advertiseLoopback": True})
     assert isinstance(ipfm.policy, IpfmLoopbackPolicyModel)
-    mpls = LoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "mplsLoopback", "dciRoutingTag": "X"})
+    mpls = NexusLoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "mplsLoopback", "dciRoutingTag": "X"})
     assert isinstance(mpls.policy, MplsLoopbackPolicyModel)
 
 
@@ -1913,7 +1913,7 @@ def test_network_os_missing_discriminator_raises():
     """
     # Summary
 
-    Verify `LoopbackNetworkOSModel.policy` raises `ValidationError` when the `policy` dict omits the `policyType`
+    Verify `NexusLoopbackNetworkOSModel.policy` raises `ValidationError` when the `policy` dict omits the `policyType`
     discriminator field, since Pydantic cannot select a branch without it.
 
     ## Test
@@ -1923,10 +1923,10 @@ def test_network_os_missing_discriminator_raises():
 
     ## Classes and Methods
 
-    - LoopbackNetworkOSModel.__init__()
+    - NexusLoopbackNetworkOSModel.__init__()
     """
     with pytest.raises(ValidationError):
-        LoopbackNetworkOSModel(networkOSType="nx-os", policy={"ip": "10.1.1.1/32"})
+        NexusLoopbackNetworkOSModel(networkOSType="nx-os", policy={"ip": "10.1.1.1/32"})
 
 
 def test_full_interface_round_trip_via_api_response():
@@ -2214,3 +2214,86 @@ def test_csr1kv_rejects_ip() -> None:
         result = Csr1kvLoopbackPolicyModel(policyType="csr1kvLoopback", extraConfig="shutdown")  # pylint: disable=unused-variable
     with pytest.raises(ValidationError):
         result = Csr1kvLoopbackPolicyModel(policyType="csr1kvLoopback", ip="10.5.5.5")  # pylint: disable=unused-variable
+
+
+# =============================================================================
+# Test: outer network_os_type discriminated union (nx-os | ios-xe)
+# =============================================================================
+
+
+def test_network_os_outer_union_selects_xe_branch() -> None:
+    """
+    # Summary
+
+    Verify `LoopbackConfigDataModel.network_os` selects `XeLoopbackNetworkOSModel` when `networkOSType == "ios-xe"` and
+    `NexusLoopbackNetworkOSModel` when `networkOSType == "nx-os"`.
+
+    ## Test
+
+    - Construct config data for each OS
+    - The selected branch model type is correct
+
+    ## Classes and Methods
+
+    - LoopbackConfigDataModel.__init__()
+    """
+    xe = LoopbackConfigDataModel(networkOS={"networkOSType": "ios-xe", "policy": {"policyType": "iosXeLoopback", "ip": "10.2.2.2"}})
+    assert isinstance(xe.network_os, XeLoopbackNetworkOSModel)
+    assert isinstance(xe.network_os.policy, XeLoopbackPolicyModel)
+    nx = LoopbackConfigDataModel(networkOS={"networkOSType": "nx-os", "policy": {"policyType": "loopback", "ip": "10.1.1.1"}})
+    assert isinstance(nx.network_os, NexusLoopbackNetworkOSModel)
+
+
+def test_cross_os_policy_type_rejected() -> None:
+    """
+    # Summary
+
+    Verify cross-OS mismatches fail structurally: `nx-os` with an XE `policy_type` and `ios-xe` with an NX-OS `policy_type`
+    both raise `ValidationError` from the discriminated union — no hand-written cross-check.
+
+    ## Test
+
+    - `nx-os` + `iosXeLoopback` raises
+    - `ios-xe` + `loopback` raises
+
+    ## Classes and Methods
+
+    - LoopbackConfigDataModel.__init__()
+    """
+    with pytest.raises(ValidationError):
+        result = LoopbackConfigDataModel(networkOS={"networkOSType": "nx-os", "policy": {"policyType": "iosXeLoopback"}})  # pylint: disable=unused-variable
+    with pytest.raises(ValidationError):
+        result = LoopbackConfigDataModel(networkOS={"networkOSType": "ios-xe", "policy": {"policyType": "loopback"}})  # pylint: disable=unused-variable
+
+
+def test_xe_from_response_tolerates_injected_policy_key() -> None:
+    """
+    # Summary
+
+    Verify the read-tolerant path works for XE branches: `from_response` with an undeclared ND-injected policy key validates,
+    while direct (write-path) construction with the same key raises.
+
+    ## Test
+
+    - `from_response` with an injected key succeeds (read mode strips it)
+    - Direct construction with the same key raises `ValidationError`
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceModel.from_response()
+    - LoopbackPolicyStrictBase.strip_none_valued_keys()
+    """
+    response = {
+        "switchIp": "192.168.1.2",
+        "interfaceName": "loopback105",
+        "interfaceType": "loopback",
+        "configData": {
+            "mode": "managed",
+            "networkOS": {"networkOSType": "ios-xe", "policy": {"policyType": "iosXeLoopback", "ip": "10.2.2.2", "ndInjectedKey": "x"}},
+        },
+    }
+    with does_not_raise():
+        instance = LoopbackInterfaceModel.from_response(response)
+    assert isinstance(instance.config_data.network_os.policy, XeLoopbackPolicyModel)
+    with pytest.raises(ValidationError):
+        result = XeLoopbackPolicyModel(policyType="iosXeLoopback", ndInjectedKey="x")  # pylint: disable=unused-variable

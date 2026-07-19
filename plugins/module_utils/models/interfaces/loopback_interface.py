@@ -17,11 +17,16 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
     - `interface_type` (hardcoded: "loopback")
     - `config_data` -> `LoopbackConfigDataModel`
         - `mode` (hardcoded: "managed")
-        - `network_os` -> `LoopbackNetworkOSModel`
-            - `network_os_type` (required, user-supplied; only "nx-os" today)
-            - `policy` -> `LoopbackPolicyModel` (`policy_type: loopback | ipfmLoopback | mplsLoopback`)
-                - `admin_state`, `ip`, `ipv6`, `vrf`, etc. (`policy_type` is required and discriminates the branch;
-                  `ipfmLoopback` and `mplsLoopback` policy types get dedicated models sharing `LoopbackPolicyBase`)
+        - `network_os` -> `NexusLoopbackNetworkOSModel | XeLoopbackNetworkOSModel` (outer discriminated union on `network_os_type`)
+            - `NexusLoopbackNetworkOSModel` (`network_os_type: "nx-os"`)
+                - `policy` -> `LoopbackPolicyModel | IpfmLoopbackPolicyModel | MplsLoopbackPolicyModel` (`policy_type` discriminator)
+                    - `admin_state`, `ip`, `ipv6`, `vrf`, etc. (`ipfmLoopback` and `mplsLoopback` policy types get dedicated
+                      models sharing `LoopbackPolicyBase`)
+            - `XeLoopbackNetworkOSModel` (`network_os_type: "ios-xe"`)
+                - `policy` -> `XeLoopbackPolicyModel | XeLoopbackShutNoshutPolicyModel | XeUnderlayLoopbackPolicyModel |
+                  XeInternalLoopbackPolicyModel | CsrLoopbackPolicyModel | Csr1kvLoopbackPolicyModel` (`policy_type` discriminator)
+                    - Each branch declares its own fields on `LoopbackPolicyStrictBase` (write-strict / read-tolerant; no NX-OS
+                      fields shared)
 """
 
 from __future__ import annotations
@@ -330,11 +335,11 @@ class Csr1kvLoopbackPolicyModel(LoopbackPolicyStrictBase):
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Interface freeform config")
 
 
-class LoopbackNetworkOSModel(NDNestedModel):
+class NexusLoopbackNetworkOSModel(NDNestedModel):
     """
     # Summary
 
-    Network OS container for a loopback interface. Maps to `configData.networkOS` in the ND API.
+    NX-OS branch of the network-OS container for a loopback interface. Selected from the outer union when `networkOSType == "nx-os"`.
 
     ## Raises
 
@@ -343,11 +348,31 @@ class LoopbackNetworkOSModel(NDNestedModel):
 
     # Not frozen: NDBaseModel.merge() assigns every explicitly-set field, and required fields are always
     # explicitly set. The Literal constrains the value; same pattern as the policy_type discriminator.
-    network_os_type: Literal["nx-os"] = Field(
-        alias="networkOSType",
-        description="Network OS (platform) type discriminator; required by the ND API schema. Only nx-os is implemented today",
-    )
+    network_os_type: Literal["nx-os"] = Field(alias="networkOSType", description="Network OS (platform) type discriminator; required by the ND API schema")
     policy: LoopbackPolicyModel | IpfmLoopbackPolicyModel | MplsLoopbackPolicyModel | None = Field(default=None, alias="policy", discriminator="policy_type")
+
+
+class XeLoopbackNetworkOSModel(NDNestedModel):
+    """
+    # Summary
+
+    IOS-XE branch of the network-OS container for a loopback interface. Selected from the outer union when `networkOSType == "ios-xe"`.
+
+    ## Raises
+
+    None
+    """
+
+    network_os_type: Literal["ios-xe"] = Field(alias="networkOSType", description="Network OS (platform) type discriminator; required by the ND API schema")
+    policy: (
+        XeLoopbackPolicyModel
+        | XeLoopbackShutNoshutPolicyModel
+        | XeUnderlayLoopbackPolicyModel
+        | XeInternalLoopbackPolicyModel
+        | CsrLoopbackPolicyModel
+        | Csr1kvLoopbackPolicyModel
+        | None
+    ) = Field(default=None, alias="policy", discriminator="policy_type")
 
 
 class LoopbackConfigDataModel(NDNestedModel):
@@ -362,7 +387,7 @@ class LoopbackConfigDataModel(NDNestedModel):
     """
 
     mode: Literal["managed"] = Field(default="managed", alias="mode", frozen=True)
-    network_os: LoopbackNetworkOSModel = Field(alias="networkOS")
+    network_os: NexusLoopbackNetworkOSModel | XeLoopbackNetworkOSModel = Field(alias="networkOS", discriminator="network_os_type")
 
 
 class LoopbackInterfaceModel(NDBaseModel):
