@@ -258,3 +258,26 @@ class LoopbackPolicyTypeEnum(str, Enum):
     LOOPBACK = "loopback"
     IPFM_LOOPBACK = "ipfmLoopback"
     MPLS_LOOPBACK = "mplsLoopback"
+
+
+class XeLoopbackPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed IOS-XE loopback policy types owned by the `nd_interface_loopback` module. `userDefined` is intentionally excluded.
+
+    `CSR_INT_LOOPBACK` is the READ-side alias of `CSR_LOOPBACK`: the ND 4.2.1 create-side discriminator enum says `csrLoopback`
+    while the read-side enum says `csrIntLoopback`. Both are listed so read-path filtering (`query_all`) matches the wire.
+
+    ## Raises
+
+    None
+    """
+
+    IOS_XE_LOOPBACK = "iosXeLoopback"
+    IOS_XE_LOOPBACK_SHUT_NOSHUT = "iosXeLoopbackShutNoshut"
+    IOS_XE_UNDERLAY_LOOPBACK = "iosXeUnderlayLoopback"
+    IOS_XE_INTERNAL_LOOPBACK = "iosXeInternalLoopback"
+    CSR_LOOPBACK = "csrLoopback"
+    CSR_INT_LOOPBACK = "csrIntLoopback"
+    CSR1KV_LOOPBACK = "csr1kvLoopback"

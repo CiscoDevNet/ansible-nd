@@ -17,8 +17,11 @@ Uses `FabricContext` for pre-flight validation (fabric existence, deployment-fre
 and switch IP-to-serial resolution. The model structure mirrors the API payload, so the
 orchestrator only needs to inject `switchId` and filter `query_all` results by interface type.
 
-`query_all` manages all three NX-OS loopback policy types (`loopback`, `ipfmLoopback`, `mplsLoopback`) — see
-`LoopbackPolicyTypeEnum`. `userDefined` and system-provisioned policy types (e.g. `underlayLoopback`) are excluded.
+`query_all` manages the union of NX-OS (`loopback`, `ipfmLoopback`, `mplsLoopback` — see `LoopbackPolicyTypeEnum`) and
+IOS-XE (`iosXeLoopback`, `iosXeLoopbackShutNoshut`, `iosXeUnderlayLoopback`, `iosXeInternalLoopback`, `csrLoopback`,
+`csrIntLoopback`, `csr1kvLoopback` — see `XeLoopbackPolicyTypeEnum`) managed loopback policy types. Note that IOS-XE's
+`iosXeUnderlayLoopback` is user-creatable (unlike NX-OS's `underlayLoopback`, which is system-provisioned), so it is
+included here. `userDefined` and other system-provisioned policy types (e.g. NX-OS `underlayLoopback`) are excluded.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesRemove,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import LoopbackPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import LoopbackPolicyTypeEnum, XeLoopbackPolicyTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -233,13 +236,17 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         # Summary
 
         Validate the fabric context and query interfaces, filtering for the loopback policy types managed by this
-        module - `loopback`, `ipfmLoopback`, and `mplsLoopback` (see `LoopbackPolicyTypeEnum`).
+        module - the union of NX-OS (`loopback`, `ipfmLoopback`, `mplsLoopback` - see `LoopbackPolicyTypeEnum`) and
+        IOS-XE (`iosXeLoopback`, `iosXeLoopbackShutNoshut`, `iosXeUnderlayLoopback`, `iosXeInternalLoopback`,
+        `csrLoopback`, `csrIntLoopback`, `csr1kvLoopback` - see `XeLoopbackPolicyTypeEnum`) policy types.
 
         The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
         and limited to switches named in the user config for all other states.
 
-        System-provisioned loopbacks (e.g. Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) and
-        the `userDefined` policy type are excluded - those are out of scope for this module.
+        IOS-XE's `iosXeUnderlayLoopback` is user-creatable (unlike NX-OS's `underlayLoopback`, which is
+        system-provisioned) and is therefore included in the managed set above. System-provisioned loopbacks (e.g.
+        NX-OS Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) and the `userDefined` policy
+        type are excluded - those are out of scope for this module.
 
         Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
 
@@ -260,7 +267,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             for switch_ip, switch_id in self._switches_to_query().items():
                 interfaces = list(self._switch_interfaces(switch_id).values())
                 loopbacks = [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
-                managed_policy_types = {policy_type.value for policy_type in LoopbackPolicyTypeEnum}
+                managed_policy_types = {policy_type.value for policy_type in LoopbackPolicyTypeEnum} | {
+                    policy_type.value for policy_type in XeLoopbackPolicyTypeEnum
+                }
                 managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_policy_types]
                 for iface in managed:
                     iface["switchIp"] = switch_ip

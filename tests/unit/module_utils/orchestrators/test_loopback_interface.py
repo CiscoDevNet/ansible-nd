@@ -947,6 +947,45 @@ def test_loopback_interface_00760() -> None:
     assert returned == {"loopback", "ipfmLoopback", "mplsLoopback"}
 
 
+def test_loopback_interface_00770() -> None:
+    """
+    # Summary
+
+    Verify `query_all` unions NX-OS and IOS-XE managed loopback policy types (`LoopbackPolicyTypeEnum` |
+    `XeLoopbackPolicyTypeEnum`), keeping XE `iosXeLoopback` and the XE read-side `csrIntLoopback` alongside NX
+    `loopback`, and excludes `userDefined`.
+
+    ## Test
+
+    - state is `overridden`, so the switch's interfaces are fetched (fabric-wide scope)
+    - Switch's interfaces list contains one NX `loopback`, one XE `iosXeLoopback`, one XE `csrIntLoopback`
+      (read-side name), and one `userDefined` entry
+    - `query_all` returns exactly the three managed-type entries and excludes `userDefined`
+    - Each returned item is enriched with `switchIp` set to the source switch's IP
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.query_all()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, state="overridden")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    returned_policy_types = {item["configData"]["networkOS"]["policy"]["policyType"] for item in result}
+    assert returned_policy_types == {"loopback", "iosXeLoopback", "csrIntLoopback"}
+    assert all(item["switchIp"] == "192.168.12.150" for item in result)
+
+
 # =============================================================================
 # Test: deploy queue de-duplication
 # =============================================================================
