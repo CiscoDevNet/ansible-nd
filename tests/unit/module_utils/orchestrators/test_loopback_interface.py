@@ -981,6 +981,7 @@ def test_loopback_interface_00770() -> None:
     with does_not_raise():
         result = instance.query_all()
 
+    assert len(result) == 3
     returned_policy_types = {item["configData"]["networkOS"]["policy"]["policyType"] for item in result}
     assert returned_policy_types == {"loopback", "iosXeLoopback", "csrLoopback"}
     assert all(item["switchIp"] == "192.168.12.150" for item in result)

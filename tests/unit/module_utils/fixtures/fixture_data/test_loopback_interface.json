@@ -635,8 +635,8 @@
     },
     "test_loopback_interface_00770c": {
         "TEST_NOTES": [
-            "query_all NX+XE union: nx loopback + xe iosXeLoopback + xe csrLoopback (wire-verified name) kept; userDefined excluded",
-            "The XE interface entries (networkOSType/policyType) are lab-verified against the 2026-07-18 probe (intent-path GET shapes), not spec-derived."
+            "query_all NX+XE union: nx loopback + xe iosXeLoopback + xe csrLoopback kept; userDefined excluded",
+            "policyType names and the XE policy-object key set (adminState/description/ip/policyType, networkOSType nested inside networkOS) are lab-verified against the 2026-07-18 intent-path GETs; the surrounding envelope (interfaceName/interfaceType, switch IDs) mirrors sibling fixtures rather than a full wire capture."
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
@@ -647,22 +647,42 @@
                 {
                     "interfaceName": "loopback10",
                     "interfaceType": "loopback",
-                    "configData": {"networkOS": {"policy": {"policyType": "loopback"}}}
+                    "configData": {"networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "loopback"}}}
                 },
                 {
                     "interfaceName": "loopback11",
                     "interfaceType": "loopback",
-                    "configData": {"networkOSType": "ios-xe", "networkOS": {"policy": {"policyType": "iosXeLoopback"}}}
+                    "configData": {
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "description": "claude xe probe loopback11",
+                                "ip": "10.11.11.1",
+                                "policyType": "iosXeLoopback"
+                            }
+                        }
+                    }
                 },
                 {
                     "interfaceName": "loopback12",
                     "interfaceType": "loopback",
-                    "configData": {"networkOSType": "ios-xe", "networkOS": {"policy": {"policyType": "csrLoopback"}}}
+                    "configData": {
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "description": "claude xe probe loopback12",
+                                "ip": "10.12.12.1",
+                                "policyType": "csrLoopback"
+                            }
+                        }
+                    }
                 },
                 {
                     "interfaceName": "loopback13",
                     "interfaceType": "loopback",
-                    "configData": {"networkOS": {"policy": {"policyType": "userDefined"}}}
+                    "configData": {"networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "userDefined"}}}
                 }
             ]
         }

@@ -268,12 +268,12 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         try:
             self.validate_prerequisites()
             all_loopbacks = []
+            managed_policy_types = {policy_type.value for policy_type in LoopbackPolicyTypeEnum} | {
+                policy_type.value for policy_type in XeLoopbackPolicyTypeEnum
+            }
             for switch_ip, switch_id in self._switches_to_query().items():
                 interfaces = list(self._switch_interfaces(switch_id).values())
                 loopbacks = [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
-                managed_policy_types = {policy_type.value for policy_type in LoopbackPolicyTypeEnum} | {
-                    policy_type.value for policy_type in XeLoopbackPolicyTypeEnum
-                }
                 managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_policy_types]
                 for iface in managed:
                     iface["switchIp"] = switch_ip

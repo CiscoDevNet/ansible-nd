@@ -316,7 +316,7 @@ class Csr1kvLoopbackPolicyModel(LoopbackPolicyStrictBase):
     """
 
     policy_type: Literal["csr1kvLoopback"] = Field(alias="policyType", description="CSR1kv loopback policy template discriminator")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Interface freeform config")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
 
 
 class NexusLoopbackNetworkOSModel(NDNestedModel):
@@ -347,6 +347,8 @@ class XeLoopbackNetworkOSModel(NDNestedModel):
     None
     """
 
+    # Not frozen: NDBaseModel.merge() assigns every explicitly-set field, and required fields are always
+    # explicitly set. The Literal constrains the value; same pattern as the policy_type discriminator.
     network_os_type: Literal["ios-xe"] = Field(alias="networkOSType", description="Network OS (platform) type discriminator; required by the ND API schema")
     policy: (
         XeLoopbackPolicyModel
@@ -492,11 +494,11 @@ class LoopbackInterfaceModel(NDBaseModel):
                                             is_service_reflect=dict(type="bool"),
                                             routing_tag=dict(type="str"),
                                             secondary_ip_list=dict(type="list", elements="dict", options=dict(ip=dict(type="str"), prefix=dict(type="int"))),
+                                            secondary_ip=dict(type="str"),
+                                            enable_pim=dict(type="bool"),
                                             dci_routing_protocol=dict(type="str", choices=["ospf", "isis"]),
                                             dci_routing_tag=dict(type="str"),
                                             ospf_area_id=dict(type="str"),
-                                            secondary_ip=dict(type="str"),
-                                            enable_pim=dict(type="bool"),
                                         ),
                                     ),
                                 ),
