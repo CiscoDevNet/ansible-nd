@@ -50,10 +50,11 @@
       - nm_xe_merged_create.after | selectattr('interface_name', 'equalto', 'loopback106') | list | length == 1
 
 # --- XE MERGED IDEMPOTENCY ---
-# loopback106 (csrLoopback) is the CSR drift case: ND reads the policyType
-# back as "csrIntLoopback" rather than "csrLoopback". The model must
-# normalize this on read so the idempotency compare below does not see a
-# spurious diff.
+# loopback106 (csrLoopback) previously exercised the CSR drift case: the ND
+# 4.2.1 OpenAPI READ schema lists the policyType as "csrIntLoopback", but a
+# live-lab probe (2026-07-18) proved the wire echoes "csrLoopback" on reads
+# too, so no read-side normalization is needed. This test still confirms no
+# spurious diff is seen on re-apply.
 
 - name: "XE MERGED IDEMPOTENT: Re-apply loopback105/loopback106 creation (check mode)"
   cisco.nd.nd_interface_loopback: *xe_merge_105_106
@@ -64,7 +65,7 @@
   cisco.nd.nd_interface_loopback: *xe_merge_105_106
   register: nm_xe_merged_idem
 
-- name: "XE MERGED IDEMPOTENT: Verify no change on second run (csrLoopback/csrIntLoopback normalization holds)"
+- name: "XE MERGED IDEMPOTENT: Verify no change on second run (csrLoopback wire name is stable)"
   ansible.builtin.assert:
     that:
       - cm_xe_merged_idem is not changed

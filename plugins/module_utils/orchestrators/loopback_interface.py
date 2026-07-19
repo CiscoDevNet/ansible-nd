@@ -19,9 +19,11 @@ orchestrator only needs to inject `switchId` and filter `query_all` results by i
 
 `query_all` manages the union of NX-OS (`loopback`, `ipfmLoopback`, `mplsLoopback` — see `LoopbackPolicyTypeEnum`) and
 IOS-XE (`iosXeLoopback`, `iosXeLoopbackShutNoshut`, `iosXeUnderlayLoopback`, `iosXeInternalLoopback`, `csrLoopback`,
-`csrIntLoopback`, `csr1kvLoopback` — see `XeLoopbackPolicyTypeEnum`) managed loopback policy types. Note that IOS-XE's
+`csr1kvLoopback` — see `XeLoopbackPolicyTypeEnum`) managed loopback policy types. Note that IOS-XE's
 `iosXeUnderlayLoopback` is user-creatable (unlike NX-OS's `underlayLoopback`, which is system-provisioned), so it is
 included here. `userDefined` and other system-provisioned policy types (e.g. NX-OS `underlayLoopback`) are excluded.
+The `csrLoopback` branch's wire name is lab-verified (2026-07-18): the ND 4.2.1 OpenAPI READ schema lists it as
+`csrIntLoopback`, but the wire echoes `csrLoopback` on reads too (drift recorded in the bug-tracker vault).
 """
 
 from __future__ import annotations
@@ -238,7 +240,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         Validate the fabric context and query interfaces, filtering for the loopback policy types managed by this
         module - the union of NX-OS (`loopback`, `ipfmLoopback`, `mplsLoopback` - see `LoopbackPolicyTypeEnum`) and
         IOS-XE (`iosXeLoopback`, `iosXeLoopbackShutNoshut`, `iosXeUnderlayLoopback`, `iosXeInternalLoopback`,
-        `csrLoopback`, `csrIntLoopback`, `csr1kvLoopback` - see `XeLoopbackPolicyTypeEnum`) policy types.
+        `csrLoopback`, `csr1kvLoopback` - see `XeLoopbackPolicyTypeEnum`) policy types. The `csrLoopback` branch's
+        wire name is lab-verified (2026-07-18): the ND 4.2.1 OpenAPI READ schema lists it as `csrIntLoopback`, but
+        the wire echoes `csrLoopback` on reads too (drift recorded in the bug-tracker vault).
 
         The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
         and limited to switches named in the user config for all other states.

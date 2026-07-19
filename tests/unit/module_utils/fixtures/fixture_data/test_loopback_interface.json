@@ -635,8 +635,8 @@
     },
     "test_loopback_interface_00770c": {
         "TEST_NOTES": [
-            "query_all NX+XE union: nx loopback + xe iosXeLoopback + xe csrIntLoopback (read-side name) kept; userDefined excluded",
-            "The XE interface entries (networkOSType/policyType) are spec-derived pending the lab-verification follow-up task; not yet confirmed against a live ND 4.2.1 IOS-XE switch."
+            "query_all NX+XE union: nx loopback + xe iosXeLoopback + xe csrLoopback (wire-verified name) kept; userDefined excluded",
+            "The XE interface entries (networkOSType/policyType) are lab-verified against the 2026-07-18 probe (intent-path GET shapes), not spec-derived."
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
@@ -657,7 +657,7 @@
                 {
                     "interfaceName": "loopback12",
                     "interfaceType": "loopback",
-                    "configData": {"networkOSType": "ios-xe", "networkOS": {"policy": {"policyType": "csrIntLoopback"}}}
+                    "configData": {"networkOSType": "ios-xe", "networkOS": {"policy": {"policyType": "csrLoopback"}}}
                 },
                 {
                     "interfaceName": "loopback13",

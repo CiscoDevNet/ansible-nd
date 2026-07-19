@@ -952,14 +952,14 @@ def test_loopback_interface_00770() -> None:
     # Summary
 
     Verify `query_all` unions NX-OS and IOS-XE managed loopback policy types (`LoopbackPolicyTypeEnum` |
-    `XeLoopbackPolicyTypeEnum`), keeping XE `iosXeLoopback` and the XE read-side `csrIntLoopback` alongside NX
-    `loopback`, and excludes `userDefined`.
+    `XeLoopbackPolicyTypeEnum`), keeping XE `iosXeLoopback` and XE `csrLoopback` alongside NX `loopback`, and
+    excludes `userDefined`.
 
     ## Test
 
     - state is `overridden`, so the switch's interfaces are fetched (fabric-wide scope)
-    - Switch's interfaces list contains one NX `loopback`, one XE `iosXeLoopback`, one XE `csrIntLoopback`
-      (read-side name), and one `userDefined` entry
+    - Switch's interfaces list contains one NX `loopback`, one XE `iosXeLoopback`, one XE `csrLoopback`
+      (wire-verified name, lab probe 2026-07-18), and one `userDefined` entry
     - `query_all` returns exactly the three managed-type entries and excludes `userDefined`
     - Each returned item is enriched with `switchIp` set to the source switch's IP
 
@@ -982,7 +982,7 @@ def test_loopback_interface_00770() -> None:
         result = instance.query_all()
 
     returned_policy_types = {item["configData"]["networkOS"]["policy"]["policyType"] for item in result}
-    assert returned_policy_types == {"loopback", "iosXeLoopback", "csrIntLoopback"}
+    assert returned_policy_types == {"loopback", "iosXeLoopback", "csrLoopback"}
     assert all(item["switchIp"] == "192.168.12.150" for item in result)
 
 

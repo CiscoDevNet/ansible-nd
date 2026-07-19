@@ -80,7 +80,7 @@ options:
                     - Use V(iosXeLoopbackShutNoshut) to manage only the admin state of an IOS-XE loopback.
                     - Use V(iosXeUnderlayLoopback) for an IOS-XE underlay (NVE source) loopback.
                     - Use V(iosXeInternalLoopback) for an IOS-XE internal loopback (unvalidated ip/ipv6, PIM option).
-                    - Use V(csrLoopback) for a CSR loopback. ND reads this policy back as C(csrIntLoopback); the module normalizes it.
+                    - Use V(csrLoopback) for a CSR loopback.
                     - Use V(csr1kvLoopback) for a CSR1kv loopback (admin state and freeform config only).
                     type: str
                     required: true
@@ -477,7 +477,7 @@ EXAMPLES = r"""
         interface_name: loopback100
     state: deleted
 
-- name: Merge a CSR loopback (ND reads this back as csrIntLoopback; the module normalizes)
+- name: Merge a CSR loopback
   cisco.nd.nd_interface_loopback:
     fabric_name: fabric-xe
     config:

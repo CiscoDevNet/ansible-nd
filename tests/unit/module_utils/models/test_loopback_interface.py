@@ -2204,26 +2204,29 @@ def test_xe_internal_ip_and_ipv6_are_unvalidated_strings() -> None:
     assert instance.enable_pim is True
 
 
-def test_csr_loopback_normalizes_read_alias() -> None:
+def test_csr_loopback_rejects_read_schema_alias() -> None:
     """
     # Summary
 
-    Verify `CsrLoopbackPolicyModel` accepts the read-side `csrIntLoopback` discriminator value and normalizes it to the
-    create-side `csrLoopback` so payloads and idempotency comparison always use the create name.
+    Verify `CsrLoopbackPolicyModel` accepts only the wire-verified `csrLoopback` discriminator value and rejects the
+    OpenAPI READ schema's `csrIntLoopback`. A live-lab probe (2026-07-18, ND 4.2.1, fabric ISN, switch WAN1) proved the
+    wire echoes `csrLoopback` on the intent-path GET as well, disproving the earlier dual-name tolerance assumption;
+    `csrIntLoopback` is now a schema-only name that never appears on the wire.
 
     ## Test
 
-    - Construct with `policyType="csrIntLoopback"`
-    - `policy_type` normalizes to `csrLoopback`; dump emits `csrLoopback`
+    - Construct with `policyType="csrLoopback"` succeeds; `policy_type == "csrLoopback"`; dump emits `csrLoopback`
+    - Construct with `policyType="csrIntLoopback"` raises `ValidationError`
 
     ## Classes and Methods
 
     - CsrLoopbackPolicyModel.__init__()
-    - CsrLoopbackPolicyModel.normalize_csr_policy_type()
     """
-    instance = CsrLoopbackPolicyModel(policyType="csrIntLoopback", ip="10.4.4.4")
-    assert instance.policy_type == "csrLoopback"
-    assert instance.model_dump(by_alias=True, exclude_none=True)["policyType"] == "csrLoopback"
+    result = CsrLoopbackPolicyModel(policyType="csrLoopback", ip="10.4.4.4")
+    assert result.policy_type == "csrLoopback"
+    assert result.model_dump(by_alias=True, exclude_none=True)["policyType"] == "csrLoopback"
+    with pytest.raises(ValidationError):
+        CsrLoopbackPolicyModel(policyType="csrIntLoopback", ip="10.4.4.4")
 
 
 def test_csr1kv_rejects_ip() -> None:

@@ -287,37 +287,21 @@ class CsrLoopbackPolicyModel(LoopbackPolicyStrictBase):
     """
     # Summary
 
-    Policy fields for the IOS-XE `csrLoopback` template (`csr_int_loopback`). The ND 4.2.1 spec drifts on this branch's name:
-    the create-side discriminator enum says `csrLoopback` while the read-side enum says `csrIntLoopback`. Both are accepted as the
-    discriminator; the validator normalizes to the create-side `csrLoopback` so payloads and idempotency comparison use one name.
-    Lab verification and the vault note / `TODO(4.2.1)` marker land in the lab-verification task.
+    Policy fields for the IOS-XE `csrLoopback` template (`csr_int_loopback`). The ND 4.2.1 OpenAPI READ schema lists this
+    branch's discriminator as `csrIntLoopback`, but a live-lab probe (2026-07-18, ND 4.2.1, fabric ISN, switch WAN1) proved
+    the wire actually echoes the create-side `csrLoopback` on the intent-path GET as well. The model uses the single
+    wire-verified name; the drift is recorded in the bug-tracker vault.
 
     ## Raises
 
     None
     """
 
-    policy_type: Literal["csrLoopback", "csrIntLoopback"] = Field(alias="policyType", description="CSR loopback policy template discriminator")
+    policy_type: Literal["csrLoopback"] = Field(alias="policyType", description="CSR loopback policy template discriminator")
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
     ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
-
-    @field_validator("policy_type", mode="after")
-    @classmethod
-    def normalize_csr_policy_type(cls, value):
-        """
-        # Summary
-
-        Normalize the read-side `csrIntLoopback` discriminator value to the create-side `csrLoopback`.
-
-        ## Raises
-
-        None
-        """
-        if value == "csrIntLoopback":
-            return "csrLoopback"
-        return value
 
 
 class Csr1kvLoopbackPolicyModel(LoopbackPolicyStrictBase):

@@ -266,8 +266,10 @@ class XeLoopbackPolicyTypeEnum(str, Enum):
 
     Managed IOS-XE loopback policy types owned by the `nd_interface_loopback` module. `userDefined` is intentionally excluded.
 
-    `CSR_INT_LOOPBACK` is the READ-side alias of `CSR_LOOPBACK`: the ND 4.2.1 create-side discriminator enum says `csrLoopback`
-    while the read-side enum says `csrIntLoopback`. Both are listed so read-path filtering (`query_all`) matches the wire.
+    The ND 4.2.1 OpenAPI READ schema drifts on the CSR branch: it lists the discriminator as `csrIntLoopback`, but a
+    live-lab probe (2026-07-18) proved the wire echoes the create-side `csrLoopback` on reads too. Only the
+    wire-verified `csrLoopback` is listed here; the drift is recorded in the bug-tracker vault
+    (`csr-loopback-read-schema-name-drift`).
 
     ## Raises
 
@@ -279,5 +281,4 @@ class XeLoopbackPolicyTypeEnum(str, Enum):
     IOS_XE_UNDERLAY_LOOPBACK = "iosXeUnderlayLoopback"
     IOS_XE_INTERNAL_LOOPBACK = "iosXeInternalLoopback"
     CSR_LOOPBACK = "csrLoopback"
-    CSR_INT_LOOPBACK = "csrIntLoopback"
     CSR1KV_LOOPBACK = "csr1kvLoopback"
