@@ -39,12 +39,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv6CIDR
 
 
-class LoopbackPolicyBase(NDNestedModel):
+class LoopbackPolicyStrictBase(NDNestedModel):
     """
     # Summary
 
-    Shared policy fields common to every managed NX-OS loopback template. Sets `extra="forbid"` so fields belonging to a
-    different `policy_type` are rejected, and strips `None`-valued keys first so unset flat-argspec options are not rejected.
+    Write-strict / read-tolerant base for every managed loopback policy branch (NX-OS and IOS-XE). Sets `extra="forbid"` so fields belonging
+    to a different `policy_type` are rejected, strips `None`-valued keys first so unset flat-argspec options are not rejected, and declares
+    `admin_state` — the only field common to all loopback templates on both network OS types.
 
     ## Raises
 
@@ -62,9 +63,6 @@ class LoopbackPolicyBase(NDNestedModel):
     }
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
-    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
 
     @model_validator(mode="before")
     @classmethod
@@ -87,6 +85,23 @@ class LoopbackPolicyBase(NDNestedModel):
             allowed = set(cls.model_fields) | {field.alias for field in cls.model_fields.values() if field.alias}
             data = {key: value for key, value in data.items() if key in allowed}
         return data
+
+
+class LoopbackPolicyBase(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Shared policy fields common to every managed NX-OS loopback template. Inherits write-strict / read-tolerant behavior and
+    `admin_state` from `LoopbackPolicyStrictBase`.
+
+    ## Raises
+
+    None
+    """
+
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
 
 
 class LoopbackPolicyModel(LoopbackPolicyBase):
