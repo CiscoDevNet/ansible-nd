@@ -5,8 +5,9 @@
 from __future__ import absolute_import, division, print_function
 
 from abc import ABC
+from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple, Union
+
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
-from typing import List, Dict, Any, ClassVar, Set, Tuple, Union, Literal, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 
@@ -228,11 +229,42 @@ class NDBaseModel(BaseModel, ABC):
             exclude_unset: When True, only compare fields explicitly set in
                 ``other`` (via Pydantic's ``exclude_unset``). This prevents
                 default values from triggering false diffs during merge
-                operations.
+                operations. This is the merge-path comparison, so a subset
+                match is additionally cross-checked with ``merge_would_change``
+                to catch merge side effects the one-way subset test cannot see
+                (e.g. mutually exclusive counterpart fields that the merge
+                would clear).
         """
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
-        return issubset(other_data, self_data)
+        is_subset = issubset(other_data, self_data)
+        if is_subset and exclude_unset and self.merge_would_change(other):
+            return False
+        return is_subset
+
+    def merge_would_change(self, other: "NDBaseModel") -> bool:
+        """
+        # Summary
+
+        Return True when `merge(other)` would mutate `self` in a way the one-way dict-subset comparison in `get_diff`
+        cannot detect. The default implementation has no such side effects itself; it only recurses into nested
+        `NDBaseModel` fields explicitly set on `other` so that nested models overriding `merge` (e.g.
+        `StormControlMutexMixin`, which clears the counterpart of a mutually exclusive pair) can surface their
+        merge side effects to the top-level diff.
+
+        ## Raises
+
+        None
+        """
+        for field_name in other.model_fields_set:
+            value = getattr(other, field_name, None)
+            if value is None:
+                continue
+            current = getattr(self, field_name, None)
+            if isinstance(current, NDBaseModel) and isinstance(value, NDBaseModel):
+                if current.merge_would_change(value):
+                    return True
+        return False
 
     def merge(self, other: "NDBaseModel") -> "NDBaseModel":
         """
