@@ -117,6 +117,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             payload["switchId"] = switch_id
             request_body = {"interfaces": [payload]}
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+            # Validate the full envelope, not `result`: _request() returns the already-unwrapped DATA dict,
+            # on which the helper's DATA.results lookup would always no-op and mask real 207 failures.
             self._raise_on_failed_result_items(self.rest_send.response_current)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return result
@@ -249,6 +251,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
                 api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
                 request_body = {"interfaces": [payload for interface_name, payload in items]}
                 result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+                # Validate the full envelope, not `result`: _request() returns the already-unwrapped DATA dict,
+                # on which the helper's DATA.results lookup would always no-op and mask real 207 failures.
                 self._raise_on_failed_result_items(self.rest_send.response_current)
                 results.append(result)
                 for interface_name, payload in items:
