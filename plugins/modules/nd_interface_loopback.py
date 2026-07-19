@@ -59,10 +59,10 @@ options:
                 description:
                 - The network OS (platform) type of the target switch. This is a discriminator that determines which
                   policy templates are applicable, and is required by the ND API schema.
-                - Only V(nx-os) is currently supported. C(ios-xe) is planned but not yet implemented.
+                - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst/CSR IOS-XE devices.
                 type: str
                 required: true
-                choices: [ nx-os ]
+                choices: [ nx-os, ios-xe ]
               policy:
                 description:
                 - The policy configuration for the loopback interface.
@@ -76,41 +76,48 @@ options:
                     - Use V(loopback) for a standard NX-OS loopback interface.
                     - Use V(ipfmLoopback) for an IP Fabric for Media loopback interface.
                     - Use V(mplsLoopback) for an MPLS loopback interface.
+                    - Use V(iosXeLoopback) for a general-purpose IOS-XE loopback.
+                    - Use V(iosXeLoopbackShutNoshut) to manage only the admin state of an IOS-XE loopback.
+                    - Use V(iosXeUnderlayLoopback) for an IOS-XE underlay (NVE source) loopback.
+                    - Use V(iosXeInternalLoopback) for an IOS-XE internal loopback (unvalidated ip/ipv6, PIM option).
+                    - Use V(csrLoopback) for a CSR loopback. ND reads this policy back as C(csrIntLoopback); the module normalizes it.
+                    - Use V(csr1kvLoopback) for a CSR1kv loopback (admin state and freeform config only).
                     type: str
                     required: true
-                    choices: [ loopback, ipfmLoopback, mplsLoopback ]
+                    choices: [ loopback, ipfmLoopback, mplsLoopback, iosXeLoopback, iosXeLoopbackShutNoshut, iosXeUnderlayLoopback,
+                      iosXeInternalLoopback, csrLoopback, csr1kvLoopback ]
                   admin_state:
                     description:
                     - The administrative state of the loopback interface.
                     - It defaults to C(true) when unset during creation.
-                    - Applies to all policy_type values (C(loopback), C(ipfmLoopback), C(mplsLoopback)).
+                    - Applies to all policy_type values.
                     type: bool
                   ip:
                     description:
                     - The IPv4 address of the loopback interface.
-                    - Applies to all policy_type values (C(loopback), C(ipfmLoopback), C(mplsLoopback)).
+                    - Applies to all policy_type values except C(iosXeLoopbackShutNoshut) and C(csr1kvLoopback).
                     type: str
                   description:
                     description:
                     - The description of the loopback interface.
-                    - Maximum 254 characters.
-                    - Applies to all policy_type values (C(loopback), C(ipfmLoopback), C(mplsLoopback)).
+                    - Applies to all policy_type values except C(iosXeLoopbackShutNoshut) and C(csr1kvLoopback). Maximum length is 200 for
+                      C(iosXeLoopback) and C(iosXeInternalLoopback), 254 otherwise.
                     type: str
                   extra_config:
                     description:
                     - Additional CLI configuration commands to apply to the interface.
-                    - Applies to all policy_type values (C(loopback), C(ipfmLoopback), C(mplsLoopback)).
+                    - Applies to all policy_type values except C(iosXeLoopbackShutNoshut).
                     type: str
                   vrf:
                     description:
                     - The VRF to which the loopback interface belongs.
                     - Maximum 32 characters.
-                    - Applies when policy_type is C(loopback) or C(ipfmLoopback).
+                    - Applies when policy_type is C(loopback), C(ipfmLoopback), C(iosXeLoopback), C(iosXeInternalLoopback), or C(csrLoopback).
                     type: str
                   ipv6:
                     description:
                     - The IPv6 address of the loopback interface.
-                    - Applies when policy_type is C(loopback).
+                    - Applies when policy_type is C(loopback) or C(iosXeInternalLoopback).
                     type: str
                   route_map_tag:
                     description:
@@ -147,6 +154,16 @@ options:
                         description:
                         - The subnet mask length for the secondary IPv4 address (4-32).
                         type: int
+                  secondary_ip:
+                    description:
+                    - Secondary IP address of the NVE interface loopback.
+                    - Applies when policy_type is C(iosXeUnderlayLoopback).
+                    type: str
+                  enable_pim:
+                    description:
+                    - Enable PIM on the interface.
+                    - Applies when policy_type is C(iosXeInternalLoopback).
+                    type: bool
                   dci_routing_protocol:
                     description:
                     - The DCI (Data Center Interconnect) link-state routing protocol.
@@ -197,10 +214,12 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module currently supports NX-OS loopback interfaces only (interface_type C(loopback)).
-- This module manages three loopback policy templates, selected via O(config[].config_data.network_os.policy.policy_type)
-  C(loopback), C(ipfmLoopback) (IP Fabric for Media), and C(mplsLoopback). The user-defined (C(userDefined)) loopback
-  policy is not yet supported.
+- This module supports both NX-OS and IOS-XE loopback interfaces (interface_type C(loopback)), selected via
+  O(config[].config_data.network_os.network_os_type).
+- This module manages three NX-OS loopback policy templates, selected via O(config[].config_data.network_os.policy.policy_type)
+  C(loopback), C(ipfmLoopback) (IP Fabric for Media), and C(mplsLoopback), plus six IOS-XE managed templates
+  C(iosXeLoopback), C(iosXeLoopbackShutNoshut), C(iosXeUnderlayLoopback), C(iosXeInternalLoopback), C(csrLoopback), and
+  C(csr1kvLoopback). The user-defined (C(userDefined)) loopback policy is not yet supported for either network OS.
 """
 
 EXAMPLES = r"""
@@ -391,6 +410,86 @@ EXAMPLES = r"""
               dci_routing_protocol: ospf
               dci_routing_tag: "200"
               ospf_area_id: "0.0.0.0"
+    state: merged
+
+- name: Merge an IOS-XE loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback100
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeLoopback
+              admin_state: true
+              ip: "10.200.100.1"
+              description: "XE loopback100"
+              vrf: blue
+    state: merged
+
+- name: Replace an IOS-XE loopback (full desired state)
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback100
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeLoopback
+              admin_state: true
+              ip: "10.200.100.2"
+              description: "XE loopback100 replaced"
+    state: replaced
+
+- name: Override all managed loopbacks (mixed NX-OS and IOS-XE desired state)
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: loopback100
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: loopback
+              admin_state: true
+              ip: "10.100.100.1"
+      - switch_ip: 192.168.2.1
+        interface_name: loopback100
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeLoopback
+              admin_state: true
+              ip: "10.200.100.1"
+    state: overridden
+
+- name: Delete an IOS-XE loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback100
+    state: deleted
+
+- name: Merge a CSR loopback (ND reads this back as csrIntLoopback; the module normalizes)
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.2
+        interface_name: loopback101
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: csrLoopback
+              admin_state: true
+              ip: "10.200.101.1"
     state: merged
 """
 

@@ -1641,17 +1641,20 @@ def test_loopback_interface_00730():
     # Summary
 
     Verify scaffolding fields (`interface_type`, `mode`) are NOT exposed in the argument spec, while `network_os_type`
-    and `policy_type` ARE exposed as required discriminator fields.
+    and `policy_type` ARE exposed as required discriminator fields, covering both the `nx-os` and `ios-xe` branches.
 
-    `policy_type` is exposed because the module supports a discriminated union of three policy types (`loopback`,
-    `ipfmLoopback`, `mplsLoopback`), allowing playbook users to specify which template they want. `network_os_type` is
-    exposed because the ND API schema requires the `networkOSType` discriminator; only `nx-os` is implemented today.
+    `policy_type` is exposed because the module supports a discriminated union of nine policy types across both
+    network OSes (three `nx-os` templates, six `ios-xe` templates), allowing playbook users to specify which template
+    they want. `network_os_type` is exposed because the ND API schema requires the `networkOSType` discriminator;
+    both `nx-os` and `ios-xe` are now implemented. `secondary_ip` (IOS-XE underlay loopback) and `enable_pim`
+    (IOS-XE internal loopback) are exposed as flat policy options.
 
     ## Test
 
     - `interface_type`, `mode` are not present anywhere in the argument spec
-    - `network_os_type` IS present in the network_os options as a required field with choices ["nx-os"]
-    - `policy_type` IS present in the policy options as a required field with the three choices
+    - `network_os_type` IS present in the network_os options as a required field with choices ["nx-os", "ios-xe"]
+    - `policy_type` IS present in the policy options as a required field with the nine choices
+    - `secondary_ip` and `enable_pim` are present in the policy options
 
     ## Classes and Methods
 
@@ -1666,12 +1669,24 @@ def test_loopback_interface_00730():
     # network_os_type IS now exposed as the required platform discriminator
     assert "network_os_type" in network_os_options
     assert network_os_options["network_os_type"]["required"] is True
-    assert network_os_options["network_os_type"]["choices"] == ["nx-os"]
+    assert network_os_options["network_os_type"]["choices"] == ["nx-os", "ios-xe"]
     policy_options = network_os_options["policy"]["options"]
     # policy_type IS now exposed as the required discriminator
     assert "policy_type" in policy_options
     assert policy_options["policy_type"]["required"] is True
-    assert set(policy_options["policy_type"]["choices"]) == {"loopback", "ipfmLoopback", "mplsLoopback"}
+    assert policy_options["policy_type"]["choices"] == [
+        "loopback",
+        "ipfmLoopback",
+        "mplsLoopback",
+        "iosXeLoopback",
+        "iosXeLoopbackShutNoshut",
+        "iosXeUnderlayLoopback",
+        "iosXeInternalLoopback",
+        "csrLoopback",
+        "csr1kvLoopback",
+    ]
+    assert policy_options["secondary_ip"] == {"type": "str"}
+    assert policy_options["enable_pim"] == {"type": "bool"}
 
 
 def test_loopback_policy_strict_rejects_foreign_field():
@@ -2024,13 +2039,16 @@ def test_argument_spec_policy_options():
     """
     # Summary
 
-    Verify the argument spec includes a required `policy_type` field and the union of all branch fields.
+    Verify the argument spec includes a required `network_os_type` field (both `nx-os` and `ios-xe` choices), a
+    required `policy_type` field spanning all nine NX-OS/IOS-XE templates, and the union of all branch fields
+    including the flat `secondary_ip` and `enable_pim` IOS-XE options.
 
     ## Test
 
-    - `policy_type` is required with choices ["loopback", "ipfmLoopback", "mplsLoopback"]
-    - All union fields from all three branches are present in policy options
-    - Fields from loopback branch, IPFM branch, and MPLS branch coexist
+    - `network_os_type` choices are exactly `["nx-os", "ios-xe"]`
+    - `policy_type` is required with choices exactly matching the nine NX-OS/IOS-XE templates, in order
+    - All union fields from all three NX-OS branches are present in policy options
+    - `secondary_ip` and `enable_pim` are present with the correct flat argspec shape
 
     ## Classes and Methods
 
@@ -2038,9 +2056,22 @@ def test_argument_spec_policy_options():
     """
     spec = LoopbackInterfaceModel.get_argument_spec()
     policy = spec["config"]["options"]["config_data"]["options"]["network_os"]["options"]["policy"]["options"]
+    assert spec["config"]["options"]["config_data"]["options"]["network_os"]["options"]["network_os_type"]["choices"] == ["nx-os", "ios-xe"]
     assert policy["policy_type"]["required"] is True
-    assert set(policy["policy_type"]["choices"]) == {"loopback", "ipfmLoopback", "mplsLoopback"}
-    # union fields present across all three branches
+    assert policy["policy_type"]["choices"] == [
+        "loopback",
+        "ipfmLoopback",
+        "mplsLoopback",
+        "iosXeLoopback",
+        "iosXeLoopbackShutNoshut",
+        "iosXeUnderlayLoopback",
+        "iosXeInternalLoopback",
+        "csrLoopback",
+        "csr1kvLoopback",
+    ]
+    assert policy["secondary_ip"] == {"type": "str"}
+    assert policy["enable_pim"] == {"type": "bool"}
+    # union fields present across all three NX-OS branches
     for field in ("ipv6", "route_map_tag", "advertise_loopback", "routing_tag", "secondary_ip_list", "dci_routing_tag", "ospf_area_id"):
         assert field in policy, field
 

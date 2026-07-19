@@ -478,11 +478,25 @@ class LoopbackInterfaceModel(NDBaseModel):
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", required=True, choices=["nx-os"]),
+                                    network_os_type=dict(type="str", required=True, choices=["nx-os", "ios-xe"]),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
-                                            policy_type=dict(type="str", required=True, choices=["loopback", "ipfmLoopback", "mplsLoopback"]),
+                                            policy_type=dict(
+                                                type="str",
+                                                required=True,
+                                                choices=[
+                                                    "loopback",
+                                                    "ipfmLoopback",
+                                                    "mplsLoopback",
+                                                    "iosXeLoopback",
+                                                    "iosXeLoopbackShutNoshut",
+                                                    "iosXeUnderlayLoopback",
+                                                    "iosXeInternalLoopback",
+                                                    "csrLoopback",
+                                                    "csr1kvLoopback",
+                                                ],
+                                            ),
                                             admin_state=dict(type="bool"),
                                             ip=dict(type="str"),
                                             description=dict(type="str"),
@@ -497,6 +511,8 @@ class LoopbackInterfaceModel(NDBaseModel):
                                             dci_routing_protocol=dict(type="str", choices=["ospf", "isis"]),
                                             dci_routing_tag=dict(type="str"),
                                             ospf_area_id=dict(type="str"),
+                                            secondary_ip=dict(type="str"),
+                                            enable_pim=dict(type="bool"),
                                         ),
                                     ),
                                 ),
