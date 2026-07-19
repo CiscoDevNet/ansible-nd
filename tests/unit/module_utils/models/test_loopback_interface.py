@@ -17,10 +17,16 @@ from contextlib import contextmanager
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    Csr1kvLoopbackPolicyModel,
+    CsrLoopbackPolicyModel,
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
     LoopbackNetworkOSModel,
     LoopbackPolicyModel,
+    XeInternalLoopbackPolicyModel,
+    XeLoopbackPolicyModel,
+    XeLoopbackShutNoshutPolicyModel,
+    XeUnderlayLoopbackPolicyModel,
 )
 from pydantic import ValidationError  # pylint: disable=unused-import
 
@@ -2037,3 +2043,172 @@ def test_argument_spec_policy_options():
     # union fields present across all three branches
     for field in ("ipv6", "route_map_tag", "advertise_loopback", "routing_tag", "secondary_ip_list", "dci_routing_tag", "ospf_area_id"):
         assert field in policy, field
+
+
+def test_xe_loopback_parses_and_round_trips() -> None:
+    """
+    # Summary
+
+    Verify `XeLoopbackPolicyModel` accepts its template fields and round-trips through `model_dump(by_alias=True)`.
+
+    ## Test
+
+    - Construct with all `ios_xe_int_loopback` template fields
+    - Dump by alias and verify wire keys
+
+    ## Classes and Methods
+
+    - XeLoopbackPolicyModel.__init__()
+    """
+    with does_not_raise():
+        instance = XeLoopbackPolicyModel(policyType="iosXeLoopback", adminState=True, ip="10.2.2.2", description="xe lo", vrfInterface="blue", extraConfig="delay 100")
+    dumped = instance.model_dump(by_alias=True, exclude_none=True)
+    assert dumped["policyType"] == "iosXeLoopback"
+    assert dumped["ip"] == "10.2.2.2"
+    assert dumped["vrfInterface"] == "blue"
+
+
+def test_xe_loopback_rejects_foreign_field() -> None:
+    """
+    # Summary
+
+    Verify `XeLoopbackPolicyModel` rejects an NX-OS-only field (`routeMapTag`) under `extra="forbid"`.
+
+    ## Test
+
+    - Construct with `routeMapTag`
+    - `ValidationError` is raised
+
+    ## Classes and Methods
+
+    - XeLoopbackPolicyModel.__init__()
+    """
+    with pytest.raises(ValidationError):
+        result = XeLoopbackPolicyModel(policyType="iosXeLoopback", routeMapTag="1")  # pylint: disable=unused-variable
+
+
+def test_xe_loopback_description_max_200() -> None:
+    """
+    # Summary
+
+    Verify `XeLoopbackPolicyModel.description` enforces the XE 200-character maximum (NX-OS allows 254).
+
+    ## Test
+
+    - 200-character description validates
+    - 201-character description raises `ValidationError` matching `description`
+
+    ## Classes and Methods
+
+    - XeLoopbackPolicyModel.__init__()
+    """
+    with does_not_raise():
+        result = XeLoopbackPolicyModel(policyType="iosXeLoopback", description="d" * 200)  # pylint: disable=unused-variable
+    with pytest.raises(ValidationError, match="description"):
+        result = XeLoopbackPolicyModel(policyType="iosXeLoopback", description="d" * 201)  # pylint: disable=unused-variable
+
+
+def test_xe_shut_noshut_rejects_ip() -> None:
+    """
+    # Summary
+
+    Verify `XeLoopbackShutNoshutPolicyModel` accepts only `admin_state` and rejects `ip` (the template has no other fields).
+
+    ## Test
+
+    - Construct with `adminState` only succeeds
+    - Construct with `ip` raises `ValidationError`
+
+    ## Classes and Methods
+
+    - XeLoopbackShutNoshutPolicyModel.__init__()
+    """
+    with does_not_raise():
+        result = XeLoopbackShutNoshutPolicyModel(policyType="iosXeLoopbackShutNoshut", adminState=False)  # pylint: disable=unused-variable
+    with pytest.raises(ValidationError):
+        result = XeLoopbackShutNoshutPolicyModel(policyType="iosXeLoopbackShutNoshut", ip="10.1.1.1")  # pylint: disable=unused-variable
+
+
+def test_xe_underlay_accepts_secondary_ip_rejects_vrf() -> None:
+    """
+    # Summary
+
+    Verify `XeUnderlayLoopbackPolicyModel` accepts `secondaryIp` and rejects `vrfInterface` (absent from the underlay template).
+
+    ## Test
+
+    - Construct with `secondaryIp` succeeds
+    - Construct with `vrfInterface` raises `ValidationError`
+
+    ## Classes and Methods
+
+    - XeUnderlayLoopbackPolicyModel.__init__()
+    """
+    with does_not_raise():
+        result = XeUnderlayLoopbackPolicyModel(policyType="iosXeUnderlayLoopback", ip="10.3.3.3", secondaryIp="10.3.3.4")  # pylint: disable=unused-variable
+    with pytest.raises(ValidationError):
+        result = XeUnderlayLoopbackPolicyModel(policyType="iosXeUnderlayLoopback", vrfInterface="blue")  # pylint: disable=unused-variable
+
+
+def test_xe_internal_ip_and_ipv6_are_unvalidated_strings() -> None:
+    """
+    # Summary
+
+    Verify `XeInternalLoopbackPolicyModel` accepts `enablePim`/`ipv6` and leaves `ip` unvalidated (the `ios_xe_int_loopback_internal`
+    template deliberately declares `ip` as a bare string in the ND 4.2.1 schema).
+
+    ## Test
+
+    - Construct with a non-IPv4 `ip` string, `ipv6`, and `enablePim` succeeds
+
+    ## Classes and Methods
+
+    - XeInternalLoopbackPolicyModel.__init__()
+    """
+    with does_not_raise():
+        instance = XeInternalLoopbackPolicyModel(policyType="iosXeInternalLoopback", ip="not-an-ip", ipv6="2001:db8::1/128", enablePim=True)
+    assert instance.ip == "not-an-ip"
+    assert instance.enable_pim is True
+
+
+def test_csr_loopback_normalizes_read_alias() -> None:
+    """
+    # Summary
+
+    Verify `CsrLoopbackPolicyModel` accepts the read-side `csrIntLoopback` discriminator value and normalizes it to the
+    create-side `csrLoopback` so payloads and idempotency comparison always use the create name.
+
+    ## Test
+
+    - Construct with `policyType="csrIntLoopback"`
+    - `policy_type` normalizes to `csrLoopback`; dump emits `csrLoopback`
+
+    ## Classes and Methods
+
+    - CsrLoopbackPolicyModel.__init__()
+    - CsrLoopbackPolicyModel.normalize_csr_policy_type()
+    """
+    instance = CsrLoopbackPolicyModel(policyType="csrIntLoopback", ip="10.4.4.4")
+    assert instance.policy_type == "csrLoopback"
+    assert instance.model_dump(by_alias=True, exclude_none=True)["policyType"] == "csrLoopback"
+
+
+def test_csr1kv_rejects_ip() -> None:
+    """
+    # Summary
+
+    Verify `Csr1kvLoopbackPolicyModel` accepts only `admin_state`/`extraConfig` and rejects `ip` (absent from the csr1kv template).
+
+    ## Test
+
+    - Construct with `extraConfig` succeeds
+    - Construct with `ip` raises `ValidationError`
+
+    ## Classes and Methods
+
+    - Csr1kvLoopbackPolicyModel.__init__()
+    """
+    with does_not_raise():
+        result = Csr1kvLoopbackPolicyModel(policyType="csr1kvLoopback", extraConfig="shutdown")  # pylint: disable=unused-variable
+    with pytest.raises(ValidationError):
+        result = Csr1kvLoopbackPolicyModel(policyType="csr1kvLoopback", ip="10.5.5.5")  # pylint: disable=unused-variable

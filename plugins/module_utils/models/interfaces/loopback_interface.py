@@ -204,6 +204,132 @@ class MplsLoopbackPolicyModel(LoopbackPolicyBase):
     ospf_area_id: str | None = Field(default=None, alias="ospfAreaId", min_length=1, max_length=15, description="OSPF area identifier")
 
 
+class XeLoopbackPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `iosXeLoopback` template (`ios_xe_int_loopback`). Maps to `configData.networkOS.policy` where
+    `policyType == "iosXeLoopback"`.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["iosXeLoopback"] = Field(alias="policyType", description="IOS-XE loopback policy template discriminator")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
+    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+
+
+class XeLoopbackShutNoshutPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `iosXeLoopbackShutNoshut` template (`ios_xe_int_loopback_admin_state`). The template carries only
+    `adminState`, inherited from `LoopbackPolicyStrictBase`.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["iosXeLoopbackShutNoshut"] = Field(alias="policyType", description="IOS-XE admin-state-only loopback policy template discriminator")
+
+
+class XeUnderlayLoopbackPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `iosXeUnderlayLoopback` template (`ios_xe_int_underlay_loopback`). Unlike NX-OS `underlayLoopback`
+    (system-provisioned, excluded), this policy type is in the XE create-side enum and therefore user-creatable.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["iosXeUnderlayLoopback"] = Field(alias="policyType", description="IOS-XE underlay loopback policy template discriminator")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
+    secondary_ip: str | None = Field(default=None, alias="secondaryIp", description="Secondary IP address of the NVE interface loopback")
+
+
+class XeInternalLoopbackPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `iosXeInternalLoopback` template (`ios_xe_int_loopback_internal`). `ip` and `ipv6` are plain strings —
+    the ND 4.2.1 schema deliberately leaves them unvalidated for this template (no `format: ipv4`), so the model matches the schema.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["iosXeInternalLoopback"] = Field(alias="policyType", description="IOS-XE internal loopback policy template discriminator")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
+    enable_pim: bool | None = Field(default=None, alias="enablePim", description="Enable PIM")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    ip: str | None = Field(default=None, alias="ip", description="Loopback IP address (unvalidated string per the ND schema for this template)")
+    ipv6: str | None = Field(default=None, alias="ipv6", description="Loopback IPv6 address (unvalidated string per the ND schema for this template)")
+    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+
+
+class CsrLoopbackPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `csrLoopback` template (`csr_int_loopback`). The ND 4.2.1 spec drifts on this branch's name:
+    the create-side discriminator enum says `csrLoopback` while the read-side enum says `csrIntLoopback`. Both are accepted as the
+    discriminator; the validator normalizes to the create-side `csrLoopback` so payloads and idempotency comparison use one name.
+    Lab verification and the vault note / `TODO(4.2.1)` marker land in the lab-verification task.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["csrLoopback", "csrIntLoopback"] = Field(alias="policyType", description="CSR loopback policy template discriminator")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
+    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+
+    @field_validator("policy_type", mode="after")
+    @classmethod
+    def normalize_csr_policy_type(cls, value):
+        """
+        # Summary
+
+        Normalize the read-side `csrIntLoopback` discriminator value to the create-side `csrLoopback`.
+
+        ## Raises
+
+        None
+        """
+        if value == "csrIntLoopback":
+            return "csrLoopback"
+        return value
+
+
+class Csr1kvLoopbackPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `csr1kvLoopback` template (`csr1kv_loopback`). The template carries only `adminState` and `extraConfig`.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["csr1kvLoopback"] = Field(alias="policyType", description="CSR1kv loopback policy template discriminator")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Interface freeform config")
+
+
 class LoopbackNetworkOSModel(NDNestedModel):
     """
     # Summary
