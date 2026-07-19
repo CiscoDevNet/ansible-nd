@@ -2061,7 +2061,9 @@ def test_xe_loopback_parses_and_round_trips() -> None:
     - XeLoopbackPolicyModel.__init__()
     """
     with does_not_raise():
-        instance = XeLoopbackPolicyModel(policyType="iosXeLoopback", adminState=True, ip="10.2.2.2", description="xe lo", vrfInterface="blue", extraConfig="delay 100")
+        instance = XeLoopbackPolicyModel(
+            policyType="iosXeLoopback", adminState=True, ip="10.2.2.2", description="xe lo", vrfInterface="blue", extraConfig="delay 100"
+        )
     dumped = instance.model_dump(by_alias=True, exclude_none=True)
     assert dumped["policyType"] == "iosXeLoopback"
     assert dumped["ip"] == "10.2.2.2"
