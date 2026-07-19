@@ -31,6 +31,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopbac
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
     LoopbackPolicyModel,
+    MplsLoopbackPolicyModel,
     NexusLoopbackNetworkOSModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
@@ -92,6 +93,20 @@ def _build_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str
             ),
         )
     return LoopbackInterfaceModel(**kwargs)
+
+
+def _build_mpls_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str = "loopback30") -> LoopbackInterfaceModel:
+    """Build a minimal `LoopbackInterfaceModel` instance with an `mplsLoopback` policy, for policy-type-grouping tests."""
+    return LoopbackInterfaceModel(
+        switch_ip=switch_ip,
+        interface_name=interface_name,
+        config_data=LoopbackConfigDataModel(
+            network_os=NexusLoopbackNetworkOSModel(
+                network_os_type="nx-os",
+                policy=MplsLoopbackPolicyModel(policy_type="mplsLoopback", admin_state=True, ip="10.3.3.1/32"),
+            ),
+        ),
+    )
 
 
 # =============================================================================
@@ -277,6 +292,45 @@ def test_loopback_interface_00120() -> None:
     model = _build_loopback_model(switch_ip="192.168.12.151")
 
     match = r"Create failed for .*loopback10.*No switch found with fabricManagementIp '192\.168\.12\.151'"
+    with pytest.raises(RuntimeError, match=match):
+        instance.create(model)
+
+    assert instance._pending_deploys == []
+
+
+def test_loopback_interface_00130() -> None:
+    """
+    # Summary
+
+    Verify `create` raises `RuntimeError` when the create response's `DATA.results[]` contains an item whose
+    `status` is not exactly `"success"`, even though the HTTP-level request itself succeeded (207 multi-status).
+    Lab-verified 2026-07-18: ND can return a per-item failure while the top-level status looks benign, so `create`
+    must inspect `results[]` rather than trusting `_request`'s success/failure classification alone.
+
+    ## Test
+
+    - switches-list succeeds
+    - POST returns 207 with a single `results[]` item whose `status` is `"failed"`
+    - `RuntimeError` matches `Create failed`
+    - No deploy is queued
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create()
+    - LoopbackInterfaceOrchestrator._raise_on_failed_result_items()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_loopback_model()
+
+    match = r"Create failed"
     with pytest.raises(RuntimeError, match=match):
         instance.create(model)
 
@@ -567,6 +621,100 @@ def test_loopback_interface_00420() -> None:
 
     assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces"
     assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
+def test_loopback_interface_00430() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` groups interfaces by `(switch_id, policy_type)`, not by switch alone. ND rejects an
+    `interfaces[]` array that mixes `policyType` values in a single bulk create (207 with a single failed item;
+    nothing created), even though both interfaces here target the same switch (bug-tracker vault:
+    `bulk-interface-create-rejects-mixed-policy-types`).
+
+    ## Test
+
+    - Two interfaces on the SAME switch with DIFFERENT policy types: loopback10 (`policyType: loopback`) and
+      loopback30 (`policyType: mplsLoopback`)
+    - TWO POSTs are issued (one per policy-type group), each with a single-item `interfaces` array - proven by
+      `rest_send.responses` containing exactly 3 entries (switches-list + 2 POSTs; a combined single POST would
+      leave one fixture unconsumed and `rest_send.responses` would have only 2 entries) and by the last committed
+      payload containing exactly one interface
+    - Both interfaces' deploys are queued
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback10"),
+        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
+    ]
+
+    with does_not_raise():
+        instance.create_bulk(models)
+
+    assert len(rest_send.responses) == 3
+    body = rest_send.committed_payload
+    assert isinstance(body, dict)
+    assert len(body["interfaces"]) == 1
+    assert sorted(instance._pending_deploys) == sorted(
+        [
+            ("loopback10", "FDO12345ABC"),
+            ("loopback30", "FDO12345ABC"),
+        ]
+    )
+
+
+def test_loopback_interface_00440() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` raises `RuntimeError` and queues no deploys when the create response's `DATA.results[]`
+    contains a failed item, using the real lab-verified (2026-07-18) rejection wire shape: HTTP 207 with a single
+    `results[]` item whose `status` is `"failed"` and whose `message` names the mixed-policy-type rejection. Nothing
+    is created on the controller side in this scenario, so no deploy may be queued (bug-tracker vault:
+    `bulk-interface-create-rejects-mixed-policy-types`, `multi-status-207-status-field-inconsistent`).
+
+    ## Test
+
+    - switches-list succeeds
+    - The single POST returns 207 with `DATA.results == [{"name": "loopback206", "status": "failed", "message":
+      "Mixed policy types [iosXeLoopback, csrLoopback] are not allowed in bulk interface creation..."}]`
+    - `RuntimeError` matches `Bulk create failed.*Mixed policy types`
+    - No deploy is queued
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    - LoopbackInterfaceOrchestrator._raise_on_failed_result_items()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [_build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback206")]
+
+    match = r"Bulk create failed.*Mixed policy types"
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk(models)
+
+    assert instance._pending_deploys == []
 
 
 # =============================================================================

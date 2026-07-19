@@ -686,5 +686,112 @@
                 }
             ]
         }
+    },
+
+    "test_loopback_interface_00130a": {
+        "TEST_NOTES": [
+            "create single-item 207 rejection: switches list (1 switch)",
+            "2026-07-18 integration-run evidence: ND returns HTTP 207 with a per-item results[] entry whose status is not 'success' even though the top-level code alone looks benign; create() must inspect results[] rather than trusting the returned status code (multi-status-207-status-field-inconsistent)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00130b": {
+        "TEST_NOTES": [
+            "create single-item 207 rejection: POST /interfaces returns 207 with a failed results[] item for loopback10"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "loopback10", "status": "failed", "message": "invalid policyType 'loopback[loopback]' for interface loopback10"}
+            ]
+        }
+    },
+
+    "test_loopback_interface_00430a": {
+        "TEST_NOTES": [
+            "create_bulk mixed policy type on same switch: switches list (1 switch)",
+            "loopback10 (policyType loopback) and loopback30 (policyType mplsLoopback) target the same switch but different policy types, so create_bulk must group by (switch, policyType) and issue two POSTs (bulk-interface-create-rejects-mixed-policy-types)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00430b": {
+        "TEST_NOTES": [
+            "create_bulk mixed policy type on same switch: POST for the 'loopback' policyType group (loopback10), success results item"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "loopback10", "status": "success"}
+            ]
+        }
+    },
+    "test_loopback_interface_00430c": {
+        "TEST_NOTES": [
+            "create_bulk mixed policy type on same switch: POST for the 'mplsLoopback' policyType group (loopback30), success results item"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "loopback30", "status": "success"}
+            ]
+        }
+    },
+
+    "test_loopback_interface_00440a": {
+        "TEST_NOTES": [
+            "create_bulk real 207 mixed-policy-type rejection: switches list (1 switch)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00440b": {
+        "TEST_NOTES": [
+            "create_bulk real 207 mixed-policy-type rejection: lab-verified (2026-07-18) wire shape - HTTP 207, single results[] item, status 'failed', nothing created. See vault note bulk-interface-create-rejects-mixed-policy-types."
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "loopback206",
+                    "status": "failed",
+                    "message": "Mixed policy types [iosXeLoopback, csrLoopback] are not allowed in bulk interface creation for interface loopback206[loopback]"
+                }
+            ]
+        }
     }
 }

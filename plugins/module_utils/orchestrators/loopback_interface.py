@@ -72,7 +72,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
     - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
-    - Via `create` if the create API request fails.
+    - Via `create` if the create API request fails, or if the response's per-item `results[]` reports a failure.
+    - Via `create_bulk` if any create API request fails, or if a response's per-item `results[]` reports a failure.
     - Via `update` if the update API request fails.
     - Via `remove_pending` if the bulk remove API request fails.
     - Via `deploy_pending` if the bulk deploy API request fails.
@@ -106,6 +107,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         ### RuntimeError
 
         - If the create API request fails.
+        - If the create response's `DATA.results[]` contains an item whose `status` is not exactly `"success"` (see
+          `_raise_on_failed_result_items`).
         """
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
@@ -114,10 +117,42 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             payload["switchId"] = switch_id
             request_body = {"interfaces": [payload]}
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+            self._raise_on_failed_result_items(self.rest_send.response_current)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
             raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def _raise_on_failed_result_items(self, response: dict | None) -> None:
+        """
+        # Summary
+
+        Inspect `response["DATA"]["results"]` (an ND multi-status per-item results array) and raise if any item's
+        `status` is not exactly `"success"`. Tolerates a missing or empty `results` array - some create responses have
+        no per-item results at all, and that is not itself a failure signal.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If any item in `results` has a `status` other than exactly `"success"` (a missing `status` key counts as
+          failure). The message lists every failing item's `name`/`interfaceName` and `message`.
+        """
+        results = response.get("DATA", {}).get("results", []) if isinstance(response, dict) else []
+        if not results:
+            return
+        failures: list[str] = []
+        for item in results:
+            # TODO(4.2.1) multi-status-207-status-field-inconsistent
+            # HTTP 207 is returned even when items failed, and the per-item status vocabulary is unreliable
+            # ('failed', 'error', 'Failed', or absent) - only an exact 'success' may be trusted.
+            # PR #398 adds 207 handling to NdV1Strategy; remove this orchestrator-level check when that merges.
+            if item.get("status") != "success":
+                name = item.get("name") or item.get("interfaceName") or "<unknown>"
+                message = item.get("message", "")
+                failures.append(f"{name}: {message}")
+        if failures:
+            raise RuntimeError("Result item(s) failed: " + "; ".join(failures))
 
     def update(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
@@ -161,34 +196,60 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         self._queue_remove(model_instance.interface_name, switch_id)
         self._queue_deploy(model_instance.interface_name, switch_id)
 
+    @staticmethod
+    def _extract_policy_type(model_instance: LoopbackInterfaceModel) -> str | None:
+        """
+        # Summary
+
+        Defensively extract `config_data.network_os.policy.policy_type` from a `LoopbackInterfaceModel` instance.
+        Any level of the chain may be `None` (e.g. a `state: deleted` identifier-only item), in which case `None` is
+        returned and used as the grouping key.
+
+        ## Raises
+
+        None
+        """
+        config_data = getattr(model_instance, "config_data", None)
+        network_os = getattr(config_data, "network_os", None) if config_data is not None else None
+        policy = getattr(network_os, "policy", None) if network_os is not None else None
+        return getattr(policy, "policy_type", None) if policy is not None else None
+
     def create_bulk(self, model_instances: list[LoopbackInterfaceModel], **kwargs) -> ResponseType:
         """
         # Summary
 
-        Create multiple loopback interfaces in bulk. Groups interfaces by switch and sends one POST per switch with all
-        interfaces in the `interfaces` array, reducing API calls from N to one-per-switch. Queues deploys for all created
-        interfaces for later bulk execution via `deploy_pending`.
+        Create multiple loopback interfaces in bulk. Groups interfaces by `(switch_id, policy_type)` and sends one POST
+        per group with the group's interfaces in the `interfaces` array, reducing API calls from N to one-per-group.
+        Queues deploys for all successfully created interfaces for later bulk execution via `deploy_pending`.
 
         ## Raises
 
         ### RuntimeError
 
         - If any create API request fails.
+        - If a create response's `DATA.results[]` contains an item whose `status` is not exactly `"success"` (see
+          `_raise_on_failed_result_items`); no deploy is queued for that group's items in that case.
         """
         try:
-            groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+            # TODO(4.2.1) bulk-interface-create-rejects-mixed-policy-types
+            # ND rejects an interfaces[] array mixing policyType values (207 with a single failed item; nothing is
+            # created), even though the create schema allows mixed arrays. One POST per (switch, policyType).
+            groups: dict[tuple[str, str | None], list[tuple[str, dict]]] = defaultdict(list)
             for model_instance in model_instances:
                 switch_id = self._resolve_switch_id(model_instance.switch_ip)
                 payload = model_instance.to_payload()
                 payload["switchId"] = switch_id
-                groups[switch_id].append((model_instance.interface_name, payload))
+                group_key = (switch_id, self._extract_policy_type(model_instance))
+                groups[group_key].append((model_instance.interface_name, payload))
 
             results = []
-            for switch_id, items in groups.items():
+            for group_key, items in groups.items():
+                switch_id = group_key[0]
                 # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
                 api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
                 request_body = {"interfaces": [payload for interface_name, payload in items]}
                 result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+                self._raise_on_failed_result_items(self.rest_send.response_current)
                 results.append(result)
                 for interface_name, payload in items:
                     self._queue_deploy(interface_name, switch_id)
