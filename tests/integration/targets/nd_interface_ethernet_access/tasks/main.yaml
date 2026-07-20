@@ -30,11 +30,15 @@
   ansible.builtin.fail:
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
   when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+  tags:
+    - always
 
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
+  tags:
+    - always
 
 - name: Run nd_interface_ethernet_access state tests with optional logging env
   block:
@@ -52,5 +56,73 @@
 
     - name: Run nd_interface_ethernet_access deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run merged state test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_merged
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+    
+
+    - name: Run merged fan-out test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged_fanout.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_merged
+            - nd4x_demo_merged_fanout
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+        - nd4x_demo_merged_fanout
+
+    - name: Run replaced state test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_replaced.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_replaced
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_replaced
+
+    - name: Run deleted state test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_deleted.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_deleted
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_deleted
+    
+    - name: Run overridden state test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_overridden.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_overridden
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_overridden
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"

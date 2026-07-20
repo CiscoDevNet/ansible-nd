@@ -6,12 +6,26 @@
 
 test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
+test_switch_id: "{{ nd_test_switch_id }}"
 
 # Ethernet interfaces used across tests.
 # Ethernet1/41 through Ethernet1/50 are reserved for these integration tests.
 # These interfaces must exist on the test switch and must NOT be port-channel members.
 
 # --- Base configs ---
+
+nd4x_ethernet_single_interface: Ethernet1/41
+
+nd4x_ethernet_fanout_interfaces:
+  - Ethernet1/42
+  - Ethernet1/43
+
+nd4x_ethernet_destructive_tests_enabled: >-
+  {{
+    nd_ethernet_destructive_tests_enabled
+    | default(false)
+    | bool
+  }}
 
 ethernet_41:
   switch_ip: "{{ test_switch_ip }}"
@@ -80,6 +94,18 @@ ethernet_42_43_updated:
         admin_state: false
         access_vlan: 250
         description: "Updated access ports description"
+
+ethernet_41_overridden:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/41
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 900
+        description: "Overridden Ethernet1/41"
+        speed: auto
 
 # --- Fan-out test: multiple interfaces sharing one config ---
 

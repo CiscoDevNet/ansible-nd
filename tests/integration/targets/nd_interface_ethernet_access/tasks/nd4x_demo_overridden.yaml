@@ -1,0 +1,198 @@
+---
+- name: "OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_ethernet_destructive_tests_enabled | bool
+    fail_msg: >-
+      The overridden test is fabric-wide and can normalize accessHost
+      interfaces omitted from the desired configuration. Run only on a
+      dedicated test fabric and set
+      nd_ethernet_destructive_tests_enabled=true.
+
+- name: "OVERRIDDEN PREFLIGHT: Inspect fabric-wide accessHost scope"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    timeout: 300
+    config:
+      - "{{ ethernet_41_overridden }}"
+    state: overridden
+  check_mode: true
+  changed_when: false
+  register: overridden_scope_probe
+
+- name: "OVERRIDDEN PREFLIGHT: Reject accessHost interfaces outside reserved ports"
+  vars:
+    existing_switch_ips: >-
+      {{
+        overridden_scope_probe.before
+        | default([])
+        | map(attribute='switch_ip')
+        | unique
+        | list
+      }}
+    existing_test_switch_interfaces: >-
+      {{
+        overridden_scope_probe.before
+        | default([])
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | map(attribute='interface_name')
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - existing_switch_ips | difference([test_switch_ip]) | length == 0
+      - existing_test_switch_interfaces
+        | difference(cleanup_interface_names)
+        | length == 0
+    fail_msg: >-
+      Unsafe overridden testbed. Existing accessHost configuration was found
+      on another switch or outside the reserved Ethernet1/41-Ethernet1/50
+      test range. No override was applied.
+
+- name: Run standardized nd_interface_ethernet_access overridden test
+  block:
+    - name: "OVERRIDDEN SETUP: Reset Ethernet1/41 through Ethernet1/43"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        timeout: 300
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - Ethernet1/41
+              - Ethernet1/42
+              - Ethernet1/43
+        state: deleted
+
+    - name: "OVERRIDDEN SETUP: Create three accessHost interfaces"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        timeout: 300
+        config:
+          - "{{ ethernet_41 }}"
+          - "{{ ethernet_42_43 }}"
+        state: merged
+      register: overridden_setup
+
+    - name: "OVERRIDDEN SETUP VERIFY: Verify prerequisite interfaces"
+      ansible.builtin.assert:
+        that:
+          - overridden_setup is changed
+          - overridden_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | list
+            | length == 1
+          - overridden_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/42')
+            | list
+            | length == 1
+          - overridden_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/43')
+            | list
+            | length == 1
+
+    - name: "OVERRIDDEN: Retain only Ethernet1/41 using standard runner"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: overridden
+
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          timeout: 300
+
+        config:
+          - "{{ ethernet_41_overridden }}"
+
+        expected:
+          check_mode_changed: true
+          apply_changed: true
+          idempotency: true
+          failed: false
+
+        nd_queries:
+          - name: Validate overridden Ethernet1/41
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F41"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: Ethernet1/41
+              - jsonpath: "$.current.configData.networkOS.policy.policyType"
+                equals: accessHost
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 900
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: "Overridden Ethernet1/41"
+
+        idempotency_retries: 1
+      register: overridden_ethernet
+
+    - name: "OVERRIDDEN VERIFY: Verify only Ethernet1/41 remains"
+      ansible.builtin.assert:
+        that:
+          - overridden_ethernet.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | list
+            | length == 1
+          - overridden_ethernet.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/42')
+            | list
+            | length == 0
+          - overridden_ethernet.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/43')
+            | list
+            | length == 0
+
+    - name: "OVERRIDDEN VERIFY: Verify Ethernet1/41 configuration"
+      vars:
+        ethernet_41_after: >-
+          {{
+            overridden_ethernet.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - ethernet_41_after.config_data.network_os.policy.access_vlan == 900
+          - ethernet_41_after.config_data.network_os.policy.description
+            == "Overridden Ethernet1/41"
+
+    - name: "OVERRIDDEN VERIFY: Verify harness idempotency"
+      ansible.builtin.assert:
+        that:
+          - overridden_ethernet.idempotency_attempts == 1
+          - overridden_ethernet.second_run_result is defined
+          - overridden_ethernet.second_run_result.changed == false
+          - overridden_ethernet.second_run_result.failed
+            | default(false)
+            | bool == false
+
+    - name: "OVERRIDDEN VERIFY: Verify REST result"
+      vars:
+        overridden_query: >-
+          {{ overridden_ethernet.nd_query_results[0] }}
+      ansible.builtin.assert:
+        that:
+          - overridden_ethernet.nd_query_results | length == 1
+          - overridden_query.status | int == 200
+          - overridden_query.failed == false
+          - overridden_query.result.current.interfaceName == "Ethernet1/41"
+          - overridden_query.result.current.configData.networkOS.policy.accessVlan
+            | int == 900
+
+  always:
+    - name: "OVERRIDDEN CLEANUP: Reset Ethernet1/41 through Ethernet1/43"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        timeout: 300
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - Ethernet1/41
+              - Ethernet1/42
+              - Ethernet1/43
+        state: deleted

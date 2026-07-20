@@ -1,0 +1,124 @@
+---
+- name: Run standardized nd_interface_ethernet_access replaced test
+  block:
+    - name: "REPLACED SETUP: Reset Ethernet1/41"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        timeout: 300
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - Ethernet1/41
+        state: deleted
+
+    - name: "REPLACED SETUP: Create original Ethernet1/41 configuration"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        timeout: 300
+        config:
+          - "{{ ethernet_41 }}"
+        state: merged
+      register: replaced_setup_ethernet_41
+
+    - name: "REPLACED SETUP VERIFY: Verify original configuration was created"
+      vars:
+        original_ethernet_41: >-
+          {{
+            replaced_setup_ethernet_41.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - replaced_setup_ethernet_41 is changed
+          - original_ethernet_41.config_data.network_os.policy.access_vlan
+            == 100
+          - original_ethernet_41.config_data.network_os.policy.description
+            == "Ansible integration test Ethernet1/41"
+
+    - name: "REPLACED: Replace Ethernet1/41 using standard runner"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: replaced
+
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          timeout: 300
+
+        config:
+          - "{{ ethernet_41_updated }}"
+
+        expected:
+          check_mode_changed: true
+          apply_changed: true
+          idempotency: true
+          failed: false
+
+        nd_queries:
+          - name: Validate replaced Ethernet1/41 from ND API
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F41"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: Ethernet1/41
+              - jsonpath: "$.current.configData.networkOS.policy.policyType"
+                equals: accessHost
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 150
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: "Updated Ethernet1/41 description"
+
+        idempotency_retries: 1
+      register: replaced_ethernet_41
+
+    - name: "REPLACED VERIFY: Verify Ethernet1/41 exists"
+      ansible.builtin.assert:
+        that:
+          - replaced_ethernet_41.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | list
+            | length == 1
+
+    - name: "REPLACED VERIFY: Verify updated configuration"
+      vars:
+        ethernet_41_after: >-
+          {{
+            replaced_ethernet_41.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - ethernet_41_after.config_data.network_os.policy.access_vlan
+            == 150
+          - ethernet_41_after.config_data.network_os.policy.description
+            == "Updated Ethernet1/41 description"
+          - ethernet_41_after.config_data.network_os.policy.bpdu_guard
+            == "disable"
+          - ethernet_41_after.config_data.network_os.policy.cdp == false
+
+    - name: "REPLACED VERIFY: Verify harness idempotency result"
+      ansible.builtin.assert:
+        that:
+          - replaced_ethernet_41.idempotency_attempts == 1
+          - replaced_ethernet_41.second_run_result is defined
+          - replaced_ethernet_41.second_run_result.changed == false
+          - replaced_ethernet_41.second_run_result.failed
+            | default(false)
+            | bool == false
+
+  always:
+    - name: "REPLACED CLEANUP: Reset Ethernet1/41"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        timeout: 300
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - Ethernet1/41
+        state: deleted
