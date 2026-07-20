@@ -46,6 +46,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import F
 from ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.resource_manager_diff import ResourceManagerDiffEngine
 from ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.resource_manager_helpers import ResourceManagerResourceHelpersMixin
 
+
+class _PaginationInconsistency(ValueError):
+    """Raised when ND pagination cannot prove that a query result is complete."""
+
+
 # =========================================================================
 # Resource Manager module
 # =========================================================================
@@ -60,6 +65,8 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
     """
 
     RESOURCE_PAGE_SIZE = 100
+    PAGINATION_SNAPSHOT_ATTEMPTS = 6
+    PAGINATION_RETRY_DELAY_SECONDS = 2
 
     def __init__(
         self,
@@ -408,6 +415,23 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             self.log.debug("_remaining_from_response: remaining value is not an integer: %s", remaining)
             return None
 
+    def _total_from_response(self, data):
+        """Return ``meta.counts.total`` and reject malformed totals."""
+        if not isinstance(data, dict):
+            return None
+        meta = data.get("meta")
+        counts = meta.get("counts") if isinstance(meta, dict) else None
+        if not isinstance(counts, dict) or "total" not in counts:
+            return None
+        total = counts.get("total")
+        try:
+            total_int = int(total)
+        except (TypeError, ValueError) as exc:
+            raise _PaginationInconsistency(f"API returned an invalid pagination total: {total!r}") from exc
+        if total_int < 0:
+            raise _PaginationInconsistency(f"API returned a negative pagination total: {total_int}")
+        return total_int
+
     def _has_next_page(self, data):
         """Return True when response metadata advertises a next page."""
         if not isinstance(data, dict):
@@ -446,7 +470,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         return resources
 
     def _fetch_resources_paginated(self, pool_name=None, switch_id=None, filter_expr=None):
-        """Fetch resource inventory through the paginated resources GET endpoint."""
+        """Fetch a complete resource inventory with bounded snapshot retries."""
         self.log.info(
             "_fetch_resources_paginated: starting resource fetch for fabric=%s, pool_name=%s, switch_id=%s, filter_expr=%s",
             self.fabric,
@@ -454,37 +478,46 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             switch_id,
             filter_expr,
         )
+        for attempt in range(1, self.PAGINATION_SNAPSHOT_ATTEMPTS + 1):
+            try:
+                return self._fetch_resources_paginated_once(pool_name, switch_id, filter_expr)
+            except _PaginationInconsistency as exc:
+                if attempt == self.PAGINATION_SNAPSHOT_ATTEMPTS:
+                    raise ValueError(
+                        f"Resource pagination remained inconsistent after {attempt} attempts "
+                        f"(fabric={self.fabric}, pool_name={pool_name}, switch_id={switch_id}, "
+                        f"filter_expr={filter_expr}): {exc}"
+                    ) from exc
+                delay = self.PAGINATION_RETRY_DELAY_SECONDS * attempt
+                self.log.warning(
+                    "_fetch_resources_paginated: inconsistent snapshot on attempt=%s; "
+                    "restarting from offset=0 after %s second(s): %s",
+                    attempt,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+
+        raise AssertionError("unreachable pagination retry state")
+
+    def _fetch_resources_paginated_once(self, pool_name=None, switch_id=None, filter_expr=None):
+        """Fetch one complete pagination snapshot or raise an inconsistency error."""
         resources = []
+        seen_resource_keys = set()
         offset = 0
         page_size = self.RESOURCE_PAGE_SIZE
         visited_offsets = set()
         page_count = 0
-        max_pages = 1000
+        expected_total = None
 
         while True:
             if offset in visited_offsets:
-                self.log.warning(
-                    "_fetch_resources_paginated: detected repeated offset=%s; stopping pagination to avoid loop",
-                    offset,
+                raise _PaginationInconsistency(
+                    f"repeated offset={offset}, unique_count={len(resources)}, expected_total={expected_total}"
                 )
-                break
             visited_offsets.add(offset)
             page_count += 1
-            if page_count > max_pages:
-                self.log.warning(
-                    "_fetch_resources_paginated: exceeded max_pages=%s; stopping pagination for safety",
-                    max_pages,
-                )
-                break
 
-            self.log.debug(
-                "_fetch_resources_paginated: requesting page offset=%s, page_size=%s, pool_name=%s, switch_id=%s, filter_expr=%s",
-                offset,
-                page_size,
-                pool_name,
-                switch_id,
-                filter_expr,
-            )
             ep = self._build_resources_get_endpoint(
                 pool_name=pool_name,
                 switch_id=switch_id,
@@ -498,72 +531,67 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             except NDModuleError as exc:
                 api_elapsed = time.monotonic() - api_start
                 if exc.status == 404:
-                    self.log.info(
-                        "_fetch_resources_paginated: GET resources returned 404 after %.3f second(s) (path=%s, state=%s), treating as empty",
-                        api_elapsed,
-                        ep.path,
-                        self.state,
-                    )
-                    break
-                self.log.exception(
-                    "_fetch_resources_paginated: GET resources API call failed after %.3f second(s) (path=%s, state=%s)",
-                    api_elapsed,
-                    ep.path,
-                    self.state,
-                )
+                    if resources or expected_total:
+                        raise _PaginationInconsistency(
+                            f"received 404 at offset={offset} before expected_total={expected_total} was reached"
+                        ) from exc
+                    return []
                 raise ValueError(
                     f"_fetch_resources_paginated: GET resources API call failed after {api_elapsed:.3f} second(s) (path={ep.path}, state={self.state})"
                 ) from exc
-            except Exception:
+            except _PaginationInconsistency:
+                raise
+            except Exception as exc:
                 api_elapsed = time.monotonic() - api_start
-                self.log.exception(
-                    "_fetch_resources_paginated: GET resources API call failed after %.3f second(s) (path=%s, state=%s)",
-                    api_elapsed,
-                    ep.path,
-                    self.state,
-                )
                 raise ValueError(
                     f"_fetch_resources_paginated: GET resources API call failed after {api_elapsed:.3f} second(s) (path={ep.path}, state={self.state})"
-                )
+                ) from exc
 
             api_elapsed = time.monotonic() - api_start
             raw_list = self._resources_from_response(data)
             remaining = self._remaining_from_response(data)
-            remaining_raw = None
-            total_count = None
-            if isinstance(data, dict):
-                meta = data.get("meta")
-                if isinstance(meta, dict):
-                    counts = meta.get("counts")
-                    if isinstance(counts, dict):
-                        remaining_raw = counts.get("remaining")
-                        total_count = counts.get("total")
+            total_count = self._total_from_response(data)
+            if total_count is not None:
+                if expected_total is None:
+                    expected_total = total_count
+                elif total_count != expected_total:
+                    raise _PaginationInconsistency(
+                        f"pagination total changed from {expected_total} to {total_count} at offset={offset}"
+                    )
             has_next = self._has_next_page(data)
             self.log.info(
                 "_fetch_resources_paginated: GET resources API response time %.3f second(s) "
-                "(path=%s, state=%s, response_count=%s, remaining=%s, remaining_raw=%s, total=%s, has_next=%s)",
+                "(path=%s, state=%s, response_count=%s, remaining=%s, total=%s, has_next=%s)",
                 api_elapsed,
                 ep.path,
                 self.state,
                 len(raw_list),
                 remaining,
-                remaining_raw,
                 total_count,
                 has_next,
             )
 
-            resources.extend(self._parse_resource_list(raw_list))
+            parsed_page = self._parse_resource_list(raw_list)
+            unique_before = len(resources)
+            for resource in parsed_page:
+                resource_id = self._get_resource_id(resource)
+                resource_key = ("id", resource_id) if resource_id is not None else ("key", self._resource_unique_key(resource))
+                if resource_key in seen_resource_keys:
+                    continue
+                seen_resource_keys.add(resource_key)
+                resources.append(resource)
             batch_count = len(raw_list)
+            unique_added = len(resources) - unique_before
             self.log.info(
                 "_fetch_resources_paginated: pagination iteration=%s "
-                "(offset=%s, page_size=%s, fetched_this_page=%s, cumulative_fetched=%s, remaining=%s, remaining_raw=%s, total=%s, has_next=%s)",
+                "(offset=%s, page_size=%s, fetched_this_page=%s, unique_added=%s, cumulative_unique=%s, remaining=%s, total=%s, has_next=%s)",
                 page_count,
                 offset,
                 page_size,
                 batch_count,
+                unique_added,
                 len(resources),
                 remaining,
-                remaining_raw,
                 total_count,
                 has_next,
             )
@@ -571,73 +599,67 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             # Stop pagination when response is a bare list (no pagination metadata)
             if isinstance(data, list):
                 self.log.debug("_fetch_resources_paginated: stopping pagination because response was a bare list")
-                break
-            # Stop pagination when page returned no resources
-            if not raw_list:
-                self.log.debug("_fetch_resources_paginated: stopping pagination because page returned no resources")
-                break
+                return resources
+
+            if expected_total is not None:
+                if len(resources) > expected_total:
+                    raise _PaginationInconsistency(
+                        f"unique_count={len(resources)} exceeded expected_total={expected_total} at offset={offset}"
+                    )
+                if len(resources) == expected_total:
+                    if remaining not in (None, 0):
+                        raise _PaginationInconsistency(
+                            f"unique_count reached total={expected_total}, but remaining={remaining} at offset={offset}"
+                        )
+                    self.log.info(
+                        "_fetch_resources_paginated: verified complete snapshot with %s unique resource(s) in %s iteration(s)",
+                        expected_total,
+                        page_count,
+                    )
+                    return resources
+                if not raw_list:
+                    raise _PaginationInconsistency(
+                        f"empty page at offset={offset}, unique_count={len(resources)}, expected_total={expected_total}"
+                    )
+                if unique_added == 0:
+                    raise _PaginationInconsistency(
+                        f"page made no unique progress at offset={offset}, unique_count={len(resources)}, expected_total={expected_total}"
+                    )
+            elif not raw_list:
+                if has_next or (remaining is not None and remaining > 0):
+                    raise _PaginationInconsistency(
+                        f"empty page at offset={offset} while pagination metadata advertises more resources"
+                    )
+                return resources
+            elif unique_added == 0:
+                raise _PaginationInconsistency(f"page made no unique progress at offset={offset}")
 
             next_offset = offset + batch_count
             if next_offset <= offset:
-                self.log.warning(
-                    "_fetch_resources_paginated: non-increasing next_offset detected (offset=%s, batch_count=%s); stopping pagination to avoid loop",
-                    offset,
-                    batch_count,
+                raise _PaginationInconsistency(
+                    f"non-increasing next offset at offset={offset}, response_count={batch_count}"
                 )
-                break
 
-            # Use remaining count as primary pagination indicator (most reliable)
+            if expected_total is not None:
+                offset = next_offset
+                continue
+
             if remaining is not None:
-                if remaining <= 0:
-                    self.log.debug("_fetch_resources_paginated: stopping pagination because remaining=%s", remaining)
-                    if remaining < 0:
-                        self.log.warning(
-                            "_fetch_resources_paginated: API returned negative remaining count (%s); "
-                            "stopping pagination early to avoid infinite loop or further data loss",
-                            remaining,
-                        )
-                    break
-                # Continue to next page when remaining > 0
-                self.log.debug(
-                    "_fetch_resources_paginated: continuing pagination because remaining=%s > 0; next_offset=%s",
-                    remaining,
-                    next_offset,
-                )
+                if remaining < 0:
+                    raise _PaginationInconsistency(f"API returned negative remaining={remaining} at offset={offset}")
+                if remaining == 0:
+                    return resources
                 offset = next_offset
                 continue
 
-            # Fallback: use next-page metadata when remaining count not available
             if has_next:
-                self.log.debug(
-                    "_fetch_resources_paginated: continuing pagination because has_next=True; next_offset=%s",
-                    next_offset,
-                )
                 offset = next_offset
                 continue
 
-            # Final fallback: continue if we got a full page, stop if partial page
             if batch_count < page_size:
-                self.log.debug(
-                    "_fetch_resources_paginated: stopping pagination because response_count=%s is smaller than page_size=%s",
-                    batch_count,
-                    page_size,
-                )
-                break
+                return resources
 
-            # Safeguard: always continue fetching when we got a full page
-            self.log.debug(
-                "_fetch_resources_paginated: continuing pagination via fallback (full page retrieved); next_offset=%s",
-                next_offset,
-            )
             offset = next_offset
-
-        self.log.info(
-            "_fetch_resources_paginated: completed resource fetch for fabric=%s, total_resources=%s, total_iterations=%s",
-            self.fabric,
-            len(resources),
-            page_count,
-        )
-        return resources
 
     def _get_all_resources(self):
         """Fetch all existing resources for the fabric from the ND Manage API and cache them."""
@@ -775,6 +797,19 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         self.log.debug("_build_gathered_resource_criteria: built %s criteria item(s)", len(criteria))
         return criteria
 
+    def _build_modifying_resource_criteria(self):
+        """Build pool and switch candidate queries for merged and deleted states."""
+        criteria = []
+        for config_item in self.config:
+            pool_name = config_item.get("pool_name")
+            if config_item.get("scope_type") == "link":
+                criteria.append((None, None, None))
+                continue
+            switches = config_item.get("switches") or [None]
+            for switch_id in switches:
+                criteria.append((pool_name, switch_id, None))
+        return criteria
+
     def _refresh_existing_resources(self, update_previous=False):
         """Load the current candidate resource snapshot for the active state."""
         self.log.info(
@@ -791,8 +826,8 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 self.log.debug("_refresh_existing_resources: gathered with config, fetching filtered candidate inventory")
                 resources = self._fetch_resources_for_criteria(self._build_gathered_resource_criteria())
         else:
-            self.log.debug("_refresh_existing_resources: modifying state, fetching full paginated inventory")
-            resources = self._fetch_resources_paginated()
+            self.log.debug("_refresh_existing_resources: modifying state, fetching filtered candidate inventory")
+            resources = self._fetch_resources_for_criteria(self._build_modifying_resource_criteria())
 
         self._all_resources = resources
         self._resources_fetched = True
@@ -1627,8 +1662,8 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
 
         final_results_data = {
             "changed": changed,
-            "before": self.translate_gathered_results(self.previous),
-            "after": self.translate_gathered_results(self.existing),
+            "before": self.translate_gathered_results(self.previous, include_resource_id=True),
+            "after": self.translate_gathered_results(self.existing, include_resource_id=True),
             "diff": self.changed_dict,
         }
 

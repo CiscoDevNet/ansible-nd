@@ -365,13 +365,19 @@ class ResourceManagerResourceHelpersMixin:
             )
         return "ID"
 
-    def translate_gathered_results(self, resources):
+    def translate_gathered_results(self, resources, include_resource_id=False):
         """Translate raw API resource items to the merged-state config format.
 
         Converts each resource from the ND API response shape
         (camelCase keys, nested scopeDetails) into the playbook ``config``
         format used by ``state: merged``:
           entity_name, pool_type, pool_name, scope_type, resource[, switches].
+
+        Args:
+            resources: Resource response models or raw API resource dictionaries.
+            include_resource_id: Include ``resource_id`` when present. This is used
+                for before/after snapshots; gathered output leaves it disabled so
+                the returned data remains replayable as merged configuration.
         """
         translated = []
         self.log.debug(
@@ -386,6 +392,7 @@ class ResourceManagerResourceHelpersMixin:
             switch_ip = self._get_switch_ip(res)
             vrf_name = self._get_vrf_name(res)
             is_pre_allocated = self._get_is_pre_allocated(res)
+            resource_id = self._get_resource_id(res) if include_resource_id else None
             pool_type = self._determine_pool_type(resource_value)
             self.log.debug(
                 "translate_gathered_results: [%s] resolved fields — "
@@ -410,6 +417,8 @@ class ResourceManagerResourceHelpersMixin:
                 "scope_type": scope_type,
                 "resource": resource_value,
             }
+            if resource_id is not None:
+                item["resource_id"] = resource_id
             if vrf_name is not None:
                 item["vrf_name"] = vrf_name
             if is_pre_allocated is not None:

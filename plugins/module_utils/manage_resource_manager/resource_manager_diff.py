@@ -111,6 +111,16 @@ class ResourceManagerDiffEngine:
         # snake_case (e.g. "device_pair") so callers may pass either format.
         inferred_scope_type = API_SCOPE_TYPE_TO_PLAYBOOK.get(inferred_scope_type, inferred_scope_type)
 
+        if inferred_scope_type == "fabric" and len(parts) == 2:
+            normalize_entity_name = ("fabric", frozenset(parts))
+            log.debug(
+                "Returning normalized entity_name='%s' from raw='%s', scope_type='%s'",
+                normalize_entity_name,
+                entity_name,
+                scope_type,
+            )
+            return normalize_entity_name
+
         if inferred_scope_type == "device_pair" and len(parts) in (2, 3):
             label = parts[2] if len(parts) == 3 else None
             normalize_entity_name = ("device_pair", frozenset((parts[0], parts[1])), label)

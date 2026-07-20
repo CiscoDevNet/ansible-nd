@@ -92,14 +92,14 @@
           - invalid_l2_vni_scope.msg is search("switches")
           - invalid_l2_vni_scope.msg is search("Required parameter not found")
 
-    - name: Create Resources - LOOPBACK_ID wrong scope type
+    - name: Create Resources - loopbackId wrong scope type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
         fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "loopback_dev"              # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "LOOPBACK_ID"                 # Based on the 'poolType', select appropriate name
+            pool_name: "loopbackId"                  # Based on the 'poolType', select appropriate name
             scope_type: "link"                       # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
             switches: # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
@@ -108,7 +108,7 @@
       register: invalid_loopback_id_scope
       ignore_errors: true
 
-    - name: Assert LOOPBACK_ID wrong scope type failed
+    - name: Assert loopbackId wrong scope type failed
       ansible.builtin.assert:
         that:
           - invalid_loopback_id_scope is failed
@@ -117,14 +117,14 @@
           - invalid_loopback_id_scope.msg is search("scope_type")
           - (invalid_loopback_id_scope.msg | lower) is search("link")
 
-    - name: Create Resources - VPC_ID wrong scope type
+    - name: Create Resources - vpcId wrong scope type
       cisco.nd.nd_manage_resource_manager:
         state: merged                                # choose form [merged, deleted, gathered]
         fabric_name: "{{ ansible_it_fabric }}"
         config:
           - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}"  # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "VPC_ID"                      # Based on the 'poolType', select appropriate name
+            pool_name: "vpcId"                       # Based on the 'poolType', select appropriate name
             scope_type: "fabric"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
             switches: # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
@@ -133,14 +133,14 @@
       register: invalid_vpc_id_scope
       ignore_errors: true
 
-    - name: Assert VPC_ID wrong scope type failed
+    - name: Assert vpcId wrong scope type failed
       ansible.builtin.assert:
         that:
           - invalid_vpc_id_scope is failed
           - invalid_vpc_id_scope.msg is defined
           - invalid_vpc_id_scope.msg is search("scope_type")
           - (invalid_vpc_id_scope.msg | lower) is search("fabric")
-          - invalid_vpc_id_scope.msg is search("VPC_ID")
+          - invalid_vpc_id_scope.msg is search("vpcId")
 
     - name: Create Resources - LOOPBACK0_IP_POOL wrong scope type
       cisco.nd.nd_manage_resource_manager:

@@ -11,6 +11,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import logging
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -1119,6 +1120,177 @@ def test_get_all_resources_reads_multiple_pages_with_offsets():
     assert "max=100&offset=1" in paths[1]
 
 
+@pytest.mark.parametrize("requested_page_size", [1, 7, 100, 500])
+def test_fetch_resources_paginated_is_independent_of_requested_page_size(requested_page_size):
+    """Pagination advances by actual response count when the server caps page size."""
+    nd = _mock_nd_module()
+    total = 11
+
+    def get_page(path, _verb):
+        query = parse_qs(urlparse(path).query)
+        offset = int(query["offset"][0])
+        response_count = min(requested_page_size, 3, total - offset)
+        resources = [
+            {
+                "resourceId": resource_id,
+                "entityName": f"loopback{resource_id}",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": str(resource_id),
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+            }
+            for resource_id in range(offset, offset + response_count)
+        ]
+        return {
+            "resources": resources,
+            "meta": {"counts": {"remaining": total - offset - response_count, "total": total}},
+        }
+
+    nd.request.side_effect = get_page
+    module = NDResourceManagerModule(nd, Results(), log=LOG)
+    module.RESOURCE_PAGE_SIZE = requested_page_size
+
+    resources = module._fetch_resources_paginated()  # pylint: disable=protected-access
+
+    assert len(resources) == total
+    paths = [call.args[0] for call in nd.request.call_args_list]
+    offsets = [int(parse_qs(urlparse(path).query)["offset"][0]) for path in paths]
+    expected_offsets = list(range(total)) if requested_page_size == 1 else [0, 3, 6, 9]
+    assert offsets == expected_offsets
+    assert all(f"max={requested_page_size}" in path for path in paths)
+
+
+def test_fetch_resources_paginated_uses_total_when_remaining_stops_early():
+    """A zero remaining value cannot truncate a result whose total is not reached."""
+    nd = _mock_nd_module()
+    pages = [
+        {
+            "resources": [
+                {
+                    "resourceId": resource_id,
+                    "entityName": f"loopback{resource_id}",
+                    "poolName": "LOOPBACK_ID",
+                    "resourceValue": str(resource_id),
+                    "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+                }
+            ],
+            "meta": {"counts": {"remaining": 0, "total": 2}},
+        }
+        for resource_id in (101, 102)
+    ]
+    nd.request.side_effect = pages
+    module = NDResourceManagerModule(nd, Results(), log=LOG)
+
+    resources = module._fetch_resources_paginated()  # pylint: disable=protected-access
+
+    assert len(resources) == 2
+    assert "offset=1" in nd.request.call_args_list[1].args[0]
+
+
+def test_fetch_resources_paginated_retries_then_fails_on_incomplete_total():
+    """Persistent premature empty pages fail instead of returning partial inventory."""
+    nd = _mock_nd_module()
+    partial_page = {
+        "resources": [
+            {
+                "resourceId": 101,
+                "entityName": "loopback0",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": "10",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+            }
+        ],
+        "meta": {"counts": {"remaining": 1, "total": 2}},
+    }
+    empty_page = {"resources": [], "meta": {"counts": {"remaining": 0, "total": 2}}}
+    nd.request.side_effect = [partial_page, empty_page] * 6
+    module = NDResourceManagerModule(nd, Results(), log=LOG)
+
+    with patch(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.time.sleep"
+    ) as sleep:
+        with pytest.raises(ValueError, match="remained inconsistent after 6 attempts"):
+            module._fetch_resources_paginated()  # pylint: disable=protected-access
+
+    paths = [call.args[0] for call in nd.request.call_args_list]
+    assert [int(parse_qs(urlparse(path).query)["offset"][0]) for path in paths] == [0, 1] * 6
+    assert [call.args[0] for call in sleep.call_args_list] == [2, 4, 6, 8, 10]
+
+
+def test_fetch_resources_paginated_discards_partial_data_before_successful_retry():
+    """A retry starts at zero and does not retain resources from the failed attempt."""
+    nd = _mock_nd_module()
+
+    def page(resource_id, remaining):
+        return {
+            "resources": [
+                {
+                    "resourceId": resource_id,
+                    "entityName": f"loopback{resource_id}",
+                    "poolName": "LOOPBACK_ID",
+                    "resourceValue": str(resource_id),
+                    "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+                }
+            ],
+            "meta": {"counts": {"remaining": remaining, "total": 2}},
+        }
+
+    empty_page = {"resources": [], "meta": {"counts": {"remaining": 0, "total": 2}}}
+    nd.request.side_effect = [page(999, 1), empty_page, page(101, 1), page(102, 0)]
+    module = NDResourceManagerModule(nd, Results(), log=LOG)
+
+    resources = module._fetch_resources_paginated()  # pylint: disable=protected-access
+
+    assert [module._get_resource_id(resource) for resource in resources] == [101, 102]  # pylint: disable=protected-access
+
+
+def test_manage_deleted_does_not_mutate_after_incomplete_pagination():
+    """Deleted state fails before remove-by-ID when inventory cannot be completed."""
+    config = [
+        {
+            "entity_name": "loopback0",
+            "pool_type": "ID",
+            "pool_name": "loopbackId",
+            "scope_type": "device",
+            "switches": ["192.0.2.10"],
+        }
+    ]
+    nd = _mock_nd_module(state="deleted", config=config)
+    resource_read_count = 0
+
+    def request(path, _verb, **kwargs):
+        nonlocal resource_read_count
+        if "/resources" not in path:
+            return {"management": {"type": "vxlanIbgp"}}
+        assert "data" not in kwargs, "delete mutation must not run with incomplete inventory"
+        resource_read_count += 1
+        if resource_read_count % 2:
+            return {
+                "resources": [
+                    {
+                        "resourceId": 101,
+                        "entityName": "loopback0",
+                        "poolName": "loopbackId",
+                        "resourceValue": "10",
+                        "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+                    }
+                ],
+                "meta": {"counts": {"remaining": 1, "total": 2}},
+            }
+        return {"resources": [], "meta": {"counts": {"remaining": 0, "total": 2}}}
+
+    nd.request.side_effect = request
+    with patch(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.FabricSwitchInventory.from_fabric",
+        return_value=_mock_fabric_inventory({"192.0.2.10": "SER1"}),
+    ):
+        module = NDResourceManagerModule(nd, Results(), log=LOG)
+        module.PAGINATION_RETRY_DELAY_SECONDS = 0
+        with pytest.raises(ValueError, match="remained inconsistent after 6 attempts"):
+            module.manage_state()
+
+    assert resource_read_count == 12
+
+
 def test_fetch_resources_paginated_uses_filtered_query_path():
     """Filtered resource reads push poolName, switchId, and entityName filter to the API."""
     nd = _mock_nd_module()
@@ -1887,6 +2059,22 @@ def test_normalize_entity_key_device_pair_matches_nd_reordered_entity_name():
     assert requested != different_label
 
 
+def test_normalize_entity_key_fabric_pair_ignores_switch_order():
+    """_normalize_entity_key matches two-part fabric names regardless of switch order."""
+    requested = ResourceManagerDiffEngine._normalize_entity_key(
+        "9KQKJLKFLKW~9HD1Q6C52FA",
+        LOG,
+        scope_type="fabric",
+    )
+    nd_response = ResourceManagerDiffEngine._normalize_entity_key(
+        "9HD1Q6C52FA~9KQKJLKFLKW",
+        LOG,
+        scope_type="fabric",
+    )
+
+    assert requested == nd_response
+
+
 def test_normalize_entity_key_link_preserves_serial_interface_pairs():
     """_normalize_entity_key compares links as unordered endpoint pairs."""
     result = ResourceManagerDiffEngine._normalize_entity_key(
@@ -2009,8 +2197,32 @@ def test_validate_input_empty_config_for_deleted_raises():
         module._validate_input()  # pylint: disable=protected-access
 
 
-def test_manage_state_merged_fetches_full_inventory_before_diffing():
-    """Merged state fetches full resource inventory before local diffing."""
+def test_build_modifying_resource_criteria_omits_switch_filter_for_links():
+    """Link candidates are not tied to the configured endpoint switch."""
+    module = _resource_manager()
+    module.config = [
+        {
+            "pool_name": "loopbackId",
+            "scope_type": "device",
+            "switches": ["SER1"],
+        },
+        {
+            "pool_name": "DCI subnet pool",
+            "scope_type": "link",
+            "switches": ["SER1"],
+        },
+    ]
+
+    criteria = module._build_modifying_resource_criteria()  # pylint: disable=protected-access
+
+    assert criteria == [
+        ("loopbackId", "SER1", None),
+        (None, None, None),
+    ]
+
+
+def test_manage_state_merged_fetches_filtered_candidates_before_diffing():
+    """Merged state narrows resource inventory by requested pool and switch."""
     config = [
         {
             "entity_name": "loopback0",
@@ -2050,13 +2262,13 @@ def test_manage_state_merged_fetches_full_inventory_before_diffing():
     path = resource_paths[0]
     assert "max=" in path
     assert "offset=0" in path
-    assert "poolName=" not in path
-    assert "switchId=" not in path
+    assert "poolName=loopbackId" in path
+    assert "switchId=SER1" in path
     assert "filter=" not in path
 
 
-def test_manage_state_deleted_fetches_full_inventory_before_matching():
-    """Deleted state fetches full resource inventory before remove-by-ID matching."""
+def test_manage_state_deleted_fetches_filtered_candidates_before_matching():
+    """Deleted state narrows resource inventory by requested pool and switch."""
     config = [
         {
             "entity_name": "loopback0",
@@ -2083,10 +2295,75 @@ def test_manage_state_deleted_fetches_full_inventory_before_matching():
     path = resource_paths[0]
     assert "max=" in path
     assert "offset=0" in path
-    assert "poolName=" not in path
-    assert "switchId=" not in path
+    assert "poolName=loopbackId" in path
+    assert "switchId=SER1" in path
     assert "filter=" not in path
     assert len(resource_paths) == 1
+
+
+def test_manage_state_deleted_matches_link_returned_under_opposite_endpoint_switch():
+    """Deleted state discovers canonically reordered links without a switch filter."""
+    config = [
+        {
+            "entity_name": "SER1~Ethernet1/3~SER2~Ethernet1/3",
+            "pool_type": "SUBNET",
+            "pool_name": "DCI subnet pool",
+            "scope_type": "link",
+            "switches": ["192.0.2.10"],
+            "resource": "10.33.61.0/30",
+        }
+    ]
+    nd = _mock_nd_module(state="deleted", config=config)
+
+    def request(path, _verb, **_kwargs):
+        if path.endswith("/fabric-1"):
+            return {"management": {"type": "vxlanIbgp"}}
+        if "/resources?" in path:
+            return {
+                "resources": [
+                    {
+                        "resourceId": 501,
+                        "entityName": "SER2~Ethernet1/3~SER1~Ethernet1/3",
+                        "poolName": "DCI subnet pool",
+                        "poolType": "SUBNET",
+                        "resourceValue": "10.33.61.0/30",
+                        "scopeDetails": {
+                            "scopeType": "link",
+                            "srcSwitchId": "SER2",
+                            "srcInterfaceName": "Ethernet1/3",
+                            "dstSwitchId": "SER1",
+                            "dstInterfaceName": "Ethernet1/3",
+                        },
+                    }
+                ],
+                "meta": {"counts": {"remaining": 0, "total": 1}},
+            }
+        return {"resources": [{"resourceId": 501}]}
+
+    nd.request.side_effect = request
+    remove_item = MagicMock()
+    remove_item.status = None
+    remove_item.message = None
+    remove_item.resource_value = "10.33.61.0/30"
+    remove_item.model_dump.return_value = {"resourceId": 501}
+    remove_response = MagicMock(resources=[remove_item])
+
+    with patch(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.FabricSwitchInventory.from_fabric",
+        return_value=_mock_fabric_inventory(),
+    ), patch(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response",
+        return_value=remove_response,
+    ):
+        module = NDResourceManagerModule(nd, Results(), log=LOG)
+        module.manage_state()
+
+    resource_paths = [call.args[0] for call in nd.request.call_args_list if "/resources?" in call.args[0]]
+    assert len(resource_paths) == 1
+    assert "poolName=" not in resource_paths[0]
+    assert "switchId=" not in resource_paths[0]
+    remove_call = next(call for call in nd.request.call_args_list if call.args[0].endswith("/resources/actions/remove"))
+    assert remove_call.kwargs["data"] == {"resourceIds": [501]}
 
 
 def test_manage_state_gathered_uses_filtered_candidate_get():
@@ -2655,6 +2932,49 @@ def test_translate_gathered_results_with_single_switch():
     assert result[0]["pool_name"] == "LOOPBACK_ID"
 
 
+def test_translate_gathered_results_includes_model_resource_id_for_snapshot():
+    """Snapshot translation includes a model-backed resource identifier."""
+    module = _resource_manager()
+
+    result = module.translate_gathered_results([_response(resourceId=101)], include_resource_id=True)  # pylint: disable=protected-access
+
+    assert result[0]["resource_id"] == 101
+
+
+def test_translate_gathered_results_includes_raw_resource_id_for_snapshot():
+    """Snapshot translation includes an identifier from a raw API dictionary."""
+    module = _resource_manager()
+    resource = {
+        "resourceId": 202,
+        "entityName": "loopback1",
+        "poolName": "LOOPBACK_ID",
+        "resourceValue": "11",
+        "scopeDetails": {"scopeType": "device", "switchIp": "192.0.2.11"},
+    }
+
+    result = module.translate_gathered_results([resource], include_resource_id=True)  # pylint: disable=protected-access
+
+    assert result[0]["resource_id"] == 202
+
+
+def test_translate_gathered_results_omits_resource_id_by_default():
+    """Gathered translation remains replayable and omits resource identifiers."""
+    module = _resource_manager()
+
+    result = module.translate_gathered_results([_response(resourceId=101)])  # pylint: disable=protected-access
+
+    assert "resource_id" not in result[0]
+
+
+def test_translate_gathered_results_omits_missing_resource_id_for_snapshot():
+    """Snapshot translation omits the identifier when the API did not return one."""
+    module = _resource_manager()
+
+    result = module.translate_gathered_results([_response(resourceId=None)], include_resource_id=True)  # pylint: disable=protected-access
+
+    assert "resource_id" not in result[0]
+
+
 def test_translate_gathered_results_preserves_vrf_and_auto_allocation():
     """Gathered output keeps VRF and is_pre_allocated for replayable config."""
     module = _resource_manager()
@@ -2834,6 +3154,22 @@ def test_compute_changes_device_pair_endpoint_normalization():
 
     changes = ResourceManagerDiffEngine.compute_changes(proposed, existing, log=LOG)
     # Should match despite different order (tilde-normalization)
+    assert len(changes["idempotent"]) == 1
+    assert changes["to_add"] == []
+
+
+def test_compute_changes_fabric_pair_endpoint_normalization():
+    """compute_changes normalizes two-part fabric entity names regardless of order."""
+    proposed = [_config(entity_name="9KQKJLKFLKW~9HD1Q6C52FA", scope_type="fabric", pool_name="VPC_DOMAIN_ID")]
+    existing = [
+        _response(
+            entityName="9HD1Q6C52FA~9KQKJLKFLKW",
+            poolName="VPC_DOMAIN_ID",
+            scopeDetails={"scopeType": "fabric"},
+        )
+    ]
+
+    changes = ResourceManagerDiffEngine.compute_changes(proposed, existing, log=LOG)
     assert len(changes["idempotent"]) == 1
     assert changes["to_add"] == []
 
@@ -4115,6 +4451,21 @@ def test_exit_module_requeries_when_changed_and_not_check_mode():
 
     module._refresh_existing_resources.assert_called_once_with(update_previous=False)  # pylint: disable=protected-access
     assert any(item.get("entity_name") == "loopback9" for item in ansible_module.exit_payload.get("after", []))
+
+
+@pytest.mark.parametrize("state", ["merged", "deleted"])
+def test_exit_module_includes_resource_ids_in_before_and_after_snapshots(state):
+    """Merge and delete output snapshots retain controller resource identifiers."""
+    module, ansible_module = _resource_manager_for_exit(verbosity=0)
+    module.state = state
+    module.results.state = state
+    module.previous = [_response(resourceId=101, entityName="loopback0")]
+    module.existing = [_response(resourceId=202, entityName="loopback1")]
+
+    module.exit_module()
+
+    assert ansible_module.exit_payload["before"][0]["resource_id"] == 101
+    assert ansible_module.exit_payload["after"][0]["resource_id"] == 202
 
 
 def test_exit_module_info_output_level_includes_proposed():
