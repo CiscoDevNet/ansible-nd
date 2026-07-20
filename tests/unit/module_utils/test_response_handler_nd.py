@@ -1995,6 +1995,155 @@ def test_response_handler_nd_01350():
 
 
 # =============================================================================
+# Test: links[] Multi-Status envelope (bulk link create / delete)
+#
+# POST /api/v1/manage/links and POST /api/v1/manage/linkActions/remove return
+# HTTP 207 with {"links": [{"linkId", "message", "status"}]}, status
+# success|failure. The GET /links list body rides the same `links` envelope,
+# but its link objects carry no top-level `status` key, so queries must not
+# false-positive. See PR #398 discussion.
+# =============================================================================
+
+
+def test_response_handler_nd_01360():
+    """
+    # Summary
+
+    Verify a 207 `links[]` envelope with a failing item is classified as failure and labelled by linkId.
+
+    ## Test
+
+    - A 207 links body with one success and one failure item sets success=False
+    - The failing item is labelled by its linkId in error_message
+    - The succeeding item does not appear in error_message
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - NdV1Strategy._format_multistatus_failure()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "links": [
+                {"linkId": "LINK-UUID-8540", "message": "LINK-UUID-8540 deleted successfully", "status": "success"},
+                {"linkId": "LINK-UUID-8541", "message": "Deletion of link with id:LINK-UUID-8541 failed due to invalid linkId.", "status": "failure"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message is not None
+    assert "LINK-UUID-8541: Deletion of link with id:LINK-UUID-8541 failed due to invalid linkId." in instance.error_message
+    assert "LINK-UUID-8540" not in instance.error_message
+
+
+def test_response_handler_nd_01370():
+    """
+    # Summary
+
+    Verify a 207 `links[]` envelope whose items all succeed is classified as success.
+
+    ## Test
+
+    - A 207 links body with only success items sets success=True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "links": [
+                {"linkId": "LINK-UUID-8540", "message": "LINK-UUID-8540 created successfully", "status": "success"},
+                {"linkId": "LINK-UUID-8541", "message": "LINK-UUID-8541 created successfully", "status": "success"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+
+
+def test_response_handler_nd_01380():
+    """
+    # Summary
+
+    Verify a failing links item carrying linkId="" yields an unlabelled message rather than ": <message>".
+
+    ## Test
+
+    - A 207 links failure item with an empty linkId (the bulk-create OpenAPI example: the link was
+      never created, so ND has no id to report) surfaces the message without a label prefix
+
+    ## Classes and Methods
+
+    - NdV1Strategy._format_multistatus_failure()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "links": [
+                {"linkId": "LINK-UUID-8540", "message": "LINK-UUID-8540 created successfully", "status": "success"},
+                {"linkId": "", "message": "PTI POLICY-14240 already associated for the link LINK-UUID-15010.", "status": "failure"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message == "ND Error: PTI POLICY-14240 already associated for the link LINK-UUID-15010."
+
+
+def test_response_handler_nd_01390():
+    """
+    # Summary
+
+    Verify a GET-shaped `links[]` list body (link objects, no `status` key) is not a false positive.
+
+    ## Test
+
+    - A 200 GET /links body whose link objects carry linkId but no status sets success=True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {"linkId": "LINK-UUID-8540", "linkType": "lan_neighbor_link", "srcInterfaceName": "Ethernet1/2", "dstInterfaceName": "Ethernet1/9"},
+                {"linkId": "LINK-UUID-48060", "linkType": "lan_planned_link", "srcInterfaceName": "Ethernet1/16", "dstInterfaceName": "Ethernet1/16"},
+            ],
+            "meta": {"counts": {"remaining": 0, "total": 2}},
+        },
+    }
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+    assert instance.result["found"] is True
+
+
+# =============================================================================
 # Test: ResponseHandler commit() can be called multiple times
 # =============================================================================
 
