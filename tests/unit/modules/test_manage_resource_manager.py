@@ -1205,9 +1205,7 @@ def test_fetch_resources_paginated_retries_then_fails_on_incomplete_total():
     nd.request.side_effect = [partial_page, empty_page] * 6
     module = NDResourceManagerModule(nd, Results(), log=LOG)
 
-    with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.time.sleep"
-    ) as sleep:
+    with patch("ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.time.sleep") as sleep:
         with pytest.raises(ValueError, match="remained inconsistent after 6 attempts"):
             module._fetch_resources_paginated()  # pylint: disable=protected-access
 

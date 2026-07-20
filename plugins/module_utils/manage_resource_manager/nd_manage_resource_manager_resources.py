@@ -490,8 +490,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                     ) from exc
                 delay = self.PAGINATION_RETRY_DELAY_SECONDS * attempt
                 self.log.warning(
-                    "_fetch_resources_paginated: inconsistent snapshot on attempt=%s; "
-                    "restarting from offset=0 after %s second(s): %s",
+                    "_fetch_resources_paginated: inconsistent snapshot on attempt=%s; " "restarting from offset=0 after %s second(s): %s",
                     attempt,
                     delay,
                     exc,
@@ -512,9 +511,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
 
         while True:
             if offset in visited_offsets:
-                raise _PaginationInconsistency(
-                    f"repeated offset={offset}, unique_count={len(resources)}, expected_total={expected_total}"
-                )
+                raise _PaginationInconsistency(f"repeated offset={offset}, unique_count={len(resources)}, expected_total={expected_total}")
             visited_offsets.add(offset)
             page_count += 1
 
@@ -532,9 +529,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 api_elapsed = time.monotonic() - api_start
                 if exc.status == 404:
                     if resources or expected_total:
-                        raise _PaginationInconsistency(
-                            f"received 404 at offset={offset} before expected_total={expected_total} was reached"
-                        ) from exc
+                        raise _PaginationInconsistency(f"received 404 at offset={offset} before expected_total={expected_total} was reached") from exc
                     return []
                 raise ValueError(
                     f"_fetch_resources_paginated: GET resources API call failed after {api_elapsed:.3f} second(s) (path={ep.path}, state={self.state})"
@@ -555,9 +550,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 if expected_total is None:
                     expected_total = total_count
                 elif total_count != expected_total:
-                    raise _PaginationInconsistency(
-                        f"pagination total changed from {expected_total} to {total_count} at offset={offset}"
-                    )
+                    raise _PaginationInconsistency(f"pagination total changed from {expected_total} to {total_count} at offset={offset}")
             has_next = self._has_next_page(data)
             self.log.info(
                 "_fetch_resources_paginated: GET resources API response time %.3f second(s) "
@@ -603,14 +596,10 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
 
             if expected_total is not None:
                 if len(resources) > expected_total:
-                    raise _PaginationInconsistency(
-                        f"unique_count={len(resources)} exceeded expected_total={expected_total} at offset={offset}"
-                    )
+                    raise _PaginationInconsistency(f"unique_count={len(resources)} exceeded expected_total={expected_total} at offset={offset}")
                 if len(resources) == expected_total:
                     if remaining not in (None, 0):
-                        raise _PaginationInconsistency(
-                            f"unique_count reached total={expected_total}, but remaining={remaining} at offset={offset}"
-                        )
+                        raise _PaginationInconsistency(f"unique_count reached total={expected_total}, but remaining={remaining} at offset={offset}")
                     self.log.info(
                         "_fetch_resources_paginated: verified complete snapshot with %s unique resource(s) in %s iteration(s)",
                         expected_total,
@@ -618,27 +607,21 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                     )
                     return resources
                 if not raw_list:
-                    raise _PaginationInconsistency(
-                        f"empty page at offset={offset}, unique_count={len(resources)}, expected_total={expected_total}"
-                    )
+                    raise _PaginationInconsistency(f"empty page at offset={offset}, unique_count={len(resources)}, expected_total={expected_total}")
                 if unique_added == 0:
                     raise _PaginationInconsistency(
                         f"page made no unique progress at offset={offset}, unique_count={len(resources)}, expected_total={expected_total}"
                     )
             elif not raw_list:
                 if has_next or (remaining is not None and remaining > 0):
-                    raise _PaginationInconsistency(
-                        f"empty page at offset={offset} while pagination metadata advertises more resources"
-                    )
+                    raise _PaginationInconsistency(f"empty page at offset={offset} while pagination metadata advertises more resources")
                 return resources
             elif unique_added == 0:
                 raise _PaginationInconsistency(f"page made no unique progress at offset={offset}")
 
             next_offset = offset + batch_count
             if next_offset <= offset:
-                raise _PaginationInconsistency(
-                    f"non-increasing next offset at offset={offset}, response_count={batch_count}"
-                )
+                raise _PaginationInconsistency(f"non-increasing next offset at offset={offset}, response_count={batch_count}")
 
             if expected_total is not None:
                 offset = next_offset
