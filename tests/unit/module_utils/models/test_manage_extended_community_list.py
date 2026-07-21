@@ -105,6 +105,7 @@ def test_manage_extended_community_list_00040() -> None:
     config_options = spec["config"]["options"]
 
     assert config_options["name"]["required"] is True
+    assert spec["cluster_name"]["type"] == "str"
     assert "required" not in config_options["type"]
     assert "required" not in config_options["entries"]
 

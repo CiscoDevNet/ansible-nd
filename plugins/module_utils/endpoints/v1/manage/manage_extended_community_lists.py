@@ -30,17 +30,25 @@ from __future__ import annotations
 from typing import ClassVar, Literal
 from urllib.parse import quote
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict, Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import ExtendedCommunityListNameMixin, FabricNameMixin, FromClusterMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import ExtendedCommunityListNameMixin, FabricNameMixin
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import CompositeQueryParams, EndpointQueryParams, LuceneQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
-class ExtendedCommunityListsEndpointParams(FromClusterMixin, EndpointQueryParams):
+class ExtendedCommunityListsEndpointParams(EndpointQueryParams):
     """Query parameters common to extended community list endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cluster_name: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Name of the target Nexus Dashboard cluster in a multi-cluster deployment",
+    )
 
 
 class _EpManageExtendedCommunityListsBase(FabricNameMixin, ExtendedCommunityListNameMixin, NDEndpointBaseModel):

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_extended_community_lists import (
+    ExtendedCommunityListsEndpointParams,
     EpManageExtendedCommunityListsBulkDelete,
     EpManageExtendedCommunityListsDelete,
     EpManageExtendedCommunityListsGet,
@@ -17,6 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageExtendedCommunityListsPost,
     EpManageExtendedCommunityListsPut,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import LuceneQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
@@ -106,3 +108,30 @@ def test_manage_extended_community_lists_00040() -> None:
     assert delete.path == "/api/v1/manage/fabrics/SITE1/extendedCommunityLists/ECL1"
     assert bulk_delete.verb == HttpVerbEnum.POST
     assert bulk_delete.path == "/api/v1/manage/fabrics/SITE1/extendedCommunityListActions/remove"
+
+
+def test_manage_extended_community_lists_00050() -> None:
+    """Verify clusterName and Lucene parameters compose on list and item paths."""
+    list_endpoint = EpManageExtendedCommunityListsListGet(
+        endpoint_params=ExtendedCommunityListsEndpointParams(cluster_name="cluster-1"),
+        lucene_params=LuceneQueryParams(filter="name:ECL SALES", max=50, offset=10, sort="name:desc"),
+    )
+    list_endpoint.fabric_name = "SITE1"
+    item_endpoint = EpManageExtendedCommunityListsGet(
+        endpoint_params=ExtendedCommunityListsEndpointParams(cluster_name="cluster-1")
+    )
+    item_endpoint.fabric_name = "SITE1"
+    item_endpoint.set_identifiers("ECL1")
+
+    assert list_endpoint.path == (
+        "/api/v1/manage/fabrics/SITE1/extendedCommunityLists?"
+        "clusterName=cluster-1&filter=name:ECL%20SALES&max=50&offset=10&sort=name%3Adesc"
+    )
+    assert item_endpoint.path == "/api/v1/manage/fabrics/SITE1/extendedCommunityLists/ECL1?clusterName=cluster-1"
+
+
+@pytest.mark.parametrize("lucene_config", [{"max": 10001}, {"sort": "name:sideways"}])
+def test_manage_extended_community_lists_00060(lucene_config: dict) -> None:
+    """Verify collection endpoints inherit shared Lucene validation."""
+    with pytest.raises(ValueError):
+        EpManageExtendedCommunityListsListGet(lucene_params=LuceneQueryParams(**lucene_config))

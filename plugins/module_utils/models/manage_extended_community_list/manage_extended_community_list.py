@@ -401,6 +401,7 @@ class ExtendedCommunityListModel(NDBaseModel):
     def get_argument_spec(cls) -> dict:
         return dict(
             fabric_name=dict(type="str", required=True),
+            cluster_name=dict(type="str"),
             config=dict(
                 type="list",
                 elements="dict",
