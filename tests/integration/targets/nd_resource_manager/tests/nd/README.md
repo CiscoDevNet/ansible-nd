@@ -5,8 +5,9 @@ These tests are selected by two variables from `nd/playbook/run_tests.yaml`:
 - `fabric_type`: optional. When omitted, legacy root-level files are used.
   When set, supported values are `base`, `ibgp`, `ebgp`, `external`, `all`,
   or a comma-separated subset.
-- `testcase`: `merge`, `delete`, `gathered`, `invalid_params`, `sanity`,
-  `load`, `*`, or a comma-separated subset.
+- `testcase`: `*`, a YAML test file name, or a comma-separated list of YAML
+  test file names. File names can be provided with or without the `.yaml`
+  extension.
 
 The fabric-specific files live in subdirectories:
 
@@ -22,24 +23,40 @@ The dispatcher includes files with the pattern `{fabric_type}/{testcase}.yaml`.
 When `fabric_type` is omitted, the dispatcher includes root-level legacy files
 with the pattern `{testcase}.yaml`.
 
-When `fabric_type` is set to a concrete fabric type, the dispatcher runs common
-base coverage first and then the fabric delta coverage:
+The selected test directories are:
 
-- `fabric_type=base` runs `base/`.
-- `fabric_type=ibgp` runs `base/` and `ibgp/`.
-- `fabric_type=ebgp` runs `base/` and `ebgp/`.
-- `fabric_type=external` runs `base/` and `external/`.
-- `fabric_type=all` runs `base/`, `ibgp/`, `ebgp/`, and `external/`.
+| `fabric_type` value | Directories searched |
+| --- | --- |
+| Omitted or empty | `tests/nd/` only |
+| `base` | `tests/nd/base/` only |
+| `ibgp` | `tests/nd/base/`, then `tests/nd/ibgp/` |
+| `ebgp` | `tests/nd/base/`, then `tests/nd/ebgp/` |
+| `external` | `tests/nd/base/`, then `tests/nd/external/` |
+| `all` | `tests/nd/base/`, `tests/nd/ibgp/`, `tests/nd/ebgp/`, and `tests/nd/external/` |
 
-`testcase=*` expands to `delete,gathered,invalid_params,load,merge,sanity`.
+`testcase=*` discovers and runs every `*.yaml` file directly inside each
+selected directory. Discovery is non-recursive, so nested directories and
+non-YAML files are not included.
+
+A named value runs only the matching file. A comma-separated value is an exact
+allowlist, so `testcase=merge,delete` runs only `merge.yaml` and `delete.yaml`
+from the selected directories. It does not run any other test files.
+
+Each requested name must exist in at least one selected directory, but it does
+not need to exist in every selected directory. For example,
+`fabric_type=ibgp testcase=load` runs `base/load.yaml` without requiring an
+`ibgp/load.yaml` file. An unknown value such as `testcase=merge,lod` fails
+before any test file is included because `lod.yaml` exists in none of the
+selected directories.
 
 Examples:
 
 ```bash
 ansible-playbook run_tests.yaml -e "testcase=delete,gathered,invalid_params,load,merge"
 ansible-playbook run_tests.yaml -e "testcase=*"
-ansible-playbook run_tests.yaml -e "fabric_type=base testcase=merge,gathered,delete"
-ansible-playbook run_tests.yaml -e "fabric_type=ibgp testcase=merge,gathered,delete"
+ansible-playbook run_tests.yaml -e "fabric_type=base testcase=merge"
+ansible-playbook run_tests.yaml -e "fabric_type=ibgp testcase=merge.yaml"
+ansible-playbook run_tests.yaml -e "fabric_type=ibgp testcase=merge,delete"
 ansible-playbook run_tests.yaml -e "fabric_type=ibgp testcase=*"
 ansible-playbook run_tests.yaml -e "fabric_type=ebgp testcase=merge,gathered,delete"
 ansible-playbook run_tests.yaml -e "fabric_type=external testcase=merge,gathered,delete"

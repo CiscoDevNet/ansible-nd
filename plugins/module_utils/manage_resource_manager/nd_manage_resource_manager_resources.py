@@ -1082,7 +1082,8 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                         }
                     )
                     self.log.error(
-                        "_validate_remove_response_for_failures: response_item[%s] has failure status: resource_value=%s, entity_name=%s, pool_name=%s, status=%s, message=%s",
+                        "_validate_remove_response_for_failures: response_item[%s] has failure status: resource_value=%s, entity_name=%s,"
+                        " pool_name=%s, status=%s, message=%s",
                         idx,
                         resource_value,
                         entity_name,
