@@ -131,6 +131,7 @@ class RouteMapNameMixin(BaseModel):
 
     route_map_name: str | None = Field(default=None, min_length=1, max_length=115, description="Route map name")
 
+
 class CommunityListNameMixin(BaseModel):
     """Mixin for endpoints that require community_list_name parameter."""
 
