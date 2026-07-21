@@ -14,6 +14,7 @@
 #   - SITE1 fabric with peer1 (192.168.12.151) and peer2 (192.168.12.152) reachable
 #   - Ethernet1/5, Ethernet1/6, Ethernet1/7 free on both peers for vPC member testing
 #   - vPC pair uses a virtual peer-link (no physical peer-link cable required); see vars/main.yaml
+#   - Multi-pair scenario additionally requires Ethernet1/10 free on all four leaves and a second vPC pair present
 #
 # Setup creates the vPC pair if missing; teardown unpairs it (which cascades and removes all
 # member vPC interfaces, so we don't need an explicit vPC-interface teardown). Set

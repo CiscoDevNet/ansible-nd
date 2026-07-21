@@ -410,7 +410,9 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         Return the unordered vPC pair discriminator for an interface record: `frozenset({switchId, peerSwitchId})`. The two peer copies
         of one vPC interface carry the same set (only the orientation swaps), while same-name interfaces on different pairs carry
         disjoint sets (issue #356). Falls back to `frozenset({switch_id})` when `peerSwitchId` is absent so a malformed record degrades
-        to per-switch identity instead of raising.
+        to per-switch identity instead of raising. Note: if BOTH peer copies of one interface ever lacked `peerSwitchId`, they would get
+        disjoint keys, both would survive dedup, and `state: overridden` could queue a spurious delete of the unconfigured copy —
+        acceptable only because the wire always carries the field (lab-verified 2026-07-20).
 
         ## Raises
 

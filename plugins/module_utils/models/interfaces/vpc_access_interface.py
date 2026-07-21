@@ -387,7 +387,6 @@ class AccessVpcHostInterfaceModel(NDBaseModel):
     """
 
     # --- Identifier Configuration ---
-    # --- Identifier Configuration ---
     # TODO(4.2.1) vpc-interface-dual-peer-duplicate
     # A vPC interface is a single fabric-level resource, but ND echoes it from BOTH peer switches in the per-switch
     # `/interfaces` GET (identical `configData`; only `switchId` / `peerSwitchId` swap). That echo is deduped in

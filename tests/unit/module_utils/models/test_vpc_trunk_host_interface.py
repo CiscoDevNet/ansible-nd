@@ -560,6 +560,7 @@ def test_vpc_trunk_host_interface_00300_identifier():
     - identifiers is ["switch_ip", "interface_name"]
     - identifier_strategy is "composite"
     - get_identifier_value returns the (switch_ip, interface_name) tuple
+    - switchIp stays excluded from the diff (exclude_from_diff)
 
     ## Classes and Methods
 
@@ -569,6 +570,7 @@ def test_vpc_trunk_host_interface_00300_identifier():
     assert instance.identifiers == ["switch_ip", "interface_name"]
     assert instance.identifier_strategy == "composite"
     assert instance.get_identifier_value() == (instance.switch_ip, "vpc500")
+    assert "switchIp" not in instance.to_diff_dict()
 
 
 @pytest.mark.parametrize(
