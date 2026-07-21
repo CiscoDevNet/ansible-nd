@@ -24,6 +24,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_community_l
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
+_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
+
 
 class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
     """
@@ -115,20 +117,24 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
         """
         # Summary
 
-        Inspect a bulk create/delete response and raise when any per-item status is not `success`.
+        Inspect a bulk create/delete response and raise on explicit per-item failure tokens.
 
         ## Raises
 
         ### RuntimeError
 
-        - If a `results` item is missing `status` or reports a non-success status.
+        - If a `results` item reports failed, failure, or error.
         """
         if not isinstance(result, dict):
             return
         items = result.get("results")
         if not isinstance(items, list):
             return
-        failures = [item for item in items if isinstance(item, dict) and item.get("status") != "success"]
+        failures = [
+            item
+            for item in items
+            if isinstance(item, dict) and str(item.get("status") or "").lower() in _FAILURE_STATUSES
+        ]
         if failures:
             details = ", ".join(f"{item.get('name')}: {item.get('status')} - {item.get('message')}" for item in failures)
             raise RuntimeError(f"Per-item failures in community list response: {details}")

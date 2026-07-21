@@ -201,6 +201,20 @@ def test_manage_extended_community_list_00110() -> None:
         instance.create_bulk([_model()])
 
 
+def test_manage_extended_community_list_00115() -> None:
+    """Verify non-failure and missing 207 status tokens are tolerated."""
+    result = {
+        "results": [
+            {"name": "ECL1", "status": "accepted", "message": "queued"},
+            {"name": "ECL2", "status": "", "message": "no status"},
+            {"name": "ECL3", "message": "status omitted"},
+        ]
+    }
+
+    with does_not_raise():
+        ManageExtendedCommunityListOrchestrator._raise_on_207_action_errors(result)
+
+
 def test_manage_extended_community_list_00120() -> None:
     """
     # Summary

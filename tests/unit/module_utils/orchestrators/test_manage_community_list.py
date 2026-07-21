@@ -197,6 +197,20 @@ def test_manage_community_list_00110() -> None:
         instance.create_bulk([_model()])
 
 
+def test_manage_community_list_00115() -> None:
+    """Verify non-failure and missing 207 status tokens are tolerated."""
+    result = {
+        "results": [
+            {"name": "CL1", "status": "accepted", "message": "queued"},
+            {"name": "CL2", "status": "", "message": "no status"},
+            {"name": "CL3", "message": "status omitted"},
+        ]
+    }
+
+    with does_not_raise():
+        ManageCommunityListOrchestrator._raise_on_207_action_errors(result)
+
+
 def test_manage_community_list_00120() -> None:
     """
     # Summary
