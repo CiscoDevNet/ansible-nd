@@ -1174,3 +1174,81 @@ def test_vpc_interface_base_00960() -> None:
         result = instance.query_all()
 
     assert result == []
+
+
+# =============================================================================
+# Test: query_all multi-pair dedup (#356)
+# =============================================================================
+
+
+def test_vpc_interface_base_01000() -> None:
+    """
+    # Summary
+
+    Verify the dedup key is `(interfaceName, frozenset({switchId, peerSwitchId}))`, not `interfaceName` alone: two vPC pairs in one
+    fabric can legally own the same vPC id (ND's `vpcId` pool is devicePair-scoped, lab-confirmed 2026-07-20 — issue #356). One pair's
+    two peer copies must collapse to a single entry while the second pair's same-name interface stays distinct.
+
+    ## Test
+
+    - `state=overridden`, four switches forming two vPC pairs, every peer echoes a `vpc210`
+    - Pair 1 copies carry pair-1 serials in `{switchId, peerSwitchId}`; pair 2 copies carry pair-2 serials
+    - Result has exactly TWO entries named `vpc210` — one per pair
+    - Each entry's `switchIp` is its pair's alphabetically-lower peer (192.168.1.1 and 192.168.1.3; nothing configured)
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.query_all()
+    - VpcInterfaceBaseOrchestrator._pair_key()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        for suffix in ("a", "b", "c", "d", "e", "f"):
+            yield responses_vpc_base(f"{method_name}{suffix}")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        instance = _build_orchestrator(gen_responses, state="overridden")
+        result = instance.query_all()
+
+    assert len(result) == 2
+    assert {entry["interfaceName"] for entry in result} == {"vpc210"}
+    assert {entry["switchIp"] for entry in result} == {"192.168.1.1", "192.168.1.3"}
+    vlans = {((entry.get("configData") or {}).get("networkOS") or {}).get("policy", {}).get("accessVlan") for entry in result}
+    assert vlans == {100, 200}
+
+
+def test_vpc_interface_base_01010() -> None:
+    """
+    # Summary
+
+    Verify a managed vPC record with no `peerSwitchId` is still returned (dedup key falls back to `frozenset({switchId})`) rather than
+    raising. The real wire always carries `peerSwitchId` (2026-07-20 captures); this pins the tolerant fallback for issue #356.
+
+    ## Test
+
+    - `state=overridden`, one switch, one managed vPC record without `peerSwitchId`
+    - `query_all` returns exactly that record, `switchIp` stamped
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.query_all()
+    - VpcInterfaceBaseOrchestrator._pair_key()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        for suffix in ("a", "b", "c"):
+            yield responses_vpc_base(f"{method_name}{suffix}")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        instance = _build_orchestrator(gen_responses, state="overridden")
+        result = instance.query_all()
+
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "vpc300"
+    assert result[0]["switchIp"] == "192.168.1.1"
