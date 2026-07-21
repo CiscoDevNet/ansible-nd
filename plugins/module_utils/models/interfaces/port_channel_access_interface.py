@@ -51,6 +51,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     SpeedEnum,
     StormControlActionEnum,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
@@ -63,7 +64,7 @@ _INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
 _CANONICAL_MEMBER_TYPE = "Ethernet"
 
 
-class PortChannelAccessPolicyModel(NDNestedModel):
+class PortChannelAccessPolicyModel(StormControlMutexMixin):
     """
     # Summary
 

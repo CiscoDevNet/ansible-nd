@@ -120,6 +120,12 @@ class UpdateGroupNameMixin(BaseModel):
     update_group_name: str | None = Field(default=None, min_length=1, description="Update group name")
 
 
+class RouteMapNameMixin(BaseModel):
+    """Mixin for endpoints that require route_map_name parameter."""
+
+    route_map_name: str | None = Field(default=None, min_length=1, max_length=115, description="Route map name")
+
+
 class TenantNameMixin(BaseModel):
     """Mixin for endpoints that require tenant_name parameter."""
 

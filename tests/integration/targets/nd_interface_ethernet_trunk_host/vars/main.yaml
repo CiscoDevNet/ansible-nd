@@ -146,6 +146,58 @@ ethernet_48_storm_control:
         description: "Storm-control read-back test Ethernet1/48"
         storm_control_broadcast_level: 50.0
 
+# --- Storm-control merge-lifecycle test configs (PR #360 review) ---
+# Percentage and pps are two representations of one NX-OS threshold, so state:merged
+# must treat them as one logical setting: explicitly selecting one variant clears an
+# existing counterpart. These configs drive the pct->pps switch, the pps->pct switch
+# back, and remediation of the dual-valued intent ND accepts (issue #351).
+
+ethernet_48_storm_control_pps:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/48
+  config_data:
+    network_os:
+      policy:
+        storm_control_broadcast_level_pps: 1000
+
+ethernet_48_storm_control_pct_switch_back:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/48
+  config_data:
+    network_os:
+      policy:
+        storm_control_broadcast_level: 42.5
+
+ethernet_48_storm_control_pps_remediate:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/48
+  config_data:
+    network_os:
+      policy:
+        storm_control_broadcast_level_pps: 12345
+
+# Raw ND intent used to seed the dual-valued state via nd_rest. The module itself
+# rejects config that sets both variants for a class, so the seed must bypass it the
+# same way ND accepted the state in issue #351 (lab-verified on 4.2.1.10 / 4.3.1.75:
+# ND accepts and echoes both; generated CLI uses only the percentage).
+ethernet_48_dual_seed_payload:
+  interfaceName: Ethernet1/48
+  interfaceType: ethernet
+  configData:
+    mode: trunk
+    networkOS:
+      networkOSType: nx-os
+      policy:
+        policyType: trunkHost
+        adminState: true
+        allowedVlans: "100-200"
+        description: "Storm-control dual-state seed Ethernet1/48"
+        stormControlBroadcastLevel: 50.0
+        stormControlBroadcastLevelPps: 12345
+
 # --- Cleanup helper: all test interfaces ---
 
 cleanup_interface_names:

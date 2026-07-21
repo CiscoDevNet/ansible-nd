@@ -26,6 +26,9 @@
     var: setup_cleanup
   tags: always
 
+# The probe supplies an empty (but present) policy: the policy-required-on-create preflight (issue #350) rejects a
+# create item whose policy is None -- and it runs in check mode by design -- so a bare `policy:` would fail here
+# whenever the cleanup above actually removed the interface (making this probe a "new" item).
 - name: "DEBUG: Re-query to see if interfaces are still present after cleanup"
   cisco.nd.nd_interface_ethernet_trunk_host:
     output_level: "{{ nd_info.output_level }}"
@@ -36,7 +39,7 @@
           - Ethernet1/41
         config_data:
           network_os:
-            policy:
+            policy: {}
     state: merged
   check_mode: true
   register: debug_requery
