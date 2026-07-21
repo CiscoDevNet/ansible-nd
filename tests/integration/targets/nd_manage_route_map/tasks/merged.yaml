@@ -1,0 +1,61 @@
+---
+# Merged state tests for nd_manage_route_map.
+
+- name: "MERGED CREATE: Create primary route map (check mode)"
+  cisco.nd.nd_manage_route_map: &merge_primary
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ route_map_primary }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_primary
+
+- name: "MERGED CREATE: Create primary route map (normal mode)"
+  cisco.nd.nd_manage_route_map: *merge_primary
+  register: nm_merged_create_primary
+
+- name: "MERGED CREATE: Verify primary route map creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_primary is changed
+      - nm_merged_create_primary is changed
+      - nm_merged_create_primary.after | selectattr('name', 'equalto', test_route_map_primary_name) | list | length == 1
+
+- name: "MERGED IDEMPOTENT: Re-apply primary route map (check mode)"
+  cisco.nd.nd_manage_route_map: *merge_primary
+  check_mode: true
+  register: cm_merged_idem_primary
+
+- name: "MERGED IDEMPOTENT: Re-apply primary route map (normal mode)"
+  cisco.nd.nd_manage_route_map: *merge_primary
+  register: nm_merged_idem_primary
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_primary is not changed
+      - nm_merged_idem_primary is not changed
+
+- name: "MERGED UPDATE: Update primary route map local preference (check mode)"
+  cisco.nd.nd_manage_route_map: &merge_primary_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ route_map_primary_updated }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_update_primary
+
+- name: "MERGED UPDATE: Update primary route map local preference (normal mode)"
+  cisco.nd.nd_manage_route_map: *merge_primary_updated
+  register: nm_merged_update_primary
+
+- name: "MERGED UPDATE: Verify primary route map updated"
+  vars:
+    primary_after: "{{ nm_merged_update_primary.after | selectattr('name', 'equalto', test_route_map_primary_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update_primary is changed
+      - nm_merged_update_primary is changed
+      - primary_after.entries[0].rule_entries[0].value == 200
