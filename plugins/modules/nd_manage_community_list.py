@@ -10,7 +10,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_manage_community_list
-version_added: "1.6.0"
+version_added: "2.0.0"
 short_description: Manage BGP community lists on Cisco Nexus Dashboard fabrics
 description:
 - Manage BGP routing-policy community lists on a Cisco Nexus Dashboard (ND) fabric.
@@ -25,6 +25,10 @@ options:
     - Required for all operations.
     type: str
     required: true
+  cluster_name:
+    description:
+    - The target cluster name in a multi-cluster deployment.
+    type: str
   config:
     description:
     - The list of community lists to configure.
@@ -53,6 +57,8 @@ options:
         - The tenant that owns this community list.
         - When omitted the default tenant is used.
         - Allowed characters are C([A-Za-z0-9_-]). Max 63 characters.
+        - When set, O(config.name) may be the bare list name or the fully qualified C(tenant~name) API name.
+        - The module reports the bare O(config.name) and uses C(tenant~name) for API lookups, updates, and deletes.
         type: str
         aliases: [ tenantName ]
       entries:
@@ -168,7 +174,6 @@ EXAMPLES = r"""
     config:
       - name: CL-STANDARD-PROD
         type: standard
-        description: Production community list
         entries:
           - sequence_number: 10
             action: permit
@@ -234,6 +239,89 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed, or in check mode would change, the fabric configuration.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The community list configuration before the module ran, structured the same as O(config).
+  - An empty list when no community lists existed.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - name: CL_EXPORT
+    tenant_name: tenantSales
+    type: standard
+    entries:
+    - sequence_number: 10
+      action: permit
+      community_numbers:
+      - "65000:100"
+after:
+  description:
+  - The community list configuration after the module ran, structured the same as O(config).
+  - This is the predicted post-write state and is not re-read from the controller after writes.
+  - In check mode, this is the configuration that would result outside check mode.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - name: CL_EXPORT
+    tenant_name: tenantSales
+    type: standard
+    entries:
+    - sequence_number: 10
+      action: permit
+      community_numbers:
+      - "65000:200"
+diff:
+  description: The per-community-list difference between C(before) and C(after).
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - name: CL_EXPORT
+    tenant_name: tenantSales
+    type: standard
+    entries:
+    - sequence_number: 10
+      action: permit
+      community_numbers:
+      - "65000:200"
+proposed:
+  description: The community list configuration proposed before reconciliation with existing state.
+  returned: when O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+  - name: CL_EXPORT
+    tenant_name: tenantSales
+    type: standard
+    entries:
+    - sequence_number: 10
+      action: permit
+      community_numbers:
+      - "65000:200"
+logs:
+  description: Internal diagnostic log messages collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample:
+  - "manage_state begin state=merged check_mode=False"
+msg:
+  description: A human-readable error message present only when the module fails.
+  returned: on failure
+  type: str
+  sample: "community list 'CL_EXPORT': 'type, entries' are required for state 'merged'."
 """
 
 import logging
