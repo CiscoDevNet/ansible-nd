@@ -2350,7 +2350,8 @@ def test_manage_state_deleted_matches_link_returned_under_opposite_endpoint_swit
         "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.FabricSwitchInventory.from_fabric",
         return_value=_mock_fabric_inventory(),
     ), patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response",
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources"
+        ".RemoveResourcesByIdsResponse.from_response",
         return_value=remove_response,
     ):
         module = NDResourceManagerModule(nd, Results(), log=LOG)

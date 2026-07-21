@@ -1055,11 +1055,15 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             resource_value = resp_item.get("resourceValue") if isinstance(resp_item, dict) else resp_item.resource_value
             status = resp_item.get("status") if isinstance(resp_item, dict) else resp_item.status
             message = resp_item.get("message") if isinstance(resp_item, dict) else resp_item.message
+            entity_name = resp_item.get("entityName") if isinstance(resp_item, dict) else getattr(resp_item, "entity_name", None)
+            pool_name = resp_item.get("poolName") if isinstance(resp_item, dict) else getattr(resp_item, "pool_name", None)
 
             self.log.debug(
-                "_validate_remove_response_for_failures: response_item[%s] resource_value=%s, status=%s, message=%s",
+                "_validate_remove_response_for_failures: response_item[%s] resource_value=%s, entity_name=%s, pool_name=%s, status=%s, message=%s",
                 idx,
                 resource_value,
+                entity_name,
+                pool_name,
                 status,
                 message,
             )
@@ -1071,14 +1075,18 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                         {
                             "index": idx,
                             "resource_value": resource_value or "unknown",
+                            "entity_name": entity_name or "unknown",
+                            "pool_name": pool_name or "unknown",
                             "status": status,
                             "message": message or "no details provided",
                         }
                     )
                     self.log.error(
-                        "_validate_remove_response_for_failures: response_item[%s] has failure status: resource_value=%s, status=%s, message=%s",
+                        "_validate_remove_response_for_failures: response_item[%s] has failure status: resource_value=%s, entity_name=%s, pool_name=%s, status=%s, message=%s",
                         idx,
                         resource_value,
+                        entity_name,
+                        pool_name,
                         status,
                         message,
                     )
@@ -1536,8 +1544,8 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         method is invoked:
           - No ``config``  → full paginated fabric inventory.
           - With ``config`` → API-filtered fetch via ``_build_gathered_resource_criteria()``
-            (pool_name, switchId, and Lucene entityName params applied server-side),
-            followed by local filtering for all documented gathered criteria.
+            (pool_name and switchId applied server-side), followed by local filtering
+            for entity names and all other documented gathered criteria.
 
         Unfiltered gathered translates the full candidate set directly. Filtered
         gathered applies the final in-memory predicate before storing results.

@@ -1,64 +1,196 @@
-##############################################
-##               SETUP                      ##
-##############################################
+---
+- name: Set VXLAN iBGP all-pool resource config
+  ansible.builtin.set_fact:
+    rm_expected_resource_count: 26
+    rm_ibgp_all_pools_config:
+      - entity_name: "ibgp_all_l3_vni_fabric"
+        pool_type: "ID"
+        pool_name: "L3_VNI"
+        scope_type: "fabric"
+        resource: "50061"
+      - entity_name: "ibgp_all_l2_vni_fabric"
+        pool_type: "ID"
+        pool_name: "L2_VNI"
+        scope_type: "fabric"
+        resource: "30061"
+      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2}}"
+        pool_type: "ID"
+        pool_name: "VPC_DOMAIN_ID"
+        scope_type: "fabric"
+        resource: "61"
+      - entity_name: "ibgp_all_bgp_asn_fabric"
+        pool_type: "ID"
+        pool_name: "BGP_ASN_ID"
+        scope_type: "fabric"
+        resource: "10061"
+      - entity_name: "ibgp_all_anycast_rp_fabric"
+        pool_type: "IP"
+        pool_name: "ANYCAST_RP_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.254.254.61"
+      - entity_name: "ibgp_all_mcast_fabric"
+        pool_type: "IP"
+        pool_name: "MCAST_IP_POOL"
+        scope_type: "fabric"
+        resource: "239.1.1.61"
+      - entity_name: "ibgp_all_mpls_loopback_fabric"
+        pool_type: "IP"
+        pool_name: "MPLS_LOOPBACK_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.255.0.61"
+      - entity_name: "ibgp_all_hypershield_ha_source_fabric"
+        pool_type: "IP"
+        pool_name: "HYPERSHIELD_HA_SOURCE_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.255.60.1"
+      - entity_name: "ibgp_all_loopback0_fabric"
+        pool_type: "IP"
+        pool_name: "LOOPBACK0_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.2.0.61"
+      - entity_name: "ibgp_all_fex_device"
+        pool_type: "ID"
+        pool_name: "fexId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "161"
+      - entity_name: "ibgp_all_loopback_device"
+        pool_type: "ID"
+        pool_name: "loopbackId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "162"
+      - entity_name: "ibgp_all_port_channel_device"
+        pool_type: "ID"
+        pool_name: "portChannelId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "661"
+      - entity_name: "ibgp_all_route_map_device"
+        pool_type: "ID"
+        pool_name: "ROUTE_MAP_SEQUENCE_NUMBER_POOL"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "163"
+      - entity_name: "ibgp_all_network_vlan_device"
+        pool_type: "ID"
+        pool_name: "networkVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "2461"
+      - entity_name: "ibgp_all_object_tracking_device"
+        pool_type: "ID"
+        pool_name: "OBJECT_TRACKING_NUMBER_POOL"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "164"
+      - entity_name: "ibgp_all_sla_device"
+        pool_type: "ID"
+        pool_name: "SLA_ID"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10061"
+      - entity_name: "ibgp_all_service_network_vlan_device"
+        pool_type: "ID"
+        pool_name: "serviceNetworkVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "3061"
+      - entity_name: "ibgp_all_vrf_vlan_device"
+        pool_type: "ID"
+        pool_name: "vrfVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "2061"
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+        pool_type: "IP"
+        pool_name: "LOOPBACK1_IP_POOL"
+        scope_type: "device_interface"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.3.0.61"
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}"
+        pool_type: "ID"
+        pool_name: "topDownL3Dot1q"
+        scope_type: "device_interface"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "161"
+      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~ibgp_all_vpc_id_pair"
+        pool_type: "ID"
+        pool_name: "vpcId"
+        scope_type: "device_pair"
+        switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+        resource: "61"
+      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}"
+        pool_type: "ID"
+        pool_name: "vpcPeerLinkVlan"
+        scope_type: "device_pair"
+        switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+        resource: "3600"
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+        pool_type: "SUBNET"
+        pool_name: "DCI subnet pool"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.33.61.0/30"
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+        pool_type: "SUBNET"
+        pool_name: "IPv6 DCI subnet pool"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "fd00::a61:10/126"
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}~{{ ansible_sno_2 }}~{{ intf_1_10 }}"
+        pool_type: "SUBNET"
+        pool_name: "HYPERSHIELD_HA_PEER_LINK_SUBNET_POOL"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.255.61.0/30"
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+        pool_type: "SUBNET"
+        pool_name: "SUBNET"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.4.61.0/30"
 
-- name: Delete Resources
+- name: Delete VXLAN iBGP all-pool resources before delete test
   cisco.nd.nd_manage_resource_manager:
-    state: deleted                                 # choose form [merged, deleted, gathered]
+    state: deleted
     fabric_name: "{{ ansible_it_fabric }}"
-    config:
-      - entity_name: "l3_vni_fabric"               # A unique name to identify the resource
-        pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
-        pool_name: "L3_VNI"                        # Based on the 'poolType', select appropriate name
-        scope_type: "fabric"                       # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-
-      - entity_name: "l2_vni_fabric"               # A unique name to identify the resource
-        pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
-        pool_name: "L2_VNI"                        # Based on the 'poolType', select appropriate name
-        scope_type: "fabric"                       # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-
-      - entity_name: "loopback_dev"                # A unique name to identify the resource
-        pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
-        pool_name: "LOOPBACK_ID"                   # Based on the 'poolType', select appropriate name
-        scope_type: "device"                       # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-        switches: # provide the switch information to which the given resource is attached
-          - "{{ ansible_switch1 }}"
-          - "{{ ansible_switch2 }}"
-
-      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}" # A unique name to identify the resource
-        pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
-        pool_name: "VPC_ID"                        # Based on the 'poolType', select appropriate name
-        scope_type: "device_pair"                  # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-        switches: # provide the switch information to which the given resource is attached
-          - "{{ ansible_switch1 }}"
-          - "{{ ansible_switch2 }}"
-
-      - entity_name: "mmudigon-2"                  # A unique name to identify the resource
-        pool_type: "IP"                            # choose from ['ID', 'IP', 'SUBNET']
-        pool_name: "LOOPBACK0_IP_POOL"             # Based on the 'poolType', select appropriate name
-        scope_type: "fabric"                       # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-
-      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}" # A unique name to identify the resource
-        pool_type: "IP"                            # choose from ['ID', 'IP', 'SUBNET']
-        pool_name: "LOOPBACK1_IP_POOL"             # Based on the 'poolType', select appropriate name
-        scope_type: "device_interface"             # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-        switches: # provide the switch information to which the given resource is attached
-          - "{{ ansible_switch1 }}"
-
-      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"  # A unique name to identify the resource
-        pool_type: "SUBNET"                        # choose from ['ID', 'IP', 'SUBNET']
-        pool_name: "SUBNET"                        # Based on the 'poolType', select appropriate name
-        scope_type: "link"                         # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-        switches: # provide the switch information to which the given resource is attached
-          - "{{ ansible_switch1 }}"
+    config: "{{ rm_ibgp_all_pools_config }}"
   register: result
 
-- name: Assert
+- name: Assert pre-clean completed
   ansible.builtin.assert:
     that:
       - 'result.failed | default(false) == false'
 
-- name: Assert API response codes
+- name: Assert pre-clean API result details
+  ansible.builtin.assert:
+    that:
+      - 'result["api_result"][0]["success"] == true'
+      - '(result["api_diff"][0]["deleted"] | length) == (result["diff"][0]["deleted"] | length)'
+      - '(result["api_payload"][0]["resourceIds"] | length) == (result["diff"][0]["deleted"] | length)'
+  when: result.api_response is defined and result["api_diff"][0]["deleted"] is defined
+
+- name: Assert pre-clean response codes
   ansible.builtin.assert:
     that:
       - 'item["RETURN_CODE"] == 200'
@@ -66,77 +198,29 @@
   when: result.api_response is defined
 
 - block:
-    ##############################################
-    ##                MERGE                     ##
-    ##############################################
-
-    - name: Create Resources
-      cisco.nd.nd_manage_resource_manager: &rm_merge
-        state: merged                              # choose form [merged, deleted, gathered]
+    - name: Create VXLAN iBGP all-pool resources
+      cisco.nd.nd_manage_resource_manager:
+        state: merged
         fabric_name: "{{ ansible_it_fabric }}"
-        config:
-          - entity_name: "l3_vni_fabric"           # A unique name to identify the resource
-            pool_type: "ID"                        # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "L3_VNI"                    # Based on the 'poolType', select appropriate name
-            scope_type: "fabric"                   # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            resource: "101"                        # The value of the resource being created
-
-          - entity_name: "l2_vni_fabric"           # A unique name to identify the resource
-            pool_type: "ID"                        # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "L2_VNI"                    # Based on the 'poolType', select appropriate name
-            scope_type: "fabric"                   # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            resource: "102"                        # The value of the resource being created
-
-          - entity_name: "loopback_dev"            # A unique name to identify the resource
-            pool_type: "ID"                        # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "LOOPBACK_ID"               # Based on the 'poolType', select appropriate name
-            scope_type: "device"                   # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switches: # provide the switch information to which the given resource is to be attached
-              - "{{ ansible_switch1 }}"            # provide the switch information to which the given resource is to be attached
-              - "{{ ansible_switch2 }}"            # provide the switch information to which the given resource is to be attached
-            resource: "200"                        # The value of the resource being created
-
-          - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}"  # A unique name to identify the resource
-            pool_type: "ID"                        # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "VPC_ID"                    # Based on the 'poolType', select appropriate name
-            scope_type: "device_pair"              # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switches: # provide the switch information to which the given resource is to be attached
-              - "{{ ansible_switch1 }}"            # provide the switch information to which the given resource is to be attached
-              - "{{ ansible_switch2 }}"            # provide the switch information to which the given resource is to be attached
-            resource: "500"                        # The value of the resource being created
-
-          - entity_name: "mmudigon-2"              # A unique name to identify the resource
-            pool_type: "IP"                        # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "LOOPBACK0_IP_POOL"         # Based on the 'poolType', select appropriate name
-            scope_type: "fabric"                   # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            resource: "110.1.1.1"                  # The value of the resource being created
-
-          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"  # A unique name to identify the resource
-            pool_type: "IP"                        # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "LOOPBACK1_IP_POOL"         # Based on the 'poolType', select appropriate name
-            scope_type: "device_interface"         # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switches: # provide the switch information to which the given resource is to be attached
-              - "{{ ansible_switch1 }}"            # provide the switch information to which the given resource is to be attached
-            resource: "fe:80::04"                  # The value of the resource being created
-
-          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"  # A unique name to identify the resource
-            pool_type: "SUBNET"                    # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "SUBNET"                    # Based on the 'poolType', select appropriate name
-            scope_type: "link"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switches: # provide the switch information to which the given resource is to be attached
-              - "{{ ansible_switch1 }}"
-            resource: "fe:80:0505::05/64"          # The value of the resource being created
+        config: "{{ rm_ibgp_all_pools_config }}"
       register: result
 
-    - name: ASSERT - Check condition
+    - name: Assert create result before delete
       ansible.builtin.assert:
         that:
           - 'result.changed == true'
-          - '(result["diff"][0]["merged"] | length) == 8'
+          - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
           - '(result["diff"][0]["deleted"] | length) == 0'
           - 'result.failed | default(false) == false'
 
-    - name: ASSERT - Check API result details
+    - name: Assert create response codes
+      ansible.builtin.assert:
+        that:
+          - 'item["RETURN_CODE"] == 200'
+      loop: "{{ result.api_response | default([]) }}"
+      when: result.api_response is defined
+
+    - name: Assert create API result details
       ansible.builtin.assert:
         that:
           - '(result["api_response"] | length) == 1'
@@ -145,154 +229,44 @@
           - '(result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
       when: result.api_response is defined
 
-    - name: Assert output fields when API response is absent
+    - name: Assert create output fields when API response is absent
       ansible.builtin.assert:
         that:
           - 'result.changed == true'
-          - '(result["after"] | length) == 7' # This is 7 as we are creating 2 diff resources for entity loopback_dev but while returning we are combining like while creating we are passing in single config
       when: result.api_response is not defined
 
-    - name: ASSERT - Check condition
-      ansible.builtin.assert:
-        that:
-          - 'item["RETURN_CODE"] == 200'
-      loop: "{{ result.api_response | default([]) }}"
-      when: result.api_response is defined
-
-    ##############################################
-    ##          IDEMPOTENCE                     ##
-    ##############################################
-
-    - name: Create Resources - Idempotence
-      cisco.nd.nd_manage_resource_manager: *rm_merge
+  always:
+    - name: Delete VXLAN iBGP all-pool resources after delete test
+      cisco.nd.nd_manage_resource_manager:
+        state: deleted
+        fabric_name: "{{ ansible_it_fabric }}"
+        config: "{{ rm_ibgp_all_pools_config }}"
       register: result
 
-    - name: ASSERT - Check condition
+    - name: Print deleted resource entity names
+      ansible.builtin.debug:
+        msg: "{{ rm_ibgp_all_pools_config | map(attribute='entity_name') | list }} deleted"
+
+    - name: Assert cleanup completed
       ansible.builtin.assert:
         that:
-          - 'result.changed == false'
+          - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == 0'
-          - '(result["diff"][0]["deleted"] | length) == 0'
+          - '(result["diff"][0]["deleted"] | length) == rm_expected_resource_count'
           - 'result.failed | default(false) == false'
 
-    - name: ASSERT - Check API result details
+    - name: Assert cleanup API result details
       ansible.builtin.assert:
         that:
           - '(result["api_response"] | length) == 1'
           - 'result["api_result"][0]["success"] == true'
-          - 'result["api_diff"][0]["merged"] is not defined'
-          - 'result["api_payload"][0] is none'
+          - '(result["api_diff"][0]["deleted"] | length) == (result["diff"][0]["deleted"] | length)'
+          - '(result["api_payload"][0]["resourceIds"] | length) == (result["diff"][0]["deleted"] | length)'
       when: result.api_response is defined
 
-    - name: Assert output fields when API response is absent
-      ansible.builtin.assert:
-        that:
-          - 'result.changed == false'
-          - '(result["after"] | length) == 7' # This is 7 as we are creating 2 diff resources for entity loopback_dev but while returning we are combining like while creating we are passing in single config
-          - '(result["before"] | length) == 7' # This is 7 as we are creating 2 diff resources for entity loopback_dev but while returning we are combining like while creating we are passing in single config
-      when: result.api_response is not defined
-
-    - name: ASSERT - Check condition
+    - name: Assert cleanup response codes
       ansible.builtin.assert:
         that:
           - 'item["RETURN_CODE"] == 200'
       loop: "{{ result.api_response | default([]) }}"
       when: result.api_response is defined
-
-    ##############################################
-    ##        MISSING PARAMS IN DELETE          ##
-    ##############################################
-
-    - name: Delete Resources - scope_type missing
-      cisco.nd.nd_manage_resource_manager:
-        state: deleted                                 # choose form [merged, deleted, gathered]
-        fabric_name: "{{ ansible_it_fabric }}"
-        config:
-          - entity_name: "l3_vni_fabric"               # A unique name to identify the resource
-      register: result
-      ignore_errors: true
-
-    - name: ASSERT - Check condition
-      ansible.builtin.assert:
-        that:
-          - 'result["msg"] == "Mandatory parameter ''scope_type'' missing"'
-
-    ##############################################
-    ##        MISSING PARAMS IN DELETE          ##
-    ##############################################
-
-    - name: Delete Resources - pool_type missing
-      cisco.nd.nd_manage_resource_manager:
-        state: deleted                                 # choose form [merged, deleted, gathered]
-        fabric_name: "{{ ansible_it_fabric }}"
-        config:
-          - scope_type: "fabric"
-      register: result
-      ignore_errors: true
-
-    - name: ASSERT - Check condition
-      ansible.builtin.assert:
-        that:
-          - 'result["msg"] == "Mandatory parameter ''pool_type'' missing"'
-
-    ##############################################
-    ##        MISSING PARAMS IN DELETE          ##
-    ##############################################
-
-    - name: Delete Resources - entity_name missing
-      cisco.nd.nd_manage_resource_manager:
-        state: deleted                                 # choose form [merged, deleted, gathered]
-        fabric_name: "{{ ansible_it_fabric }}"
-        config:
-          - pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "VPC_ID"                        # Based on the 'poolType', select appropriate name
-            scope_type: "fabric"
-      register: result
-      ignore_errors: true
-
-    - name: ASSERT - Check condition
-      ansible.builtin.assert:
-        that:
-          - 'result["msg"] == "Mandatory parameter ''entity_name'' missing"'
-
-    ##############################################
-    ##        MISSING PARAMS IN DELETE          ##
-    ##############################################
-
-    - name: Delete Resources - pool_name missing
-      cisco.nd.nd_manage_resource_manager:
-        state: deleted                                 # choose form [merged, deleted, gathered]
-        fabric_name: "{{ ansible_it_fabric }}"
-        config:
-          - entity_name: "l3_vni_fabric"               # A unique name to identify the resource
-            pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
-            scope_type: "fabric"
-      register: result
-      ignore_errors: true
-
-    - name: ASSERT - Check condition
-      ansible.builtin.assert:
-        that:
-          - 'result["msg"] == "Mandatory parameter ''pool_name'' missing"'
-
-    ##############################################
-    ##        MISSING PARAMS IN DELETE          ##
-    ##############################################
-
-    - name: Delete Resources - switch info missing
-      cisco.nd.nd_manage_resource_manager:
-        state: deleted                                 # choose form [merged, deleted, gathered]
-        fabric_name: "{{ ansible_it_fabric }}"
-        config:
-          - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}" # A unique name to identify the resource
-            pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
-            pool_name: "VPC_ID"                        # Based on the 'poolType', select appropriate name
-            scope_type: "device_pair"                  # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-
-      register: result
-      ignore_errors: true
-
-    - name: Assert conditions
-      ansible.builtin.assert:
-        that:
-          - '"switches : Required parameter not found" in result["msg"]'
