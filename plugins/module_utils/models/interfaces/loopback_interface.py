@@ -19,9 +19,9 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
         - `mode` (hardcoded: "managed")
         - `network_os` -> `NexusLoopbackNetworkOSModel | XeLoopbackNetworkOSModel` (outer discriminated union on `network_os_type`)
             - `NexusLoopbackNetworkOSModel` (`network_os_type: "nx-os"`)
-                - `policy` -> `LoopbackPolicyModel | IpfmLoopbackPolicyModel | MplsLoopbackPolicyModel` (`policy_type` discriminator)
+                - `policy` -> `NexusLoopbackPolicyModel | IpfmLoopbackPolicyModel | MplsLoopbackPolicyModel` (`policy_type` discriminator)
                     - `admin_state`, `ip`, `ipv6`, `vrf`, etc. (`ipfmLoopback` and `mplsLoopback` policy types get dedicated
-                      models sharing `LoopbackPolicyBase`)
+                      models sharing `NexusLoopbackPolicyBase`)
             - `XeLoopbackNetworkOSModel` (`network_os_type: "ios-xe"`)
                 - `policy` -> `XeLoopbackPolicyModel | XeLoopbackShutNoshutPolicyModel | XeUnderlayLoopbackPolicyModel |
                   XeInternalLoopbackPolicyModel | CsrLoopbackPolicyModel | Csr1kvLoopbackPolicyModel` (`policy_type` discriminator)
@@ -92,7 +92,7 @@ class LoopbackPolicyStrictBase(NDNestedModel):
         return data
 
 
-class LoopbackPolicyBase(LoopbackPolicyStrictBase):
+class NexusLoopbackPolicyBase(LoopbackPolicyStrictBase):
     """
     # Summary
 
@@ -109,7 +109,7 @@ class LoopbackPolicyBase(LoopbackPolicyStrictBase):
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
 
 
-class LoopbackPolicyModel(LoopbackPolicyBase):
+class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
     """
     # Summary
 
@@ -170,7 +170,7 @@ class SecondaryIpModel(NDNestedModel):
     prefix: int | None = Field(default=None, alias="prefix", ge=4, le=32, description="Subnet mask length (4-32)")
 
 
-class IpfmLoopbackPolicyModel(LoopbackPolicyBase):
+class IpfmLoopbackPolicyModel(NexusLoopbackPolicyBase):
     """
     # Summary
 
@@ -190,7 +190,7 @@ class IpfmLoopbackPolicyModel(LoopbackPolicyBase):
     secondary_ip_list: list[SecondaryIpModel] | None = Field(default=None, alias="secondaryIpList", description="Secondary IPv4 addresses")
 
 
-class MplsLoopbackPolicyModel(LoopbackPolicyBase):
+class MplsLoopbackPolicyModel(NexusLoopbackPolicyBase):
     """
     # Summary
 
@@ -333,7 +333,9 @@ class NexusLoopbackNetworkOSModel(NDNestedModel):
     # Not frozen: NDBaseModel.merge() assigns every explicitly-set field, and required fields are always
     # explicitly set. The Literal constrains the value; same pattern as the policy_type discriminator.
     network_os_type: Literal["nx-os"] = Field(alias="networkOSType", description="Network OS (platform) type discriminator; required by the ND API schema")
-    policy: LoopbackPolicyModel | IpfmLoopbackPolicyModel | MplsLoopbackPolicyModel | None = Field(default=None, alias="policy", discriminator="policy_type")
+    policy: NexusLoopbackPolicyModel | IpfmLoopbackPolicyModel | MplsLoopbackPolicyModel | None = Field(
+        default=None, alias="policy", discriminator="policy_type"
+    )
 
 
 class XeLoopbackNetworkOSModel(NDNestedModel):
@@ -406,13 +408,29 @@ class LoopbackInterfaceModel(NDBaseModel):
     interface_type: Literal["loopback"] = Field(default="loopback", alias="interfaceType", frozen=True)
     config_data: LoopbackConfigDataModel | None = Field(default=None, alias="configData")
 
+    @property
+    def policy_type(self) -> str | None:
+        """
+        # Summary
+
+        The `policy_type` discriminator from `config_data.network_os.policy`, or `None` when `config_data` or `policy` is
+        unset (e.g. a `state: deleted` identifier-only item).
+
+        ## Raises
+
+        None
+        """
+        if self.config_data is None or self.config_data.network_os.policy is None:
+            return None
+        return self.config_data.network_os.policy.policy_type
+
     @classmethod
     def from_response(cls, response, **kwargs):
         """
         # Summary
 
         Build a `LoopbackInterfaceModel` from an ND GET response, tagging validation `context={"mode": "read"}` so branch
-        models tolerate ND-injected read-only policy keys (see `LoopbackPolicyBase.strip_none_valued_keys`).
+        models tolerate ND-injected read-only policy keys (see `LoopbackPolicyStrictBase.strip_none_valued_keys`).
 
         ## Raises
 

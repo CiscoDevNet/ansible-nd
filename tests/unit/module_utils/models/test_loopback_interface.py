@@ -21,8 +21,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopbac
     CsrLoopbackPolicyModel,
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
-    LoopbackPolicyModel,
     NexusLoopbackNetworkOSModel,
+    NexusLoopbackPolicyModel,
     XeInternalLoopbackPolicyModel,
     XeLoopbackNetworkOSModel,
     XeLoopbackPolicyModel,
@@ -84,7 +84,7 @@ SAMPLE_ANSIBLE_CONFIG = {
 
 
 # =============================================================================
-# Test: LoopbackPolicyModel
+# Test: NexusLoopbackPolicyModel
 # =============================================================================
 
 
@@ -102,10 +102,10 @@ def test_loopback_interface_00010():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(policy_type="loopback")
     assert instance.admin_state is None
     assert instance.ip is None
     assert instance.ipv6 is None
@@ -129,10 +129,10 @@ def test_loopback_interface_00020():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(
+        instance = NexusLoopbackPolicyModel(
             admin_state=True,
             ip="10.1.1.1",
             vrf="management",
@@ -161,10 +161,10 @@ def test_loopback_interface_00030():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(
+        instance = NexusLoopbackPolicyModel(
             adminState=False,
             ip="10.2.2.2",
             vrfInterface="default",
@@ -192,14 +192,14 @@ def test_loopback_interface_00040():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with pytest.raises(ValidationError):
-        LoopbackPolicyModel(policy_type="ipfm_loopback")
+        NexusLoopbackPolicyModel(policy_type="ipfm_loopback")
     with pytest.raises(ValidationError):
-        LoopbackPolicyModel(policy_type="user_defined")
+        NexusLoopbackPolicyModel(policy_type="user_defined")
     with does_not_raise():
-        instance = LoopbackPolicyModel(policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(policy_type="loopback")
     assert instance.policy_type == "loopback"
 
 
@@ -217,9 +217,9 @@ def test_loopback_interface_00060():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.model_dump()
+    - NexusLoopbackPolicyModel.model_dump()
     """
-    instance = LoopbackPolicyModel(ip="10.1.1.1/32", policy_type="loopback")
+    instance = NexusLoopbackPolicyModel(ip="10.1.1.1/32", policy_type="loopback")
     result = instance.model_dump(exclude_none=True)
     assert "ip" in result
     assert "admin_state" not in result
@@ -228,7 +228,7 @@ def test_loopback_interface_00060():
 
 
 # =============================================================================
-# Test: LoopbackPolicyModel — route_map_tag coercion
+# Test: NexusLoopbackPolicyModel — route_map_tag coercion
 # =============================================================================
 
 
@@ -245,10 +245,10 @@ def test_loopback_interface_00065():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.coerce_route_map_tag()
+    - NexusLoopbackPolicyModel.coerce_route_map_tag()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(route_map_tag=12345, policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(route_map_tag=12345, policy_type="loopback")
     assert instance.route_map_tag == "12345"
     assert isinstance(instance.route_map_tag, str)
 
@@ -266,10 +266,10 @@ def test_loopback_interface_00066():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.coerce_route_map_tag()
+    - NexusLoopbackPolicyModel.coerce_route_map_tag()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(route_map_tag="12345", policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(route_map_tag="12345", policy_type="loopback")
     assert instance.route_map_tag == "12345"
 
 
@@ -286,16 +286,16 @@ def test_loopback_interface_00067():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.coerce_route_map_tag()
+    - NexusLoopbackPolicyModel.coerce_route_map_tag()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(routeMapTag=12345, policyType="loopback")
+        instance = NexusLoopbackPolicyModel(routeMapTag=12345, policyType="loopback")
     assert instance.route_map_tag == "12345"
     assert isinstance(instance.route_map_tag, str)
 
 
 # =============================================================================
-# Test: LoopbackPolicyModel — Field Constraints
+# Test: NexusLoopbackPolicyModel — Field Constraints
 # =============================================================================
 
 
@@ -312,10 +312,10 @@ def test_loopback_interface_00070():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with pytest.raises(ValidationError, match="vrf"):
-        LoopbackPolicyModel(vrf="")
+        NexusLoopbackPolicyModel(vrf="")
 
 
 def test_loopback_interface_00071():
@@ -331,10 +331,10 @@ def test_loopback_interface_00071():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with pytest.raises(ValidationError, match="vrf"):
-        LoopbackPolicyModel(vrf="a" * 33)
+        NexusLoopbackPolicyModel(vrf="a" * 33)
 
 
 def test_loopback_interface_00072():
@@ -350,10 +350,10 @@ def test_loopback_interface_00072():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(vrf="a" * 32, policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(vrf="a" * 32, policy_type="loopback")
     assert instance.vrf == "a" * 32
 
 
@@ -370,10 +370,10 @@ def test_loopback_interface_00073():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with pytest.raises(ValidationError, match="description"):
-        LoopbackPolicyModel(description="")
+        NexusLoopbackPolicyModel(description="")
 
 
 def test_loopback_interface_00074():
@@ -389,10 +389,10 @@ def test_loopback_interface_00074():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with pytest.raises(ValidationError, match="description"):
-        LoopbackPolicyModel(description="a" * 255)
+        NexusLoopbackPolicyModel(description="a" * 255)
 
 
 @pytest.mark.parametrize(
@@ -430,14 +430,14 @@ def test_loopback_interface_00076(value, should_raise):
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     - models.types.ascii_only()
     """
     if should_raise:
         with pytest.raises(ValidationError, match="description must contain only ASCII"):
-            LoopbackPolicyModel(description=value)
+            NexusLoopbackPolicyModel(description=value)
     else:
-        instance = LoopbackPolicyModel(description=value, policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(description=value, policy_type="loopback")
         assert instance.description == value
 
 
@@ -454,15 +454,15 @@ def test_loopback_interface_00075():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(description="a" * 254, policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(description="a" * 254, policy_type="loopback")
     assert instance.description == "a" * 254
 
 
 # =============================================================================
-# Test: LoopbackPolicyModel — IPv4 Validation
+# Test: NexusLoopbackPolicyModel — IPv4 Validation
 # =============================================================================
 
 
@@ -480,10 +480,10 @@ def test_loopback_interface_00080():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
+    - NexusLoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ip="10.1.1.1/32", policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(ip="10.1.1.1/32", policy_type="loopback")
     assert instance.ip == "10.1.1.1"
 
 
@@ -501,10 +501,10 @@ def test_loopback_interface_00081():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
+    - NexusLoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ip="10.1.1.0/24", policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(ip="10.1.1.0/24", policy_type="loopback")
     assert instance.ip == "10.1.1.0"
 
 
@@ -521,10 +521,10 @@ def test_loopback_interface_00082():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
+    - NexusLoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with pytest.raises(ValidationError, match="is not a valid IPv4 address"):
-        LoopbackPolicyModel(ip="999.999.999.999/32")
+        NexusLoopbackPolicyModel(ip="999.999.999.999/32")
 
 
 def test_loopback_interface_00083():
@@ -540,10 +540,10 @@ def test_loopback_interface_00083():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
+    - NexusLoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ip="10.1.1.1", policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(ip="10.1.1.1", policy_type="loopback")
     assert instance.ip == "10.1.1.1"
 
 
@@ -560,10 +560,10 @@ def test_loopback_interface_00084():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
+    - NexusLoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with pytest.raises(ValidationError, match="is not a valid IPv4 address"):
-        LoopbackPolicyModel(ip="not-an-ip")
+        NexusLoopbackPolicyModel(ip="not-an-ip")
 
 
 def test_loopback_interface_00085():
@@ -579,14 +579,14 @@ def test_loopback_interface_00085():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
+    - NexusLoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with pytest.raises(ValidationError, match="is not a valid IPv4 address"):
-        LoopbackPolicyModel(ip="2001:db8::1/128")
+        NexusLoopbackPolicyModel(ip="2001:db8::1/128")
 
 
 # =============================================================================
-# Test: LoopbackPolicyModel — IPv6 Validation
+# Test: NexusLoopbackPolicyModel — IPv6 Validation
 # =============================================================================
 
 
@@ -603,10 +603,10 @@ def test_loopback_interface_00086():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
+    - NexusLoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ipv6="2001:db8::1/128", policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(ipv6="2001:db8::1/128", policy_type="loopback")
     assert instance.ipv6 == "2001:db8::1/128"
 
 
@@ -623,10 +623,10 @@ def test_loopback_interface_00087():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
+    - NexusLoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ipv6="2001:db8::/64", policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(ipv6="2001:db8::/64", policy_type="loopback")
     assert instance.ipv6 == "2001:db8::/64"
 
 
@@ -643,10 +643,10 @@ def test_loopback_interface_00088():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
+    - NexusLoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with pytest.raises(ValidationError, match="Invalid IPv6 address"):
-        LoopbackPolicyModel(ipv6="not-an-ipv6")
+        NexusLoopbackPolicyModel(ipv6="not-an-ipv6")
 
 
 def test_loopback_interface_00089():
@@ -662,10 +662,10 @@ def test_loopback_interface_00089():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
+    - NexusLoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with pytest.raises(ValidationError, match="Invalid IPv6 address"):
-        LoopbackPolicyModel(ipv6="10.1.1.1/32")
+        NexusLoopbackPolicyModel(ipv6="10.1.1.1/32")
 
 
 def test_loopback_interface_00090():
@@ -681,10 +681,10 @@ def test_loopback_interface_00090():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
+    - NexusLoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with does_not_raise():
-        instance = LoopbackPolicyModel(ipv6="2001:db8::1", policy_type="loopback")
+        instance = NexusLoopbackPolicyModel(ipv6="2001:db8::1", policy_type="loopback")
     assert instance.ipv6 == "2001:db8::1"
 
 
@@ -710,7 +710,7 @@ def test_loopback_interface_00100():
     - NexusLoopbackNetworkOSModel.__init__()
     """
     with pytest.raises(ValidationError):
-        result = NexusLoopbackNetworkOSModel(policy=LoopbackPolicyModel(policy_type="loopback"))  # pylint: disable=unused-variable
+        result = NexusLoopbackNetworkOSModel(policy=NexusLoopbackPolicyModel(policy_type="loopback"))  # pylint: disable=unused-variable
 
 
 def test_loopback_interface_00110():
@@ -805,7 +805,9 @@ def test_loopback_interface_00150():
     - LoopbackConfigDataModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackConfigDataModel(network_os=NexusLoopbackNetworkOSModel(network_os_type="nx-os", policy=LoopbackPolicyModel(policy_type="loopback")))
+        instance = LoopbackConfigDataModel(
+            network_os=NexusLoopbackNetworkOSModel(network_os_type="nx-os", policy=NexusLoopbackPolicyModel(policy_type="loopback"))
+        )
     assert instance.mode == "managed"
 
 
@@ -829,7 +831,7 @@ def test_loopback_interface_00160():
             mode="managed",
             network_os=NexusLoopbackNetworkOSModel(
                 network_os_type="nx-os",
-                policy=LoopbackPolicyModel(ip="10.1.1.1/32", admin_state=True, policy_type="loopback"),
+                policy=NexusLoopbackPolicyModel(ip="10.1.1.1/32", admin_state=True, policy_type="loopback"),
             ),
         )
     assert instance.mode == "managed"
@@ -1542,7 +1544,7 @@ def test_loopback_interface_00670():
     """
     instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
     with pytest.raises(TypeError, match="Cannot merge"):
-        instance.merge(LoopbackPolicyModel(policy_type="loopback"))
+        instance.merge(NexusLoopbackPolicyModel(policy_type="loopback"))
 
 
 def test_loopback_interface_00680():
@@ -1693,27 +1695,27 @@ def test_loopback_policy_strict_rejects_foreign_field():
     """
     # Summary
 
-    Verify `LoopbackPolicyModel` rejects a field belonging to a different `policy_type` branch (e.g. `dciRoutingTag`,
+    Verify `NexusLoopbackPolicyModel` rejects a field belonging to a different `policy_type` branch (e.g. `dciRoutingTag`,
     which belongs to the mpls loopback template, not this one).
 
     ## Test
 
-    - Construct with an extra field not defined on `LoopbackPolicyModel`
+    - Construct with an extra field not defined on `NexusLoopbackPolicyModel`
     - Raises ValidationError (`extra="forbid"`)
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with pytest.raises(ValidationError):
-        LoopbackPolicyModel(policyType="loopback", dciRoutingTag="MPLS_UNDERLAY")
+        NexusLoopbackPolicyModel(policyType="loopback", dciRoutingTag="MPLS_UNDERLAY")
 
 
 def test_loopback_policy_requires_policy_type():
     """
     # Summary
 
-    Verify `LoopbackPolicyModel` requires `policy_type` — it no longer defaults to "loopback".
+    Verify `NexusLoopbackPolicyModel` requires `policy_type` — it no longer defaults to "loopback".
 
     ## Test
 
@@ -1722,17 +1724,17 @@ def test_loopback_policy_requires_policy_type():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with pytest.raises(ValidationError):
-        LoopbackPolicyModel(ip="10.1.1.1/32")
+        NexusLoopbackPolicyModel(ip="10.1.1.1/32")
 
 
 def test_loopback_policy_strips_none_valued_keys():
     """
     # Summary
 
-    Verify `LoopbackPolicyBase.strip_none_valued_keys` drops `None`-valued keys before validation so unset flat-argspec
+    Verify `NexusLoopbackPolicyBase.strip_none_valued_keys` drops `None`-valued keys before validation so unset flat-argspec
     options are not rejected by `extra="forbid"`.
 
     A foreign (undeclared) key with value None must be stripped before extra="forbid" runs, so it does NOT raise —
@@ -1746,10 +1748,10 @@ def test_loopback_policy_strips_none_valued_keys():
 
     ## Classes and Methods
 
-    - LoopbackPolicyBase.strip_none_valued_keys()
+    - NexusLoopbackPolicyBase.strip_none_valued_keys()
     """
     with does_not_raise():
-        model = LoopbackPolicyModel(policyType="loopback", ip="10.1.1.1/32", dciRoutingTag=None)
+        model = NexusLoopbackPolicyModel(policyType="loopback", ip="10.1.1.1/32", dciRoutingTag=None)
     assert model.ip == "10.1.1.1"
     assert model.policy_type == "loopback"
 
@@ -1903,7 +1905,7 @@ def test_network_os_discriminator_selects_branch():
 
     ## Test
 
-    - `policyType: "loopback"` selects `LoopbackPolicyModel`
+    - `policyType: "loopback"` selects `NexusLoopbackPolicyModel`
     - `policyType: "ipfmLoopback"` selects `IpfmLoopbackPolicyModel`
     - `policyType: "mplsLoopback"` selects `MplsLoopbackPolicyModel`
 
@@ -1917,7 +1919,7 @@ def test_network_os_discriminator_selects_branch():
     )
 
     lo = NexusLoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "loopback", "ip": "10.1.1.1/32"})
-    assert isinstance(lo.policy, LoopbackPolicyModel)
+    assert isinstance(lo.policy, NexusLoopbackPolicyModel)
     ipfm = NexusLoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "ipfmLoopback", "advertiseLoopback": True})
     assert isinstance(ipfm.policy, IpfmLoopbackPolicyModel)
     mpls = NexusLoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "mplsLoopback", "dciRoutingTag": "X"})
@@ -1953,7 +1955,7 @@ def test_full_interface_round_trip_via_api_response():
 
     ## Test
 
-    - `from_response(SAMPLE_API_RESPONSE)` selects `LoopbackPolicyModel` for `config_data.network_os.policy`
+    - `from_response(SAMPLE_API_RESPONSE)` selects `NexusLoopbackPolicyModel` for `config_data.network_os.policy`
     - `to_payload()` round-trips `policyType: "loopback"` back out
 
     ## Classes and Methods
@@ -1962,7 +1964,7 @@ def test_full_interface_round_trip_via_api_response():
     - LoopbackInterfaceModel.to_payload()
     """
     model = LoopbackInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
-    assert isinstance(model.config_data.network_os.policy, LoopbackPolicyModel)
+    assert isinstance(model.config_data.network_os.policy, NexusLoopbackPolicyModel)
     payload = model.to_payload()
     assert payload["configData"]["networkOS"]["policy"]["policyType"] == "loopback"
 
@@ -1977,18 +1979,18 @@ def test_from_response_tolerates_nd_injected_policy_key():
     # Summary
 
     Verify `LoopbackInterfaceModel.from_response()` tolerates a `policy` key that ND injects on read (e.g.
-    `linkStateRoutingTag`) but that is not declared on `LoopbackPolicyModel`, instead of aborting under `extra="forbid"`.
+    `linkStateRoutingTag`) but that is not declared on `NexusLoopbackPolicyModel`, instead of aborting under `extra="forbid"`.
 
     ## Test
 
     - `from_response()` on a real captured GET shape (including `linkStateRoutingTag`) does not raise
-    - The resulting `policy` is a `LoopbackPolicyModel` and does not expose the injected key as an attribute
+    - The resulting `policy` is a `NexusLoopbackPolicyModel` and does not expose the injected key as an attribute
     - `to_payload()` does not echo the injected key back out
 
     ## Classes and Methods
 
     - LoopbackInterfaceModel.from_response()
-    - LoopbackPolicyBase.strip_none_valued_keys()
+    - NexusLoopbackPolicyBase.strip_none_valued_keys()
     """
     response = {
         "switchIp": "192.168.1.1",
@@ -2010,7 +2012,7 @@ def test_from_response_tolerates_nd_injected_policy_key():
         },
     }
     model = LoopbackInterfaceModel.from_response(response)
-    assert isinstance(model.config_data.network_os.policy, LoopbackPolicyModel)
+    assert isinstance(model.config_data.network_os.policy, NexusLoopbackPolicyModel)
     assert not hasattr(model.config_data.network_os.policy, "link_state_routing_tag")
     assert "linkStateRoutingTag" not in model.to_payload()["configData"]["networkOS"]["policy"]
 
@@ -2024,15 +2026,15 @@ def test_write_path_still_rejects_wrong_branch_field():
 
     ## Test
 
-    - Construct `LoopbackPolicyModel` directly (no `from_response`, so no read context) with a foreign field
+    - Construct `NexusLoopbackPolicyModel` directly (no `from_response`, so no read context) with a foreign field
     - Raises ValidationError
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.__init__()
+    - NexusLoopbackPolicyModel.__init__()
     """
     with pytest.raises(ValidationError):
-        LoopbackPolicyModel(policyType="loopback", dciRoutingTag="MPLS_UNDERLAY")
+        NexusLoopbackPolicyModel(policyType="loopback", dciRoutingTag="MPLS_UNDERLAY")
 
 
 def test_argument_spec_policy_options():

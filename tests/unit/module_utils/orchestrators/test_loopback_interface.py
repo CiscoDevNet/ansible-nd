@@ -30,9 +30,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
-    LoopbackPolicyModel,
     MplsLoopbackPolicyModel,
     NexusLoopbackNetworkOSModel,
+    NexusLoopbackPolicyModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
@@ -89,7 +89,7 @@ def _build_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str
         kwargs["config_data"] = LoopbackConfigDataModel(
             network_os=NexusLoopbackNetworkOSModel(
                 network_os_type="nx-os",
-                policy=LoopbackPolicyModel(policy_type="loopback", admin_state=True, ip="10.1.1.1/32"),
+                policy=NexusLoopbackPolicyModel(policy_type="loopback", admin_state=True, ip="10.1.1.1/32"),
             ),
         )
     return LoopbackInterfaceModel(**kwargs)
