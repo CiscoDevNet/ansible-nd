@@ -9,7 +9,7 @@ This module provides mixin classes that can be composed to add common
 fields to endpoint models without duplication.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
