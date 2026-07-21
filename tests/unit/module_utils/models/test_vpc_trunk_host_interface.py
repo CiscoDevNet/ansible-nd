@@ -551,27 +551,24 @@ def test_vpc_trunk_host_interface_00300_identifier():
     """
     # Summary
 
-    Verify the identifier is `interface_name` only (single strategy). A vPC interface is one fabric-level resource;
-    ND echoes it from both peers but it must collapse to one identity for diff/override-deletion correctness.
+    Verify the identifier is the composite (`switch_ip`, `interface_name`), matching the other interface modules. Two vPC pairs in one
+    fabric may legally reuse the same vPC id (ND's `vpcId` resource pool is devicePair-scoped; issue #356), so name-only identity cannot
+    represent them. The dual-peer GET echo is deduped in `VpcInterfaceBaseOrchestrator.query_all` (pair-set key), not via the identity.
 
     ## Test
 
-    - Identifier is `["interface_name"]`
-    - Identifier strategy is `"single"`
-    - get_identifier_value returns the interface name string
-    - `switch_ip` is excluded from the diff dict (routing-only field)
+    - identifiers is ["switch_ip", "interface_name"]
+    - identifier_strategy is "composite"
+    - get_identifier_value returns the (switch_ip, interface_name) tuple
 
     ## Classes and Methods
 
     - TrunkVpcHostInterfaceModel.get_identifier_value()
-    - TrunkVpcHostInterfaceModel.to_diff_dict()
     """
     instance = TrunkVpcHostInterfaceModel(switch_ip="192.168.1.1", interface_name="vpc500")
-    assert instance.identifiers == ["interface_name"]
-    assert instance.identifier_strategy == "single"
-    assert instance.get_identifier_value() == "vpc500"
-    # switch_ip is for routing only; it must not appear in the diff dict so two peers' echoes diff-equal.
-    assert "switchIp" not in instance.to_diff_dict()
+    assert instance.identifiers == ["switch_ip", "interface_name"]
+    assert instance.identifier_strategy == "composite"
+    assert instance.get_identifier_value() == (instance.switch_ip, "vpc500")
 
 
 @pytest.mark.parametrize(
