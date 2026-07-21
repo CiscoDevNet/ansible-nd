@@ -30,6 +30,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -267,7 +268,7 @@ class CommunityListModel(NDBaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_entries_match_type(self):
+    def validate_entries_match_type(self, info: ValidationInfo):
         """
         Cross-validate entries against the declared community list type.
 
@@ -275,6 +276,9 @@ class CommunityListModel(NDBaseModel):
           Standard-only fields (community_numbers, well-known flags) MUST NOT be set.
         - For *standard* lists entries MUST NOT have community_number_regex set.
         """
+        if (info.context or {}).get("mode") == "response":
+            return self
+
         standard_only_fields = {
             "no_advertise",
             "blackhole",

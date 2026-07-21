@@ -145,3 +145,25 @@ def test_manage_community_list_00070() -> None:
     CommunityListModel.from_config({"name": "C" * 51, "tenant_name": tenant_name})
     with pytest.raises(ValueError, match="tenant-scoped community list API name"):
         CommunityListModel.from_config({"name": "C" * 52, "tenant_name": tenant_name})
+
+
+def test_manage_community_list_00080() -> None:
+    """Verify type-specific validation is config-only and does not reject ND responses."""
+    response = {
+        "name": "CL-EXPANDED",
+        "type": "expanded",
+        "entries": [
+            {
+                "sequenceNumber": 10,
+                "action": "permit",
+                "communityNumberRegex": "100:.*",
+                "noAdvertise": False,
+            }
+        ],
+    }
+
+    instance = CommunityListModel.from_response(response)
+    assert instance.entries[0].no_advertise is False
+
+    with pytest.raises(ValueError, match="no_advertise must not be set"):
+        CommunityListModel.from_config(response)

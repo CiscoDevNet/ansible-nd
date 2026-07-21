@@ -147,3 +147,25 @@ def test_manage_extended_community_list_00070() -> None:
     ExtendedCommunityListModel.from_config({"name": "E" * 51, "tenant_name": tenant_name})
     with pytest.raises(ValueError, match="tenant-scoped extended community list API name"):
         ExtendedCommunityListModel.from_config({"name": "E" * 52, "tenant_name": tenant_name})
+
+
+def test_manage_extended_community_list_00080() -> None:
+    """Verify type-specific validation is config-only and does not reject ND responses."""
+    response = {
+        "name": "ECL-EXPANDED",
+        "type": "expanded",
+        "entries": [
+            {
+                "sequenceNumber": 10,
+                "action": "permit",
+                "communityNumberRegex": "65000:.*",
+                "routeTargetCollection": [],
+            }
+        ],
+    }
+
+    instance = ExtendedCommunityListModel.from_response(response)
+    assert instance.entries[0].route_target_collection == []
+
+    with pytest.raises(ValueError, match="route_target_collection must not be set"):
+        ExtendedCommunityListModel.from_config(response)

@@ -38,6 +38,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -328,7 +329,7 @@ class ExtendedCommunityListModel(NDBaseModel):
     # ------------------------------------------------------------------
 
     @model_validator(mode="after")
-    def validate_entries_match_type(self):
+    def validate_entries_match_type(self, info: ValidationInfo):
         """
         Cross-validate entries against the declared extended community list type.
 
@@ -336,6 +337,9 @@ class ExtendedCommunityListModel(NDBaseModel):
           Standard-only fields MUST NOT be set.
         - For *standard* lists entries MUST NOT have community_number_regex set.
         """
+        if (info.context or {}).get("mode") == "response":
+            return self
+
         standard_only_fields = {
             "router_mac_collection",
             "route_target_collection",
