@@ -9,8 +9,6 @@ Enum definitions for the nd_manage_community_list module.
 
 from __future__ import annotations
 
-__metaclass__ = type
-
 from enum import Enum
 
 

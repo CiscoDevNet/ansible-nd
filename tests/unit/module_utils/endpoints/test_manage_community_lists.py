@@ -6,9 +6,7 @@
 
 """Unit tests for endpoints/v1/manage/manage_community_lists.py."""
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_community_lists import (

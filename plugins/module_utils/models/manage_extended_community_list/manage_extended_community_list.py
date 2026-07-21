@@ -28,12 +28,10 @@ A ``model_validator`` on ``ExtendedCommunityListModel`` enforces the
 type-specific entry constraints at validation time.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import re
-from typing import ClassVar, Dict, List, Optional, Set
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -109,34 +107,34 @@ class ExtendedCommunityListEntryModel(NDNestedModel):
     )
 
     # --- Standard-only fields ---
-    router_mac_collection: Optional[List[str]] = Field(
+    router_mac_collection: list[str] | None = Field(
         default=None,
         alias="routerMacCollection",
         description=("One or more router MAC addresses in eeee.eeee.eeee, " "ee:ee:ee:ee:ee:ee, or ee-ee-ee-ee-ee-ee format."),
     )
-    route_target_collection: Optional[List[str]] = Field(
+    route_target_collection: list[str] | None = Field(
         default=None,
         alias="routeTargetCollection",
         description=("One or more route targets in ASN2:NN, ASN4:NN, or IPv4:NN format."),
     )
-    site_of_origin_collection: Optional[List[str]] = Field(
+    site_of_origin_collection: list[str] | None = Field(
         default=None,
         alias="siteOfOriginCollection",
         description=("One or more site-of-origin values in ASN2:NN, ASN4:NN, or " "IPv4:NN format."),
     )
-    transitive_generic_extended_collection: Optional[List[str]] = Field(
+    transitive_generic_extended_collection: list[str] | None = Field(
         default=None,
         alias="transitiveGenericExtendedCollection",
         description=("One or more transitive generic extended community values " "in ASN4:NN format (e.g. 65000:123)."),
     )
-    non_transitive_generic_extended_collection: Optional[List[str]] = Field(
+    non_transitive_generic_extended_collection: list[str] | None = Field(
         default=None,
         alias="nonTransitiveGenericExtendedCollection",
         description=("One or more non-transitive generic extended community values " "in ASN4:NN format (e.g. 64512:789)."),
     )
 
     # --- Expanded-only ---
-    community_number_regex: Optional[str] = Field(
+    community_number_regex: str | None = Field(
         default=None,
         alias="communityNumberRegex",
         description=("Regular expression in aa:nn format for matching extended community " "strings. Max 63 characters. Must not start with [a-zA-Z~!#%@`;]."),
@@ -219,15 +217,15 @@ class ExtendedCommunityListModel(NDBaseModel):
     are unique per fabric with no address-family dimension.
     """
 
-    identifiers: ClassVar[Optional[List[str]]] = ["name"]
+    identifiers: ClassVar[list[str] | None] = ["name"]
     identifier_strategy: ClassVar[str] = "single"
 
     # Read-only timestamp excluded from payloads and diffs
-    exclude_from_diff: ClassVar[Set[str]] = {"last_update_timestamp"}
-    payload_exclude_fields: ClassVar[Set[str]] = {"last_update_timestamp"}
+    exclude_from_diff: ClassVar[set[str]] = {"last_update_timestamp"}
+    payload_exclude_fields: ClassVar[set[str]] = {"last_update_timestamp"}
 
     # Strip summary-only keys returned by the list/summary endpoints
-    unwanted_keys: ClassVar[List[str]] = [
+    unwanted_keys: ClassVar[list[str]] = [
         "numberOfEntries",
         "numberOfAssociations",
         "associations",
@@ -244,23 +242,23 @@ class ExtendedCommunityListModel(NDBaseModel):
         min_length=1,
         max_length=115,
     )
-    type: Optional[ExtendedCommunityListTypeEnum] = Field(
+    type: ExtendedCommunityListTypeEnum | None = Field(
         default=None,
         alias="type",
         description="Type of extended community list: standard or expanded.",
     )
-    last_update_timestamp: Optional[str] = Field(
+    last_update_timestamp: str | None = Field(
         default=None,
         alias="lastUpdateTimestamp",
         description="Timestamp of the last update (read-only, set by the API).",
     )
-    tenant_name: Optional[str] = Field(
+    tenant_name: str | None = Field(
         default=None,
         alias="tenantName",
         description=("Name of the tenant that owns this extended community list. " "Allowed characters: [A-Za-z0-9_-]. Max 63 characters."),
         max_length=63,
     )
-    entries: Optional[List[ExtendedCommunityListEntryModel]] = Field(
+    entries: list[ExtendedCommunityListEntryModel] | None = Field(
         default=None,
         alias="entries",
         description="Collection of extended community list entries.",
@@ -333,7 +331,7 @@ class ExtendedCommunityListModel(NDBaseModel):
     # ------------------------------------------------------------------
 
     @classmethod
-    def get_argument_spec(cls) -> Dict:
+    def get_argument_spec(cls) -> dict:
         return dict(
             fabric_name=dict(type="str", required=True),
             config=dict(

@@ -6,9 +6,7 @@
 
 """Unit tests for models/manage_community_list/manage_community_list.py."""
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_community_list.manage_community_list import CommunityListModel

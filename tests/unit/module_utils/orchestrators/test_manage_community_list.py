@@ -6,9 +6,7 @@
 
 """Unit tests for ManageCommunityListOrchestrator."""
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import inspect
 

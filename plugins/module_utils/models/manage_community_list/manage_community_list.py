@@ -20,12 +20,10 @@ A single flat ``CommunityListEntryModel`` covers both flavours.  A
 entry constraints.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import re
-from typing import ClassVar, Dict, List, Optional, Set
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -85,46 +83,46 @@ class CommunityListEntryModel(NDNestedModel):
     )
 
     # --- Standard-only: well-known community flags ---
-    no_advertise: Optional[bool] = Field(
+    no_advertise: bool | None = Field(
         default=None,
         alias="noAdvertise",
         description=("Do not advertise the route to any iBGP or eBGP neighbors " "(well-known community 65535:65282)."),
     )
-    blackhole: Optional[bool] = Field(
+    blackhole: bool | None = Field(
         default=None,
         alias="blackhole",
         description=("Used to drop traffic to a specified destination " "(well-known community 65535:666)."),
     )
-    no_export: Optional[bool] = Field(
+    no_export: bool | None = Field(
         default=None,
         alias="noExport",
         description="Do not export to next AS (well-known community).",
     )
-    internet: Optional[bool] = Field(
+    internet: bool | None = Field(
         default=None,
         alias="internet",
         description="Internet (well-known community).",
     )
-    graceful_shutdown: Optional[bool] = Field(
+    graceful_shutdown: bool | None = Field(
         default=None,
         alias="gracefulShutdown",
         description="Graceful shutdown (well-known community).",
     )
-    local_asn: Optional[bool] = Field(
+    local_asn: bool | None = Field(
         default=None,
         alias="localAsn",
         description=(
             "Do not advertise the route to an iBGP neighbor if the route " "is received from another iBGP neighbor " "(well-known community 65535:65284)."
         ),
     )
-    community_numbers: Optional[List[str]] = Field(
+    community_numbers: list[str] | None = Field(
         default=None,
         alias="communityNumbers",
         description="List of community numbers in ASN:NN format (0-65535:0-65535).",
     )
 
     # --- Expanded-only ---
-    community_number_regex: Optional[str] = Field(
+    community_number_regex: str | None = Field(
         default=None,
         alias="communityNumberRegex",
         description=("Regular expression in aa:nn format for matching community strings. " "Max length 63. Must not start with [a-zA-Z~!#%@`;]."),
@@ -164,16 +162,16 @@ class CommunityListModel(NDBaseModel):
     Identifier strategy: ``single`` on ``name``.
     """
 
-    identifiers: ClassVar[Optional[List[str]]] = ["name"]
+    identifiers: ClassVar[list[str] | None] = ["name"]
     identifier_strategy: ClassVar[str] = "single"
 
     # Read-only timestamp excluded from payloads and diffs
-    exclude_from_diff: ClassVar[Set[str]] = {"last_update_timestamp"}
-    payload_exclude_fields: ClassVar[Set[str]] = {"last_update_timestamp"}
+    exclude_from_diff: ClassVar[set[str]] = {"last_update_timestamp"}
+    payload_exclude_fields: ClassVar[set[str]] = {"last_update_timestamp"}
 
     # Strip any summary-only keys that appear in the list response but are
     # not part of the full item schema
-    unwanted_keys: ClassVar[List[str]] = [
+    unwanted_keys: ClassVar[list[str]] = [
         "numberOfEntries",
         "numberOfAssociations",
         "associations",
@@ -190,23 +188,23 @@ class CommunityListModel(NDBaseModel):
         min_length=1,
         max_length=115,
     )
-    type: Optional[CommunityListTypeEnum] = Field(
+    type: CommunityListTypeEnum | None = Field(
         default=None,
         alias="type",
         description="Type of community list: standard or expanded.",
     )
-    last_update_timestamp: Optional[str] = Field(
+    last_update_timestamp: str | None = Field(
         default=None,
         alias="lastUpdateTimestamp",
         description="Timestamp of the last update (read-only, set by the API).",
     )
-    tenant_name: Optional[str] = Field(
+    tenant_name: str | None = Field(
         default=None,
         alias="tenantName",
         description=("Name of the tenant that owns this community list. " "Allowed characters: [A-Za-z0-9_-]. Max 63 characters."),
         max_length=63,
     )
-    entries: Optional[List[CommunityListEntryModel]] = Field(
+    entries: list[CommunityListEntryModel] | None = Field(
         default=None,
         alias="entries",
         description="Collection of community list entries.",
@@ -273,7 +271,7 @@ class CommunityListModel(NDBaseModel):
         return self
 
     @classmethod
-    def get_argument_spec(cls) -> Dict:
+    def get_argument_spec(cls) -> dict:
         return dict(
             fabric_name=dict(type="str", required=True),
             config=dict(

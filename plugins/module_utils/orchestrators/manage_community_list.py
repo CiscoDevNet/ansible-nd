@@ -4,11 +4,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
-
-from typing import Any, ClassVar, Type
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_community_lists import (
@@ -39,19 +37,19 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
     here and assigned to every endpoint instance before use.
     """
 
-    model_class: ClassVar[Type[NDBaseModel]] = CommunityListModel
+    model_class: ClassVar[type[NDBaseModel]] = CommunityListModel
 
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
 
     # Stub assignments satisfy NDBaseOrchestrator.validate_bulk_endpoints
-    create_endpoint: Type[NDEndpointBaseModel] = EpManageCommunityListsPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpManageCommunityListsPut
-    delete_endpoint: Type[NDEndpointBaseModel] = EpManageCommunityListsDelete
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageCommunityListsGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageCommunityListsListGet
-    create_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageCommunityListsPost
-    delete_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageCommunityListsBulkDelete
+    create_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsPost
+    update_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsPut
+    delete_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsDelete
+    query_one_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsGet
+    query_all_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsListGet
+    create_bulk_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsPost
+    delete_bulk_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsBulkDelete
 
     _fabric_context: FabricContext | None = None
 
