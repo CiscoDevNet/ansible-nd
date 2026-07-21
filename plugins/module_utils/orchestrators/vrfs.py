@@ -40,7 +40,6 @@ import json
 import time
 
 from typing import Any, Callable, ClassVar
-from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import (
@@ -673,10 +672,10 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         return names
 
     def _vrf_name_filter(self, vrf_names: list[str]) -> str:
-        """Build a URL-safe Lucene filter for VRF names."""
+        """Build a raw Lucene filter for endpoint serialization."""
         terms = [f"vrfName:{vrf_name}" for vrf_name in sorted(set(vrf_names))]
         expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
-        return quote(expression, safe="")
+        return expression
 
     def _normalize_query_vrf_item(self, item: Any) -> Any:
         if not isinstance(item, dict):

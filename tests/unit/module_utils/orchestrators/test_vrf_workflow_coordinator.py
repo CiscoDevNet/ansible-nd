@@ -22,6 +22,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflo
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachment_manager import (
     VrfAttachmentManager,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_dependency_checker import (
+    VrfDependencyChecker,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multicluster_parent_vrf import (
     MulticlusterParentVrfStrategy,
 )
@@ -48,6 +51,39 @@ class _AttachmentCoordinator:
     @staticmethod
     def _attachment_matches(existing, desired):
         return VrfAttachmentManager.attachment_matches(existing, desired)
+
+
+def test_vrf_dependency_filter_is_encoded_once_in_network_query_path():
+    requested_paths = []
+
+    class Orchestrator:
+        @staticmethod
+        def _make_endpoint(endpoint_cls):
+            endpoint = endpoint_cls()
+            endpoint.fabric_name = "fab1"
+            return endpoint
+
+        @staticmethod
+        def _request(**kwargs):
+            requested_paths.append(kwargs["path"])
+            return {"networks": []}
+
+    class Coordinator:
+        @staticmethod
+        def _new_vrf_orchestrator(_module_args, _strategy):
+            return Orchestrator(), {}
+
+    class Strategy:
+        fabric_name = "fab1"
+        is_multicluster = False
+        is_parent = False
+
+    checker = VrfDependencyChecker(Coordinator())
+
+    assert checker.query_networks_for_vrfs({}, Strategy(), ["VRF PRIMARY&50%"], use_filter=True) == []
+    assert requested_paths == [
+        "/api/v1/manage/fabrics/fab1/networks?max=10000&filter=vrfName%3AVRF%20PRIMARY%2650%25",
+    ]
 
 
 def test_vrf_workflow_coordinator_resolves_strategy_with_gen3_restsend():

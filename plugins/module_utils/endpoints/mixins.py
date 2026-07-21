@@ -96,10 +96,10 @@ class OffsetMixin(BaseModel):
     offset: int | None = Field(default=None, ge=0, description="Pagination offset")
 
 
-class NodeNameMixin(BaseModel):
-    """Mixin for endpoints that require node_name parameter."""
+class SwitchIdMixin(BaseModel):
+    """Mixin for endpoints that require switch_id parameter."""
 
-    node_name: str | None = Field(default=None, min_length=1, description="Node name")
+    switch_id: str | None = Field(default=None, min_length=1, description="Switch serial number or ID")
 
 
 class SwitchSerialNumberMixin(BaseModel):
@@ -126,16 +126,16 @@ class RouteMapNameMixin(BaseModel):
     route_map_name: str | None = Field(default=None, min_length=1, max_length=115, description="Route map name")
 
 
+class TenantNameMixin(BaseModel):
+    """Mixin for endpoints that require tenant_name parameter."""
+
+    tenant_name: str | None = Field(default=None, min_length=1, description="Tenant name")
+
+
 class VrfNameMixin(BaseModel):
     """Mixin for endpoints that require vrf_name parameter."""
 
     vrf_name: str | None = Field(default=None, min_length=1, max_length=64, description="VRF name")
-
-
-class SwitchIdMixin(BaseModel):
-    """Mixin for endpoints that require switch_id parameter."""
-
-    switch_id: str | None = Field(default=None, min_length=1, description="Switch serial number")
 
 
 class PeerSwitchIdMixin(BaseModel):
@@ -169,6 +169,12 @@ class ViewMixin(BaseModel):
     """Mixin for endpoints that support view parameter."""
 
     view: str | None = Field(default=None, description="Optional view type for filtering results")
+
+
+class NodeNameMixin(BaseModel):
+    """Mixin for endpoints that require node_name parameter."""
+
+    node_name: str | None = Field(default=None, min_length=1, description="Node name")
 
 
 class PolicyIdMixin(BaseModel):

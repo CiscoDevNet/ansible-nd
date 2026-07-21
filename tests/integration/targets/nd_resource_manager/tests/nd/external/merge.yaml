@@ -1,0 +1,116 @@
+---
+- name: External delta pools - Set resource config
+  ansible.builtin.set_fact:
+    rm_test_config:
+      - entity_name: "external_instance_device"
+        pool_type: "ID"
+        pool_name: "INSTANCE_ID"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "201"
+
+      - entity_name: "external_loopback_ipv6_fabric"
+        pool_type: "IP"
+        pool_name: "LOOPBACK_IPV6_POOL"
+        scope_type: "fabric"
+        resource: "fe80::31"
+
+      - entity_name: "external_tunnel_ios_xe_device"
+        pool_type: "ID"
+        pool_name: "TUNNEL_ID_IOS_XE"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "31"
+    rm_test_delete_config:
+      - entity_name: "external_instance_device"
+        pool_type: "ID"
+        pool_name: "INSTANCE_ID"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "external_loopback_ipv6_fabric"
+        pool_type: "IP"
+        pool_name: "LOOPBACK_IPV6_POOL"
+        scope_type: "fabric"
+
+      - entity_name: "external_tunnel_ios_xe_device"
+        pool_type: "ID"
+        pool_name: "TUNNEL_ID_IOS_XE"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+    rm_expected_resource_count: 3
+
+- name: External delta pools - Pre-clean resources
+  cisco.nd.nd_manage_resource_manager: &rm_delete
+    state: deleted
+    fabric_name: "{{ ansible_it_fabric }}"
+    config: "{{ rm_test_delete_config }}"
+  register: result
+
+- name: External delta pools - Assert pre-clean did not fail
+  ansible.builtin.assert:
+    that:
+      - 'result.failed | default(false) == false'
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+- block:
+    - name: External delta pools - Create resources
+      cisco.nd.nd_manage_resource_manager: &rm_merge
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config: "{{ rm_test_config }}"
+      register: result
+
+    - name: External delta pools - Assert create result
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+          - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
+          - '(result["diff"][0]["deleted"] | length) == 0'
+          - 'result.failed | default(false) == false'
+
+    - name: External delta pools - Assert create API details
+      ansible.builtin.assert:
+        that:
+          - '(result["api_response"] | length) == 1'
+          - 'result["api_result"][0]["success"] == true'
+          - '(result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
+          - '(result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
+          - result.api_response | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+      when: result.api_response is defined
+
+    - name: External delta pools - Create resources idempotence
+      cisco.nd.nd_manage_resource_manager: *rm_merge
+      register: result
+
+    - name: External delta pools - Assert idempotence
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == false'
+          - '(result["diff"][0]["merged"] | length) == 0'
+          - '(result["diff"][0]["deleted"] | length) == 0'
+          - 'result.failed | default(false) == false'
+
+    - name: External delta pools - Assert idempotence API details
+      ansible.builtin.assert:
+        that:
+          - '(result["api_response"] | length) == 1'
+          - 'result["api_result"][0]["success"] == true'
+          - 'result["api_payload"][0] is none'
+          - result.api_response | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+      when: result.api_response is defined
+
+  always:
+    - name: External delta pools - Cleanup resources
+      cisco.nd.nd_manage_resource_manager: *rm_delete
+      register: result
+
+    - name: External delta pools - Assert cleanup did not fail
+      ansible.builtin.assert:
+        that:
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0

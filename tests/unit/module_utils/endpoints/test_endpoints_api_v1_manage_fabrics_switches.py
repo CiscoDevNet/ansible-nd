@@ -253,8 +253,8 @@ def test_endpoints_api_v1_manage_fabrics_switches_00140():
     assert set(query.split("&")) == {
         "clusterName=cluster-a",
         "hostname=leaf1",
-        "filter=hostname:leaf*",
-        "sort=hostname:asc",
+        "filter=hostname%3Aleaf%2A",
+        "sort=hostname%3Aasc",
     }
 
 

@@ -417,7 +417,7 @@ class Log:
         logging.raiseExceptions = value
 
 
-def setup_logging(module: "AnsibleModule", develop: bool = False) -> Log:
+def setup_logging(module: "AnsibleModule", develop: bool = False, config: Optional[str] = None) -> Log:
     """
     # Summary
 
@@ -434,6 +434,9 @@ def setup_logging(module: "AnsibleModule", develop: bool = False) -> Log:
 
     -   Calls `module.fail_json()` if logging configuration fails, which
         exits the module with an error message rather than raising an exception.
+    -   If `config` is provided it overrides the `ND_LOGGING_CONFIG` environment
+        variable.  Pass `None` (the default) to rely solely on the environment
+        variable.
 
     ## Usage
 
@@ -445,6 +448,12 @@ def setup_logging(module: "AnsibleModule", develop: bool = False) -> Log:
         log = setup_logging(module)
     ```
 
+    To point at a specific config file (e.g. during local development):
+
+    ```python
+    log = setup_logging(module, config="/path/to/logging_config.json")
+    ```
+
     To enable logging exceptions during development, pass `develop=True`:
 
     ```python
@@ -453,6 +462,8 @@ def setup_logging(module: "AnsibleModule", develop: bool = False) -> Log:
     """
     try:
         log = Log(develop=develop)
+        if config is not None:
+            log.config = config
         log.commit()
     except ValueError as error:
         module.fail_json(msg=str(error))

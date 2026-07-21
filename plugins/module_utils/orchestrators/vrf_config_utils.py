@@ -8,8 +8,6 @@ components.
 
 from __future__ import annotations
 
-from urllib.parse import quote
-
 
 def configured_vrf_names(config: list[dict]) -> list[str]:
     """Return configured VRF names in stable order."""
@@ -44,7 +42,7 @@ def deploy_type_by_vrf(config: list[dict]) -> dict[str, str]:
 
 
 def vrf_name_filter(vrf_names: list[str]) -> str:
-    """Build a URL-safe Lucene filter for VRF names."""
+    """Build a raw Lucene filter for endpoint serialization."""
     terms = [f"vrfName:{vrf_name}" for vrf_name in sorted(set(vrf_names))]
     expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
-    return quote(expression, safe="")
+    return expression

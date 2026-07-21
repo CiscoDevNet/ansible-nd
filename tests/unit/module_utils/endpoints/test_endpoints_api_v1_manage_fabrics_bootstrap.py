@@ -125,10 +125,10 @@ def test_endpoints_api_v1_manage_fabrics_bootstrap_00050():
         result = params.to_query_string()
     assert set(result.split("&")) == {
         "clusterName=cluster-a",
-        "filter=serialNumber:SN*",
+        "filter=serialNumber%3ASN%2A",
         "max=50",
         "offset=0",
-        "sort=serialNumber:asc",
+        "sort=serialNumber%3Aasc",
     }
 
 
