@@ -28,7 +28,7 @@ def responses_manage_community_list(key: str):
     return load_fixture("test_manage_community_list")[key]
 
 
-def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> RestSend:
+def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1", cluster_name: str | None = None) -> RestSend:
     """Build a `RestSend` wired to a file-based `Sender` and `ResponseHandler`."""
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
@@ -39,7 +39,10 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    rest_send = RestSend({"check_mode": False, "fabric_name": fabric_name})
+    params = {"check_mode": False, "fabric_name": fabric_name}
+    if cluster_name is not None:
+        params["cluster_name"] = cluster_name
+    rest_send = RestSend(params)
     rest_send.sender = sender
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
@@ -294,3 +297,60 @@ def test_manage_community_list_00320(monkeypatch: pytest.MonkeyPatch) -> None:
     instance.delete_bulk([model])
 
     assert operation_types == [OperationType.CREATE, OperationType.UPDATE, OperationType.DELETE]
+
+
+def test_manage_community_list_00400(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify query_all walks and de-duplicates Lucene pages."""
+    pages = [
+        {"communityLists": [{"name": "CL1"}, {"name": "CL2"}]},
+        {"communityLists": [{"name": "CL2"}, {"name": "CL3"}]},
+        {"communityLists": []},
+    ]
+    paths = []
+
+    def fake_request(*args, **kwargs):
+        paths.append(kwargs["path"])
+        return pages.pop(0)
+
+    def responses():
+        yield {}
+
+    unused_rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    assert unused_rest_send is not None
+    assert unused_fabric_context is not None
+    monkeypatch.setattr(ManageCommunityListOrchestrator, "query_all_page_size", 2)
+    monkeypatch.setattr(instance, "_request", fake_request)
+
+    result = instance.query_all()
+
+    assert [item["name"] for item in result] == ["CL1", "CL2", "CL3"]
+    assert paths == [
+        "/api/v1/manage/fabrics/fabric_1/communityLists?max=2&offset=0",
+        "/api/v1/manage/fabrics/fabric_1/communityLists?max=2&offset=2",
+        "/api/v1/manage/fabrics/fabric_1/communityLists?max=2&offset=4",
+    ]
+
+
+def test_manage_community_list_00410(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify cluster_name is forwarded to collection and item reads."""
+    paths = []
+
+    def fake_request(*args, **kwargs):
+        paths.append(kwargs["path"])
+        return {"communityLists": []}
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), cluster_name="cluster-1")
+    instance = ManageCommunityListOrchestrator(rest_send=rest_send)
+    instance._fabric_context = _FakeFabricContext()
+    monkeypatch.setattr(instance, "_request", fake_request)
+
+    instance.query_all()
+    instance.query_one(_model())
+
+    assert paths == [
+        "/api/v1/manage/fabrics/fabric_1/communityLists?clusterName=cluster-1&max=100&offset=0",
+        "/api/v1/manage/fabrics/fabric_1/communityLists/CL1?clusterName=cluster-1",
+    ]

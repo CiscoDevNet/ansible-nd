@@ -42,6 +42,8 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
 
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    query_all_page_size: ClassVar[int] = 100
+    query_all_max_pages: ClassVar[int] = 10000
 
     # Stub assignments satisfy NDBaseOrchestrator.validate_bulk_endpoints
     create_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsPost
@@ -66,6 +68,11 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
         None
         """
         return self.rest_send.params.get("fabric_name")
+
+    @property
+    def cluster_name(self) -> str | None:
+        """Return the optional target cluster name from module params."""
+        return self.rest_send.params.get("cluster_name")
 
     @property
     def fabric_context(self) -> FabricContext:
@@ -107,6 +114,9 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
         None
         """
         api_endpoint.fabric_name = self.fabric_name
+        params = getattr(api_endpoint, "endpoint_params", None)
+        if self.cluster_name and params is not None and hasattr(params, "cluster_name"):
+            params.cluster_name = self.cluster_name
         return api_endpoint
 
     @staticmethod
@@ -230,10 +240,33 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
         """
         try:
             self.validate_prerequisites()
-            ep = self._configure_endpoint(self.query_all_endpoint())
-            result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
-            if isinstance(result, dict):
-                return result.get("communityLists", []) or []
-            return []
+            collected: list[dict] = []
+            seen: set[str] = set()
+            offset = 0
+            pages_fetched = 0
+            while pages_fetched < self.query_all_max_pages:
+                pages_fetched += 1
+                ep = self._configure_endpoint(self.query_all_endpoint())
+                ep.lucene_params.max = self.query_all_page_size
+                ep.lucene_params.offset = offset
+                result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
+                page = result.get("communityLists", []) or [] if isinstance(result, dict) else (result or [])
+                if not page:
+                    break
+
+                new_rows = 0
+                for row in page:
+                    name = row.get("name") if isinstance(row, dict) else None
+                    if name is not None:
+                        if name in seen:
+                            continue
+                        seen.add(name)
+                    collected.append(row)
+                    new_rows += 1
+
+                if len(page) < self.query_all_page_size or new_rows == 0:
+                    break
+                offset += self.query_all_page_size
+            return collected
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
