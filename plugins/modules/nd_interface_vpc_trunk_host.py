@@ -353,6 +353,11 @@ notes:
 - The primary switch supplied in O(config[].switch_ip) must already be in a vPC pair (managed by
   M(cisco.nd.nd_manage_vpc_pair)). The peer serial is auto-resolved from the pair record.
 - C(peer1) refers to the switch supplied in O(config[].switch_ip); C(peer2) refers to the auto-resolved peer.
+- A vPC interface is identified by the combination of O(config[].switch_ip) and O(config[].interface_name). Two different vPC
+  pairs in the same fabric may reuse the same vPC id (for example C(vpc100) on two pairs); list each under its own pair's
+  O(config[].switch_ip).
+- Listing the same O(config[].interface_name) under both peers of the same vPC pair is rejected; list each vPC interface once,
+  under either peer.
 """
 
 EXAMPLES = r"""
