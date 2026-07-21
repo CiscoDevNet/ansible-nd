@@ -490,7 +490,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                     ) from exc
                 delay = self.PAGINATION_RETRY_DELAY_SECONDS * attempt
                 self.log.warning(
-                    "_fetch_resources_paginated: inconsistent snapshot on attempt=%s; " "restarting from offset=0 after %s second(s): %s",
+                    "_fetch_resources_paginated: inconsistent snapshot on attempt=%s; restarting from offset=0 after %s second(s): %s",
                     attempt,
                     delay,
                     exc,
