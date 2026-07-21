@@ -71,15 +71,16 @@ def _instance(gen_responses: ResponseGenerator) -> tuple[RestSend, ManageExtende
     return rest_send, instance, fabric_context
 
 
-def _model(name: str = "ECL1") -> ExtendedCommunityListModel:
+def _model(name: str = "ECL1", tenant_name: str | None = None) -> ExtendedCommunityListModel:
     """Build a standard extended community list model."""
-    return ExtendedCommunityListModel.from_config(
-        {
-            "name": name,
-            "type": "standard",
-            "entries": [{"sequence_number": 10, "action": "permit", "route_target_collection": ["65000:100"]}],
-        }
-    )
+    config = {
+        "name": name,
+        "type": "standard",
+        "entries": [{"sequence_number": 10, "action": "permit", "route_target_collection": ["65000:100"]}],
+    }
+    if tenant_name is not None:
+        config["tenant_name"] = tenant_name
+    return ExtendedCommunityListModel.from_config(config)
 
 
 def test_manage_extended_community_list_00010() -> None:
@@ -254,3 +255,22 @@ def test_manage_extended_community_list_00300() -> None:
     assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/extendedCommunityListActions/remove"
     assert rest_send.verb == HttpVerbEnum.POST.value
     assert rest_send.committed_payload == {"extendedCommunityListNames": ["ECL1"]}
+
+
+def test_manage_extended_community_list_00310() -> None:
+    """Verify tenant-scoped update paths and delete payloads use API names."""
+    update_model = _model("ECL1", tenant_name="tenantA")
+
+    def responses():
+        yield responses_manage_extended_community_list("test_manage_extended_community_list_00200a")
+        yield responses_manage_extended_community_list("test_manage_extended_community_list_00300a")
+
+    rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    assert unused_fabric_context is not None
+
+    instance.update(update_model)
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/extendedCommunityLists/tenantA~ECL1"
+    assert rest_send.committed_payload["name"] == "tenantA~ECL1"
+
+    instance.delete_bulk([ExtendedCommunityListModel.from_config({"name": "ECL1", "tenant_name": "tenantA"})])
+    assert rest_send.committed_payload == {"extendedCommunityListNames": ["tenantA~ECL1"]}

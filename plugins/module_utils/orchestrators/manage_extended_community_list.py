@@ -203,7 +203,7 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
         """
         try:
             ep = self._configure_endpoint(self.delete_bulk_endpoint())
-            payload = {"extendedCommunityListNames": [m.name for m in model_instances]}
+            payload = {"extendedCommunityListNames": [m.get_identifier_value() for m in model_instances]}
             result = self._request(path=ep.path, verb=ep.verb, data=payload)
             self._raise_on_207_action_errors(result)
             return result

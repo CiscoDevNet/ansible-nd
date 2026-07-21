@@ -23,7 +23,7 @@ entry constraints.
 from __future__ import annotations
 
 import re
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -47,6 +47,8 @@ _COMMUNITY_NUMBER_RE = re.compile(
 
 # Regex for expanded community-list entries: must not start with [a-zA-Z~!#%@`;]
 _COMMUNITY_REGEX_RE = re.compile(r"^[^a-zA-Z~!#%@`;].*$")
+DEFAULT_TENANT_COMMUNITY_LIST_NAME_MAX_LENGTH = 63
+TENANT_COMMUNITY_LIST_API_NAME_MAX_LENGTH = 115
 
 
 class CommunityListEntryModel(NDNestedModel):
@@ -159,10 +161,10 @@ class CommunityListModel(NDBaseModel):
     discriminates between them and a ``model_validator`` enforces the
     type-specific entry constraints.
 
-    Identifier strategy: ``single`` on ``name``.
+    Identifier strategy: ``single`` on the fully qualified ``api_name``.
     """
 
-    identifiers: ClassVar[list[str] | None] = ["name"]
+    identifiers: ClassVar[list[str] | None] = ["api_name"]
     identifier_strategy: ClassVar[str] = "single"
 
     # Read-only timestamp excluded from payloads and diffs
@@ -211,6 +213,20 @@ class CommunityListModel(NDBaseModel):
         min_length=1,
     )
 
+    @property
+    def api_name(self) -> str:
+        """Return the community-list name used in API paths and delete payloads."""
+        if self.tenant_name and not self.name.startswith(f"{self.tenant_name}~"):
+            return f"{self.tenant_name}~{self.name}"
+        return self.name
+
+    def to_payload(self, **kwargs) -> dict[str, Any]:
+        """Export an API payload with a fully qualified tenant-scoped name."""
+        data = super().to_payload(**kwargs)
+        if self.tenant_name:
+            data["name"] = self.api_name
+        return data
+
     @field_validator("name", mode="before")
     @classmethod
     def validate_name(cls, v):
@@ -230,6 +246,25 @@ class CommunityListModel(NDBaseModel):
         if not pattern.match(str(v)):
             raise ValueError(f"tenant_name '{v}' contains invalid characters. " "Allowed: [A-Za-z0-9_-].")
         return v
+
+    @model_validator(mode="after")
+    def normalize_and_validate_name(self) -> "CommunityListModel":
+        """Store tenant-scoped lists with a bare config name and validate API name limits."""
+        if self.tenant_name:
+            prefix = f"{self.tenant_name}~"
+            if self.name.startswith(prefix):
+                self.name = self.name[len(prefix) :]
+            if len(self.api_name) > TENANT_COMMUNITY_LIST_API_NAME_MAX_LENGTH:
+                raise ValueError(
+                    f"tenant-scoped community list API name '{self.api_name}' must be "
+                    f"{TENANT_COMMUNITY_LIST_API_NAME_MAX_LENGTH} characters or fewer."
+                )
+        elif len(self.name) > DEFAULT_TENANT_COMMUNITY_LIST_NAME_MAX_LENGTH:
+            raise ValueError(
+                f"default-tenant community list name '{self.name}' must be "
+                f"{DEFAULT_TENANT_COMMUNITY_LIST_NAME_MAX_LENGTH} characters or fewer."
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_entries_match_type(self):

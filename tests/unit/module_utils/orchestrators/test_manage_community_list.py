@@ -67,15 +67,16 @@ def _instance(gen_responses: ResponseGenerator) -> tuple[RestSend, ManageCommuni
     return rest_send, instance, fabric_context
 
 
-def _model(name: str = "CL1") -> CommunityListModel:
+def _model(name: str = "CL1", tenant_name: str | None = None) -> CommunityListModel:
     """Build a standard community list model."""
-    return CommunityListModel.from_config(
-        {
-            "name": name,
-            "type": "standard",
-            "entries": [{"sequence_number": 10, "action": "permit", "community_numbers": ["100:200"]}],
-        }
-    )
+    config = {
+        "name": name,
+        "type": "standard",
+        "entries": [{"sequence_number": 10, "action": "permit", "community_numbers": ["100:200"]}],
+    }
+    if tenant_name is not None:
+        config["tenant_name"] = tenant_name
+    return CommunityListModel.from_config(config)
 
 
 def test_manage_community_list_00010() -> None:
@@ -250,3 +251,22 @@ def test_manage_community_list_00300() -> None:
     assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/communityListActions/remove"
     assert rest_send.verb == HttpVerbEnum.POST.value
     assert rest_send.committed_payload == {"communityListNames": ["CL1"]}
+
+
+def test_manage_community_list_00310() -> None:
+    """Verify tenant-scoped update paths and delete payloads use API names."""
+    update_model = _model("CL1", tenant_name="tenantA")
+
+    def responses():
+        yield responses_manage_community_list("test_manage_community_list_00200a")
+        yield responses_manage_community_list("test_manage_community_list_00300a")
+
+    rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    assert unused_fabric_context is not None
+
+    instance.update(update_model)
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/communityLists/tenantA~CL1"
+    assert rest_send.committed_payload["name"] == "tenantA~CL1"
+
+    instance.delete_bulk([CommunityListModel.from_config({"name": "CL1", "tenant_name": "tenantA"})])
+    assert rest_send.committed_payload == {"communityListNames": ["tenantA~CL1"]}

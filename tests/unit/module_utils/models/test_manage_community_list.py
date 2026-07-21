@@ -40,7 +40,7 @@ def test_manage_community_list_00010() -> None:
     """
     instance = CommunityListModel.from_config({"name": "CL-DELETE"})
 
-    assert CommunityListModel.identifiers == ["name"]
+    assert CommunityListModel.identifiers == ["api_name"]
     assert CommunityListModel.identifier_strategy == "single"
     assert instance.get_identifier_value() == "CL-DELETE"
     assert instance.type is None
@@ -105,3 +105,43 @@ def test_manage_community_list_00040() -> None:
     assert config_options["name"]["required"] is True
     assert "required" not in config_options["type"]
     assert "required" not in config_options["entries"]
+
+
+def test_manage_community_list_00050() -> None:
+    """Verify tenant-scoped names are normalized while API identity stays qualified."""
+    instance = CommunityListModel.from_config(
+        {
+            "name": "tenantA~CL-TENANT",
+            "tenant_name": "tenantA",
+            "type": "standard",
+            "entries": [{"sequence_number": 10, "action": "permit"}],
+        }
+    )
+
+    assert instance.name == "CL-TENANT"
+    assert instance.api_name == "tenantA~CL-TENANT"
+    assert instance.get_identifier_value() == "tenantA~CL-TENANT"
+    assert instance.to_config()["name"] == "CL-TENANT"
+    assert instance.to_payload()["name"] == "tenantA~CL-TENANT"
+
+
+def test_manage_community_list_00060() -> None:
+    """Verify same-name lists in different tenants have distinct identifiers."""
+    first = CommunityListModel.from_config({"name": "CL-SHARED", "tenant_name": "tenantA"})
+    second = CommunityListModel.from_config({"name": "CL-SHARED", "tenant_name": "tenantB"})
+
+    assert first.get_identifier_value() == "tenantA~CL-SHARED"
+    assert second.get_identifier_value() == "tenantB~CL-SHARED"
+    assert first.get_identifier_value() != second.get_identifier_value()
+
+
+def test_manage_community_list_00070() -> None:
+    """Verify default and tenant-qualified API name length limits."""
+    CommunityListModel.from_config({"name": "C" * 63})
+    with pytest.raises(ValueError, match="default-tenant community list name"):
+        CommunityListModel.from_config({"name": "C" * 64})
+
+    tenant_name = "T" * 63
+    CommunityListModel.from_config({"name": "C" * 51, "tenant_name": tenant_name})
+    with pytest.raises(ValueError, match="tenant-scoped community list API name"):
+        CommunityListModel.from_config({"name": "C" * 52, "tenant_name": tenant_name})

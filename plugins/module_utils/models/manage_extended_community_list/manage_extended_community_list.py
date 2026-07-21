@@ -31,7 +31,7 @@ type-specific entry constraints at validation time.
 from __future__ import annotations
 
 import re
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -68,6 +68,8 @@ _GENERIC_EXTENDED_RE = re.compile(r"^[1-9]\d{0,9}:\d+$")
 
 # Expanded community-number regex: must not start with [a-zA-Z~!#%@`;]
 _COMMUNITY_REGEX_RE = re.compile(r"^[^a-zA-Z~!#%@`;].*$")
+DEFAULT_TENANT_EXTENDED_COMMUNITY_LIST_NAME_MAX_LENGTH = 63
+TENANT_EXTENDED_COMMUNITY_LIST_API_NAME_MAX_LENGTH = 115
 
 
 class ExtendedCommunityListEntryModel(NDNestedModel):
@@ -213,11 +215,10 @@ class ExtendedCommunityListModel(NDBaseModel):
     discriminates between them and a ``model_validator`` enforces the
     type-specific entry constraints at validation time.
 
-    Identifier strategy: ``single`` on ``name`` - extended community list names
-    are unique per fabric with no address-family dimension.
+    Identifier strategy: ``single`` on the fully qualified ``api_name``.
     """
 
-    identifiers: ClassVar[list[str] | None] = ["name"]
+    identifiers: ClassVar[list[str] | None] = ["api_name"]
     identifier_strategy: ClassVar[str] = "single"
 
     # Read-only timestamp excluded from payloads and diffs
@@ -265,6 +266,20 @@ class ExtendedCommunityListModel(NDBaseModel):
         min_length=1,
     )
 
+    @property
+    def api_name(self) -> str:
+        """Return the extended-community-list name used in API paths and delete payloads."""
+        if self.tenant_name and not self.name.startswith(f"{self.tenant_name}~"):
+            return f"{self.tenant_name}~{self.name}"
+        return self.name
+
+    def to_payload(self, **kwargs) -> dict[str, Any]:
+        """Export an API payload with a fully qualified tenant-scoped name."""
+        data = super().to_payload(**kwargs)
+        if self.tenant_name:
+            data["name"] = self.api_name
+        return data
+
     # ------------------------------------------------------------------
     # Field validators
     # ------------------------------------------------------------------
@@ -288,6 +303,25 @@ class ExtendedCommunityListModel(NDBaseModel):
         if not pattern.match(str(v)):
             raise ValueError(f"tenant_name '{v}' contains invalid characters. " "Allowed: [A-Za-z0-9_-].")
         return v
+
+    @model_validator(mode="after")
+    def normalize_and_validate_name(self) -> "ExtendedCommunityListModel":
+        """Store tenant-scoped lists with a bare config name and validate API name limits."""
+        if self.tenant_name:
+            prefix = f"{self.tenant_name}~"
+            if self.name.startswith(prefix):
+                self.name = self.name[len(prefix) :]
+            if len(self.api_name) > TENANT_EXTENDED_COMMUNITY_LIST_API_NAME_MAX_LENGTH:
+                raise ValueError(
+                    f"tenant-scoped extended community list API name '{self.api_name}' must be "
+                    f"{TENANT_EXTENDED_COMMUNITY_LIST_API_NAME_MAX_LENGTH} characters or fewer."
+                )
+        elif len(self.name) > DEFAULT_TENANT_EXTENDED_COMMUNITY_LIST_NAME_MAX_LENGTH:
+            raise ValueError(
+                f"default-tenant extended community list name '{self.name}' must be "
+                f"{DEFAULT_TENANT_EXTENDED_COMMUNITY_LIST_NAME_MAX_LENGTH} characters or fewer."
+            )
+        return self
 
     # ------------------------------------------------------------------
     # Cross-field model validator

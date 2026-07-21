@@ -42,7 +42,7 @@ def test_manage_extended_community_list_00010() -> None:
     """
     instance = ExtendedCommunityListModel.from_config({"name": "ECL-DELETE"})
 
-    assert ExtendedCommunityListModel.identifiers == ["name"]
+    assert ExtendedCommunityListModel.identifiers == ["api_name"]
     assert ExtendedCommunityListModel.identifier_strategy == "single"
     assert instance.get_identifier_value() == "ECL-DELETE"
     assert instance.type is None
@@ -107,3 +107,43 @@ def test_manage_extended_community_list_00040() -> None:
     assert config_options["name"]["required"] is True
     assert "required" not in config_options["type"]
     assert "required" not in config_options["entries"]
+
+
+def test_manage_extended_community_list_00050() -> None:
+    """Verify tenant-scoped names are normalized while API identity stays qualified."""
+    instance = ExtendedCommunityListModel.from_config(
+        {
+            "name": "tenantA~ECL-TENANT",
+            "tenant_name": "tenantA",
+            "type": "standard",
+            "entries": [{"sequence_number": 10, "action": "permit"}],
+        }
+    )
+
+    assert instance.name == "ECL-TENANT"
+    assert instance.api_name == "tenantA~ECL-TENANT"
+    assert instance.get_identifier_value() == "tenantA~ECL-TENANT"
+    assert instance.to_config()["name"] == "ECL-TENANT"
+    assert instance.to_payload()["name"] == "tenantA~ECL-TENANT"
+
+
+def test_manage_extended_community_list_00060() -> None:
+    """Verify same-name lists in different tenants have distinct identifiers."""
+    first = ExtendedCommunityListModel.from_config({"name": "ECL-SHARED", "tenant_name": "tenantA"})
+    second = ExtendedCommunityListModel.from_config({"name": "ECL-SHARED", "tenant_name": "tenantB"})
+
+    assert first.get_identifier_value() == "tenantA~ECL-SHARED"
+    assert second.get_identifier_value() == "tenantB~ECL-SHARED"
+    assert first.get_identifier_value() != second.get_identifier_value()
+
+
+def test_manage_extended_community_list_00070() -> None:
+    """Verify default and tenant-qualified API name length limits."""
+    ExtendedCommunityListModel.from_config({"name": "E" * 63})
+    with pytest.raises(ValueError, match="default-tenant extended community list name"):
+        ExtendedCommunityListModel.from_config({"name": "E" * 64})
+
+    tenant_name = "T" * 63
+    ExtendedCommunityListModel.from_config({"name": "E" * 51, "tenant_name": tenant_name})
+    with pytest.raises(ValueError, match="tenant-scoped extended community list API name"):
+        ExtendedCommunityListModel.from_config({"name": "E" * 52, "tenant_name": tenant_name})
