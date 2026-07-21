@@ -387,15 +387,17 @@ class AccessVpcHostInterfaceModel(NDBaseModel):
     """
 
     # --- Identifier Configuration ---
+    # --- Identifier Configuration ---
     # TODO(4.2.1) vpc-interface-dual-peer-duplicate
     # A vPC interface is a single fabric-level resource, but ND echoes it from BOTH peer switches in the per-switch
-    # `/interfaces` GET (with identical `configData` and only `switchId` / `peerSwitchId` swapping). Using a composite
-    # (switch_ip, interface_name) identifier caused `_manage_override_deletions` to delete the peer-side duplicate. The
-    # identifier is therefore `interface_name` only; `switch_ip` is kept as a field for routing (URL-path resolution +
-    # peer-resolution) but is excluded from diff and dedup'd in `query_all`.
+    # `/interfaces` GET (identical `configData`; only `switchId` / `peerSwitchId` swap). That echo is deduped in
+    # `VpcInterfaceBaseOrchestrator.query_all`, keyed on `interfaceName` + the unordered `{switchId, peerSwitchId}` pair
+    # set, so the composite identifier below stays safe: two vPC pairs in one fabric may legally reuse the same vPC id
+    # (ND's `vpcId` resource pool is devicePair-scoped; issue #356), which a name-only identity cannot represent.
+    # `switch_ip` remains excluded from payload and diff (routing-only on the wire).
 
-    identifiers: ClassVar[list[str] | None] = ["interface_name"]
-    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
 
     # --- Serialization Configuration ---
 
