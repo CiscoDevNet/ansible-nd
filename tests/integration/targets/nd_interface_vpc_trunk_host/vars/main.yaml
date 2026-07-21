@@ -128,3 +128,44 @@ vpc_trunk_host_with_vlan_mapping:
             customer_inner_vlan_id: 510
             provider_vlan_id: 1010
             dot1q_tunnel: true
+
+# --- Multi-pair scenario (#356): second vPC pair + same-name interfaces on both pairs ---
+# Requires a SECOND vPC pair in the fabric (SITE1: S1_LE3/S1_LE4, added 2026-07-20). The scenario asserts the
+# pair exists and fails with a clear message if not — it never creates or mutates vPC pairs.
+test_switch_ip_pair2_peer1: "{{ nd_test_vpc_pair2_peer1_ip | default('192.168.12.154') }}"
+test_switch_ip_pair2_peer2: "{{ nd_test_vpc_pair2_peer2_ip | default('192.168.12.155') }}"
+
+# Same interface name and id on BOTH pairs — legal on ND (devicePair-scoped vpcId pool, issue #356).
+vpc_multi_pair_name: vpc210
+vpc_multi_pair_pair1:
+  switch_ip: "{{ test_switch_ip_peer1 }}"
+  interface_name: "{{ vpc_multi_pair_name }}"
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "100-200"
+        native_vlan: 99
+        peer1_port_channel_id: 210
+        peer1_member_ports:
+          - Ethernet1/9
+        peer2_port_channel_id: 210
+        peer2_member_ports:
+          - Ethernet1/9
+        port_channel_mode: active
+vpc_multi_pair_pair2:
+  switch_ip: "{{ test_switch_ip_pair2_peer1 }}"
+  interface_name: "{{ vpc_multi_pair_name }}"
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "100-200"
+        native_vlan: 99
+        peer1_port_channel_id: 210
+        peer1_member_ports:
+          - Ethernet1/9
+        peer2_port_channel_id: 210
+        peer2_member_ports:
+          - Ethernet1/9
+        port_channel_mode: active

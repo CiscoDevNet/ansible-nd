@@ -42,6 +42,9 @@
     - name: Run nd_interface_vpc_trunk_host overridden state tests
       ansible.builtin.include_tasks: overridden.yaml
 
+    - name: Include multi-pair same-vPC-id tests (issue 356)
+      ansible.builtin.include_tasks: multi_pair.yaml
+
     - name: Run nd_interface_vpc_trunk_host deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
   always:
