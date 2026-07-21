@@ -167,3 +167,25 @@ def test_manage_community_list_00080() -> None:
 
     with pytest.raises(ValueError, match="no_advertise must not be set"):
         CommunityListModel.from_config(response)
+
+
+def test_manage_community_list_00090() -> None:
+    """Verify type and entries are required only for write-state config."""
+    for state in ("merged", "replaced", "overridden"):
+        with pytest.raises(ValueError, match=f"required for state '{state}'"):
+            CommunityListModel.from_config({"name": "CL1"}, context={"state": state})
+
+    deleted = CommunityListModel.from_config({"name": "CL1"}, context={"state": "deleted"})
+    without_state = CommunityListModel.from_config({"name": "CL1"})
+    complete = CommunityListModel.from_config(
+        {
+            "name": "CL1",
+            "type": "standard",
+            "entries": [{"sequence_number": 10, "action": "permit"}],
+        },
+        context={"state": "merged"},
+    )
+
+    assert deleted.type is None
+    assert without_state.entries is None
+    assert complete.type == "standard"

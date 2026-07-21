@@ -324,6 +324,19 @@ class ExtendedCommunityListModel(NDBaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_required_for_write_states(self, info: ValidationInfo) -> "ExtendedCommunityListModel":
+        """Require the API body fields for write states while allowing name-only deletes."""
+        state = (info.context or {}).get("state")
+        if state in ("merged", "replaced", "overridden"):
+            missing = [field_name for field_name in ("type", "entries") if getattr(self, field_name) is None]
+            if missing:
+                verb = "is" if len(missing) == 1 else "are"
+                raise ValueError(
+                    f"extended community list '{self.api_name}': '{', '.join(missing)}' {verb} required for state '{state}'."
+                )
+        return self
+
     # ------------------------------------------------------------------
     # Cross-field model validator
     # ------------------------------------------------------------------
