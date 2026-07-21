@@ -4,6 +4,7 @@
 # Override nd_test_fabric_name in inventory or extra-vars to match the ND 4.2 testbed.
 
 test_fabric_name: "{{ nd_test_fabric_name | default('SITE1') }}"
+extended_community_list_tenant_identity_name: ANSIBLE_ECL_TENANT_IDENTITY
 
 extended_community_list_standard:
   name: ANSIBLE_ECL_STANDARD
