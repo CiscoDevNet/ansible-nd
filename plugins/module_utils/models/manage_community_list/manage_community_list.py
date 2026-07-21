@@ -50,6 +50,14 @@ _COMMUNITY_NUMBER_RE = re.compile(
 _COMMUNITY_REGEX_RE = re.compile(r"^[^a-zA-Z~!#%@`;].*$")
 DEFAULT_TENANT_COMMUNITY_LIST_NAME_MAX_LENGTH = 63
 TENANT_COMMUNITY_LIST_API_NAME_MAX_LENGTH = 115
+_STANDARD_FALSE_DEFAULT_ALIASES = (
+    "noAdvertise",
+    "blackhole",
+    "noExport",
+    "internet",
+    "gracefulShutdown",
+    "localAsn",
+)
 
 
 class CommunityListEntryModel(NDNestedModel):
@@ -226,6 +234,17 @@ class CommunityListModel(NDBaseModel):
         data = super().to_payload(**kwargs)
         if self.tenant_name:
             data["name"] = self.api_name
+        return data
+
+    def to_diff_dict(self, **kwargs) -> dict[str, Any]:
+        """Ignore false and empty defaults ND adds to standard entry responses."""
+        data = super().to_diff_dict(**kwargs)
+        for entry in data.get("entries") or []:
+            for field_name in _STANDARD_FALSE_DEFAULT_ALIASES:
+                if entry.get(field_name) is False:
+                    entry.pop(field_name)
+            if entry.get("communityNumbers") == []:
+                entry.pop("communityNumbers")
         return data
 
     @field_validator("name", mode="before")

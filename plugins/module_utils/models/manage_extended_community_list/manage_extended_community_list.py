@@ -71,6 +71,13 @@ _GENERIC_EXTENDED_RE = re.compile(r"^[1-9]\d{0,9}:\d+$")
 _COMMUNITY_REGEX_RE = re.compile(r"^[^a-zA-Z~!#%@`;].*$")
 DEFAULT_TENANT_EXTENDED_COMMUNITY_LIST_NAME_MAX_LENGTH = 63
 TENANT_EXTENDED_COMMUNITY_LIST_API_NAME_MAX_LENGTH = 115
+_STANDARD_EMPTY_COLLECTION_ALIASES = (
+    "routerMacCollection",
+    "routeTargetCollection",
+    "siteOfOriginCollection",
+    "transitiveGenericExtendedCollection",
+    "nonTransitiveGenericExtendedCollection",
+)
 
 
 class ExtendedCommunityListEntryModel(NDNestedModel):
@@ -279,6 +286,15 @@ class ExtendedCommunityListModel(NDBaseModel):
         data = super().to_payload(**kwargs)
         if self.tenant_name:
             data["name"] = self.api_name
+        return data
+
+    def to_diff_dict(self, **kwargs) -> dict[str, Any]:
+        """Ignore empty collection defaults ND adds to standard entry responses."""
+        data = super().to_diff_dict(**kwargs)
+        for entry in data.get("entries") or []:
+            for field_name in _STANDARD_EMPTY_COLLECTION_ALIASES:
+                if entry.get(field_name) == []:
+                    entry.pop(field_name)
         return data
 
     # ------------------------------------------------------------------

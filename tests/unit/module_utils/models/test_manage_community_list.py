@@ -189,3 +189,69 @@ def test_manage_community_list_00090() -> None:
     assert deleted.type is None
     assert without_state.entries is None
     assert complete.type == "standard"
+
+
+def test_manage_community_list_00100() -> None:
+    """Verify ND-added false defaults do not break merged-state idempotency."""
+    current = CommunityListModel.from_response(
+        {
+            "name": "CL1",
+            "type": "standard",
+            "entries": [
+                {
+                    "sequenceNumber": 10,
+                    "action": "permit",
+                    "communityNumbers": ["100:200"],
+                    "noAdvertise": False,
+                    "blackhole": False,
+                    "noExport": False,
+                    "internet": False,
+                    "gracefulShutdown": False,
+                    "localAsn": False,
+                },
+                {
+                    "sequenceNumber": 20,
+                    "action": "deny",
+                    "communityNumbers": [],
+                    "noAdvertise": False,
+                    "blackhole": False,
+                    "noExport": True,
+                    "internet": False,
+                    "gracefulShutdown": False,
+                    "localAsn": False,
+                },
+            ],
+        }
+    )
+    proposed = CommunityListModel.from_config(
+        {
+            "name": "CL1",
+            "type": "standard",
+            "entries": [
+                {"sequence_number": 10, "action": "permit", "community_numbers": ["100:200"]},
+                {"sequence_number": 20, "action": "deny", "no_export": True},
+            ],
+        }
+    )
+
+    assert current.get_diff(proposed, exclude_unset=True) is True
+
+
+def test_manage_community_list_00110() -> None:
+    """Verify explicitly clearing a true well-known flag still produces a diff."""
+    current = CommunityListModel.from_response(
+        {
+            "name": "CL1",
+            "type": "standard",
+            "entries": [{"sequenceNumber": 10, "action": "permit", "noExport": True}],
+        }
+    )
+    proposed = CommunityListModel.from_config(
+        {
+            "name": "CL1",
+            "type": "standard",
+            "entries": [{"sequence_number": 10, "action": "permit", "no_export": False}],
+        }
+    )
+
+    assert current.get_diff(proposed, exclude_unset=True) is False

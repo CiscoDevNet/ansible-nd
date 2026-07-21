@@ -191,3 +191,33 @@ def test_manage_extended_community_list_00090() -> None:
     assert deleted.type is None
     assert without_state.entries is None
     assert complete.type == "standard"
+
+
+def test_manage_extended_community_list_00100() -> None:
+    """Verify ND-added empty collection defaults do not break merged-state idempotency."""
+    current = ExtendedCommunityListModel.from_response(
+        {
+            "name": "ECL1",
+            "type": "standard",
+            "entries": [
+                {
+                    "sequenceNumber": 10,
+                    "action": "permit",
+                    "routeTargetCollection": ["65000:100"],
+                    "routerMacCollection": [],
+                    "siteOfOriginCollection": [],
+                    "transitiveGenericExtendedCollection": [],
+                    "nonTransitiveGenericExtendedCollection": [],
+                }
+            ],
+        }
+    )
+    proposed = ExtendedCommunityListModel.from_config(
+        {
+            "name": "ECL1",
+            "type": "standard",
+            "entries": [{"sequence_number": 10, "action": "permit", "route_target_collection": ["65000:100"]}],
+        }
+    )
+
+    assert current.get_diff(proposed, exclude_unset=True) is True
