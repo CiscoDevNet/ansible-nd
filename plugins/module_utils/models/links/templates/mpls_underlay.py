@@ -11,8 +11,12 @@ from .base import (
     InterfaceDescriptionsMixin,
     LinkTemplateBase,
     TtagMixin,
+    con,
     pd,
 )
+
+MPLS_FABRIC_TYPE_CHOICES = ("mplsLdp", "mplsSr")
+DCI_ROUTING_PROTOCOL_CHOICES = ("ospf", "is-is")
 
 
 class MplsUnderlayTemplateInputs(
@@ -24,16 +28,18 @@ class MplsUnderlayTemplateInputs(
 
     policy_type_marker: Literal["mplsUnderlay"] = Field(default="mplsUnderlay", exclude=True)
 
-    mpls_fabric_type: str | None = Field(default=None, alias="mplsFabricType")
-    dci_routing_protocol: str | None = Field(default=None, alias="dciRoutingProtocol")
-    dci_routing_tag: str | None = Field(default=None, alias="dciRoutingTag", json_schema_extra=pd("MPLS_UNDERLAY"))
+    mpls_fabric_type: str | None = Field(default=None, alias="mplsFabricType", json_schema_extra=con(choices=MPLS_FABRIC_TYPE_CHOICES, required=True))
+    dci_routing_protocol: str | None = Field(
+        default=None, alias="dciRoutingProtocol", json_schema_extra=con(choices=DCI_ROUTING_PROTOCOL_CHOICES, required=True)
+    )
+    dci_routing_tag: str | None = Field(default=None, alias="dciRoutingTag", json_schema_extra=pd("MPLS_UNDERLAY", required=True))
     ospf_area_id: str | None = Field(default=None, alias="ospfAreaId")
 
     sr_global_block_range: str | None = Field(default=None, alias="srGlobalBlockRange", json_schema_extra=pd("16000-23999"))
-    src_sr_index: int | None = Field(default=None, alias="srcSrIndex")
-    dst_sr_index: int | None = Field(default=None, alias="dstSrIndex")
+    src_sr_index: int | None = Field(default=None, alias="srcSrIndex", json_schema_extra=con(minimum=0, maximum=471804))
+    dst_sr_index: int | None = Field(default=None, alias="dstSrIndex", json_schema_extra=con(minimum=0, maximum=471804))
 
-    src_ip_address_mask: str | None = Field(default=None, alias="srcIpAddressMask")
-    dst_ip_address: str | None = Field(default=None, alias="dstIpAddress")
+    src_ip_address_mask: str | None = Field(default=None, alias="srcIpAddressMask", json_schema_extra=con(required=True))
+    dst_ip_address: str | None = Field(default=None, alias="dstIpAddress", json_schema_extra=con(required=True))
 
-    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216))
+    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216, minimum=576, maximum=9216))

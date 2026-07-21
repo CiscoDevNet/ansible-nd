@@ -285,12 +285,19 @@ def test_unsupported_policy_read_does_not_raise_and_is_flagged():
     assert raw.get("interfaceVrf") == "default"
 
 
-def test_supported_policy_with_unknown_field_falls_back_on_read():
-    """A supported policy carrying a field absent from its model is tolerated on read
-    (extra=forbid would otherwise abort the whole query)."""
+def test_supported_policy_with_unknown_field_stays_mutable_on_read():
+    """A supported policy carrying an extra response field must resolve to its real
+    policy model (mutable), NOT fall back to the opaque unsupported record. The
+    unknown key is dropped on read so extra=forbid does not misclassify the link
+    (mikewiebe finding: a valid preprovision link returning mtu/speed became immutable)."""
     link = NDLinkModel.from_response(_response_link("numbered", {"srcIp": "1.1.1.1", "someBrandNewField": "x"}))
-    assert link.is_unsupported_policy is True
+    assert link.is_unsupported_policy is False
     assert link.config_data.policy_type == "numbered"
+    assert type(link.config_data.template_inputs).__name__ == "NumberedTemplateInputs"
+    # the unknown key is dropped, the known one is kept
+    dumped = link.config_data.template_inputs.model_dump(by_alias=True)
+    assert dumped.get("srcIp") == "1.1.1.1"
+    assert "someBrandNewField" not in dumped
 
 
 def test_unsupported_policy_rejected_on_write():
@@ -426,11 +433,65 @@ def test_payload_keeps_user_orientation():
     assert payload["configData"]["templateInputs"]["srcIp"] == "10.0.0.2"
 
 
-def test_inter_fabric_identity_keeps_orientation():
-    """Inter-fabric links (distinct fabric roles) are not collapsed by orientation."""
+def test_inter_fabric_identity_is_orientation_independent():
+    """A physical inter-fabric cable (distinct fabrics) has one identity in either
+    orientation, so a reversed declaration is matched, not duplicated/missed/recreated."""
     a = _phys_link("X", "Ethernet1/1", "Y", "Ethernet1/1", src_fabric="f1", dst_fabric="f2")
     b = _phys_link("Y", "Ethernet1/1", "X", "Ethernet1/1", src_fabric="f2", dst_fabric="f1")
-    assert a.get_identifier_value() != b.get_identifier_value()
+    assert a.get_identifier_value() == b.get_identifier_value()
+
+
+def _ebgp_vrf_lite_link(src_sw, src_fabric, dst_sw, dst_fabric, template_inputs):
+    return NDLinkModel.from_response(
+        {
+            "srcClusterName": "c1",
+            "dstClusterName": "c1",
+            "srcFabricName": src_fabric,
+            "dstFabricName": dst_fabric,
+            "srcSwitchName": src_sw,
+            "dstSwitchName": dst_sw,
+            "srcInterfaceName": "Ethernet1/1",
+            "dstInterfaceName": "Ethernet1/1",
+            "configData": {"policyType": "ebgpVrfLite", "templateInputs": template_inputs},
+        }
+    )
+
+
+def test_reversed_inter_fabric_link_compares_equal():
+    """A reversed inter-fabric (VRF-lite) cable with its symmetric directional fields
+    correspondingly swapped (srcEbgpAsn/dstEbgpAsn, per-interface descriptions) shows
+    no diff, so merged stays idempotent across fabrics."""
+    fwd = _ebgp_vrf_lite_link(
+        "X",
+        "f1",
+        "Y",
+        "f2",
+        {"srcEbgpAsn": "100", "dstEbgpAsn": "200", "srcInterfaceDescription": "to-Y", "dstInterfaceDescription": "to-X"},
+    )
+    rev = _ebgp_vrf_lite_link(
+        "Y",
+        "f2",
+        "X",
+        "f1",
+        {"srcEbgpAsn": "200", "dstEbgpAsn": "100", "srcInterfaceDescription": "to-X", "dstInterfaceDescription": "to-Y"},
+    )
+    assert fwd.get_identifier_value() == rev.get_identifier_value()
+    assert fwd.to_diff_dict() == rev.to_diff_dict()
+
+
+def test_directional_pairs_are_policy_specific():
+    """The directional swap set is derived per policy from the model's own fields:
+    ebgpVrfLite pairs the symmetric srcEbgpAsn/dstEbgpAsn; numbered pairs srcIp/dstIp
+    and the dhcp/bfd per-interface toggles. The asymmetric srcIpAddressMask/dstIpAddress
+    pair is deliberately excluded (a value swap would move the mask to the wrong end)."""
+    ebgp = _ebgp_vrf_lite_link("X", "f1", "Y", "f2", {"srcEbgpAsn": "100", "dstEbgpAsn": "200"})
+    pairs = set(ebgp._template_directional_pairs())
+    assert ("srcEbgpAsn", "dstEbgpAsn") in pairs
+    assert ("srcIpAddressMask", "dstIpAddress") not in pairs  # asymmetric, intentionally not reoriented
+    numbered = _phys_link("X", "Ethernet1/1", "Y", "Ethernet1/1", {"srcIp": "1.1.1.1", "dstIp": "1.1.1.2"})
+    npairs = set(numbered._template_directional_pairs())
+    assert ("srcIp", "dstIp") in npairs
+    assert ("dhcpRelayOnSrcInterface", "dhcpRelayOnDstInterface") in npairs
 
 
 # ---------------------------------------------------------------------------
@@ -454,10 +515,74 @@ def _proposed_preprovision():
 
 
 def test_realized_preprovision_numbered_is_treated_as_unchanged():
-    """An existing numbered link (ND-realized) vs the original preprovision
-    declaration is no diff, so the module is idempotent and preserves ND values."""
-    existing = _phys_link("LEAF1", "Ethernet1/1", "SPINE1", "Ethernet1/1", {"srcIp": "10.4.0.1", "dstIp": "10.4.0.2"})
+    """Persistent intent: an ND-realized numbered link whose user-managed fields
+    already match the preprovision declaration is no diff, so the module is
+    idempotent and preserves ND-assigned addresses/numbered-only fields."""
+    existing = _phys_link(
+        "LEAF1",
+        "Ethernet1/1",
+        "SPINE1",
+        "Ethernet1/1",
+        {"srcIp": "10.4.0.1", "dstIp": "10.4.0.2", "srcInterfaceDescription": "planned"},
+    )
     assert existing.get_diff(_proposed_preprovision()) is True
+
+
+def test_realized_preprovision_user_field_change_is_a_diff():
+    """Persistent intent: after realization, a change to a user-managed field
+    (interface description) in the preprovision declaration is a real diff, so the
+    module updates it instead of silently ignoring the edit."""
+    existing = _phys_link(
+        "LEAF1",
+        "Ethernet1/1",
+        "SPINE1",
+        "Ethernet1/1",
+        {"srcIp": "10.4.0.1", "dstIp": "10.4.0.2", "srcInterfaceDescription": "planned"},
+    )
+    assert existing.get_diff(_proposed_preprovision()) is True
+    # Change the declared description -> now a diff.
+    changed = NDLinkModel.from_config(
+        {
+            "src_fabric_name": "f1",
+            "dst_fabric_name": "f1",
+            "src_switch_name": "LEAF1",
+            "dst_switch_name": "SPINE1",
+            "src_interface_name": "Ethernet1/1",
+            "dst_interface_name": "Ethernet1/1",
+            "config_data": {"policy_type": "preprovision", "template_inputs": {"src_interface_description": "updated"}},
+        },
+        context={"state": "merged"},
+    )
+    assert existing.get_diff(changed) is False  # False == has a diff
+
+
+def test_realized_preprovision_merge_stays_numbered_and_applies_user_field():
+    """Persistent intent: merging the changed preprovision declaration onto the
+    realized link keeps it numbered (a valid PUT, not a rejected policy change),
+    preserves ND-assigned addresses, and applies the new interface description."""
+    existing = _phys_link(
+        "LEAF1",
+        "Ethernet1/1",
+        "SPINE1",
+        "Ethernet1/1",
+        {"srcIp": "10.4.0.1", "dstIp": "10.4.0.2", "srcInterfaceDescription": "planned"},
+    )
+    changed = NDLinkModel.from_config(
+        {
+            "src_fabric_name": "f1",
+            "dst_fabric_name": "f1",
+            "src_switch_name": "LEAF1",
+            "dst_switch_name": "SPINE1",
+            "src_interface_name": "Ethernet1/1",
+            "dst_interface_name": "Ethernet1/1",
+            "config_data": {"policy_type": "preprovision", "template_inputs": {"src_interface_description": "updated"}},
+        },
+        context={"state": "merged"},
+    )
+    merged = existing.merge(changed)
+    assert merged.config_data.policy_type == "numbered"  # stays numbered (no policy change)
+    assert merged.config_data.template_inputs.src_interface_description == "updated"  # user field applied
+    assert merged.config_data.template_inputs.src_ip == "10.4.0.1"  # ND-assigned address preserved
 
 
 def test_non_realized_policy_difference_still_diffs():
@@ -528,6 +653,108 @@ def test_argument_spec_omits_read_only_link_type():
     linkPost) so it is not a settable option."""
     spec = NDLinkModel.get_argument_spec()
     assert "link_type" not in spec["config"]["options"]
+
+
+def test_argument_spec_requires_identity_fields():
+    """Fabric and interface names on both ends are required within each config item
+    (mandatory identity), while top-level config stays optional so gathered runs."""
+    spec = NDLinkModel.get_argument_spec()
+    options = spec["config"]["options"]
+    for name in ("src_fabric_name", "dst_fabric_name", "src_interface_name", "dst_interface_name"):
+        assert options[name].get("required") is True, name
+    assert spec["config"].get("required") is not True  # top-level config optional (gathered)
+
+
+# ---------------------------------------------------------------------------
+# Write-contract enforcement (OpenAPI): strict on write, tolerant on read
+# ---------------------------------------------------------------------------
+
+
+def _write_config(policy_type, template_inputs, state="merged"):
+    return NDLinkModel.from_config(
+        {
+            "src_fabric_name": "f1",
+            "dst_fabric_name": "f1",
+            "src_switch_name": "a",
+            "dst_switch_name": "b",
+            "src_interface_name": "Ethernet1/1",
+            "dst_interface_name": "Ethernet1/1",
+            "config_data": {"policy_type": policy_type, "template_inputs": template_inputs},
+        },
+        context={"state": state},
+    )
+
+
+def test_out_of_range_mtu_rejected_on_write():
+    """mtu below the OpenAPI minimum fails at the Ansible boundary, before check mode
+    proposes a change or any request is sent (mikewiebe: mtu 0 reached ND and blocked delete)."""
+    with pytest.raises(ValidationError):
+        _write_config("numbered", {"mtu": 0})
+
+
+def test_invalid_speed_enum_rejected_on_write():
+    """An invalid speed enum fails on write instead of only at the controller."""
+    with pytest.raises(ValidationError):
+        _write_config("numbered", {"speed": "invalid-speed"})
+
+
+def test_description_over_max_length_rejected_on_write():
+    """Interface description longer than 254 chars fails on write."""
+    with pytest.raises(ValidationError):
+        _write_config("numbered", {"srcInterfaceDescription": "x" * 255})
+
+
+def test_required_asn_missing_rejected_on_write():
+    """ebgpVrfLite requires srcEbgpAsn/dstEbgpAsn (no default), so omitting them fails on write."""
+    with pytest.raises(ValidationError):
+        _write_config("ebgpVrfLite", {})
+
+
+def test_required_asn_present_ok_on_write():
+    """ebgpVrfLite with the required ASNs validates on write."""
+    link = _write_config("ebgpVrfLite", {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002"})
+    assert link.config_data.template_inputs.src_ebgp_asn == "65001"
+
+
+def test_required_field_with_default_not_forced_on_write():
+    """mtu is required by the spec but carries a documented default, so the module
+    supplies it and the user is not forced to provide it (no false rejection)."""
+    link = _write_config("numbered", {"speed": "auto"})
+    assert link.config_data.policy_type == "numbered"
+
+
+def test_out_of_range_and_bad_enum_tolerated_on_read():
+    """Controller reads stay tolerant: an already-invalid ND record (mtu 0, unknown
+    speed) is still gathered so it can be inspected and repaired/deleted."""
+    link = NDLinkModel.from_response(_response_link("numbered", {"mtu": 0, "speed": "weird"}))
+    assert link.is_unsupported_policy is False
+    assert link.config_data.template_inputs.mtu == 0
+    assert link.config_data.template_inputs.speed == "weird"
+
+
+def test_multisite_overlay_accepts_macsec_fields_on_write():
+    """multisiteOverlay now models the macsec/qkd fields (previously missing), so a
+    write that sets them validates instead of being rejected as unknown."""
+    link = _write_config(
+        "multisiteOverlay",
+        {
+            "srcEbgpAsn": "65001",
+            "dstEbgpAsn": "65002",
+            "srcIpAddress": "10.0.0.1",
+            "dstIpAddress": "10.0.0.2",
+            "macsec": True,
+            "macsecPrimaryKeyString": "s3cret",
+        },
+    )
+    assert type(link.config_data.template_inputs).__name__ == "MultisiteOverlayTemplateInputs"
+    assert link.config_data.template_inputs.macsec is True
+
+
+def test_layer2dci_ttag_field_removed():
+    """inheritTtagFabricSetting is not in the OpenAPI layer2DciConfig schema, so it is
+    no longer a layer2Dci field and is rejected as unknown on write."""
+    with pytest.raises(ValidationError):
+        _write_config("layer2Dci", {"inheritTtagFabricSetting": True})
 
 
 def test_link_type_still_read_from_response():

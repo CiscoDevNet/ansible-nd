@@ -8,11 +8,13 @@ from typing import Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 
 from .base import (
+    BGP_AUTH_KEY_ENCRYPTION_CHOICES,
     InterfaceDescriptionsMixin,
     LinkTemplateBase,
     MacsecFullMixin,
     QkdMixin,
     TtagMixin,
+    con,
     pd,
 )
 
@@ -28,15 +30,15 @@ class EbgpVrfLiteTemplateInputs(
 
     policy_type_marker: Literal["ebgpVrfLite"] = Field(default="ebgpVrfLite", exclude=True)
 
-    src_ebgp_asn: str | None = Field(default=None, alias="srcEbgpAsn")
-    dst_ebgp_asn: str | None = Field(default=None, alias="dstEbgpAsn")
+    src_ebgp_asn: str | None = Field(default=None, alias="srcEbgpAsn", json_schema_extra=con(required=True))
+    dst_ebgp_asn: str | None = Field(default=None, alias="dstEbgpAsn", json_schema_extra=con(required=True))
 
     src_ip_address_mask: str | None = Field(default=None, alias="srcIpAddressMask")
     src_ipv6_address_mask: str | None = Field(default=None, alias="srcIpv6AddressMask")
     dst_ip_address: str | None = Field(default=None, alias="dstIpAddress")
     dst_ipv6_address: str | None = Field(default=None, alias="dstIpv6Address")
 
-    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216))
+    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216, minimum=576, maximum=9216))
     routing_tag: str | None = Field(default=None, alias="routingTag")
 
     auto_gen_config_default_vrf: bool | None = Field(default=None, alias="autoGenConfigDefaultVrf", json_schema_extra=pd(False))
@@ -47,7 +49,7 @@ class EbgpVrfLiteTemplateInputs(
 
     default_vrf_ebgp_neighbor_password: str | None = Field(default=None, alias="defaultVrfEbgpNeighborPassword", json_schema_extra={"secret": True})
     default_vrf_ebgp_password_key_encryption_type: str | None = Field(
-        default=None, alias="defaultVrfEbgpPasswordKeyEncryptionType", json_schema_extra=pd("3des")
+        default=None, alias="defaultVrfEbgpPasswordKeyEncryptionType", json_schema_extra=pd("3des", choices=BGP_AUTH_KEY_ENCRYPTION_CHOICES)
     )
     redistrib_ebgp_route_map_name: str | None = Field(default=None, alias="redistribEbgpRouteMapName")
     template_config_gen_peer: str | None = Field(default=None, alias="templateConfigGenPeer", json_schema_extra=pd("Ext_VRF_Lite_Jython"))

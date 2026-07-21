@@ -8,6 +8,7 @@ from typing import Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 
 from .base import (
+    SPEED_CHOICES,
     InterfaceDescriptionsMixin,
     LinkTemplateBase,
     MacsecFullMixin,
@@ -38,8 +39,8 @@ class Layer3DciVrfLiteTemplateInputs(
     src_vrf_name: str | None = Field(default=None, alias="srcVrfName")
     dst_vrf_name: str | None = Field(default=None, alias="dstVrfName")
 
-    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216))
-    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto"))
+    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216, minimum=576, maximum=9216))
+    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto", choices=SPEED_CHOICES))
 
     ip_redirects: bool | None = Field(default=None, alias="ipRedirects", json_schema_extra=pd(False))
     ipv4_pim: bool | None = Field(default=None, alias="ipv4Pim", json_schema_extra=pd(False))

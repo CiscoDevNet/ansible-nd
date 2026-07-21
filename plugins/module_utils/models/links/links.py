@@ -35,14 +35,18 @@ class LinkConfigDataModel(NDNestedModel):
     @model_validator(mode="wrap")
     @classmethod
     def _tolerate_unsupported_on_read(cls, data: Any, handler: Any, info: Any) -> LinkConfigDataModel:
-        """Preserve unsupported/odd controller links instead of aborting the read.
+        """Preserve genuinely unsupported controller links instead of aborting the read.
 
-        Strict parsing (discriminated union + ``extra="forbid"``) is kept for user
-        input -- write states thread ``context["state"]`` through validation -- so
-        bad config still fails fast. On a controller read (no state), a policy type
-        this module does not model, or a supported policy carrying a field absent
-        from its local model, is captured as an opaque ``UnsupportedTemplateInputs``
+        Strict parsing (discriminated union + write-contract validation) is kept for
+        user input -- write states thread ``context["state"]`` -- so bad config still
+        fails fast. On a controller read a policy type this module does not model
+        (no matching discriminator) is captured as an opaque ``UnsupportedTemplateInputs``
         record rather than raising ``ValidationError`` and aborting ``query_all``.
+
+        A *supported* policy carrying extra or out-of-range response fields no longer
+        reaches this fallback: ``LinkTemplateBase._drop_unknown_on_read`` strips unknown
+        keys on reads and the write-contract checks are skipped for responses, so such a
+        link resolves to its real policy model and stays mutable.
         """
         try:
             return handler(data)
@@ -195,14 +199,23 @@ class NDLinkModel(NDBaseModel):
         identity = self.link_id or self.get_identifier_value()
         return "Link {0} uses unsupported policy type '{1}'".format(identity, policy_type)
 
-    # --- Orientation independence (intra-fabric physical links) ---------------
-    # A physical intra-fabric link has no inherent direction: ND can return it
-    # with the endpoints reversed relative to the playbook. For such links the
-    # identity is made order-independent and the diff view is canonicalized, so a
-    # reversed link is matched (not duplicated on merged, found on deleted, not
-    # delete+recreated on overridden) and compares equal. Inter-fabric links
-    # (VRF lite, DCI, multisite) keep their orientation -- there src/dst are
-    # distinct fabric roles and some directional fields are asymmetric.
+    # --- Orientation independence (physical links, intra- and inter-fabric) ----
+    # A physical link has no inherent direction: ND can return it with the
+    # endpoints reversed relative to the playbook, whether the two ends are in the
+    # same fabric (numbered/unnumbered) or different fabrics (VRF lite, DCI,
+    # multisite, MPLS). For every link the identity is made order-independent and
+    # the diff view is canonicalized, so a reversed cable is matched (not duplicated
+    # on merged, found on deleted, not delete+recreated on overridden) and compares
+    # equal. Payloads keep the user's orientation; canonicalization is comparison
+    # only. The directional template pairs are derived per policy from the model's
+    # own fields, so each policy gets its own src/dst set.
+    #
+    # Known limitation: a few inter-fabric policies pair a masked source address
+    # with a plain destination (srcIpAddressMask / dstIpAddress); the mask lives on
+    # the field, not the endpoint, so a value swap would move it to the wrong end.
+    # Those asymmetric address fields are deliberately NOT reoriented -- identity is
+    # still orientation-independent, but declare such a link in ND's orientation to
+    # stay idempotent on the addressing fields.
 
     _IDENTITY_ALIAS_PAIRS: ClassVar[list] = [
         ("srcClusterName", "dstClusterName"),
@@ -210,17 +223,38 @@ class NDLinkModel(NDBaseModel):
         ("srcSwitchName", "dstSwitchName"),
         ("srcInterfaceName", "dstInterfaceName"),
     ]
-    _TEMPLATE_DIRECTIONAL_ALIAS_PAIRS: ClassVar[list] = [
-        ("srcIp", "dstIp"),
-        ("srcIpv6", "dstIpv6"),
-        ("srcInterfaceDescription", "dstInterfaceDescription"),
-        ("srcInterfaceConfig", "dstInterfaceConfig"),
-        ("dhcpRelayOnSrcInterface", "dhcpRelayOnDstInterface"),
-        ("bfdEchoOnSrcInterface", "bfdEchoOnDstInterface"),
-    ]
 
-    def _is_intra_fabric(self) -> bool:
-        return bool(self.src_fabric_name) and self.src_fabric_name == self.dst_fabric_name
+    @staticmethod
+    def _dst_counterpart(alias: str) -> str | None:
+        """The destination alias paired with a source-side alias, or None.
+
+        Handles a leading ``src`` prefix (``srcIp`` -> ``dstIp``) and an infix
+        ``Src`` (``dhcpRelayOnSrcInterface`` -> ``dhcpRelayOnDstInterface``). Only a
+        clean src<->dst rename is treated as directional, so asymmetric address/mask
+        pairs (whose two aliases are not a rename of each other) are left alone.
+        """
+        if alias.startswith("src"):
+            return "dst" + alias[3:]
+        if "Src" in alias:
+            return alias.replace("Src", "Dst")
+        return None
+
+    def _template_directional_pairs(self) -> list:
+        """The (srcAlias, dstAlias) template-input pairs to swap when this link is
+        reversed, derived from this link's own policy model so each policy gets its
+        own directional set (every symmetric src/dst field the model declares)."""
+        template_inputs = getattr(self.config_data, "template_inputs", None)
+        if template_inputs is None:
+            return []
+        aliases = {(field_info.alias or name) for name, field_info in type(template_inputs).model_fields.items()}
+        pairs: list = []
+        paired: set = set()
+        for alias in sorted(aliases):
+            counterpart = self._dst_counterpart(alias)
+            if counterpart and counterpart != alias and counterpart in aliases and alias not in paired and counterpart not in paired:
+                pairs.append((alias, counterpart))
+                paired.update((alias, counterpart))
+        return pairs
 
     def _endpoints(self) -> tuple:
         ids = self.identifiers or []
@@ -233,10 +267,11 @@ class NDLinkModel(NDBaseModel):
         return tuple("" if value is None else str(value) for value in endpoint)
 
     def get_identifier_value(self) -> Any:
-        """Composite identity, made orientation-independent for intra-fabric links."""
-        if not self._is_intra_fabric():
-            return super().get_identifier_value()
+        """Composite identity, made orientation-independent for every physical link
+        (intra- and inter-fabric) so a reversed cable resolves to one identity."""
         src, dst = self._endpoints()
+        if not any(src) and not any(dst):
+            return super().get_identifier_value()
         low, high = sorted((src, dst), key=self._endpoint_key)
         return low + high
 
@@ -254,14 +289,13 @@ class NDLinkModel(NDBaseModel):
             data[second] = first_value
 
     def _canonicalize_orientation(self, data: dict[str, Any]) -> None:
-        """Reorient a diff dict to a canonical endpoint order (intra-fabric only).
+        """Reorient a diff dict to a canonical endpoint order for any physical link.
 
-        Comparison-only: payloads keep the user's orientation. Because both
-        existing and proposed links canonicalize identically, a reversed physical
-        link compares equal instead of showing a spurious change.
+        Comparison-only: payloads keep the user's orientation. Because both existing
+        and proposed links canonicalize identically, a reversed cable compares equal
+        instead of showing a spurious change. Both the endpoint identity fields and
+        the policy's directional template fields are swapped.
         """
-        if not self._is_intra_fabric():
-            return
         src, dst = self._endpoints()
         if self._endpoint_key(src) <= self._endpoint_key(dst):
             return  # already in canonical order
@@ -269,8 +303,19 @@ class NDLinkModel(NDBaseModel):
             self._swap_keys(data, first, second)
         template_inputs = (data.get("configData") or {}).get("templateInputs")
         if isinstance(template_inputs, dict):
-            for first, second in self._TEMPLATE_DIRECTIONAL_ALIAS_PAIRS:
+            for first, second in self._template_directional_pairs():
                 self._swap_keys(template_inputs, first, second)
+
+    # User-managed interface fields that survive the preprovision->numbered
+    # realization: after ND converts the link, the preprovision declaration still
+    # governs these (persistent declarative intent). ND-assigned addresses and
+    # numbered-only fields are preserved and never compared against the declaration.
+    _PREPROVISION_MANAGED_FIELDS: ClassVar[tuple] = (
+        "src_interface_description",
+        "dst_interface_description",
+        "src_interface_config",
+        "dst_interface_config",
+    )
 
     def _is_realized_preprovision_of(self, other: Any) -> bool:
         """True when ``self`` (existing, from ND) is the realized ``numbered`` form
@@ -278,24 +323,63 @@ class NDLinkModel(NDBaseModel):
 
         After a planned ``preprovision`` link comes up and ND runs
         Save/Recalculate, ND converts it to a ``numbered`` link with
-        controller-assigned addresses. Reapplying the unchanged ``preprovision``
-        source must recognise this expected lifecycle rather than treating it as a
-        policy change.
+        controller-assigned addresses. Reapplying the ``preprovision`` source must
+        recognise this expected lifecycle rather than treating it as a policy change.
         """
         self_policy = getattr(self.config_data, "policy_type", None)
         other_policy = getattr(getattr(other, "config_data", None), "policy_type", None)
         return self_policy == "numbered" and other_policy == "preprovision"
 
-    def get_diff(self, other: Any, exclude_unset: bool = False) -> bool:
-        """Diff comparison, treating a realized preprovision->numbered link as unchanged.
+    def _preprovision_managed_fields_match(self, other: Any) -> bool:
+        """True when every user-managed field the proposed ``preprovision`` declaration
+        actually set already matches this realized ``numbered`` link.
 
-        Returns True (no diff) so the module keeps ND's realized ``numbered`` link
-        and its assigned values, stays idempotent, and never tries to convert it
-        back to ``preprovision``.
+        Only fields the user explicitly declared are compared (merged semantics), so
+        an omitted field is never a change. ND-assigned addresses and numbered-only
+        fields are ignored entirely.
+        """
+        existing_ti = getattr(self.config_data, "template_inputs", None)
+        proposed_ti = getattr(getattr(other, "config_data", None), "template_inputs", None)
+        declared = getattr(proposed_ti, "model_fields_set", set())
+        for field_name in self._PREPROVISION_MANAGED_FIELDS:
+            if field_name not in declared:
+                continue
+            if getattr(existing_ti, field_name, None) != getattr(proposed_ti, field_name, None):
+                return False
+        return True
+
+    def get_diff(self, other: Any, exclude_unset: bool = False) -> bool:
+        """Diff comparison.
+
+        Persistent-intent lifecycle for a realized ``preprovision``->``numbered`` link:
+        the link stays ``numbered`` on ND, but the ``preprovision`` declaration still
+        governs the interface description/config fields. Report no diff only when those
+        user-managed fields are unchanged; a later edit to one of them is a real change
+        (so the module keeps ND's realized numbered link and its assigned addresses,
+        yet still applies description/config updates).
         """
         if self._is_realized_preprovision_of(other):
-            return True
+            return self._preprovision_managed_fields_match(other)
         return super().get_diff(other, exclude_unset=exclude_unset)
+
+    def merge(self, other: Any) -> "NDBaseModel":
+        """Merge a proposed declaration into this existing link.
+
+        For a realized ``preprovision``->``numbered`` link, overlay only the
+        user-managed interface description/config fields onto the existing
+        ``numbered`` link and keep it ``numbered``, so the resulting update is a valid
+        ``numbered`` PUT that preserves ND-assigned addresses and numbered-only fields
+        (never a rejected policy change). Every other case uses the standard merge.
+        """
+        if self._is_realized_preprovision_of(other):
+            existing_ti = self.config_data.template_inputs
+            proposed_ti = getattr(other.config_data, "template_inputs", None)
+            declared = getattr(proposed_ti, "model_fields_set", set())
+            for field_name in self._PREPROVISION_MANAGED_FIELDS:
+                if field_name in declared:
+                    setattr(existing_ti, field_name, getattr(proposed_ti, field_name, None))
+            return self
+        return super().merge(other)
 
     @classmethod
     def collect_secret_values(cls, config_item: dict[str, Any]) -> set[str]:
@@ -416,12 +500,20 @@ class NDLinkModel(NDBaseModel):
                 options=dict(
                     src_cluster_name=dict(type="str"),
                     dst_cluster_name=dict(type="str"),
-                    src_fabric_name=dict(type="str"),
-                    dst_fabric_name=dict(type="str"),
+                    # Fabric and interface names on both ends are mandatory parts of
+                    # every link's composite identity (Manage and OneManage). Requiring
+                    # them here fails an incomplete item early at the Ansible boundary
+                    # with a field-specific message, instead of later with an
+                    # implementation-oriented composite-identifier exception. The
+                    # top-level ``config`` stays optional so ``state: gathered`` (no
+                    # config) still runs. Cluster identity for OneManage is scope
+                    # dependent and validated at runtime once ``link_scope`` resolves.
+                    src_fabric_name=dict(type="str", required=True),
+                    dst_fabric_name=dict(type="str", required=True),
                     src_switch_name=dict(type="str"),
                     dst_switch_name=dict(type="str"),
-                    src_interface_name=dict(type="str"),
-                    dst_interface_name=dict(type="str"),
+                    src_interface_name=dict(type="str", required=True),
+                    dst_interface_name=dict(type="str", required=True),
                     src_switch_id=dict(type="str"),
                     dst_switch_id=dict(type="str"),
                     src_switch_ip=dict(type="str"),

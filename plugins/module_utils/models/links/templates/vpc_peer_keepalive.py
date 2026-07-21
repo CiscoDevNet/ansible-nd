@@ -26,4 +26,4 @@ class VpcPeerKeepaliveTemplateInputs(
     interface_vrf: str | None = Field(default=None, alias="interfaceVrf")
 
     interface_admin_state: bool | None = Field(default=None, alias="interfaceAdminState", json_schema_extra=pd(True))
-    mtu: int | None = Field(default=None, alias="mtu", json_schema_extra=pd(9216))
+    mtu: int | None = Field(default=None, alias="mtu", json_schema_extra=pd(9216, minimum=576, maximum=9216))

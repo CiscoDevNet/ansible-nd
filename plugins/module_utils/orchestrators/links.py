@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Sequence
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
@@ -206,7 +206,46 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         if model_instance.config_data and model_instance.config_data.policy_type:
             proposed_policy = model_instance.config_data.policy_type
 
-        return proposed_policy is not None and proposed_policy != existing_policy
+        if proposed_policy is None or proposed_policy == existing_policy:
+            return False
+
+        # Realized preprovision is not a policy change: ND converts a planned
+        # preprovision link to numbered, and reapplying the preprovision declaration
+        # keeps it numbered (persistent intent, updating only the user-managed
+        # interface fields). Allow it through instead of rejecting the update.
+        if existing_policy == "numbered" and proposed_policy == "preprovision":
+            return False
+
+        return True
+
+    def _raise_if_policy_type_change(self, model_instance: NDLinkModel) -> None:
+        """Raise if this update would change ``policy_type`` on an existing link.
+
+        ND rejects a cross-policy PUT (the link must be deleted and recreated), so
+        this must fail before any mutation. Called from :meth:`preflight` (which the
+        state machine runs in BOTH check and normal mode) so a dry-run cannot report
+        a transition as a valid change; also kept in :meth:`update` as defense in
+        depth for direct callers.
+        """
+        if not self._is_policy_type_change(model_instance):
+            return
+        composite_key = model_instance.get_identifier_value()
+        existing_policy = self._existing_by_key.get(composite_key)
+        proposed_policy = model_instance.config_data.policy_type
+        raise Exception(
+            "Cannot change policy_type from '{0}' to '{1}' on existing link {2}. "
+            "ND requires deleting the link first and recreating with the new "
+            "policy_type. Run this module with state=deleted for this link, "
+            "then re-run with state=merged.".format(existing_policy, proposed_policy, composite_key)
+        )
+
+    def preflight(self, model_instances: Sequence[NDLinkModel]) -> None:
+        """Pre-mutation validation run by the state machine in both check and normal
+        mode. Rejects cross-policy transitions here so check mode is a reliable
+        preflight gate rather than approving a change that normal mode will reject.
+        """
+        for model_instance in model_instances:
+            self._raise_if_policy_type_change(model_instance)
 
     def create(self, model_instance: NDLinkModel, **kwargs: Any) -> ResponseType:
         """Single create delegates to the bulk path (ND only exposes bulk POST)."""
@@ -232,16 +271,9 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
 
     def update(self, model_instance: NDLinkModel, **kwargs: Any) -> ResponseType:
         """PUT /links/{linkId}; rejects cross policy updates (needs delete and recreate)."""
-        if self._is_policy_type_change(model_instance):
-            composite_key = model_instance.get_identifier_value()
-            existing_policy = self._existing_by_key.get(composite_key)
-            proposed_policy = model_instance.config_data.policy_type
-            raise Exception(
-                "Cannot change policy_type from '{0}' to '{1}' on existing link {2}. "
-                "ND requires deleting the link first and recreating with the new "
-                "policy_type. Run this module with state=deleted for this link, "
-                "then re-run with state=merged.".format(existing_policy, proposed_policy, composite_key)
-            )
+        # Primary enforcement is in preflight (runs in both modes); this is defense
+        # in depth for any direct caller that bypasses the state machine.
+        self._raise_if_policy_type_change(model_instance)
 
         try:
             link_id = self._resolve_link_id(model_instance)

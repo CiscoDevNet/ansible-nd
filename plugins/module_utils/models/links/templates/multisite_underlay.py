@@ -8,10 +8,12 @@ from typing import Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 
 from .base import (
+    SPEED_CHOICES,
     EbgpPasswordMixin,
     InterfaceDescriptionsMixin,
     LinkTemplateBase,
     TtagMixin,
+    con,
     pd,
 )
 
@@ -26,11 +28,11 @@ class MultisiteUnderlayTemplateInputs(
 
     policy_type_marker: Literal["multisiteUnderlay"] = Field(default="multisiteUnderlay", exclude=True)
 
-    src_ebgp_asn: str | None = Field(default=None, alias="srcEbgpAsn")
-    dst_ebgp_asn: str | None = Field(default=None, alias="dstEbgpAsn")
+    src_ebgp_asn: str | None = Field(default=None, alias="srcEbgpAsn", json_schema_extra=con(required=True))
+    dst_ebgp_asn: str | None = Field(default=None, alias="dstEbgpAsn", json_schema_extra=con(required=True))
     ebgp_bfd: bool | None = Field(default=None, alias="ebgpBfd", json_schema_extra=pd(False))
     ebgp_log_neighbor_change: bool | None = Field(default=None, alias="ebgpLogNeighborChange", json_schema_extra=pd(False))
-    ebgp_maximum_paths: int | None = Field(default=None, alias="ebgpMaximumPaths", json_schema_extra=pd(64))
+    ebgp_maximum_paths: int | None = Field(default=None, alias="ebgpMaximumPaths", json_schema_extra=pd(64, minimum=1, maximum=64))
     ebgp_send_comboth: bool | None = Field(default=None, alias="ebgpSendComboth", json_schema_extra=pd(False))
 
     src_ip_address_mask: str | None = Field(default=None, alias="srcIpAddressMask")
@@ -38,8 +40,8 @@ class MultisiteUnderlayTemplateInputs(
     dst_ip_address: str | None = Field(default=None, alias="dstIpAddress")
     dst_ipv6_address: str | None = Field(default=None, alias="dstIpv6Address")
 
-    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216))
-    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto"))
+    link_mtu: int | None = Field(default=None, alias="linkMtu", json_schema_extra=pd(9216, minimum=576, maximum=9216))
+    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto", choices=SPEED_CHOICES))
     routing_tag: str | None = Field(default=None, alias="routingTag")
 
     dci_tracking_enable_flag: bool | None = Field(default=None, alias="dciTrackingEnableFlag", json_schema_extra=pd(False))

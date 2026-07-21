@@ -20,32 +20,51 @@ from __future__ import annotations
 
 from typing import Any
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, Field
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, Field, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
 # Sentinel: a field with no documented ND default (sent as a typed empty when unset).
 _NO_DEFAULT = object()
 
+# Shared OpenAPI enum value sets (links_spec.json). Reused across policy types.
+SPEED_CHOICES = ("auto", "10Mb", "100Mb", "1Gb", "2.5Gb", "5Gb", "10Gb", "25Gb", "40Gb", "50Gb", "100Gb", "200Gb", "400Gb", "800Gb")
+FEC_CHOICES = ("auto", "fcFec", "off", "rsCons16", "rsFec", "rsIeee")
+BGP_AUTH_KEY_ENCRYPTION_CHOICES = ("3des", "type6", "type7")
+
 
 def pd(default: Any, **extra: Any) -> dict[str, Any]:
-    """Build a ``json_schema_extra`` dict tagging a field's documented ND default."""
+    """Build a ``json_schema_extra`` dict tagging a field's documented ND default,
+    plus any write-contract constraints (``choices``/``minimum``/``maximum``/
+    ``max_length``/``required``) enforced by :meth:`LinkTemplateBase._enforce_write_contract`.
+    """
     return {"payload_default": default, **extra}
 
 
+def con(**extra: Any) -> dict[str, Any]:
+    """Like :func:`pd` but for a field with no documented ND default: carries only
+    write-contract constraints (``choices``/``minimum``/``maximum``/``max_length``/
+    ``required``). Used where the OpenAPI spec constrains a field but gives no default.
+    """
+    return dict(extra)
+
+
 class InterfaceBasicsMixin(BaseModel):
-    """Common interface level settings shared by most policy types."""
+    """Common interface level settings shared by the intra-fabric addressed policies
+    (numbered, unnumbered, ipv6LinkLocal). ``mtu`` is required by the OpenAPI write
+    contract for all three; the module still fills the documented default (9216) when
+    the user omits it, so requiredness only bites a field with no default."""
 
     interface_admin_state: bool | None = Field(default=None, alias="interfaceAdminState", json_schema_extra=pd(True))
-    mtu: int | None = Field(default=None, alias="mtu", json_schema_extra=pd(9216))
-    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto"))
-    fec: str | None = Field(default=None, alias="fec", json_schema_extra=pd("auto"))
+    mtu: int | None = Field(default=None, alias="mtu", json_schema_extra=pd(9216, minimum=576, maximum=9216, required=True))
+    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto", choices=SPEED_CHOICES))
+    fec: str | None = Field(default=None, alias="fec", json_schema_extra=pd("auto", choices=FEC_CHOICES))
 
 
 class InterfaceDescriptionsMixin(BaseModel):
     """Source/destination interface descriptions and freeform config strings."""
 
-    src_interface_description: str | None = Field(default=None, alias="srcInterfaceDescription")
-    dst_interface_description: str | None = Field(default=None, alias="dstInterfaceDescription")
+    src_interface_description: str | None = Field(default=None, alias="srcInterfaceDescription", json_schema_extra=con(max_length=254))
+    dst_interface_description: str | None = Field(default=None, alias="dstInterfaceDescription", json_schema_extra=con(max_length=254))
     src_interface_config: str | None = Field(default=None, alias="srcInterfaceConfig")
     dst_interface_config: str | None = Field(default=None, alias="dstInterfaceConfig")
 
@@ -88,14 +107,14 @@ class QkdMixin(BaseModel):
     ignore_certificate: bool | None = Field(default=None, alias="ignoreCertificate", json_schema_extra=pd(False))
     src_kme_server_ip: str | None = Field(default=None, alias="srcKmeServerIp")
     dst_kme_server_ip: str | None = Field(default=None, alias="dstKmeServerIp")
-    src_kme_server_port_number: int | None = Field(default=None, alias="srcKmeServerPortNumber")
-    dst_kme_server_port_number: int | None = Field(default=None, alias="dstKmeServerPortNumber")
+    src_kme_server_port_number: int | None = Field(default=None, alias="srcKmeServerPortNumber", json_schema_extra=con(minimum=0, maximum=65535))
+    dst_kme_server_port_number: int | None = Field(default=None, alias="dstKmeServerPortNumber", json_schema_extra=con(minimum=0, maximum=65535))
     src_macsec_key_chain_prefix: str | None = Field(default=None, alias="srcMacsecKeyChainPrefix")
     dst_macsec_key_chain_prefix: str | None = Field(default=None, alias="dstMacsecKeyChainPrefix")
-    src_qkd_profile_name: str | None = Field(default=None, alias="srcQkdProfileName")
-    dst_qkd_profile_name: str | None = Field(default=None, alias="dstQkdProfileName")
-    src_trustpoint_label: str | None = Field(default=None, alias="srcTrustpointLabel")
-    dst_trustpoint_label: str | None = Field(default=None, alias="dstTrustpointLabel")
+    src_qkd_profile_name: str | None = Field(default=None, alias="srcQkdProfileName", json_schema_extra=con(max_length=63))
+    dst_qkd_profile_name: str | None = Field(default=None, alias="dstQkdProfileName", json_schema_extra=con(max_length=63))
+    src_trustpoint_label: str | None = Field(default=None, alias="srcTrustpointLabel", json_schema_extra=con(max_length=64))
+    dst_trustpoint_label: str | None = Field(default=None, alias="dstTrustpointLabel", json_schema_extra=con(max_length=64))
 
 
 class EbgpPasswordMixin(BaseModel):
@@ -103,7 +122,9 @@ class EbgpPasswordMixin(BaseModel):
 
     enable_ebgp_password: bool | None = Field(default=None, alias="enableEbgpPassword", json_schema_extra=pd(True))
     ebgp_password: str | None = Field(default=None, alias="ebgpPassword", json_schema_extra={"secret": True})
-    ebgp_auth_key_encryption_type: str | None = Field(default=None, alias="ebgpAuthKeyEncryptionType", json_schema_extra=pd("3des"))
+    ebgp_auth_key_encryption_type: str | None = Field(
+        default=None, alias="ebgpAuthKeyEncryptionType", json_schema_extra=pd("3des", choices=BGP_AUTH_KEY_ENCRYPTION_CHOICES)
+    )
     inherit_ebgp_password_msd_settings: bool | None = Field(default=None, alias="inheritEbgpPasswordMsdSettings", json_schema_extra=pd(True))
 
 
@@ -132,6 +153,74 @@ class LinkTemplateBase(NDNestedModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_unknown_on_read(cls, data: Any, info: Any) -> Any:
+        """Keep controller reads tolerant of forward/legacy response fields.
+
+        ``extra="forbid"`` is the write-time guard that rejects a field belonging to
+        another policy. On a controller read (``from_response`` marks
+        ``source="response"``) that same strictness would misclassify a *supported*
+        policy carrying an extra response field as an opaque unsupported link (it once
+        did for a valid ``preprovision`` link returning ``mtu``/``speed``). Drop the
+        unknown keys on read only, so the link resolves to its real policy model and
+        stays mutable. Write input keeps every key, so ``extra="forbid"`` still
+        rejects a wrong field. ``extra="allow"`` models (userDefined) are exempt.
+        """
+        context = info.context or {}
+        if context.get("source") != "response" or not isinstance(data, dict):
+            return data
+        if cls.model_config.get("extra") == "allow":
+            return data
+        known = {"policy_type_marker"}
+        for field_name, field_info in cls.model_fields.items():
+            known.add(field_name)
+            if field_info.alias:
+                known.add(field_info.alias)
+        return {key: value for key, value in data.items() if key in known}
+
+    @model_validator(mode="after")
+    def _enforce_write_contract(self, info: Any) -> LinkTemplateBase:
+        """Enforce the OpenAPI write contract (required / enum / numeric bounds /
+        string length) on user writes only.
+
+        Write states thread ``context["state"]``; controller reads mark
+        ``source="response"``. Enforcement runs only for writes so invalid intent
+        fails before check mode proposes a change or any mutating request is sent,
+        while gathered stays tolerant of legacy / forward-compatible / already-invalid
+        controller records. A required field that carries a documented default is not
+        forced on the user (the payload fill supplies it); only a required field with
+        no default must be provided, otherwise it would be sent as a typed empty and
+        rejected by ND.
+        """
+        context = info.context or {}
+        if not context.get("state") or context.get("source") == "response":
+            return self
+        policy = getattr(self, "policy_type_marker", type(self).__name__)
+        for field_name, field_info in type(self).model_fields.items():
+            extra = field_info.json_schema_extra
+            if not isinstance(extra, dict):
+                continue
+            alias = field_info.alias or field_name
+            value = getattr(self, field_name, None)
+            if value is None:
+                if extra.get("required") and "payload_default" not in extra:
+                    raise ValueError("'{0}' is required for policy_type '{1}'.".format(alias, policy))
+                continue
+            choices = extra.get("choices")
+            if choices is not None and value not in choices:
+                raise ValueError("'{0}'={1!r} is not a valid choice for policy_type '{2}'. Valid choices: {3}.".format(alias, value, policy, list(choices)))
+            minimum = extra.get("minimum")
+            if minimum is not None and isinstance(value, int) and not isinstance(value, bool) and value < minimum:
+                raise ValueError("'{0}'={1} is below the minimum {2} for policy_type '{3}'.".format(alias, value, minimum, policy))
+            maximum = extra.get("maximum")
+            if maximum is not None and isinstance(value, int) and not isinstance(value, bool) and value > maximum:
+                raise ValueError("'{0}'={1} exceeds the maximum {2} for policy_type '{3}'.".format(alias, value, maximum, policy))
+            max_length = extra.get("max_length")
+            if max_length is not None and isinstance(value, str) and len(value) > max_length:
+                raise ValueError("'{0}' exceeds the maximum length of {1} characters for policy_type '{2}'.".format(alias, max_length, policy))
+        return self
 
     @classmethod
     def secret_field_keys(cls, by_alias: bool = True) -> set[str]:

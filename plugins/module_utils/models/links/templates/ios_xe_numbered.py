@@ -8,6 +8,7 @@ from typing import Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 
 from .base import (
+    SPEED_CHOICES,
     InterfaceDescriptionsMixin,
     LinkTemplateBase,
     pd,
@@ -30,5 +31,5 @@ class IosXeNumberedTemplateInputs(
     interface_admin_state: bool | None = Field(default=None, alias="interfaceAdminState", json_schema_extra=pd(True))
     src_ip: str | None = Field(default=None, alias="srcIp")
     dst_ip: str | None = Field(default=None, alias="dstIp")
-    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto"))
-    mtu: int | None = Field(default=None, alias="mtu", json_schema_extra=pd(9198))
+    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto", choices=SPEED_CHOICES))
+    mtu: int | None = Field(default=None, alias="mtu", json_schema_extra=pd(9198, minimum=1500, maximum=9198))

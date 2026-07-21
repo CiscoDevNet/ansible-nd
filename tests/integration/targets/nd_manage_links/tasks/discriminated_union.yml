@@ -160,7 +160,7 @@
           - policy_change_to_vrflite is failed
           - policy_change_to_vrflite.msg is search("policy_type")
 
-    - name: Reapply the original preprovision declaration over a realized (numbered) link
+    - name: Reapply a preprovision declaration over a realized (numbered) link (persistent intent applies the user field, no policy switch)
       cisco.nd.nd_manage_links:
         config:
           - src_fabric_name: '{{ test_fabric_numbered }}'
@@ -172,16 +172,42 @@
             config_data:
               policy_type: preprovision
               template_inputs:
-                src_interface_description: should not switch policy in place
+                src_interface_description: persistent intent applied on realized link
         state: merged
       register: preprovision_over_realized
 
-    - name: Verify the realized preprovision link is recognized and left as numbered (idempotent, no error)
+    # Persistent intent: the link stays numbered (no policy-switch error), and because the
+    # declared interface description differs from the realized link it is a real change and
+    # is applied as a numbered PUT (not a rejected policy change).
+    - name: Verify persistent intent recognizes the realized link, keeps it numbered, and applies the user field
       ansible.builtin.assert:
         that:
           - preprovision_over_realized is not failed
-          - preprovision_over_realized.changed == false
+          - preprovision_over_realized.changed == true
           - (preprovision_over_realized.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "numbered"
+
+    - name: Reapply the same preprovision declaration again (now idempotent under persistent intent)
+      cisco.nd.nd_manage_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_numbered }}'
+            dst_fabric_name: '{{ test_fabric_numbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: preprovision
+              template_inputs:
+                src_interface_description: persistent intent applied on realized link
+        state: merged
+      register: preprovision_over_realized_again
+
+    - name: Verify the second reapply is idempotent - still numbered, no change
+      ansible.builtin.assert:
+        that:
+          - preprovision_over_realized_again is not failed
+          - preprovision_over_realized_again.changed == false
+          - (preprovision_over_realized_again.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "numbered"
 
     - name: Clean up baseline numbered link
       cisco.nd.nd_manage_links:

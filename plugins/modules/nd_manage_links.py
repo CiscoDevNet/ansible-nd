@@ -64,11 +64,15 @@ options:
       src_fabric_name:
         description:
         - The name of the source fabric.
+        - Required within each O(config) item; it is a mandatory part of the link identity.
         type: str
+        required: true
       dst_fabric_name:
         description:
         - The name of the destination fabric.
+        - Required within each O(config) item; it is a mandatory part of the link identity.
         type: str
+        required: true
       src_switch_name:
         description:
         - The hostname of the source switch.
@@ -102,11 +106,15 @@ options:
       src_interface_name:
         description:
         - The name of the source interface, for example C(Ethernet1/1).
+        - Required within each O(config) item; it is a mandatory part of the link identity.
         type: str
+        required: true
       dst_interface_name:
         description:
         - The name of the destination interface, for example C(Ethernet1/1).
+        - Required within each O(config) item; it is a mandatory part of the link identity.
         type: str
+        required: true
       config_data:
         description:
         - The link policy configuration.
@@ -725,7 +733,10 @@ def determine_strategy(module: AnsibleModule) -> ManageLinkStrategy | OneManageL
         )
 
     if link_scope == "auto":
-        config = module.params.get("config", [])
+        # ``config`` is optional (e.g. ``state: gathered`` with no config); Ansible
+        # supplies the key with value None, so ``.get("config", [])`` returns None,
+        # not the []-fallback. Coalesce with ``or []`` before iterating.
+        config = module.params.get("config") or []
         has_cluster_fields = any(item.get("src_cluster_name") or item.get("dst_cluster_name") for item in config)
         if has_cluster_fields:
             return OneManageLinkStrategy(
@@ -736,6 +747,28 @@ def determine_strategy(module: AnsibleModule) -> ManageLinkStrategy | OneManageL
         return ManageLinkStrategy(fabric_name=fabric_name, cluster_name=cluster_name, ticket_id=ticket_id)
 
     module.fail_json(msg="Invalid link_scope: {0}".format(link_scope))
+
+
+def validate_scope_identity(module: AnsibleModule, strategy: ManageLinkStrategy | OneManageLinkStrategy | None) -> None:
+    """Validate scope-dependent link identity once ``link_scope`` is resolved.
+
+    The argspec marks the fabric and interface names required on every item (they
+    are identity for both scopes). Cluster names are identity only for OneManage,
+    so requiredness cannot be expressed statically in the argspec; enforce it here.
+    Fail early with a field-specific message instead of a late controller error.
+    ``state: gathered`` supplies no config, so it is naturally exempt.
+    """
+    if not isinstance(strategy, OneManageLinkStrategy):
+        return
+    for index, item in enumerate(module.params.get("config") or []):
+        if not isinstance(item, dict):
+            continue
+        missing = [name for name in ("src_cluster_name", "dst_cluster_name") if not item.get(name)]
+        if missing:
+            module.fail_json(
+                msg="config item {0} is missing OneManage identity field(s): {1}. "
+                "Source and destination cluster names are required in the one_manage scope.".format(index, ", ".join(missing))
+            )
 
 
 def main() -> None:
@@ -767,6 +800,7 @@ def main() -> None:
     try:
         strategy = determine_strategy(module)
         NDLinkModel.identifiers = strategy.identifier_fields
+        validate_scope_identity(module, strategy)
 
         sender = Sender()
         sender.ansible_module = module

@@ -7,7 +7,7 @@ from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 
-from .base import LinkTemplateBase
+from .base import LinkTemplateBase, con
 
 
 class MplsOverlayTemplateInputs(LinkTemplateBase):
@@ -15,6 +15,6 @@ class MplsOverlayTemplateInputs(LinkTemplateBase):
 
     policy_type_marker: Literal["mplsOverlay"] = Field(default="mplsOverlay", exclude=True)
 
-    src_ebgp_asn: str | None = Field(default=None, alias="srcEbgpAsn")
-    dst_ebgp_asn: str | None = Field(default=None, alias="dstEbgpAsn")
-    dst_ip_address: str | None = Field(default=None, alias="dstIpAddress")
+    src_ebgp_asn: str | None = Field(default=None, alias="srcEbgpAsn", json_schema_extra=con(required=True))
+    dst_ebgp_asn: str | None = Field(default=None, alias="dstEbgpAsn", json_schema_extra=con(required=True))
+    dst_ip_address: str | None = Field(default=None, alias="dstIpAddress", json_schema_extra=con(required=True))

@@ -14,6 +14,7 @@ both link scopes and the bulk per-item failure guard.
 from __future__ import annotations
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.models.links.links import NDLinkModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.links import NDLinkOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.manage_link import ManageLinkStrategy
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.one_manage_link import OneManageLinkStrategy
@@ -159,3 +160,52 @@ def test_prepare_config_data_backfills_on_copy_not_input():
     assert result is not raw
     assert result[0]["src_switch_name"] == "host1"
     assert result[0]["src_switch_id"] == "SID1"
+
+
+# ---------------------------------------------------------------------------
+# preflight: policy-transition validation runs in both check and normal mode
+# ---------------------------------------------------------------------------
+
+
+def _link_model(policy_type, template_inputs=None):
+    return NDLinkModel.from_config(
+        {
+            "src_fabric_name": "f",
+            "dst_fabric_name": "f",
+            "src_switch_name": "leaf1",
+            "dst_switch_name": "spine1",
+            "src_interface_name": "Ethernet1/1",
+            "dst_interface_name": "Ethernet1/1",
+            "config_data": {"policy_type": policy_type, "template_inputs": template_inputs or {}},
+        },
+        context={"state": "merged"},
+    )
+
+
+def test_preflight_rejects_policy_transition():
+    """A cross-policy update (numbered -> unnumbered) is rejected in preflight, which
+    the state machine runs in BOTH modes, so check mode cannot approve a change that
+    normal mode rejects."""
+    orch = _orchestrator()
+    proposed = _link_model("unnumbered")
+    object.__setattr__(orch, "_existing_by_key", {proposed.get_identifier_value(): "numbered"})
+    with pytest.raises(Exception, match="Cannot change policy_type"):
+        orch.preflight([proposed])
+
+
+def test_preflight_allows_realized_preprovision():
+    """Reapplying a preprovision declaration over an ND-realized numbered link is
+    persistent intent, not a policy change, so preflight lets it through."""
+    orch = _orchestrator()
+    proposed = _link_model("preprovision", {"src_interface_description": "planned"})
+    object.__setattr__(orch, "_existing_by_key", {proposed.get_identifier_value(): "numbered"})
+    orch.preflight([proposed])  # must not raise
+
+
+def test_is_policy_type_change_false_for_realized_preprovision():
+    """The realized preprovision->numbered case is explicitly not treated as a
+    policy change by the guard."""
+    orch = _orchestrator()
+    proposed = _link_model("preprovision")
+    object.__setattr__(orch, "_existing_by_key", {proposed.get_identifier_value(): "numbered"})
+    assert orch._is_policy_type_change(proposed) is False

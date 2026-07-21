@@ -8,8 +8,10 @@ from typing import Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 
 from .base import (
+    SPEED_CHOICES,
     InterfaceDescriptionsMixin,
     LinkTemplateBase,
+    pd,
 )
 
 
@@ -19,9 +21,14 @@ class PreprovisionTemplateInputs(
 ):
     """Template inputs for policy_type=preprovision.
 
-    Limited to the four interface description and config fields ND returns for this
-    policy; including others (mtu, speed, fec, interface_admin_state) breaks
-    idempotency because ND drops them on read.
+    Per the OpenAPI ``preprovisionConfig`` schema this policy carries the interface
+    description/config fields plus ``mtu`` and ``speed`` (but not ``fec`` or
+    ``interfaceAdminState``, unlike numbered/unnumbered). ``mtu``/``speed`` were
+    previously omitted, which made a controller read of a preprovision link with
+    those fields fall back to the opaque unsupported record (and hence immutable).
     """
 
     policy_type_marker: Literal["preprovision"] = Field(default="preprovision", exclude=True)
+
+    mtu: int | None = Field(default=None, alias="mtu", json_schema_extra=pd(9216, minimum=576, maximum=9216))
+    speed: str | None = Field(default=None, alias="speed", json_schema_extra=pd("auto", choices=SPEED_CHOICES))
