@@ -51,7 +51,7 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
 
 
 class _FakeFabricContext:
-    """Minimal `FabricContext` stand-in for query preflight."""
+    """Minimal `FabricContext` stand-in for mutation preflight."""
 
     def __init__(self) -> None:
         self.validated = False
@@ -112,12 +112,11 @@ def test_manage_community_list_00030() -> None:
     """
     # Summary
 
-    Verify query_all validates fabric prerequisites and extracts the response wrapper.
+    Verify query_all reads inventory without running mutation preflight.
 
     ## Classes and Methods
 
     - ManageCommunityListOrchestrator.query_all()
-    - ManageCommunityListOrchestrator.validate_prerequisites()
     """
     method_name = inspect.stack()[0][3]
 
@@ -129,8 +128,23 @@ def test_manage_community_list_00030() -> None:
 
     result = instance.query_all()
 
-    assert fabric_context.validated is True
+    assert fabric_context.validated is False
     assert result[0]["name"] == "CL1"
+
+
+def test_manage_community_list_00020() -> None:
+    """Verify mutation preflight delegates to FabricContext only when config exists."""
+
+    def responses():
+        yield {}
+
+    unused_rest_send, instance, fabric_context = _instance(ResponseGenerator(responses()))
+    assert unused_rest_send is not None
+
+    instance.preflight([])
+    assert fabric_context.validated is False
+    instance.preflight([_model()])
+    assert fabric_context.validated is True
 
 
 def test_manage_community_list_00100() -> None:

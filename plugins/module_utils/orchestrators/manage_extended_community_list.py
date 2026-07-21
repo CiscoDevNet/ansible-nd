@@ -93,19 +93,10 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
             self._fabric_context = FabricContext(rest_send=self.rest_send, fabric_name=self.fabric_name)
         return self._fabric_context
 
-    def validate_prerequisites(self) -> None:
-        """
-        # Summary
-
-        Validate that the target fabric exists, is local, and is not deployment-frozen.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If the fabric cannot be safely mutated.
-        """
-        self.fabric_context.validate_for_mutation()
+    def preflight(self, model_instances: list[ExtendedCommunityListModel]) -> None:
+        """Validate that the target fabric can be mutated before writes."""
+        if model_instances:
+            self.fabric_context.validate_for_mutation()
 
     def _configure_endpoint(self, api_endpoint: NDEndpointBaseModel) -> NDEndpointBaseModel:
         """
@@ -243,7 +234,6 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
         Extracts the ``extendedCommunityLists`` wrapper key from the list response.
         """
         try:
-            self.validate_prerequisites()
             collected: list[dict] = []
             seen: set[str] = set()
             offset = 0
