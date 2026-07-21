@@ -139,3 +139,16 @@
   ansible.builtin.assert:
     that:
       - mp_cleanup is changed
+
+# Pair 2's copy is normally removed by the OVERRIDDEN step above; this best-effort delete (no changed
+# assert, failures ignored) keeps the fabric clean if a prior run aborted between the MERGED create
+# and the OVERRIDDEN step.
+- name: "MULTI-PAIR CLEANUP: Delete pair 2's {{ vpc_multi_pair_name }} (best effort)"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_pair2_peer1 }}"
+        interface_name: "{{ vpc_multi_pair_name }}"
+    state: deleted
+  failed_when: false
