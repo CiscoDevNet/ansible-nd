@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     PayloadUtils,
@@ -45,9 +46,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch
     SwitchServiceContext,
     _request_with_retry_policy,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.fabric_capabilities import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.fabric_switch_capabilities import (
     SwitchFabricCapabilityError,
-    validate_switch_configs_for_fabric,
+    validate_switch_configs_for_fabric_type,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -143,6 +144,12 @@ def _cfg(seed_ip="192.0.2.10", role="leaf", state="merged", **overrides):
     return SwitchConfigModel.model_validate(data, context={"state": state})
 
 
+def _cfg_without_role(seed_ip="192.0.2.10", state="merged", **overrides):
+    data = {"seed_ip": seed_ip, "username": "admin", "password": "password"}
+    data.update(overrides)
+    return SwitchConfigModel.model_validate(data, context={"state": state})
+
+
 def _sw(seed_ip, switch_id, role="leaf", discovery_status="ok", system_mode="normal", **overrides):
     data = {
         "switchId": switch_id,
@@ -185,7 +192,6 @@ def _empty_plan(**overrides):
         "to_preprovision": [],
         "to_swap": [],
         "to_rma": [],
-        "poap_ips": set(),
         "to_delete_existing": [],
     }
     data.update(overrides)
@@ -346,7 +352,7 @@ def _resource(state="merged", *, config=None, check_mode=False, existing=None, o
     resource.output.assign(before=resource.before, after=resource.existing)
 
     resource.discovery = SimpleNamespace(discover=lambda configs: {}, build_proposed=lambda configs, discovered, existing_items: [])
-    resource.fabric_utils = SimpleNamespace(get_fabric_type=lambda: "vxlan")
+    resource.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "vxlan")
     resource.fabric_ops = RecordingFabricOps()
     resource.poap_handler = SimpleNamespace(handle=lambda configs, existing_items=None: None)
     resource.rma_handler = SimpleNamespace(handle=lambda configs, existing_items: None)
@@ -424,7 +430,7 @@ def test_validate_configs_accepts_dict_and_rejects_duplicates():
 
     configs = SwitchDiffEngine.validate_configs({"seed_ip": "192.0.2.10", "username": "admin", "password": "password"}, "merged", nd, log)
     assert len(configs) == 1
-    assert configs[0].role == "leaf"
+    assert configs[0].role is None
 
     sha512_config = SwitchDiffEngine.validate_configs(
         {"seed_ip": "192.0.2.11", "username": "admin", "password": "password", "auth_proto": "SHA_512_AES_256"},
@@ -482,7 +488,7 @@ def test_fabric_capability_validation_rejects_campus_leaf_before_writes():
     """Campus VXLAN rejects leaf role before discovery/add/config-save can start."""
     config = [{"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf", "preserve_config": False}]
     resource = _resource(state="merged", config=config)
-    resource.fabric_utils = SimpleNamespace(get_fabric_type=lambda: "vxlanCampus")
+    resource.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "vxlanCampus")
     resource.discovery = SimpleNamespace(
         discover=lambda configs: raise_assertion("discovery should not run after capability validation failure"),
         build_proposed=lambda configs, discovered, existing: [],
@@ -495,21 +501,38 @@ def test_fabric_capability_validation_rejects_campus_leaf_before_writes():
 
 def test_fabric_capability_validation_allows_campus_border_gateway():
     """Campus VXLAN accepts the supported border-gateway role with preserve_config=false."""
-    capability = validate_switch_configs_for_fabric(
+    capability = validate_switch_configs_for_fabric_type(
         "Campus_AK",
-        {"management": {"type": "vxlanCampus"}},
+        "vxlanCampus",
         [_cfg(role="border_gateway", preserve_config=False)],
     )
 
     assert capability.family == "Campus VXLAN"
 
 
+def test_fabric_capability_validation_allows_unspecified_role():
+    """Omitted role is allowed so the controller can apply its default."""
+    capability = validate_switch_configs_for_fabric_type(
+        "Campus_AK",
+        "vxlanCampus",
+        [_cfg_without_role(preserve_config=False)],
+    )
+
+    assert capability.family == "Campus VXLAN"
+
+
+def test_switch_config_rejects_explicit_null_role():
+    """Explicit role=None is invalid; omit the key to use the controller default."""
+    with pytest.raises(ValidationError, match="role cannot be null"):
+        _cfg(role=None)
+
+
 def test_fabric_capability_validation_rejects_external_without_preserve_config():
     """External fabrics require brownfield preserve_config=true."""
     with pytest.raises(SwitchFabricCapabilityError, match="preserve_config 'false' is not supported for External"):
-        validate_switch_configs_for_fabric(
+        validate_switch_configs_for_fabric_type(
             "EXT1",
-            {"management": {"type": "externalConnectivity"}},
+            "externalConnectivity",
             [_cfg(preserve_config=False)],
         )
 
@@ -517,18 +540,18 @@ def test_fabric_capability_validation_rejects_external_without_preserve_config()
 def test_fabric_capability_validation_rejects_routed_non_nxos():
     """Routed fabrics reject non-NX-OS platform types."""
     with pytest.raises(SwitchFabricCapabilityError, match="platform_type 'ios-xe' is not supported for Routed"):
-        validate_switch_configs_for_fabric(
+        validate_switch_configs_for_fabric_type(
             "ROUTED1",
-            {"management": {"type": "routed"}},
+            "routed",
             [_cfg(platform_type="ios-xe")],
         )
 
 
 def test_fabric_capability_validation_allows_ipfm_tier2_leaf():
     """IPFM exposes tier2_leaf as a supported user-facing role."""
-    capability = validate_switch_configs_for_fabric(
+    capability = validate_switch_configs_for_fabric_type(
         "IPFM1",
-        {"management": {"type": "ipfm"}},
+        "ipfm",
         [_cfg(role="tier2_leaf", preserve_config=False)],
     )
 
@@ -557,6 +580,17 @@ def test_compute_changes_classifies_normal_switches():
     assert [cfg.seed_ip for cfg in plan.migration_mode] == ["192.0.2.12"]
     assert [cfg.seed_ip for cfg in plan.to_add] == ["192.0.2.13"]
     assert [sw.switch_id for sw in plan.to_delete] == ["DELETE"]
+
+
+def test_compute_changes_omitted_role_is_idempotent_for_existing_switch_role():
+    """Omitted role means do not enforce role drift against existing inventory."""
+    existing = [_sw("192.0.2.10", "IDEMP", role="spine")]
+    proposed = [_cfg_without_role("192.0.2.10")]
+
+    plan = SwitchDiffEngine.compute_changes(proposed, existing, ListLogger())
+
+    assert [cfg.seed_ip for cfg in plan.idempotent] == ["192.0.2.10"]
+    assert not plan.to_update
 
 
 def test_compute_changes_classifies_poap_preprovision_swap_and_rma():
@@ -715,7 +749,7 @@ def test_switch_fabric_ops_bulk_add_delete_credentials_roles_and_finalize():
         BulkAddSpec(
             switches=[
                 (
-                    _cfg("192.0.2.10"),
+                    _cfg_without_role("192.0.2.10"),
                     {
                         "hostname": "leaf1",
                         "ip": "192.0.2.10",
@@ -733,6 +767,7 @@ def test_switch_fabric_ops_bulk_add_delete_credentials_roles_and_finalize():
         )
     )
     assert ctx.results.metadata[-1]["action"] == "create"
+    assert "switchRole" not in ctx.nd.calls[-1]["data"]["switches"][0]
 
     deleted = fabric_ops.bulk_delete([_sw("192.0.2.10", "SERIAL1")])
     assert deleted == ["SERIAL1"]
@@ -836,7 +871,6 @@ def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
             switch_actions=[("SERIAL1", _cfg("192.0.2.10", preserve_config=True))],
             wait_utils=wait,
             context="merged",
-            all_preserve_config=True,
             skip_greenfield_check=True,
             update_roles=True,
         )
@@ -1173,7 +1207,6 @@ def test_execute_add_phase_handles_bulk_add_migration_and_wait_processing():
     assert actions == [("ADD1", cfg_add), ("MIGRATE", cfg_migrate)]
     assert len(resource.fabric_ops.bulk_adds) == 1
     assert resource.fabric_ops.post_add_calls[0].update_roles is True
-    assert resource.fabric_ops.post_add_calls[0].all_preserve_config is True
 
 
 def test_manage_state_routes_gathered_deleted_and_required_config_paths():
@@ -1457,66 +1490,63 @@ def test_switch_wait_utils_filters_statuses_and_fetch_helpers():
     assert SwitchWaitUtils._filter_by_discovery_status(["SERIAL1", "SERIAL2", "MISSING"], switch_data, "ok") == ["SERIAL2", "MISSING"]
 
     nd = FakeND(data={"switches": switch_data})
-    wait = SwitchWaitUtils(SimpleNamespace(nd=nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(SimpleNamespace(nd=nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_details_cache=SimpleNamespace())
     assert wait._fetch_switch_data() == switch_data
 
     empty_nd = FakeND(data={"switches": []})
-    wait = SwitchWaitUtils(SimpleNamespace(nd=empty_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(SimpleNamespace(nd=empty_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_details_cache=SimpleNamespace())
     assert wait._fetch_switch_data() == []
 
     missing_switches_nd = FakeND(data={})
-    wait = SwitchWaitUtils(SimpleNamespace(nd=missing_switches_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(
+        SimpleNamespace(nd=missing_switches_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_details_cache=SimpleNamespace()
+    )
     assert wait._fetch_switch_data() == []
 
     failing_nd = FakeND(exc=ValueError("down"))
-    wait = SwitchWaitUtils(SimpleNamespace(nd=failing_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(SimpleNamespace(nd=failing_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_details_cache=SimpleNamespace())
     assert wait._fetch_switch_data() is None
 
     nd = FakeND(data={"ok": True})
-    wait = SwitchWaitUtils(SimpleNamespace(nd=nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(SimpleNamespace(nd=nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_details_cache=SimpleNamespace())
     wait._trigger_rediscovery(["SERIAL1"])
     assert nd.calls[0]["data"] == {"switchIds": ["SERIAL1"]}
     wait._trigger_rediscovery([])
     assert len(nd.calls) == 1
 
     nd = FakeND(data={"switches": [{"ip": "192.0.2.10", "status": "ok"}, {"ipaddr": "192.0.2.11", "status": "manageable"}]})
-    wait = SwitchWaitUtils(SimpleNamespace(nd=nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(SimpleNamespace(nd=nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_details_cache=SimpleNamespace())
     assert wait._get_discovery_status("192.0.2.10")["status"] == "ok"
     assert wait._get_discovery_status("192.0.2.11")["status"] == "manageable"
     assert wait._get_discovery_status("192.0.2.12") is None
 
 
 def test_switch_wait_utils_public_wait_shortcuts_and_polling(monkeypatch):
-    """Public wait methods honor brownfield/greenfield shortcuts and polling outcomes."""
+    """Public wait methods honor greenfield/POAP shortcuts and polling outcomes."""
     sleep_calls = []
     monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils.time.sleep", lambda seconds: sleep_calls.append(seconds))
 
-    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
-    wait._wait_for_system_mode = lambda serials: True
-    wait._wait_for_discovery_state = lambda serials, state: raise_assertion("discovery should be skipped")
-    assert wait.wait_for_switch_manageable(["SERIAL1"], all_preserve_config=True) is True
-
-    fabric_utils = SimpleNamespace(get_fabric_info=lambda: {"management": {"greenfieldDebugFlag": "enable"}})
-    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=fabric_utils)
+    fabric_utils = SimpleNamespace(is_greenfield_debug_enabled=lambda: True)
+    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_details_cache=fabric_utils)
     wait._wait_for_system_mode = lambda serials: True
     wait._wait_for_discovery_state = lambda serials, state: raise_assertion("discovery should be skipped")
     assert wait.wait_for_switch_manageable(["SERIAL1"]) is True
     assert wait._is_greenfield_debug_enabled() is True
 
     states_seen = []
-    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_details_cache=SimpleNamespace())
     wait._wait_for_system_mode = lambda serials: True
     wait._wait_for_discovery_state = lambda serials, state: states_seen.append(state) or True
     assert wait.wait_for_switch_manageable(["SERIAL1"], skip_greenfield_check=True) is True
     assert states_seen == ["unreachable", "ok"]
 
-    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=2, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=2, wait_interval=1, fabric_details_cache=SimpleNamespace())
     wait._fetch_switch_data = lambda: [{"serialNumber": "SERIAL1", "additionalData": {"systemMode": "normal", "discoveryStatus": "ok"}}]
     assert wait._wait_for_switches_in_fabric(["SERIAL1"]) is True
     assert wait._wait_for_discovery_state(["SERIAL1"], "ok") is True
     assert wait._poll_system_mode(["SERIAL1"], "normal", expect_match=False) == []
 
-    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_details_cache=SimpleNamespace())
     wait._fetch_switch_data = lambda: [{"serialNumber": "OTHER", "additionalData": {"systemMode": "migration", "discoveryStatus": "unreachable"}}]
     assert wait._wait_for_switches_in_fabric(["SERIAL1"]) is False
     assert wait._wait_for_discovery_state(["SERIAL1"], "ok") is False
@@ -1527,7 +1557,7 @@ def test_switch_wait_utils_combined_post_add_wait(monkeypatch):
     """Combined post-add wait polls once per attempt across mixed platform policies."""
     monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils.time.sleep", lambda _seconds: None)
     rediscovered = []
-    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=3, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=3, wait_interval=1, fabric_details_cache=SimpleNamespace())
     responses = iter(
         [
             [
@@ -1564,7 +1594,7 @@ def test_switch_wait_utils_combined_post_add_wait(monkeypatch):
     )
     assert rediscovered == [["NXOS1", "IOSXR1"]]
 
-    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_details_cache=SimpleNamespace())
     wait._fetch_switch_data = lambda: []
     wait._trigger_rediscovery = lambda serials: None
     assert wait.wait_for_post_add_switches(nxos_reload=[], nxos_preserve=[], ready_without_reload=["SERIAL1"]) is False
@@ -1574,7 +1604,7 @@ def test_switch_wait_utils_wait_for_discovery_success_failure_and_timeout(monkey
     """wait_for_discovery returns data on success and None on failed/timeout paths."""
     monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils.time.sleep", lambda _seconds: None)
 
-    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_details_cache=SimpleNamespace())
     wait._get_discovery_status = lambda seed_ip: {"status": "ok", "ip": seed_ip}
     assert wait.wait_for_discovery("192.0.2.10", max_attempts=1, wait_interval=1) == {"status": "ok", "ip": "192.0.2.10"}
 

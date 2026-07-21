@@ -69,6 +69,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.co
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
     FabricSwitchInventory,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_details_cache import (
+    FabricDetailsCache,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     ApiDataChecker,
     SwitchFabricUtils,
@@ -81,11 +84,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils imp
     build_bootstrap_index,
     build_poap_data_block,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.fabric_capabilities import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.fabric_switch_capabilities import (
     SwitchFabricCapabilityError,
     validate_switch_configs_for_fabric_type,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.utils import FabricUtils
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
     EpManageFabricsSwitchesPost,
     EpManageFabricsSwitchProvisionRMAPost,
@@ -115,7 +117,7 @@ _REQUEST_RETRY_DELAY: int = 1
 _REQUEST_ERRORS = (NDModuleError, TypeError, ValueError)
 _MODEL_ERRORS = (ValidationError, TypeError, ValueError)
 _OUTPUT_CONVERSION_ERRORS = (AttributeError, TypeError, ValueError)
-_FABRIC_OPERATION_ERRORS = (NDModuleError, SwitchOperationError, TypeError, ValueError)
+_FABRIC_OPERATION_ERRORS = (NDModuleError, SwitchOperationError, RuntimeError, TypeError, ValueError)
 
 
 @dataclass
@@ -175,7 +177,6 @@ class PostAddProcessingSpec:
     switch_actions: list[tuple[str, "SwitchConfigModel"]]
     wait_utils: Any
     context: str
-    all_preserve_config: bool = False
     skip_greenfield_check: bool = False
     update_roles: bool = False
 
@@ -252,11 +253,13 @@ class SwitchServiceContext:
     ) -> dict[str, Any]:
         """Execute an API call with standard error handling and result registration.
 
-        Args:
-            spec: API call details, result metadata, and error context.
+        ## Parameters
 
-        Returns:
-            The API response dict.
+        - `spec`: API call details, result metadata, and error context.
+
+        ## Returns
+
+        - The API response dict.
         """
         try:
             _request_with_retry_policy(
@@ -302,11 +305,13 @@ class BootstrapCache:
     def get_index(self, *, refresh: bool = False) -> dict[str, dict[str, Any]]:
         """Return the bootstrap serial → data index, querying the API only on first call or refresh.
 
-        Args:
-            refresh: Force re-query of the bootstrap API.
+        ## Parameters
 
-        Returns:
-            Dict mapping serial number to bootstrap data.
+        - `refresh`: Force re-query of the bootstrap API.
+
+        ## Returns
+
+        - Dict mapping serial number to bootstrap data.
         """
         if self._switches is None or refresh:
             self._log.debug("BootstrapCache: querying bootstrap API (refresh=%s)", refresh)
@@ -350,8 +355,6 @@ class SwitchPlan:
         to_preprovision: Pre-provision configs that need the preProvision API call.
         to_swap:        Serial-swap configs (poap + preprovision both present).
         to_rma:         RMA configs.
-        poap_ips:       Seed IPs of all POAP/preprovision/swap configs — used by
-                        overridden to skip these IPs during the cleanup sweep.
         to_delete_existing: Existing ``SwitchDataModel`` records for switches that
                         must be deleted before re-add (POAP/preprovision mismatches
                         and overridden normal updates).  Kept parallel to the
@@ -373,7 +376,6 @@ class SwitchPlan:
     to_rma: list["SwitchConfigModel"]
 
     # Cross-cutting helpers
-    poap_ips: set
     to_delete_existing: list["SwitchDataModel"]
 
 
@@ -387,19 +389,26 @@ class SwitchDiffEngine:
         nd: NDModule,
         log: logging.Logger,
     ) -> list[SwitchConfigModel]:
-        """Validate raw module config and return typed switch configs.
+        """
+        # Summary
 
-        Args:
-            config: Raw config dict or list of dicts from module parameters.
-            state: Requested module state.
-            nd: ND module wrapper used for failure handling.
-            log: Logger instance.
+        Validate raw module config and return typed switch configs.
 
-        Returns:
-            List of validated ``SwitchConfigModel`` objects.
+        ## Parameters
 
-        Raises:
-            ValidationError: Raised by model validation for invalid input.
+        - `config`: Raw config dict or list of dicts from module parameters.
+        - `state`: Requested module state.
+        - `nd`: ND module wrapper used for failure handling.
+        - `log`: Logger instance.
+
+        ## Returns
+
+        - List of validated ``SwitchConfigModel`` objects.
+
+        ## Raises
+
+        - `ValueError`: Raised when model validation fails outside an Ansible
+            module context or duplicate seed IP entries are provided.
         """
         log.debug("ENTER: validate_configs()")
 
@@ -494,13 +503,15 @@ class SwitchDiffEngine:
           preconditions).
         * **rma** — always active (no idempotency check; caller validates).
 
-        Args:
-            proposed_configs: All validated switch configs for this run.
-            existing: Current fabric inventory snapshot.
-            log: Logger instance.
+        ## Parameters
 
-        Returns:
-            :class:`SwitchPlan` with all buckets populated.
+        - `proposed_configs`: All validated switch configs for this run.
+        - `existing`: Current fabric inventory snapshot.
+        - `log`: Logger instance.
+
+        ## Returns
+
+        - :class:`SwitchPlan` with all buckets populated.
         """
         log.debug("ENTER: compute_changes()")
         log.info(
@@ -705,7 +716,6 @@ class SwitchDiffEngine:
             to_preprovision=to_preprovision,
             to_swap=to_swap,
             to_rma=to_rma,
-            poap_ips=poap_ips,
             to_delete_existing=to_delete_existing,
         )
         log.info(
@@ -736,19 +746,21 @@ class SwitchDiffEngine:
         time — no error is raised for those. Any omitted fields are logged at
         INFO level so the operator can see what was sourced from the API.
 
-        Args:
-            nd: ND module wrapper used for failure handling.
-            serial: Serial number of the switch being processed.
-            model: User-provided switch model, or None if omitted.
-            version: User-provided software version, or None if omitted.
-            config_data: User-provided ``ConfigDataModel``, or None if omitted.
-            bootstrap_data: Matching entry from the bootstrap GET API.
-            log: Logger instance.
-            context: Label used in error messages (e.g. ``"Bootstrap"`` or ``"RMA"``).
-            hostname: User-provided hostname, or None if omitted (bootstrap only).
+        ## Parameters
 
-        Returns:
-            None.
+        - `nd`: ND module wrapper used for failure handling.
+        - `serial`: Serial number of the switch being processed.
+        - `model`: User-provided switch model, or None if omitted.
+        - `version`: User-provided software version, or None if omitted.
+        - `config_data`: User-provided ``ConfigDataModel``, or None if omitted.
+        - `bootstrap_data`: Matching entry from the bootstrap GET API.
+        - `log`: Logger instance.
+        - `context`: Label used in error messages (e.g. ``"Bootstrap"`` or ``"RMA"``).
+        - `hostname`: User-provided hostname, or None if omitted (bootstrap only).
+
+        ## Returns
+
+        - None.
         """
         bs_data = spec.bootstrap_data.get("data") or {}
         mismatches: list[str] = []
@@ -809,11 +821,13 @@ class SwitchDiscoveryService:
     def __init__(self, ctx: SwitchServiceContext):
         """Initialize the discovery service.
 
-        Args:
-            ctx: Shared service context.
+        ## Parameters
 
-        Returns:
-            None.
+        - `ctx`: Shared service context.
+
+        ## Returns
+
+        - None.
         """
         self.ctx = ctx
 
@@ -823,11 +837,13 @@ class SwitchDiscoveryService:
     ) -> dict[str, dict[str, Any]]:
         """Discover switches for the provided config list.
 
-        Args:
-            switch_configs: Validated switch configuration entries.
+        ## Parameters
 
-        Returns:
-            Dict mapping seed IP to raw discovery data.
+        - `switch_configs`: Validated switch configuration entries.
+
+        ## Returns
+
+        - Dict mapping seed IP to raw discovery data.
         """
         log = self.ctx.log
         log.debug("Step 1: Grouping switches by credentials")
@@ -871,15 +887,17 @@ class SwitchDiscoveryService:
     ) -> dict[str, dict[str, Any]]:
         """Run one bulk discovery call for switches with shared credentials.
 
-        Args:
-            switches: Switches to discover.
-            username: Discovery username.
-            password: Discovery password.
-            auth_proto: SNMP v3 authentication protocol.
-            platform_type: Platform type for discovery.
+        ## Parameters
 
-        Returns:
-            Dict mapping seed IP to discovered switch data.
+        - `switches`: Switches to discover.
+        - `username`: Discovery username.
+        - `password`: Discovery password.
+        - `auth_proto`: SNMP v3 authentication protocol.
+        - `platform_type`: Platform type for discovery.
+
+        ## Returns
+
+        - Dict mapping seed IP to discovered switch data.
         """
         nd = self.ctx.nd
         log = self.ctx.log
@@ -1028,13 +1046,15 @@ class SwitchDiscoveryService:
     ) -> list[SwitchDataModel]:
         """Build proposed switch models from discovery and inventory data.
 
-        Args:
-            proposed_config: Validated switch config entries.
-            discovered_data: Mapping of seed IP to raw discovery data.
-            existing: Current fabric inventory snapshot.
+        ## Parameters
 
-        Returns:
-            List of ``SwitchDataModel`` instances for proposed state.
+        - `proposed_config`: Validated switch config entries.
+        - `discovered_data`: Mapping of seed IP to raw discovery data.
+        - `existing`: Current fabric inventory snapshot.
+
+        ## Returns
+
+        - List of ``SwitchDataModel`` instances for proposed state.
         """
         log = self.ctx.log
         proposed: list[SwitchDataModel] = []
@@ -1084,12 +1104,14 @@ class SwitchFabricOps:
     def __init__(self, ctx: SwitchServiceContext, fabric_utils: SwitchFabricUtils):
         """Initialize the fabric operation service.
 
-        Args:
-            ctx: Shared service context.
-            fabric_utils: Utility wrapper for fabric-level operations.
+        ## Parameters
 
-        Returns:
-            None.
+        - `ctx`: Shared service context.
+        - `fabric_utils`: Utility wrapper for fabric-level operations.
+
+        ## Returns
+
+        - None.
         """
         self.ctx = ctx
         self.fabric_utils = fabric_utils
@@ -1098,18 +1120,28 @@ class SwitchFabricOps:
         self,
         spec: BulkAddSpec,
     ) -> dict[str, Any]:
-        """Add multiple discovered switches to the fabric.
+        """
+        # Summary
 
-        Args:
-            switches: List of ``(SwitchConfigModel, discovered_data)`` tuples.
-            username: Discovery username.
-            password: Discovery password.
-            auth_proto: SNMP v3 authentication protocol.
-            platform_type: Platform type.
-            preserve_config: Whether to preserve existing switch config.
+        Add multiple discovered switches to the fabric.
 
-        Returns:
-            API response payload.
+        ## Parameters
+
+        - `switches`: List of ``(SwitchConfigModel, discovered_data)`` tuples.
+        - `username`: Discovery username.
+        - `password`: Discovery password.
+        - `auth_proto`: SNMP v3 authentication protocol.
+        - `platform_type`: Platform type.
+        - `preserve_config`: Whether to preserve existing switch config.
+
+        ## Returns
+
+        - API response payload.
+
+        ## Raises
+
+        - `SwitchOperationError`: Raised when no valid discovered switch payloads
+            are available for the add request.
         """
         nd = self.ctx.nd
         log = self.ctx.log
@@ -1187,16 +1219,22 @@ class SwitchFabricOps:
         self,
         switches: list[SwitchDataModel | SwitchDiscoveryModel],
     ) -> list[str]:
-        """Remove multiple switches from the fabric.
+        """
+        # Summary
 
-        Args:
-            switches: Switch models to delete.
+        Remove multiple switches from the fabric.
 
-        Returns:
-            List of switch identifiers submitted for deletion.
+        ## Parameters
 
-        Raises:
-            SwitchOperationError: Raised when the delete API call fails.
+        - `switches`: Switch models to delete.
+
+        ## Returns
+
+        - List of switch identifiers submitted for deletion.
+
+        ## Raises
+
+        - `SwitchOperationError`: Raised when the delete API call fails.
         """
         nd = self.ctx.nd
         log = self.ctx.log
@@ -1265,11 +1303,13 @@ class SwitchFabricOps:
     ) -> None:
         """Save switch credentials grouped by username and password.
 
-        Args:
-            switch_actions: ``(switch_id, SwitchConfigModel)`` pairs.
+        ## Parameters
 
-        Returns:
-            None.
+        - `switch_actions`: ``(switch_id, SwitchConfigModel)`` pairs.
+
+        ## Returns
+
+        - None.
         """
         log = self.ctx.log
 
@@ -1325,11 +1365,13 @@ class SwitchFabricOps:
     ) -> None:
         """Update switch roles in bulk.
 
-        Args:
-            switch_actions: ``(switch_id, SwitchConfigModel)`` pairs.
+        ## Parameters
 
-        Returns:
-            None.
+        - `switch_actions`: ``(switch_id, SwitchConfigModel)`` pairs.
+
+        ## Returns
+
+        - None.
         """
         log = self.ctx.log
 
@@ -1394,13 +1436,15 @@ class SwitchFabricOps:
         Uses service context flags to decide whether save and deploy should be
         executed. No-op in check mode.
 
-        Args:
-            serial_numbers: Switch serial numbers to deploy when
+        ## Parameters
+
+        - `serial_numbers`: Switch serial numbers to deploy when
                             ``deploy_type`` is ``switch``. Falls back to
                             global deploy if empty or ``None``.
 
-        Returns:
-            None.
+        ## Returns
+
+        - None.
         """
         if self.ctx.nd.module.check_mode:
             return
@@ -1444,16 +1488,17 @@ class SwitchFabricOps:
     ) -> None:
         """Run post-add tasks for newly processed switches.
 
-        Args:
-            switch_actions: ``(switch_id, SwitchConfigModel)`` pairs.
-            wait_utils: Wait utility used for manageability checks.
-            context: Label used in logs and error messages.
-            all_preserve_config: Whether to use preserve-config wait behavior.
-            skip_greenfield_check: Whether to skip greenfield wait shortcut.
-            update_roles: Whether to apply bulk role updates.
+        ## Parameters
 
-        Returns:
-            None.
+        - `switch_actions`: ``(switch_id, SwitchConfigModel)`` pairs.
+        - `wait_utils`: Wait utility used for manageability checks.
+        - `context`: Label used in logs and error messages.
+        - `skip_greenfield_check`: Whether to skip greenfield wait shortcut.
+        - `update_roles`: Whether to apply bulk role updates.
+
+        ## Returns
+
+        - None.
         """
         nd = self.ctx.nd
         log = self.ctx.log
@@ -1461,10 +1506,13 @@ class SwitchFabricOps:
         wait_sets = self._split_post_add_wait_sets(spec.switch_actions)
 
         log.info(
-            "Waiting for %s %s switch(es) to become manageable: %s",
+            "Waiting for %s %s switch(es) to become manageable: %s " "(nxos_reload=%s, nxos_preserve=%s, ready_without_reload=%s)",
             len(all_serials),
             spec.context,
             all_serials,
+            len(wait_sets.nxos_reload),
+            len(wait_sets.nxos_preserve),
+            len(wait_sets.ready_without_reload),
         )
 
         success = spec.wait_utils.wait_for_post_add_switches(
@@ -1541,14 +1589,16 @@ class POAPHandler:
     ):
         """Initialize the POAP workflow handler.
 
-        Args:
-            ctx: Shared service context.
-            fabric_ops: Fabric operation service.
-            wait_utils: Switch wait utility service.
-            bootstrap_cache: Shared bootstrap API cache.
+        ## Parameters
 
-        Returns:
-            None.
+        - `ctx`: Shared service context.
+        - `fabric_ops`: Fabric operation service.
+        - `wait_utils`: Switch wait utility service.
+        - `bootstrap_cache`: Shared bootstrap API cache.
+
+        ## Returns
+
+        - None.
         """
         self.ctx = ctx
         self.fabric_ops = fabric_ops
@@ -1562,12 +1612,14 @@ class POAPHandler:
     ) -> None:
         """Execute POAP processing for the provided switch configs.
 
-        Args:
-            proposed_config: Validated switch configs for POAP operations.
-            existing: Current fabric inventory snapshot.
+        ## Parameters
 
-        Returns:
-            None.
+        - `proposed_config`: Validated switch configs for POAP operations.
+        - `existing`: Current fabric inventory snapshot.
+
+        ## Returns
+
+        - None.
         """
         nd = self.ctx.nd
         log = self.ctx.log
@@ -1706,12 +1758,14 @@ class POAPHandler:
     ) -> None:
         """Process bootstrap POAP entries.
 
-        Args:
-            bootstrap_entries: ``(SwitchConfigModel, POAPConfigModel)`` pairs
+        ## Parameters
+
+        - `bootstrap_entries`: ``(SwitchConfigModel, POAPConfigModel)`` pairs
                 for bootstrap operations.
 
-        Returns:
-            None.
+        ## Returns
+
+        - None.
         """
         nd = self.ctx.nd
         log = self.ctx.log
@@ -1786,13 +1840,15 @@ class POAPHandler:
     ) -> BootstrapImportSwitchModel:
         """Build a bootstrap import model from config and bootstrap data.
 
-        Args:
-            switch_cfg: Parent switch config.
-            poap_cfg: POAP config entry.
-            bootstrap_data: Matching bootstrap response entry.
+        ## Parameters
 
-        Returns:
-            Completed ``BootstrapImportSwitchModel`` for API submission.
+        - `switch_cfg`: Parent switch config.
+        - `poap_cfg`: POAP config entry.
+        - `bootstrap_data`: Matching bootstrap response entry.
+
+        ## Returns
+
+        - Completed ``BootstrapImportSwitchModel`` for API submission.
         """
         log = self.ctx.log
         log.debug("ENTER: _build_bootstrap_import_model(serial=%s)", poap_cfg.serial_number)
@@ -1894,11 +1950,13 @@ class POAPHandler:
     ) -> None:
         """Submit bootstrap import models.
 
-        Args:
-            models: ``BootstrapImportSwitchModel`` objects to submit.
+        ## Parameters
 
-        Returns:
-            None.
+        - `models`: ``BootstrapImportSwitchModel`` objects to submit.
+
+        ## Returns
+
+        - None.
         """
         log = self.ctx.log
 
@@ -1938,12 +1996,14 @@ class POAPHandler:
     ) -> PreProvisionSwitchModel:
         """Build a pre-provision model from PreprovisionConfigModel configuration.
 
-        Args:
-            switch_cfg: Parent switch config.
-            preprov_cfg: Pre-provision config entry.
+        ## Parameters
 
-        Returns:
-            Completed ``PreProvisionSwitchModel`` for API submission.
+        - `switch_cfg`: Parent switch config.
+        - `preprov_cfg`: Pre-provision config entry.
+
+        ## Returns
+
+        - Completed ``PreProvisionSwitchModel`` for API submission.
         """
         log = self.ctx.log
         log.debug("ENTER: _build_preprovision_model(serial=%s)", preprov_cfg.serial_number)
@@ -1990,11 +2050,13 @@ class POAPHandler:
     ) -> None:
         """Submit pre-provision switch models.
 
-        Args:
-            models: ``PreProvisionSwitchModel`` objects to submit.
+        ## Parameters
 
-        Returns:
-            None.
+        - `models`: ``PreProvisionSwitchModel`` objects to submit.
+
+        ## Returns
+
+        - None.
         """
         log = self.ctx.log
 
@@ -2034,14 +2096,16 @@ class POAPHandler:
     ) -> None:
         """Process POAP serial-swap entries.
 
-        Args:
-            swap_entries: ``(SwitchConfigModel, POAPConfigModel, PreprovisionConfigModel)``
+        ## Parameters
+
+        - `swap_entries`: ``(SwitchConfigModel, POAPConfigModel, PreprovisionConfigModel)``
                 swap triples where poap carries the new serial and preprovision
                 carries the old (pre-provisioned) serial.
-            existing: Current fabric inventory snapshot.
+        - `existing`: Current fabric inventory snapshot.
 
-        Returns:
-            None.
+        ## Returns
+
+        - None.
         """
         nd = self.ctx.nd
         log = self.ctx.log
@@ -2214,14 +2278,16 @@ class RMAHandler:
     ):
         """Initialize the RMA workflow handler.
 
-        Args:
-            ctx: Shared service context.
-            fabric_ops: Fabric operation service.
-            wait_utils: Switch wait utility service.
-            bootstrap_cache: Shared bootstrap API cache.
+        ## Parameters
 
-        Returns:
-            None.
+        - `ctx`: Shared service context.
+        - `fabric_ops`: Fabric operation service.
+        - `wait_utils`: Switch wait utility service.
+        - `bootstrap_cache`: Shared bootstrap API cache.
+
+        ## Returns
+
+        - None.
         """
         self.ctx = ctx
         self.fabric_ops = fabric_ops
@@ -2235,12 +2301,14 @@ class RMAHandler:
     ) -> None:
         """Execute RMA processing for the provided switch configs.
 
-        Args:
-            proposed_config: Validated switch configs for RMA operations.
-            existing: Current fabric inventory snapshot.
+        ## Parameters
 
-        Returns:
-            None.
+        - `proposed_config`: Validated switch configs for RMA operations.
+        - `existing`: Current fabric inventory snapshot.
+
+        ## Returns
+
+        - None.
         """
         nd = self.ctx.nd
         log = self.ctx.log
@@ -2372,12 +2440,14 @@ class RMAHandler:
         IP).  The serial number of the old switch is derived from inventory —
         it is not required in the playbook config.
 
-        Args:
-            rma_entries: ``(SwitchConfigModel, RMAConfigModel)`` pairs.
-            existing: Current fabric inventory snapshot.
+        ## Parameters
 
-        Returns:
-            Dict keyed by ``seed_ip`` with prerequisite metadata including
+        - `rma_entries`: ``(SwitchConfigModel, RMAConfigModel)`` pairs.
+        - `existing`: Current fabric inventory snapshot.
+
+        ## Returns
+
+        - Dict keyed by ``seed_ip`` with prerequisite metadata including
             ``old_serial``, ``hostname``, and ``switch_data``.
         """
         nd = self.ctx.nd
@@ -2466,14 +2536,16 @@ class RMAHandler:
         optional image policy, and optional discovery credentials come from the
         playbook config.
 
-        Args:
-            switch_cfg: Parent switch config.
-            rma_cfg: RMA config entry.
-            bootstrap_data: Bootstrap response entry for the replacement switch.
-            old_switch_info: Prerequisite metadata keyed from _validate_prerequisites.
+        ## Parameters
 
-        Returns:
-            Completed ``RMASwitchModel`` for API submission.
+        - `switch_cfg`: Parent switch config.
+        - `rma_cfg`: RMA config entry.
+        - `bootstrap_data`: Bootstrap response entry for the replacement switch.
+        - `old_switch_info`: Prerequisite metadata keyed from _validate_prerequisites.
+
+        ## Returns
+
+        - Completed ``RMASwitchModel`` for API submission.
         """
         log = self.ctx.log
         old_serial = old_switch_info["old_serial"]
@@ -2523,11 +2595,13 @@ class RMAHandler:
         The old and new switch IDs are embedded in the payload via
         ``oldSwitchId`` and ``newSwitchId`` fields on the model.
 
-        Args:
-            rma_model: RMA model for the replacement switch.
+        ## Parameters
 
-        Returns:
-            None.
+        - `rma_model`: RMA model for the replacement switch.
+
+        ## Returns
+
+        - None.
         """
         log = self.ctx.log
 
@@ -2581,13 +2655,15 @@ class NDSwitchResourceModule:
     ):
         """Initialize module state, services, and inventory snapshots.
 
-        Args:
-            nd: ND module wrapper.
-            results: Shared results aggregator.
-            logger: Optional logger instance.
+        ## Parameters
 
-        Returns:
-            None.
+        - `nd`: ND module wrapper.
+        - `results`: Shared results aggregator.
+        - `logger`: Optional logger instance.
+
+        ## Returns
+
+        - None.
         """
         log = logger or logging.getLogger("nd.NDSwitchResourceModule")
         self.log = log
@@ -2639,10 +2715,10 @@ class NDSwitchResourceModule:
         self.output: NDOutput = NDOutput(output_level=self.module.params.get("output_level", "normal"))
         self.output.assign(before=self.before, after=self.existing)
 
-        # Utility instances: global FabricUtils handles metadata; SwitchFabricUtils handles switch-specific fabric actions.
-        self.fabric_utils = FabricUtils(self.nd, self.fabric)
+        # Utility instances: FabricDetailsCache handles fabric details; SwitchFabricUtils handles switch-specific fabric actions.
+        self.fabric_details_cache = FabricDetailsCache(self.nd._get_rest_send(), self.fabric)  # pylint: disable=protected-access
         self.switch_fabric_utils = SwitchFabricUtils(self.nd, self.fabric, log)
-        self.wait_utils = SwitchWaitUtils(self, self.fabric, log, fabric_utils=self.fabric_utils)
+        self.wait_utils = SwitchWaitUtils(self, self.fabric, log, fabric_details_cache=self.fabric_details_cache)
         self.bootstrap_cache = BootstrapCache(self.nd, self.fabric, log)
 
         # Service instances (Dependency Injection)
@@ -2696,7 +2772,7 @@ class NDSwitchResourceModule:
         if not configs:
             return
         try:
-            fabric_type = self.fabric_utils.get_fabric_type()
+            fabric_type = self.fabric_details_cache.get_fabric_type()
             capability = validate_switch_configs_for_fabric_type(self.fabric, fabric_type, configs)
             self.log.debug(
                 "Switch capability validation passed for fabric %s using %s matrix",
@@ -2723,8 +2799,9 @@ class NDSwitchResourceModule:
         For ``deleted`` state the plan may be ``None`` (no config supplied),
         so the entire existing inventory is treated as the deletion target.
 
-        Returns:
-            Dict suitable for merging into the final ``exit_json`` payload,
+        ## Returns
+
+        - Dict suitable for merging into the final ``exit_json`` payload,
             containing ``before``, ``after``, ``diff``, and ``changed``.
         """
         before_list = self._inventory_to_config_list(self.before)
@@ -2841,8 +2918,9 @@ class NDSwitchResourceModule:
         Includes operation logs and previous/current inventory snapshots in the
         final response payload.
 
-        Returns:
-            None.
+        ## Returns
+
+        - None.
         """
         self.results.build_final_result()
         final = self.results.final_result
@@ -2928,8 +3006,9 @@ class NDSwitchResourceModule:
         5. Delegate to the appropriate state handler with the populated plan
            and the single ``discovered_data`` dict.
 
-        Returns:
-            None.
+        ## Returns
+
+        - None.
         """
         self.log.info("Managing state: %s", self.state)
 
@@ -3041,12 +3120,14 @@ class NDSwitchResourceModule:
         in-sync by design and are excluded from this check.  Only relevant
         when deploy is enabled; returns False immediately otherwise.
 
-        Args:
-            plan: Action plan from :meth:`SwitchDiffEngine.compute_changes`.
-            existing_by_ip: Existing switches keyed by fabric management IP.
+        ## Parameters
 
-        Returns:
-            True if finalize should run for idempotent switches, False otherwise.
+        - `plan`: Action plan from :meth:`SwitchDiffEngine.compute_changes`.
+        - `existing_by_ip`: Existing switches keyed by fabric management IP.
+
+        ## Returns
+
+        - True if finalize should run for idempotent switches, False otherwise.
         """
         if not self.ctx.deploy_config:
             return False
@@ -3071,12 +3152,14 @@ class NDSwitchResourceModule:
     ) -> None:
         """Register a check-mode result with standard metadata.
 
-        Args:
-            action: Action label (e.g. ``"merge"``, ``"override"``).
-            diff_current: Diff payload describing what would change.
+        ## Parameters
 
-        Returns:
-            None.
+        - `action`: Action label (e.g. ``"merge"``, ``"override"``).
+        - `diff_current`: Diff payload describing what would change.
+
+        ## Returns
+
+        - None.
         """
         self.results.action = action
         self.results.state = self.state
@@ -3096,15 +3179,17 @@ class NDSwitchResourceModule:
         appends migration-mode switches, and executes post-add processing
         (wait, credentials, roles, finalize).
 
-        Args:
-            add_configs: Switch configs to add via bulk discovery+add.
-            plan: The current action plan (used for migration_mode).
-            discovered_data: Discovery data keyed by seed IP.
-            existing_by_ip: Existing inventory keyed by management IP.
-            context: Label used in logs and wait error messages.
+        ## Parameters
 
-        Returns:
-            List of ``(serial_number, SwitchConfigModel)`` pairs that were processed.
+        - `add_configs`: Switch configs to add via bulk discovery+add.
+        - `plan`: The current action plan (used for migration_mode).
+        - `discovered_data`: Discovery data keyed by seed IP.
+        - `existing_by_ip`: Existing inventory keyed by management IP.
+        - `context`: Label used in logs and wait error messages.
+
+        ## Returns
+
+        - List of ``(serial_number, SwitchConfigModel)`` pairs that were processed.
         """
         switch_actions: list[tuple[str, SwitchConfigModel]] = []
         have_migration = bool(spec.plan.migration_mode)
@@ -3147,15 +3232,11 @@ class NDSwitchResourceModule:
                 self.sent_adds.append(cfg)
 
         if switch_actions:
-            all_preserve_config = all(cfg.preserve_config for _sn, cfg in switch_actions)
-            if all_preserve_config:
-                self.log.info("All switches brownfield (preserve_config=True) — reload detection skipped")
             self.fabric_ops.post_add_processing(
                 PostAddProcessingSpec(
                     switch_actions=switch_actions,
                     wait_utils=self.wait_utils,
                     context=spec.context,
-                    all_preserve_config=all_preserve_config,
                     update_roles=have_migration,
                 )
             )
@@ -3174,13 +3255,15 @@ class NDSwitchResourceModule:
         Normal switches that require field-level updates fail fast; use
         ``overridden`` state for in-place updates.
 
-        Args:
-            plan: Unified action plan from :meth:`SwitchDiffEngine.compute_changes`.
-            discovered_data: Discovery data keyed by seed IP for all switches
+        ## Parameters
+
+        - `plan`: Unified action plan from :meth:`SwitchDiffEngine.compute_changes`.
+        - `discovered_data`: Discovery data keyed by seed IP for all switches
                              that required discovery this run.
 
-        Returns:
-            None.
+        ## Returns
+
+        - None.
         """
         self.log.debug("ENTER: _handle_merged_state()")
         self.log.info("Handling merged state")
@@ -3302,16 +3385,19 @@ class NDSwitchResourceModule:
         """Handle overridden-state reconciliation for the fabric.
 
         Reconciles the fabric to match exactly the desired config.  Switches
-        in the fabric that have no config entry are deleted.  POAP/preprovision
-        switches at ``plan.poap_ips`` are excluded from the cleanup sweep.
-        Normal switches with field differences are deleted and re-added.
+        in the fabric that have no config entry are deleted via ``to_delete``.
+        POAP/preprovision mismatches that need replacement are deleted via
+        ``to_delete_existing`` before their add workflow runs. Normal switches
+        with field differences are deleted and re-added.
 
-        Args:
-            plan: Unified action plan from :meth:`SwitchDiffEngine.compute_changes`.
-            discovered_data: Discovery data keyed by seed IP.
+        ## Parameters
 
-        Returns:
-            None.
+        - `plan`: Unified action plan from :meth:`SwitchDiffEngine.compute_changes`.
+        - `discovered_data`: Discovery data keyed by seed IP.
+
+        ## Returns
+
+        - None.
         """
         self.log.debug("ENTER: _handle_overridden_state()")
         self.log.info("Handling overridden state")
@@ -3450,12 +3536,14 @@ class NDSwitchResourceModule:
         differences trigger delete and re-add, and POAP/preprovision mismatches
         are also re-provisioned.
 
-        Args:
-            plan: Unified action plan from :meth:`SwitchDiffEngine.compute_changes`.
-            discovered_data: Discovery data keyed by seed IP.
+        ## Parameters
 
-        Returns:
-            None.
+        - `plan`: Unified action plan from :meth:`SwitchDiffEngine.compute_changes`.
+        - `discovered_data`: Discovery data keyed by seed IP.
+
+        ## Returns
+
+        - None.
         """
         self.log.debug("ENTER: _handle_replaced_state()")
         self.log.info("Handling replaced state")
@@ -3583,8 +3671,9 @@ class NDSwitchResourceModule:
         SwitchConfigModel shape by exit_json(). This method only records the
         result metadata so that Results aggregation works correctly.
 
-        Returns:
-            None.
+        ## Returns
+
+        - None.
         """
         self.log.debug("ENTER: _handle_gathered_state()")
         self.log.info("Gathering inventory for fabric '%s'", self.fabric)
@@ -3618,12 +3707,14 @@ class NDSwitchResourceModule:
         ignored; only ``seed_ip`` and ``role`` matter.  When no config is
         provided, all switches in the fabric are deleted.
 
-        Args:
-            proposed_config: Optional config list that limits deletion scope.
+        ## Parameters
+
+        - `proposed_config`: Optional config list that limits deletion scope.
                              Pass ``None`` to delete all switches.
 
-        Returns:
-            None.
+        ## Returns
+
+        - None.
         """
         self.log.debug("ENTER: _handle_deleted_state()")
         self.log.info("Handling deleted state")
@@ -3694,12 +3785,14 @@ class NDSwitchResourceModule:
     def _log_operation(self, operation: str, identifier: str) -> None:
         """Append a successful operation record to the module log.
 
-        Args:
-            operation: Operation label.
-            identifier: Switch identifier for the operation.
+        ## Parameters
 
-        Returns:
-            None.
+        - `operation`: Operation label.
+        - `identifier`: Switch identifier for the operation.
+
+        ## Returns
+
+        - None.
         """
         self.nd_logs.append(
             {

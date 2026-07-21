@@ -123,18 +123,29 @@ def test_switch_config_operation_type(extra, expected):
 
 
 def test_switch_config_state_defaults_and_gathered_output_mask_credentials():
-    """Merged config defaults role, and gathered output is reusable with placeholders."""
+    """Merged config preserves omitted role and gathered output masks credentials."""
     cfg = SwitchConfigModel.model_validate(
         {"seed_ip": "192.0.2.10", "username": "admin", "password": "password"},
         context={"state": "merged"},
     )
 
-    assert cfg.role == "leaf"
+    assert cfg.role is None
+    assert "role" not in cfg.to_payload()
     gathered = cfg.to_gathered_dict()
     assert gathered["seed_ip"] == "192.0.2.10"
     assert gathered["username"] == "<username>"
     assert gathered["password"] == "<password>"
+    assert "role" not in gathered
     assert "platform_type" not in gathered
+
+
+def test_switch_config_rejects_explicit_null_role():
+    """Explicit role=null is invalid; omit role to use the controller default."""
+    with pytest.raises(ValidationError, match="role cannot be null"):
+        SwitchConfigModel.model_validate(
+            {"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": None},
+            context={"state": "merged"},
+        )
 
 
 def test_switch_config_requires_credentials_for_write_states():

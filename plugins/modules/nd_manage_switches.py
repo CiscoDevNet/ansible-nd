@@ -102,9 +102,9 @@ options:
             role:
                 description:
                 - Role to assign to the switch in the fabric.
+                - When omitted, the controller applies its default role and role drift is not enforced.
                 - Supported values depend on the target fabric type. See C(notes).
                 type: str
-                default: leaf
                 choices:
                 - leaf
                 - spine
@@ -283,9 +283,10 @@ notes:
   is used as the stable identity for idempotency checks.
 - Idempotence for B(normal discovery) - A switch is considered idempotent when
   its C(seed_ip) already exists in the fabric inventory with no configuration
-  drift (same role).
-- The module validates switch platform, C(role), and C(preserve_config) against
-  the resolved fabric type before discovery or write operations.
+  drift. If C(role) is omitted, role drift is ignored and the controller
+  default applies on add.
+- The module validates switch platform, provided C(role), and C(preserve_config)
+  against the resolved fabric type before discovery or write operations.
 - 'NX-OS only fabrics: Routed, DataCenter VXLAN, Enhanced Classic LAN, AI VXLAN,
   AI Routed, and IPFM.'
 - 'NX-OS and IOS-XE fabrics: Campus VXLAN.'
@@ -298,8 +299,8 @@ notes:
 - Campus VXLAN supports only C(border_gateway), C(border_gateway_spine), and
   C(border_gateway_super_spine) switch roles.
 - IPFM supports C(leaf), C(spine), and C(tier2_leaf) switch roles.
-- Validation failures include the exact supported platform, C(role), and
-  C(preserve_config) values for the target fabric type.
+- Validation failures include the exact supported platform, provided C(role),
+  and C(preserve_config) values for the target fabric type.
 """
 
 EXAMPLES = """

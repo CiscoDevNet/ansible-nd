@@ -275,11 +275,13 @@ class SwitchDataModel(NDBaseModel):
         1. Inventory API format: {switchId, fabricManagementIp, switchRole, ...}
         2. Discovery API format: {serialNumber, ip, hostname, model, softwareVersion, status, ...}
 
-        Args:
-            response: Response dict from either inventory or discovery API
+        ## Parameters
 
-        Returns:
-            SwitchDataModel instance
+        - `response`: Response dict from either inventory or discovery API
+
+        ## Returns
+
+        - SwitchDataModel instance
         """
         # Detect format and transform if needed
         if "switchId" in response or "fabricManagementIp" in response:
@@ -312,8 +314,9 @@ class SwitchDataModel(NDBaseModel):
         fields are always present (None when not available). Credential fields
         are never included.
 
-        Returns:
-            Dict with keys: seed_ip, serial_number, hostname, model,
+        ## Returns
+
+        - Dict with keys: seed_ip, serial_number, hostname, model,
             role, software_version, mode.
         """
         ad = self.additional_data

@@ -7,9 +7,6 @@ from __future__ import absolute_import, annotations, division, print_function
 from copy import deepcopy
 from typing import Any
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
-    EpManageFabricsGet,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import (
     EpFabricConfigSavePost,
 )
@@ -135,7 +132,6 @@ class FabricUtils:
     def __init__(self, nd_module: Any, fabric_name: str) -> None:
         self.nd = nd_module
         self.fabric_name = fabric_name
-        self._fabric_info: dict[str, Any] | None = None
 
     @staticmethod
     def build_config_save_path(fabric_name: str) -> str:
@@ -163,48 +159,6 @@ class FabricUtils:
 
     def config_deploy_path(self, force_show_run: bool = True) -> str:
         return self.build_config_deploy_path(self.fabric_name, force_show_run=force_show_run)
-
-    @staticmethod
-    def build_fabric_info_path(fabric_name: str) -> str:
-        """
-        Build /manage/fabrics/{fabricName} endpoint path for the given fabric.
-        """
-        endpoint = EpManageFabricsGet(fabric_name=fabric_name)
-        return endpoint.path
-
-    @property
-    def fabric_info_path(self) -> str:
-        return self.build_fabric_info_path(self.fabric_name)
-
-    def get_fabric_info(self) -> dict[str, Any]:
-        """
-        Retrieve and cache fabric details from the Manage fabric endpoint.
-        """
-        if self._fabric_info is not None:
-            return self._fabric_info
-
-        path = self.fabric_info_path
-        response_data = self.nd.request(path, HttpVerbEnum.GET)
-        if not isinstance(response_data, dict):
-            raise ValueError(
-                f"Unable to determine fabric details for '{self.fabric_name}': " f"expected a dictionary response, got {type(response_data).__name__}"
-            )
-        self._fabric_info = response_data
-        return response_data
-
-    def get_fabric_type(self) -> str:
-        """
-        Return the canonical fabric type from fabric details management.type.
-        """
-        fabric_info = self.get_fabric_info()
-        management = fabric_info.get("management")
-        if not isinstance(management, dict):
-            raise ValueError(f"Unable to determine fabric type for '{self.fabric_name}': response does not contain 'management.type'")
-
-        fabric_type = management.get("type")
-        if not isinstance(fabric_type, str) or not fabric_type.strip():
-            raise ValueError(f"Unable to determine fabric type for '{self.fabric_name}': response does not contain a non-empty 'management.type'")
-        return fabric_type.strip()
 
     def save_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         """

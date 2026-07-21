@@ -52,8 +52,15 @@ class SwitchRole(str, Enum):
     @classmethod
     def from_user_input(cls, value: str) -> "SwitchRole":
         """
+        # Summary
+
         Convert user-friendly input to enum value.
         Accepts underscore-separated values like 'border_gateway' -> 'borderGateway'
+
+        ## Raises
+
+        - `ValueError`: Raised when the supplied role cannot be mapped to a
+            ``SwitchRole`` value.
         """
         if not value:
             return cls.LEAF
@@ -73,8 +80,15 @@ class SwitchRole(str, Enum):
     @classmethod
     def normalize(cls, value: str | "SwitchRole" | None) -> "SwitchRole":
         """
+        # Summary
+
         Normalize input to enum value (case-insensitive).
         Accepts: LEAF, leaf, border_gateway, borderGateway, etc.
+
+        ## Raises
+
+        - `ValueError`: Raised when the supplied role cannot be mapped to a
+            ``SwitchRole`` value.
         """
         if value is None:
             return cls.LEAF
@@ -137,8 +151,15 @@ class ShallowDiscoveryPlatformType(str, Enum):
     @classmethod
     def normalize(cls, value: str | "ShallowDiscoveryPlatformType" | None) -> "ShallowDiscoveryPlatformType":
         """
+        # Summary
+
         Normalize input to enum value (case-insensitive).
         Accepts: NX_OS, nx-os, NX-OS, ios_xe, ios-xe, etc.
+
+        ## Raises
+
+        - `ValueError`: Raised when the supplied platform type cannot be mapped to
+            a ``ShallowDiscoveryPlatformType`` value.
         """
         if value is None:
             return cls.NX_OS
@@ -186,8 +207,15 @@ class SnmpV3AuthProtocol(str, Enum):
     @classmethod
     def normalize(cls, value: str | "SnmpV3AuthProtocol" | None) -> "SnmpV3AuthProtocol":
         """
+        # Summary
+
         Normalize input to enum value (case-insensitive).
         Accepts: MD5, md5, MD5_DES, md5-des, etc.
+
+        ## Raises
+
+        - `ValueError`: Raised when the supplied protocol cannot be mapped to an
+            ``SnmpV3AuthProtocol`` value.
         """
         if value is None:
             return cls.MD5

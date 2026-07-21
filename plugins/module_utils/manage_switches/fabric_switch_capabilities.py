@@ -4,7 +4,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""Fabric capability validation for nd_manage_switches."""
+"""Fabric switch capability validation for nd_manage_switches."""
 
 from __future__ import annotations
 
@@ -168,39 +168,17 @@ def _normalize_fabric_type(value: str) -> str:
     return value.replace("-", "").replace("_", "").replace(" ", "").lower()
 
 
-def _first_string_value(source: dict[str, Any], keys: tuple[str, ...]) -> str | None:
-    """Return the first non-empty string-ish value for keys in source."""
-    for key in keys:
-        value = source.get(key)
-        if value not in (None, ""):
-            return str(value)
-    return None
-
-
-def fabric_type_from_details(fabric_details: dict[str, Any]) -> str | None:
-    """Extract the controller fabric type from a Manage fabric GET response."""
-    if not isinstance(fabric_details, dict):
-        return None
-
-    keys = ("type", "fabricType", "fabric_type", "nvPairs.FABRIC_TYPE")
-    management = fabric_details.get("management")
-    if isinstance(management, dict):
-        fabric_type = _first_string_value(management, keys)
-        if fabric_type:
-            return fabric_type
-
-    fabric_type = _first_string_value(fabric_details, keys)
-    if fabric_type:
-        return fabric_type
-
-    nv_pairs = fabric_details.get("nvPairs")
-    if isinstance(nv_pairs, dict):
-        return _first_string_value(nv_pairs, ("FABRIC_TYPE", "fabricType", "type"))
-    return None
-
-
 def capability_for_fabric_type(fabric_type: str) -> FabricSwitchCapability:
-    """Return the capability matrix entry for a fabric type."""
+    """
+    # Summary
+
+    Return the switch capability matrix entry for a fabric type.
+
+    ## Raises
+
+    - `SwitchFabricCapabilityError`: Raised when the fabric type is not represented
+        in the switch support matrix.
+    """
     normalized = _normalize_fabric_type(fabric_type)
     capability = CAPABILITY_BY_FABRIC_TYPE.get(normalized)
     if capability is None:
@@ -211,25 +189,23 @@ def capability_for_fabric_type(fabric_type: str) -> FabricSwitchCapability:
     return capability
 
 
-def validate_switch_configs_for_fabric(
-    fabric_name: str,
-    fabric_details: dict[str, Any],
-    configs: list[SwitchConfigModel],
-) -> FabricSwitchCapability:
-    """Validate switch configs against the target fabric's support matrix."""
-    fabric_type = fabric_type_from_details(fabric_details)
-    if not fabric_type:
-        raise SwitchFabricCapabilityError(f"Unable to determine fabric type for fabric '{fabric_name}' from controller fabric details.")
-
-    return validate_switch_configs_for_fabric_type(fabric_name, fabric_type, configs)
-
-
 def validate_switch_configs_for_fabric_type(
     fabric_name: str,
     fabric_type: str,
     configs: list[SwitchConfigModel],
 ) -> FabricSwitchCapability:
-    """Validate switch configs against the support matrix for a canonical fabric type."""
+    """
+    # Summary
+
+    Validate switch configs against the support matrix for a canonical fabric
+    type.
+
+    ## Raises
+
+    - `SwitchFabricCapabilityError`: Raised when the fabric type is unsupported, or
+        when any provided platform, role, or preserve_config value is invalid
+        for the target fabric family.
+    """
     capability = capability_for_fabric_type(fabric_type)
     errors: list[str] = []
     for cfg in configs:
@@ -241,7 +217,7 @@ def validate_switch_configs_for_fabric_type(
                 f"{prefix}: platform_type '{_enum_value(cfg.platform_type)}' is not supported for {capability.family} fabric "
                 f"'{fabric_name}' (type '{fabric_type}'). Supported platform_type values: {_enum_values(capability.platform_types)}."
             )
-        if role not in capability.roles:
+        if role is not None and role not in capability.roles:
             role_display = _enum_value(cfg.role) if cfg.role else "<unspecified>"
             errors.append(
                 f"{prefix}: role '{role_display}' is not supported for {capability.family} fabric '{fabric_name}' "
