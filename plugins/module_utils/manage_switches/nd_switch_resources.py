@@ -1506,7 +1506,7 @@ class SwitchFabricOps:
         wait_sets = self._split_post_add_wait_sets(spec.switch_actions)
 
         log.info(
-            "Waiting for %s %s switch(es) to become manageable: %s " "(nxos_reload=%s, nxos_preserve=%s, ready_without_reload=%s)",
+            "Waiting for %s %s switch(es) to become manageable: %s (nxos_reload=%s, nxos_preserve=%s, ready_without_reload=%s)",
             len(all_serials),
             spec.context,
             all_serials,
