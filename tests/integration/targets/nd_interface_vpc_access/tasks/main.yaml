@@ -16,7 +16,9 @@
 #   - vPC pair uses a virtual peer-link (no physical peer-link cable required); see vars/main.yaml
 #
 # Setup creates the vPC pair if missing; teardown unpairs it (which cascades and removes all
-# member vPC interfaces, so we don't need an explicit vPC-interface teardown).
+# member vPC interfaces, so we don't need an explicit vPC-interface teardown). Set
+# nd_test_manage_vpc_pairs=false to treat the pair as pre-existing lab substrate (setup/teardown
+# then leave it untouched).
 
 - name: Test that we have a Nexus Dashboard host, username and password
   ansible.builtin.fail:
@@ -57,6 +59,7 @@
             peer2_switch_id: "{{ test_switch_ip_peer2 }}"
         state: deleted
       ignore_errors: true
+      when: test_manage_vpc_pairs
   vars:
     ansible_command_timeout: 300
   environment:

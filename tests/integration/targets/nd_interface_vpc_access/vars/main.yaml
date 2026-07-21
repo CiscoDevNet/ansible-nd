@@ -26,6 +26,9 @@ test_switch_ip_peer2: "{{ nd_test_vpc_peer2_ip | default('192.168.12.152') }}"
 # Revert to a physical peer-link once ND fixes physical peer-link config generation, i.e. restore
 # use_virtual_peer_link: false plus switch_po_id / peer_switch_po_id / switch_member_interfaces /
 # peer_switch_member_interfaces (Ethernet1/2 on both peers) under vpc_pair_details.
+#
+# Set nd_test_manage_vpc_pairs=false to treat this pair as pre-existing lab substrate (see
+# test_manage_vpc_pairs below); the config above is then only used for peer-serial resolution.
 vpc_pair_setup:
   peer1_switch_id: "{{ test_switch_ip_peer1 }}"
   peer2_switch_id: "{{ test_switch_ip_peer2 }}"
@@ -36,6 +39,11 @@ vpc_pair_setup:
     keep_alive_vrf: management
     switch_keep_alive_local_ip: "{{ test_switch_ip_peer1 }}"
     peer_switch_keep_alive_local_ip: "{{ test_switch_ip_peer2 }}"
+
+# When false, the test run treats the vPC pair as pre-existing lab substrate: setup does not
+# create/modify the pair and teardown does not unpair it. Default true preserves the original
+# self-contained behavior (setup creates the pair, teardown unpairs it).
+test_manage_vpc_pairs: "{{ nd_test_manage_vpc_pairs | default(true) | bool }}"
 
 # Baseline vPC access interface used by merged + idempotency tests.
 vpc_access_baseline:
