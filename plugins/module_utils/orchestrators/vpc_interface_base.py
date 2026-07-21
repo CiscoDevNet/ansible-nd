@@ -31,6 +31,7 @@ user to create the pair first via `nd_manage_vpc_pair`.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -112,6 +113,45 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         super().model_post_init(__context)
         self._peer_serial_cache: dict[str, str] = {}
+
+    def preflight(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Run the shared interface preflight, then reject a config that lists the same `interface_name` under both peers of one vPC
+        pair. With the composite `(switch_ip, interface_name)` identity (issue #356) such a config parses as two proposed items that
+        target a single ND resource; failing fast here (the state machine runs `preflight` before any mutation, in check mode too)
+        prevents a double-write against one interface. Pair resolution runs ONLY for names that appear more than once, so runs with
+        unique names — the common case — issue no additional requests; the duplicate path costs one cached `vpcPair` GET per distinct
+        primary switch, reused later by create/update.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If two (or more) proposed items share an `interface_name` and resolve to the same vPC pair.
+        - Propagated from `super().preflight` / `_resolve_switch_id` / `_resolve_peer_switch_id` (unresolvable switch, missing pair).
+        """
+        super().preflight(model_instances)
+        items_by_name: dict[str, list[ModelType]] = {}
+        for model_instance in model_instances:
+            items_by_name.setdefault(model_instance.interface_name, []).append(model_instance)
+        offenders: list[str] = []
+        for name, items in items_by_name.items():
+            if len(items) < 2:
+                continue
+            switch_ips_by_pair: dict[frozenset[str], list[str]] = {}
+            for item in items:
+                switch_id = self._resolve_switch_id(item.switch_ip)
+                peer_serial = self._resolve_peer_switch_id(item.switch_ip, switch_id)
+                switch_ips_by_pair.setdefault(frozenset({switch_id, peer_serial}), []).append(item.switch_ip)
+            for switch_ips in switch_ips_by_pair.values():
+                if len(switch_ips) > 1:
+                    offenders.append(
+                        f"{name} is listed for multiple peers ({', '.join(sorted(switch_ips))}) of the same vPC pair; list it once, under either peer"
+                    )
+        if offenders:
+            raise RuntimeError(f"Invalid vPC config in fabric '{self.fabric_name}': " + "; ".join(sorted(offenders)))
 
     def _managed_policy_types(self) -> set[str]:
         """

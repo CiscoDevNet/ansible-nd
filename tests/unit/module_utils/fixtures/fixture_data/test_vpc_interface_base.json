@@ -728,5 +728,55 @@
             {"interfaceName": "vpc300", "interfaceType": "vpc",
              "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost", "accessVlan": 30}}}}
         ]}
+    },
+    "test_vpc_interface_base_01100a": {
+        "TEST_NOTES": ["Same-pair-dupe guard (#356): switches list for _resolve_switch_id (two peers of one pair)."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [
+            {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"},
+            {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}
+        ]}
+    },
+    "test_vpc_interface_base_01100b": {
+        "TEST_NOTES": ["Same-pair-dupe guard (#356): vpcPair for FDO11111AAA — peer is FDO22222BBB."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"switchId": "FDO11111AAA", "peerSwitchId": "FDO22222BBB"}
+    },
+    "test_vpc_interface_base_01100c": {
+        "TEST_NOTES": ["Same-pair-dupe guard (#356): vpcPair for FDO22222BBB — peer is FDO11111AAA (same pair -> guard fires)."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"switchId": "FDO22222BBB", "peerSwitchId": "FDO11111AAA"}
+    },
+    "test_vpc_interface_base_01110a": {
+        "TEST_NOTES": ["Same-pair-dupe guard pass (#356): switches list — four leaves, two pairs."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [
+            {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"},
+            {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"},
+            {"fabricManagementIp": "192.168.1.3", "switchId": "FDO33333CCC"},
+            {"fabricManagementIp": "192.168.1.4", "switchId": "FDO44444DDD"}
+        ]}
+    },
+    "test_vpc_interface_base_01110b": {
+        "TEST_NOTES": ["Same-pair-dupe guard pass (#356): vpcPair for FDO11111AAA — pair 1."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"switchId": "FDO11111AAA", "peerSwitchId": "FDO22222BBB"}
+    },
+    "test_vpc_interface_base_01110c": {
+        "TEST_NOTES": ["Same-pair-dupe guard pass (#356): vpcPair for FDO33333CCC — pair 2 (different pair -> no error)."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO33333CCC/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"switchId": "FDO33333CCC", "peerSwitchId": "FDO44444DDD"}
     }
 }

@@ -1252,3 +1252,106 @@ def test_vpc_interface_base_01010() -> None:
     assert len(result) == 1
     assert result[0]["interfaceName"] == "vpc300"
     assert result[0]["switchIp"] == "192.168.1.1"
+
+
+# =============================================================================
+# Test: preflight same-pair-duplicate guard (#356)
+# =============================================================================
+
+
+def test_vpc_interface_base_01100() -> None:
+    """
+    # Summary
+
+    Verify `preflight` raises when one config lists the same `interface_name` under both peers of the SAME vPC pair. With composite
+    identity (issue #356) such a config parses as two items that target one ND resource; the guard fails fast (before any mutation,
+    check mode included via the state machine's existing preflight wiring) instead of double-writing.
+
+    ## Test
+
+    - Two proposed items: vpc100@192.168.1.1 and vpc100@192.168.1.2 — peers of one pair (vpcPair fixtures)
+    - `preflight` raises `RuntimeError` naming vpc100 and both IPs
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        for suffix in ("a", "b", "c"):
+            yield responses_vpc_base(f"{method_name}{suffix}")
+
+    gen_responses = ResponseGenerator(responses())
+    instance = _build_orchestrator(gen_responses)
+    items = [
+        _build_model(switch_ip="192.168.1.1", interface_name="vpc100"),
+        _build_model(switch_ip="192.168.1.2", interface_name="vpc100"),
+    ]
+
+    with pytest.raises(RuntimeError, match=r"vpc100.*192\.168\.1\.1, 192\.168\.1\.2.*same vPC pair"):
+        instance.preflight(items)
+
+
+def test_vpc_interface_base_01110() -> None:
+    """
+    # Summary
+
+    Verify `preflight` accepts the same `interface_name` on two DIFFERENT vPC pairs — the multi-pair vPC-id reuse that issue #356
+    exists to support (lab-confirmed legal on ND 4.2.1, devicePair-scoped vpcId pool).
+
+    ## Test
+
+    - Two proposed items: vpc100@192.168.1.1 (pair 1) and vpc100@192.168.1.3 (pair 2)
+    - `preflight` does not raise
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        for suffix in ("a", "b", "c"):
+            yield responses_vpc_base(f"{method_name}{suffix}")
+
+    gen_responses = ResponseGenerator(responses())
+    instance = _build_orchestrator(gen_responses)
+    items = [
+        _build_model(switch_ip="192.168.1.1", interface_name="vpc100"),
+        _build_model(switch_ip="192.168.1.3", interface_name="vpc100"),
+    ]
+
+    with does_not_raise():
+        instance.preflight(items)
+
+
+def test_vpc_interface_base_01120() -> None:
+    """
+    # Summary
+
+    Verify `preflight` issues ZERO requests when every proposed `interface_name` is unique (the overwhelmingly common case): pair
+    resolution only runs for duplicated names, so idempotent runs pay no extra API cost (CLAUDE.md performance rule, issue #356).
+
+    ## Test
+
+    - Two proposed items with distinct names
+    - The response generator yields nothing — any API request would raise StopIteration and fail the test
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight()
+    """
+
+    def responses():
+        yield from ()
+
+    gen_responses = ResponseGenerator(responses())
+    instance = _build_orchestrator(gen_responses)
+    items = [
+        _build_model(switch_ip="192.168.1.1", interface_name="vpc100"),
+        _build_model(switch_ip="192.168.1.1", interface_name="vpc101"),
+    ]
+
+    with does_not_raise():
+        instance.preflight(items)
