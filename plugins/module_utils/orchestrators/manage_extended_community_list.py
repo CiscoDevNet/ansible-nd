@@ -17,6 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageExtendedCommunityListsPost,
     EpManageExtendedCommunityListsPut,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import (
@@ -173,7 +174,7 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
                 self._validate_write_model(model_instance)
             ep = self._configure_endpoint(self.create_bulk_endpoint())
             payload = {"extendedCommunityLists": [m.to_payload() for m in model_instances]}
-            result = self._request(path=ep.path, verb=ep.verb, data=payload)
+            result = self._request(path=ep.path, verb=ep.verb, data=payload, operation_type=OperationType.CREATE)
             self._raise_on_207_action_errors(result)
             return result
         except Exception as e:
@@ -186,7 +187,12 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
             self._validate_write_model(model_instance)
             ep = self._configure_endpoint(self.update_endpoint())
             ep.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=ep.path, verb=ep.verb, data=model_instance.to_payload())
+            return self._request(
+                path=ep.path,
+                verb=ep.verb,
+                data=model_instance.to_payload(),
+                operation_type=OperationType.UPDATE,
+            )
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -204,7 +210,7 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
         try:
             ep = self._configure_endpoint(self.delete_bulk_endpoint())
             payload = {"extendedCommunityListNames": [m.get_identifier_value() for m in model_instances]}
-            result = self._request(path=ep.path, verb=ep.verb, data=payload)
+            result = self._request(path=ep.path, verb=ep.verb, data=payload, operation_type=OperationType.DELETE)
             self._raise_on_207_action_errors(result)
             return result
         except Exception as e:

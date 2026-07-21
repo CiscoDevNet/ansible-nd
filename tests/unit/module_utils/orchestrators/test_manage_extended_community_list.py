@@ -11,7 +11,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import (
     ExtendedCommunityListModel,
 )
@@ -274,3 +274,27 @@ def test_manage_extended_community_list_00310() -> None:
 
     instance.delete_bulk([ExtendedCommunityListModel.from_config({"name": "ECL1", "tenant_name": "tenantA"})])
     assert rest_send.committed_payload == {"extendedCommunityListNames": ["tenantA~ECL1"]}
+
+
+def test_manage_extended_community_list_00320(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify custom mutation paths record create, update, and delete operation types."""
+    operation_types = []
+
+    def fake_request(*args, **kwargs):
+        operation_types.append(kwargs.get("operation_type"))
+        return {"results": []}
+
+    def responses():
+        yield {}
+
+    unused_rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    assert unused_rest_send is not None
+    assert unused_fabric_context is not None
+    monkeypatch.setattr(instance, "_request", fake_request)
+    model = _model()
+
+    instance.create_bulk([model])
+    instance.update(model)
+    instance.delete_bulk([model])
+
+    assert operation_types == [OperationType.CREATE, OperationType.UPDATE, OperationType.DELETE]
