@@ -147,20 +147,21 @@ def _mcfg_parent_orchestrator():
     )
 
 
-def test_network_config_model_requires_attachment_interfaces_key():
-    with pytest.raises(ValueError, match="interfaces"):
-        NetworkConfigModel.from_config(
-            {
-                "network_name": "BLUE_NET",
-                "is_l2only": True,
-                "vlan_id": 2301,
-                "attach": [
-                    {
-                        "ip_address": "10.1.1.11",
-                    }
-                ],
-            }
-        )
+def test_network_config_model_defaults_missing_attachment_interfaces_to_empty_list():
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "BLUE_NET",
+            "is_l2only": True,
+            "vlan_id": 2301,
+            "attach": [
+                {
+                    "ip_address": "10.1.1.11",
+                }
+            ],
+        }
+    )
+
+    assert model.to_config()["attach"][0]["interfaces"] == []
 
 
 def test_network_config_model_accepts_empty_attachment_interfaces():
@@ -189,7 +190,7 @@ def test_network_parent_argument_spec_includes_child_config():
     assert spec["attach"]["options"]["interfaces"]["options"]["mode"]["choices"]
     assert spec["attach"]["options"]["interfaces"]["options"]["mode"]["required"] is True
     assert spec["attach"]["options"]["interfaces"]["options"]["interface_range"]["required"] is True
-    assert spec["attach"]["options"]["interfaces"]["required"] is True
+    assert spec["attach"]["options"]["interfaces"]["default"] == []
     assert spec["attach"]["options"]["deploy"]["default"] is True
     assert "ports" not in spec["attach"]["options"]
     assert "tor_ports" not in spec["attach"]["options"]
@@ -1052,7 +1053,7 @@ def test_legacy_network_names_are_normalized():
     assert config["rt_auto"] is True
 
 
-def test_attachment_shape_rejects_ports_without_interfaces():
+def test_attachment_shape_accepts_interfaces_and_defaults_missing_interfaces():
     model = NetworkConfigModel.from_config(
         {
             "net_name": "LEGACY_ATTACH",
@@ -1076,19 +1077,19 @@ def test_attachment_shape_rejects_ports_without_interfaces():
     assert attach["deploy"] is False
     assert attach["interfaces"][0]["interface_range"] == "Ethernet1/1"
 
-    with pytest.raises(ValueError, match="interfaces"):
-        NetworkConfigModel.from_config(
-            {
-                "net_name": "LEGACY_ATTACH",
-                "is_l2only": True,
-                "attach": [
-                    {
-                        "ip_address": "10.1.1.11",
-                        "ports": ["Ethernet1/1"],
-                    }
-                ],
-            }
-        )
+    omitted = NetworkConfigModel.from_config(
+        {
+            "net_name": "OMITTED_INTERFACES_ATTACH",
+            "is_l2only": True,
+            "attach": [
+                {
+                    "ip_address": "10.1.1.11",
+                }
+            ],
+        }
+    )
+
+    assert omitted.to_config()["attach"][0]["interfaces"] == []
 
     with pytest.raises(ValueError, match="mode"):
         NetworkConfigModel.from_config(

@@ -68,7 +68,7 @@ class NetworkAttachmentConfigModel(NDNestedModel):
 
     ip_address: str = Field(alias="ipAddress")
     vlan_id: int | None = Field(default=None, alias="vlanId")
-    interfaces: list[NetworkInterfaceConfigModel] = Field(default=...)
+    interfaces: list[NetworkInterfaceConfigModel] = Field(default_factory=list)
     deploy: bool | None = True
     attachment_options: dict[str, Any] | None = None
     extra_config: str | None = Field(default=None, alias="extraConfig")

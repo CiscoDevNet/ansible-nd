@@ -119,10 +119,11 @@ options:
           interfaces:
             description:
               - Interface attachment entries.
-              - Provide an empty list when attaching the Network to a switch without
-                per-interface bindings.
+              - Defaults to an empty list when omitted.
+              - Use an empty list to attach the Network to a switch without per-interface
+                bindings.
             type: list
-            required: true
+            default: []
             elements: dict
             suboptions:
               mode:
