@@ -19,7 +19,7 @@
         config:
           - "{{ loopback_100 }}"
         state: merged
-        tags:
+      tags:
         - nd4x_demo
         - nd4x_demo_replaced
 
@@ -27,9 +27,6 @@
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_interface_loopback
         state: replaced
-        tags:
-        - nd4x_demo
-        - nd4x_demo_replaced
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
@@ -53,6 +50,9 @@
               - jsonpath: "$.current.configData.networkOS.policy.ip"
                 equals: "10.100.100.2"
       register: replaced_loopback_100
+      tags:
+        - nd4x_demo
+        - nd4x_demo_replaced
 
     - name: "REPLACED VERIFY: Verify loopback100 updated"
       vars:
@@ -62,7 +62,7 @@
             | selectattr('interface_name', 'equalto', 'loopback100')
             | first
           }}
-        tags:
+      tags:
         - nd4x_demo
         - nd4x_demo_replaced
       ansible.builtin.assert:
@@ -76,10 +76,10 @@
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        tags:
-        - nd4x_demo
-        - nd4x_demo_replaced
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_name: loopback100
         state: deleted
+      tags:
+        - nd4x_demo
+        - nd4x_demo_replaced
