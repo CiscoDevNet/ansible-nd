@@ -19,6 +19,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     FabricTypeEnum,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.vpc_pair_model import (
+    VpcPairModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModuleError
 
 
@@ -78,89 +81,18 @@ def _base_params():
     }
 
 
-@pytest.fixture
-def _details_config():
-    return {
-        VpcFieldNames.SWITCH_ID: "SN01",
-        VpcFieldNames.PEER_SWITCH_ID: "SN02",
-        VpcFieldNames.USE_VIRTUAL_PEER_LINK: False,
-        "vpc_pair_details": {
-            "type": "default",
-            "domain_id": 1,
-            "keep_alive_vrf": "management",
-        },
-    }
-
-
-def _run_supported_create(nrm):
-    with patch.object(actions, "NDModuleV2", _FakeNDModuleV2):
-        with patch.object(actions, "_validate_switches_exist_in_fabric", return_value=None):
-            with patch.object(actions, "_get_pairing_support_details", return_value=None):
-                with patch.object(actions, "_validate_fabric_peering_support", return_value=None):
-                    with patch.object(actions, "_build_vpc_pair_payload", return_value={"ok": True}):
-                        return actions.custom_vpc_create(nrm)
-
-
-def test_manage_vpc_pair_actions_00010_block_vpc_pair_details_on_ibgp_create(_base_params, _details_config):
-    nrm = _FakeNrm(
-        {
-            **_base_params,
-            "_test_management_type_response": FabricTypeEnum.VXLAN_IBGP.value,
-        },
-        _details_config,
-    )
-
-    with patch.object(actions, "NDModuleV2", _FakeNDModuleV2):
-        with pytest.raises(VpcPairResourceError) as exc:
-            actions.custom_vpc_create(nrm)
-
-    assert "vpc_pair_details" in exc.value.msg
-    assert "iBGP/eBGP VXLAN fabrics" in exc.value.msg
-
-
-def test_manage_vpc_pair_actions_00020_block_vpc_pair_details_on_ebgp_update(_base_params, _details_config):
-    nrm = _FakeNrm(
-        {
-            **_base_params,
-            "_test_management_type_response": FabricTypeEnum.VXLAN_EBGP.value,
-        },
-        _details_config,
-        existing_config={
-            VpcFieldNames.SWITCH_ID: "SN01",
-            VpcFieldNames.PEER_SWITCH_ID: "SN02",
-            VpcFieldNames.USE_VIRTUAL_PEER_LINK: False,
-        },
-    )
-
-    with patch.object(actions, "NDModuleV2", _FakeNDModuleV2):
-        with pytest.raises(VpcPairResourceError) as exc:
-            actions.custom_vpc_update(nrm)
-
-    assert "vpc_pair_details" in exc.value.msg
-    assert "iBGP/eBGP VXLAN fabrics" in exc.value.msg
-
-
-def test_manage_vpc_pair_actions_00030_allow_cached_external_fabric_type(_base_params, _details_config):
-    nrm = _FakeNrm(
-        _base_params,
-        _details_config,
-        fabric_type=FabricTypeEnum.EXTERNAL_CONNECTIVITY.value,
-    )
-
-    response = _run_supported_create(nrm)
-
-    assert response == {}
-
-
-def test_manage_vpc_pair_actions_00040_allow_future_fabric_type(_base_params, _details_config):
+def test_manage_vpc_pair_actions_00040_preflight_allows_unknown_fabric_type(_base_params):
+    # Only the explicit blocked set (iBGP/eBGP VXLAN) is rejected; any other
+    # fabric type (including an unknown/future value) accepts explicit details.
+    proposed_item = _details_model()
     nrm = _FakeNrm(
         {**_base_params, "_test_management_type_response": "futureFabricType"},
-        _details_config,
+        _inherited_payload(),
     )
 
-    response = _run_supported_create(nrm)
+    with patch.object(actions, "NDModuleV2", _FakeNDModuleV2):
+        actions.validate_proposed_details_support(nrm, proposed_item)
 
-    assert response == {}
     assert nrm.fabric_type == "futureFabricType"
 
 
@@ -275,7 +207,7 @@ def test_manage_vpc_pair_actions_00120_resolve_fabric_type_rejects_malformed_res
     assert "Unable to determine fabric type" in exc.value.msg
 
 
-def test_manage_vpc_pair_actions_00130_cache_reuses_successful_fabric_type(_base_params, _details_config):
+def test_manage_vpc_pair_actions_00130_cache_reuses_successful_fabric_type(_base_params):
     class _CountingNDModuleV2:
         def __init__(self):
             self.request_count = 0
@@ -284,97 +216,204 @@ def test_manage_vpc_pair_actions_00130_cache_reuses_successful_fabric_type(_base
             self.request_count += 1
             return {"management": {"type": FabricTypeEnum.EXTERNAL_CONNECTIVITY.value}}
 
-    nrm = _FakeNrm(_base_params, _details_config)
+    nrm = _FakeNrm(_base_params, {})
     nd_v2 = _CountingNDModuleV2()
 
-    actions._validate_vpc_pair_details_fabric_support(nrm, nd_v2, "fab1")
-    actions._validate_vpc_pair_details_fabric_support(nrm, nd_v2, "fab1")
+    actions._ensure_fabric_type(nrm, nd_v2, "fab1")
+    actions._ensure_fabric_type(nrm, nd_v2, "fab1")
 
     assert nd_v2.request_count == 1
     assert nrm.fabric_type == FabricTypeEnum.EXTERNAL_CONNECTIVITY.value
 
 
-def test_manage_vpc_pair_actions_00135_failed_resolution_does_not_populate_cache(_base_params, _details_config):
+def test_manage_vpc_pair_actions_00135_failed_resolution_does_not_populate_cache(_base_params):
     class _MalformedResponseNDModuleV2:
         def request(self, path, verb, payload=None):
             return {}
 
-    nrm = _FakeNrm(_base_params, _details_config)
+    nrm = _FakeNrm(_base_params, {})
 
     with pytest.raises(VpcPairResourceError):
-        actions._validate_vpc_pair_details_fabric_support(nrm, _MalformedResponseNDModuleV2(), "fab1")
+        actions._ensure_fabric_type(nrm, _MalformedResponseNDModuleV2(), "fab1")
 
     assert nrm.fabric_type is None
 
 
 @pytest.mark.parametrize(
-    "proposed_config",
+    "proposed_item",
     [
         {},
         {"vpc_pair_details": {}},
         {VpcFieldNames.VPC_PAIR_DETAILS: []},
     ],
 )
-def test_manage_vpc_pair_actions_00140_no_details_skips_fabric_lookup(_base_params, proposed_config):
+def test_manage_vpc_pair_actions_00140_no_details_skips_fabric_lookup(_base_params, proposed_item):
     class _NeverCalledNDModuleV2:
+        def __init__(self, module=None):
+            pass
+
         def request(self, path, verb, payload=None):
             raise AssertionError("fabric lookup should not be called")
 
-    nrm = _FakeNrm(_base_params, proposed_config)
+    nrm = _FakeNrm(_base_params, {})
 
-    actions._validate_vpc_pair_details_fabric_support(nrm, _NeverCalledNDModuleV2(), "fab1")
+    with patch.object(actions, "NDModuleV2", _NeverCalledNDModuleV2):
+        actions.validate_proposed_details_support(nrm, proposed_item)
 
     assert nrm.fabric_type is None
 
 
-def test_manage_vpc_pair_actions_00150_check_mode_create_rejects_ibgp_details(_base_params, _details_config):
-    nrm = _FakeNrm(
+# ---------------------------------------------------------------------------
+# Fix for GitHub review comment (actions.py:147): fabric-support validation must
+# examine the raw user intent, not the reconciled/merged state. These tests
+# exercise the two helpers wired into the state machine
+# (``_manage_create_update_state``):
+#   * ``validate_proposed_details_support`` runs BEFORE the diff/no_diff decision
+#     so an unsupported field is rejected even when it matches existing state
+#     (an idempotent request must not silently accept a prohibited field), and it
+#     only considers fields the user explicitly supplied.
+#   * ``strip_inherited_details_for_blocked_fabric`` removes merge-inherited
+#     vpcPairDetails from the outgoing payload on blocked fabrics so the field is
+#     never sent back to Nexus Dashboard, while leaving explicit and
+#     External/ISN/LANClassic details intact.
+# ---------------------------------------------------------------------------
+
+_DETAILS_INPUT = {"type": "default", "domain_id": 1}
+
+
+def _details_model():
+    """Raw user model that explicitly supplies vpc_pair_details."""
+    return VpcPairModel.from_config(
         {
-            **_base_params,
-            "_test_management_type_response": FabricTypeEnum.VXLAN_IBGP.value,
-        },
-        _details_config,
-        check_mode=True,
+            "switch_id": "SN01",
+            "peer_switch_id": "SN02",
+            "use_virtual_peer_link": False,
+            "vpc_pair_details": dict(_DETAILS_INPUT),
+        }
+    )
+
+
+def _no_details_model():
+    """Raw user model that omits vpc_pair_details (id-only intent)."""
+    return VpcPairModel.from_config(
+        {
+            "switch_id": "SN01",
+            "peer_switch_id": "SN02",
+            "use_virtual_peer_link": False,
+        }
+    )
+
+
+def _inherited_payload():
+    """Reconciled payload that carries vpcPairDetails (e.g. inherited via merge)."""
+    return {
+        VpcFieldNames.SWITCH_ID: "SN01",
+        VpcFieldNames.PEER_SWITCH_ID: "SN02",
+        VpcFieldNames.USE_VIRTUAL_PEER_LINK: False,
+        VpcFieldNames.VPC_PAIR_DETAILS: dict(_DETAILS_INPUT),
+    }
+
+
+@pytest.mark.parametrize(
+    "blocked_type",
+    [FabricTypeEnum.VXLAN_IBGP.value, FabricTypeEnum.VXLAN_EBGP.value],
+)
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_manage_vpc_pair_actions_00180_preflight_rejects_explicit_details_even_when_idempotent(_base_params, check_mode, blocked_type):
+    # Mike case 1 (+ check mode): explicit unsupported details are rejected from
+    # the raw user intent, regardless of whether the requested value already
+    # matches controller state. The preflight never consults existing_config, so
+    # the state machine's no_diff early-return cannot silently accept the field.
+    # Parametrized over both blocked fabric types (iBGP/eBGP VXLAN) and check
+    # mode, replacing the retired handler-level block tests.
+    proposed_item = _details_model()
+    nrm = _FakeNrm(
+        {**_base_params, "_test_management_type_response": blocked_type},
+        _inherited_payload(),
+        existing_config=_inherited_payload(),
+        check_mode=check_mode,
     )
 
     with patch.object(actions, "NDModuleV2", _FakeNDModuleV2):
-        with pytest.raises(VpcPairResourceError):
-            actions.custom_vpc_create(nrm)
+        with pytest.raises(VpcPairResourceError) as exc:
+            actions.validate_proposed_details_support(nrm, proposed_item)
 
-    assert nrm.module.params["_test_request_count"] == 1
+    assert "vpc_pair_details" in exc.value.msg
+    assert "iBGP/eBGP VXLAN fabrics" in exc.value.msg
 
 
-def test_manage_vpc_pair_actions_00160_check_mode_update_rejects_ebgp_details(_base_params, _details_config):
+def test_manage_vpc_pair_actions_00190_preflight_ignores_omitted_details_without_fabric_lookup(_base_params):
+    # Mike case 2 (preflight half): when the user omits details, merge-inherited
+    # details must not be treated as user intent, and no controller lookup runs.
+    proposed_item = _no_details_model()
     nrm = _FakeNrm(
-        {
-            **_base_params,
-            "_test_management_type_response": FabricTypeEnum.VXLAN_EBGP.value,
-        },
-        _details_config,
-        existing_config={VpcFieldNames.SWITCH_ID: "SN01"},
-        check_mode=True,
+        {**_base_params, "_test_management_type_response": FabricTypeEnum.VXLAN_IBGP.value},
+        _inherited_payload(),
     )
 
     with patch.object(actions, "NDModuleV2", _FakeNDModuleV2):
-        with pytest.raises(VpcPairResourceError):
-            actions.custom_vpc_update(nrm)
+        actions.validate_proposed_details_support(nrm, proposed_item)
 
-    assert nrm.module.params["_test_request_count"] == 1
+    assert nrm.fabric_type is None
+    assert "_test_request_count" not in nrm.module.params
 
 
-def test_manage_vpc_pair_actions_00170_check_mode_allows_supported_details_without_write(_base_params, _details_config):
+def test_manage_vpc_pair_actions_00200_preflight_allows_explicit_details_on_external(_base_params):
+    # Mike point 4: External continues to accept explicitly supplied details.
+    proposed_item = _details_model()
     nrm = _FakeNrm(
-        {
-            **_base_params,
-            "_test_management_type_response": FabricTypeEnum.EXTERNAL_CONNECTIVITY.value,
-        },
-        _details_config,
-        check_mode=True,
+        {**_base_params, "_test_management_type_response": FabricTypeEnum.EXTERNAL_CONNECTIVITY.value},
+        _inherited_payload(),
     )
 
     with patch.object(actions, "NDModuleV2", _FakeNDModuleV2):
-        response = actions.custom_vpc_create(nrm)
+        actions.validate_proposed_details_support(nrm, proposed_item)
 
-    assert response == _details_config
     assert nrm.fabric_type == FabricTypeEnum.EXTERNAL_CONNECTIVITY.value
-    assert nrm.module.params["_test_request_count"] == 1
+
+
+def test_manage_vpc_pair_actions_00210_sanitize_strips_inherited_details_on_blocked_fabric(_base_params):
+    # Mike case 2 + point 3: inherited details are stripped from the outgoing
+    # payload on blocked fabrics, so the update does NOT send vpcPairDetails.
+    proposed_item = _no_details_model()
+    nrm = _FakeNrm(
+        {**_base_params, "_test_management_type_response": FabricTypeEnum.VXLAN_EBGP.value},
+        _inherited_payload(),
+    )
+
+    with patch.object(actions, "NDModuleV2", _FakeNDModuleV2):
+        actions.strip_inherited_details_for_blocked_fabric(nrm, proposed_item)
+
+    assert VpcFieldNames.VPC_PAIR_DETAILS not in nrm.proposed_config
+    assert "vpc_pair_details" not in nrm.proposed_config
+
+
+def test_manage_vpc_pair_actions_00220_sanitize_preserves_inherited_details_on_external(_base_params):
+    # Mike point 4: External preserves details even when inherited via merge.
+    proposed_item = _no_details_model()
+    nrm = _FakeNrm(
+        {**_base_params, "_test_management_type_response": FabricTypeEnum.EXTERNAL_CONNECTIVITY.value},
+        _inherited_payload(),
+    )
+
+    with patch.object(actions, "NDModuleV2", _FakeNDModuleV2):
+        actions.strip_inherited_details_for_blocked_fabric(nrm, proposed_item)
+
+    assert nrm.proposed_config[VpcFieldNames.VPC_PAIR_DETAILS] == _DETAILS_INPUT
+
+
+def test_manage_vpc_pair_actions_00230_sanitize_keeps_explicit_details_without_fabric_lookup(_base_params):
+    # Explicit user details are never stripped by the sanitizer and require no
+    # fabric lookup there (they are governed by the preflight validator instead).
+    proposed_item = _details_model()
+    nrm = _FakeNrm(
+        {**_base_params, "_test_management_type_response": FabricTypeEnum.VXLAN_IBGP.value},
+        _inherited_payload(),
+    )
+
+    with patch.object(actions, "NDModuleV2", _FakeNDModuleV2):
+        actions.strip_inherited_details_for_blocked_fabric(nrm, proposed_item)
+
+    assert nrm.proposed_config[VpcFieldNames.VPC_PAIR_DETAILS] == _DETAILS_INPUT
+    assert nrm.fabric_type is None
+    assert "_test_request_count" not in nrm.module.params

@@ -115,6 +115,13 @@ options:
             vpc_pair_details:
                 description:
                 - Optional vPC pair template details (default/custom template fields).
+                - This option is not supported on iBGP/eBGP VXLAN fabrics (C(vxlanIbgp) and
+                  C(vxlanEbgp)) and is rejected during validation for those fabric types. On
+                  iBGP/eBGP VXLAN fabrics, supply only the peer switch IDs with
+                  O(config.use_virtual_peer_link=false); Nexus Dashboard discovers the directly
+                  connected physical peer-link interfaces automatically.
+                - Supported on fabric types that accept explicit physical peer-link details, such
+                  as LANClassic, External Connectivity (C(externalConnectivity)), and ISN fabrics.
                 type: dict
 extends_documentation_fragment:
 - cisco.nd.modules
@@ -193,6 +200,37 @@ EXAMPLES = """
     config:
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
+
+# Create a vPC pair on an iBGP/eBGP VXLAN fabric (physical peer-link).
+# vpc_pair_details is not supported on vxlanIbgp/vxlanEbgp fabrics: omit it and
+# set use_virtual_peer_link: false so Nexus Dashboard discovers the directly
+# connected peer interfaces automatically.
+- name: Create vPC pair on an iBGP/eBGP VXLAN fabric
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: myVxlanFabric
+    state: merged
+    config:
+      - peer1_switch_id: "FDO23040Q85"
+        peer2_switch_id: "FDO23040Q86"
+        use_virtual_peer_link: false
+
+# Create a vPC pair on an External Connectivity fabric with explicit
+# vpc_pair_details. Explicit physical peer-link details are accepted on
+# LANClassic, External Connectivity, and ISN fabrics.
+- name: Create vPC pair on an External Connectivity fabric with vpc_pair_details
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: myExternalFabric
+    state: merged
+    config:
+      - peer1_switch_id: "FDO23040Q85"
+        peer2_switch_id: "FDO23040Q86"
+        use_virtual_peer_link: false
+        vpc_pair_details:
+          type: default
+          domain_id: 110
+          keep_alive_vrf: management
+          switch_keep_alive_local_ip: "192.0.2.11"
+          peer_switch_keep_alive_local_ip: "192.0.2.12"
 
 # Native Ansible check_mode behavior
 - name: Check mode vPC pair creation

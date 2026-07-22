@@ -34,7 +34,7 @@
     vpc_pair_details_expected_supported: >-
       {{
         (fabric_type | default('LANClassic') | string | lower)
-        in ['lanclassic', 'external', 'isn']
+        in ['lanclassic', 'external', 'externalconnectivity', 'isn']
       }}
     deploy_local: true
   delegate_to: localhost

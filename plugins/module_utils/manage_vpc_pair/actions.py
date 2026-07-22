@@ -119,6 +119,21 @@ def _resolve_fabric_type(nd_v2: NDModuleV2, fabric_name: str) -> str:
     return fabric_type.strip()
 
 
+def _ensure_fabric_type(nrm: Any, nd_v2: NDModuleV2, fabric_name: str) -> str:
+    """
+    Resolve the fabric type once and cache it on the state machine.
+
+    The resolved value is stored on ``nrm.fabric_type`` so repeated validation
+    and payload-sanitization passes across the proposed items in a single run
+    trigger at most one controller lookup.
+    """
+    fabric_type = nrm.fabric_type
+    if fabric_type is None:
+        fabric_type = _resolve_fabric_type(nd_v2, fabric_name)
+        nrm.fabric_type = fabric_type
+    return fabric_type
+
+
 def _get_proposed_vpc_pair_details(proposed_config: Any) -> dict[str, Any] | None:
     """Return non-empty proposed vpc_pair_details (snake_case or API key)."""
     if not isinstance(proposed_config, dict):
@@ -132,26 +147,41 @@ def _get_proposed_vpc_pair_details(proposed_config: Any) -> dict[str, Any] | Non
     return details
 
 
-def _validate_vpc_pair_details_fabric_support(
-    nrm: Any,
-    nd_v2: NDModuleV2,
-    fabric_name: str,
-) -> None:
+def _get_explicit_proposed_details(proposed_item: Any) -> dict[str, Any] | None:
     """
-    Block vpc_pair_details on fabrics where it is not supported.
+    Return non-empty vpc_pair_details only when the user explicitly supplied it.
 
-    Currently blocked for VXLAN iBGP/eBGP fabrics. Allowed for other fabric
-    types (for example External/ISN-style deployments) where the controller
-    supports the additional settings.
+    ``proposed_item`` is the raw user-intent model built directly from the
+    playbook config, so ``model_dump(exclude_unset=True)`` reflects exactly the
+    fields the user set; defaults and merge-inherited values are excluded. A
+    plain dict is also accepted for convenience.
     """
-    proposed_details = _get_proposed_vpc_pair_details(nrm.proposed_config)
+    if hasattr(proposed_item, "model_dump"):
+        explicit_config = proposed_item.model_dump(by_alias=True, exclude_none=True, exclude_unset=True)
+    else:
+        explicit_config = proposed_item
+    return _get_proposed_vpc_pair_details(explicit_config)
+
+
+def validate_proposed_details_support(nrm: Any, proposed_item: Any) -> None:
+    """
+    Reject vpc_pair_details on blocked fabrics using only raw user intent.
+
+    This preflight check runs before the state machine computes diffs, so an
+    unsupported field is rejected even when the requested value happens to match
+    existing controller state; an idempotent request must not silently accept a
+    prohibited field. Only fields the user explicitly supplied are considered, so
+    inherited/merged details never cause a false rejection. The fabric type is
+    resolved and cached lazily and only when explicit details are present, so the
+    common id-only path performs no extra controller lookup.
+    """
+    proposed_details = _get_explicit_proposed_details(proposed_item)
     if proposed_details is None:
         return
 
-    fabric_type = nrm.fabric_type
-    if fabric_type is None:
-        fabric_type = _resolve_fabric_type(nd_v2, fabric_name)
-        nrm.fabric_type = fabric_type
+    fabric_name = nrm.module.params.get("fabric_name")
+    nd_v2 = NDModuleV2(nrm.module)
+    fabric_type = _ensure_fabric_type(nrm, nd_v2, fabric_name)
 
     if fabric_type in _BLOCKED_FABRIC_TYPES_FOR_VPC_PAIR_DETAILS:
         _raise_vpc_error(
@@ -164,6 +194,41 @@ def _validate_vpc_pair_details_fabric_support(
             fabric_type=fabric_type,
             unsupported_field="vpc_pair_details",
         )
+
+
+def strip_inherited_details_for_blocked_fabric(nrm: Any, proposed_item: Any) -> None:
+    """
+    Drop merge-inherited vpc_pair_details from the outgoing payload on blocked fabrics.
+
+    When a user omits vpc_pair_details on an update, ``merge()`` re-adds the
+    vpcPairDetails carried by existing controller state into the reconciled
+    payload. On iBGP/eBGP VXLAN fabrics that inherited field must never be sent
+    back to Nexus Dashboard. Explicitly supplied details are left untouched here
+    because they are already validated by :func:`validate_proposed_details_support`
+    and remain permitted on External/ISN/LANClassic fabrics. The fabric lookup is
+    performed only when the payload actually carries details.
+    """
+    if not isinstance(nrm.proposed_config, dict):
+        return
+
+    payload_details = nrm.proposed_config.get(VpcFieldNames.VPC_PAIR_DETAILS)
+    if payload_details is None:
+        payload_details = nrm.proposed_config.get("vpc_pair_details")
+    if not payload_details:
+        return
+
+    if _get_explicit_proposed_details(proposed_item) is not None:
+        # User explicitly supplied details; preflight already validated them and
+        # supported fabrics must keep them.
+        return
+
+    fabric_name = nrm.module.params.get("fabric_name")
+    nd_v2 = NDModuleV2(nrm.module)
+    fabric_type = _ensure_fabric_type(nrm, nd_v2, fabric_name)
+
+    if fabric_type in _BLOCKED_FABRIC_TYPES_FOR_VPC_PAIR_DETAILS:
+        nrm.proposed_config.pop(VpcFieldNames.VPC_PAIR_DETAILS, None)
+        nrm.proposed_config.pop("vpc_pair_details", None)
 
 
 def _build_compare_payloads(nrm: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -243,14 +308,7 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
         raise ValueError("peer_switch_id is required but was not provided")
 
     # Initialize RestSend via NDModuleV2.
-    # Validate details support before create to fail early on unsupported
-    # fabric types (iBGP/eBGP VXLAN).
     nd_v2 = NDModuleV2(nrm.module)
-    _validate_vpc_pair_details_fabric_support(
-        nrm=nrm,
-        nd_v2=nd_v2,
-        fabric_name=fabric_name,
-    )
 
     if nrm.module.check_mode:
         return nrm.proposed_config
@@ -385,14 +443,7 @@ def custom_vpc_update(nrm: Any) -> dict[str, Any] | None:
         raise ValueError("peer_switch_id is required but was not provided")
 
     # Initialize RestSend via NDModuleV2.
-    # Validate details support before update to fail early on unsupported
-    # fabric types (iBGP/eBGP VXLAN).
     nd_v2 = NDModuleV2(nrm.module)
-    _validate_vpc_pair_details_fabric_support(
-        nrm=nrm,
-        nd_v2=nd_v2,
-        fabric_name=fabric_name,
-    )
 
     if nrm.module.check_mode:
         return nrm.proposed_config
