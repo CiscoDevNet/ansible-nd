@@ -1,1 +1,8 @@
 output/
+
+# Local integration test config (use *.template files as reference)
+integration/inventory.networking
+integration/integration_config.yml
+
+# Log files
+*.log

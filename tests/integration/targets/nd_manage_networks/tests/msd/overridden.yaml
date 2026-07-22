@@ -1,0 +1,183 @@
+---
+- name: Test Entry Point - [nd_manage_networks - msd - overridden]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MSD Overridden Tests - [nd_manage_networks]      +"
+      - "----------------------------------------------------------------"
+  when: nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden - Build Parent and Child Network Config
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_msd_parent_fabric }}"
+    target_network_delete_config:
+      - network_name: ansible-nd-net-msd-over-seed
+        is_l2only: true
+      - network_name: ansible-nd-net-msd-over-keep
+        is_l2only: true
+    nd_network_msd_over_seed:
+      - network_name: ansible-nd-net-msd-over-seed
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 221 }}"
+        vlan_id: "{{ nd_network_base_vlan + 221 }}"
+        vlan_name: ansible_nd_net_msd_over_seed
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+      - network_name: ansible-nd-net-msd-over-keep
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 222 }}"
+        vlan_id: "{{ nd_network_base_vlan + 222 }}"
+        vlan_name: ansible_nd_net_msd_over_keep
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+    nd_network_msd_over_config:
+      - network_name: ansible-nd-net-msd-over-keep
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 222 }}"
+        vlan_id: "{{ nd_network_base_vlan + 222 }}"
+        vlan_name: ans_nd_net_msd_over_upd
+        rt_auto: true
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+  delegate_to: localhost
+  when: nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden - Prepare Seed Configuration
+  vars:
+    file: msd_over_seed
+    network_conf: "{{ nd_network_msd_over_seed }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden - Prepare Override Configuration
+  vars:
+    file: msd_over
+    network_conf: "{{ nd_network_msd_over_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC1 - Seed Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_msd_over_seed_conf }}"
+  register: msd_over_seed_result
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC2 - Override Networks
+  cisco.nd.nd_manage_networks: &msd_over_conf
+    fabric_name: "{{ target_fabric }}"
+    state: overridden
+    config: "{{ nd_network_msd_over_conf }}"
+    output_level: debug
+  register: msd_over_result
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC2 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - msd_over_result.changed == true
+      - msd_over_result.fabric_type == "multisite_parent"
+      - msd_over_result.child_fabrics is not defined
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC2 - Gather Parent Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: []
+  register: msd_over_gathered
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC2 - Validate Remaining Network
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ msd_over_gathered }}"
+    test_data: "{{ nd_network_msd_over_conf }}"
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC2 - Validate Removed Network
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ msd_over_gathered }}"
+    test_data:
+      - network_name: ansible-nd-net-msd-over-seed
+    present: false
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC3 - Idempotence
+  cisco.nd.nd_manage_networks: *msd_over_conf
+  register: msd_over_idempotent
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - msd_over_idempotent.changed == false
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_overridden | bool
+  tags:
+    - msd
+    - overridden

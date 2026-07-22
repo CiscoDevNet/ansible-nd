@@ -1,0 +1,60 @@
+---
+# Overridden state tests for nd_interface_subinterface_managed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# At this point Eth.2, Eth.3, Eth.4, and PC.5 exist on the fabric. Override
+# reduces the set to only what is specified; any managed subinterface managed by
+# this module that is not in the config is removed.
+
+- name: "OVERRIDDEN: Reduce to only Eth.2 and PC.5"
+  cisco.nd.nd_interface_subinterface_managed: &override_eth_2_pc_5
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: "{{ ethernet_parent }}.2"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              description: "Overridden Eth.2"
+              vlan_id: 2
+              vrf_interface: default
+              ip: 10.99.200.1
+              prefix: 24
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: "{{ port_channel_parent }}.5"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              description: "Overridden PC.5"
+              vlan_id: 5
+              vrf_interface: default
+              ip: 10.99.205.1
+              prefix: 24
+    state: overridden
+  register: nm_overridden_reduce
+
+- name: "OVERRIDDEN: Verify reduce changed and removed entries are gone"
+  vars:
+    eth_3_name: "{{ ethernet_parent }}.3"
+    eth_4_name: "{{ ethernet_parent }}.4"
+    eth_3_after: "{{ nm_overridden_reduce.after | selectattr('interface_name', 'equalto', eth_3_name) | list }}"
+    eth_4_after: "{{ nm_overridden_reduce.after | selectattr('interface_name', 'equalto', eth_4_name) | list }}"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_reduce is changed
+      - eth_3_after | length == 0
+      - eth_4_after | length == 0
+
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply"
+  cisco.nd.nd_interface_subinterface_managed: *override_eth_2_pc_5
+  register: nm_overridden_idem
+
+- name: "OVERRIDDEN IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_idem is not changed

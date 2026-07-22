@@ -1,0 +1,201 @@
+---
+# Variables for nd_manage_l3out integration tests.
+#
+# Override these in your inventory or extra-vars to match a real ND 4.1+ testbed.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
+test_fabric1_name: "{{ nd_test_fabric1_name | default('DC1-Fabric') }}"
+test_fabric2_name: "{{ nd_test_fabric2_name | default('External-Fabric') }}"
+test_vrf1_name: "{{ nd_test_vrf1_name | default('production') }}"
+test_vrf2_name: "{{ nd_test_vrf2_name | default('external') }}"
+test_tenant1_name: "{{ nd_test_tenant1_name | default(omit) }}"
+test_tenant2_name: "{{ nd_test_tenant2_name | default(omit) }}"
+test_switch1_id: "{{ nd_test_switch1_id | default('FDO12345678') }}"
+test_switch2_id: "{{ nd_test_switch2_id | default('FDO87654321') }}"
+# Management IP variants for testing IP-based switch_id resolution
+test_switch1_mgmt_ip: "{{ nd_test_switch1_mgmt_ip | default('10.1.1.11') }}"
+test_switch2_mgmt_ip: "{{ nd_test_switch2_mgmt_ip | default('10.1.1.12') }}"
+test_switch1_interface: "{{ nd_test_switch1_interface | default('Ethernet1/1') }}"
+test_switch2_interface: "{{ nd_test_switch2_interface | default('Ethernet1/1') }}"
+test_switch1_subif: "{{ nd_test_switch1_subif | default('Ethernet1/2') }}"
+test_switch2_subif: "{{ nd_test_switch2_subif | default('Ethernet1/2') }}"
+
+# L3Out names used across tests
+test_l3out_bgp_name: ansible-test-l3out-bgp
+test_l3out_static_name: ansible-test-l3out-static
+test_l3out_svi_name: ansible-test-l3out-svi
+
+# L3Out configs used across tests (YAML anchors reference these)
+l3out_bgp:
+  name: "{{ test_l3out_bgp_name }}"
+  fabric1_name: "{{ test_fabric1_name }}"
+  fabric2_name: "{{ test_fabric2_name }}"
+  vrf1_name: "{{ test_vrf1_name }}"
+  vrf2_name: "{{ test_vrf2_name }}"
+  tenant1_name: "{{ test_tenant1_name }}"
+  tenant2_name: "{{ test_tenant2_name }}"
+  configured_fabrics: both
+  ip_version: ipv4
+  connectivity_details:
+    routing_interface_type: routed
+    links:
+      - mtu: 9216
+        ipv4_mask_length: 30
+        switch1_details:
+          switch_id: "{{ test_switch1_id }}"
+          interface_name: "{{ test_switch1_interface }}"
+          interface_ipv4_address: 10.0.0.1
+        switch2_details:
+          switch_id: "{{ test_switch2_id }}"
+          interface_name: "{{ test_switch2_interface }}"
+          interface_ipv4_address: 10.0.0.2
+  routing_details:
+    routing_protocol: bgp
+    bgp:
+      auth: false
+      bfd: true
+      hold_interval: 180
+      keep_alive_interval: 60
+      fabric1_details:
+        advertise_default_route: true
+        ipv4_peering_details:
+          ipv4_route_map_in: rm-in
+          ipv4_route_map_out: rm-out
+
+l3out_bgp_updated:
+  name: "{{ test_l3out_bgp_name }}"
+  fabric1_name: "{{ test_fabric1_name }}"
+  fabric2_name: "{{ test_fabric2_name }}"
+  vrf1_name: "{{ test_vrf1_name }}"
+  vrf2_name: "{{ test_vrf2_name }}"
+  tenant1_name: "{{ test_tenant1_name }}"
+  tenant2_name: "{{ test_tenant2_name }}"
+  configured_fabrics: both
+  ip_version: ipv4
+  connectivity_details:
+    routing_interface_type: routed
+    links:
+      - mtu: 9216
+        ipv4_mask_length: 30
+        switch1_details:
+          switch_id: "{{ test_switch1_id }}"
+          interface_name: "{{ test_switch1_interface }}"
+          interface_ipv4_address: 10.0.0.1
+        switch2_details:
+          switch_id: "{{ test_switch2_id }}"
+          interface_name: "{{ test_switch2_interface }}"
+          interface_ipv4_address: 10.0.0.2
+  routing_details:
+    routing_protocol: bgp
+    bgp:
+      auth: false
+      bfd: true
+      hold_interval: 240
+      keep_alive_interval: 60
+      fabric1_details:
+        advertise_default_route: true
+        ipv4_peering_details:
+          ipv4_route_map_in: rm-in
+          ipv4_route_map_out: rm-out
+
+l3out_static:
+  name: "{{ test_l3out_static_name }}"
+  fabric1_name: "{{ test_fabric1_name }}"
+  fabric2_name: "{{ test_fabric2_name }}"
+  vrf1_name: "{{ test_vrf1_name }}"
+  vrf2_name: "{{ test_vrf2_name }}"
+  configured_fabrics: fabric1
+  ip_version: ipv4
+  connectivity_details:
+    routing_interface_type: subInterface
+    links:
+      - vlan_id: 100
+        mtu: 1500
+        ipv4_mask_length: 24
+        switch1_details:
+          switch_id: "{{ test_switch1_id }}"
+          interface_name: "{{ test_switch1_subif }}"
+          interface_ipv4_address: 192.168.100.1
+          interface_description: "Link to external network"
+        switch2_details:
+          switch_id: "{{ test_switch2_id }}"
+          interface_name: "{{ test_switch2_subif }}"
+          interface_ipv4_address: 192.168.100.2
+          interface_description: "Link from DC1"
+  routing_details:
+    routing_protocol: static
+    static:
+      fabric1_static_routes:
+        - ip_version: ipv4
+          ip_prefix: 0.0.0.0/0
+          next_hop: 192.168.100.254
+          switch_ids:
+            - "{{ test_switch1_id }}"
+          route_preference: 1
+
+l3out_static_replaced:
+  name: "{{ test_l3out_static_name }}"
+  fabric1_name: "{{ test_fabric1_name }}"
+  fabric2_name: "{{ test_fabric2_name }}"
+  vrf1_name: "{{ test_vrf1_name }}"
+  vrf2_name: "{{ test_vrf2_name }}"
+  configured_fabrics: both
+  ip_version: ipv4
+  connectivity_details:
+    routing_interface_type: routed
+    links:
+      - mtu: 9216
+        ipv4_mask_length: 30
+        switch1_details:
+          switch_id: "{{ test_switch1_id }}"
+          interface_name: "{{ test_switch1_interface }}"
+          interface_ipv4_address: 10.0.1.1
+        switch2_details:
+          switch_id: "{{ test_switch2_id }}"
+          interface_name: "{{ test_switch2_interface }}"
+          interface_ipv4_address: 10.0.1.2
+  routing_details:
+    routing_protocol: bgp
+    bgp:
+      bfd: false
+      fabric1_details:
+        advertise_default_route: false
+
+l3out_svi:
+  name: "{{ test_l3out_svi_name }}"
+  fabric1_name: "{{ test_fabric1_name }}"
+  fabric2_name: "{{ test_fabric2_name }}"
+  vrf1_name: "{{ test_vrf1_name }}"
+  vrf2_name: "{{ test_vrf2_name }}"
+  configured_fabrics: both
+  ip_version: both
+  connectivity_details:
+    routing_interface_type: svi
+    links:
+      - vlan_id: 200
+        mtu: 9216
+        ipv4_mask_length: 24
+        ipv6_prefix_length: 64
+        ipv4_pim: true
+        switch1_details:
+          switch_id: "{{ test_switch1_id }}"
+          interface_name: Vlan200
+          interface_ipv4_address: 10.200.0.1
+          interface_ipv6_address: "2001:db8:200::1"
+        switch2_details:
+          switch_id: "{{ test_switch2_id }}"
+          interface_name: Vlan200
+          interface_ipv4_address: 10.200.0.2
+          interface_ipv6_address: "2001:db8:200::2"
+  routing_details:
+    routing_protocol: bgp
+    bgp:
+      bfd: true
+      fabric1_details:
+        advertise_host_routes: true
+        ipv4_peering_details:
+          ipv4_route_map_in: rm-v4-in
+          ipv4_route_map_out: rm-v4-out
+        ipv6_peering_details:
+          ipv6_route_map_in: rm-v6-in
+          ipv6_route_map_out: rm-v6-out

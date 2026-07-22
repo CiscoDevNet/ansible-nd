@@ -1,0 +1,62 @@
+---
+# Variables for nd_interface_subinterface_unmanaged integration tests.
+#
+# Override fabric_name, switch_ip, ethernet_parent and port_channel_parent in your
+# inventory or extra-vars to match a real ND 4.2 testbed.
+#
+# The parent interfaces must exist and (for Ethernet parents) must be in a routed
+# (L3) policy before unmanaged subinterfaces can be created on them. ND rejects
+# subinterface creation against L2 access/trunk parents with HTTP 207 status:failed
+# and message "Sub-interface can be created only on routed physical or port-channel
+# interfaces". The unmanaged variant follows the same rule as the managed variant.
+#
+# Sub-id range .20-.29 avoids collision with the managed target's .2-.5 range so
+# both targets can run on the same testbed without interference.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
+test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
+ethernet_parent: "{{ nd_test_ethernet_parent | default('Ethernet1/3') }}"
+port_channel_parent: "{{ nd_test_port_channel_parent | default('Port-channel10') }}"
+
+# --- Base configs ---
+#
+# Unmanaged subinterfaces carry no user-configurable policy fields. Each config
+# item contains only switch_ip + interface_name; the module hard-codes
+# mode=unmanaged, network_os_type=nx-os, policy_type=monitorSubinterface.
+
+subif_eth_20:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.20"
+
+subif_eth_21:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.21"
+
+subif_eth_22:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.22"
+
+subif_pc_25:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ port_channel_parent }}.25"
+
+# Subinterface used to exercise the replaced fall-back-to-create case. NOT created
+# in merged.yaml; replaced.yaml is the first phase that touches it.
+
+subif_eth_29:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.29"
+
+# --- Cleanup helper: all test subinterfaces to remove before/after tests run ---
+
+cleanup_config:
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.20"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.21"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.22"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.29"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ port_channel_parent }}.25"

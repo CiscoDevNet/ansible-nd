@@ -1,0 +1,40 @@
+---
+# Pre-test setup for nd_interface_vpc_access
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Ensures:
+#   1. Any pre-existing vPC pair on the test peers is removed (clears any stale vPC interfaces).
+#   2. A fresh vPC pair is created so the access tests have a stable substrate.
+#   3. ND switch poller has time to discover the new pair before tests start.
+
+- name: "SETUP: Tear down any existing vPC pair on test peers"
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
+        peer2_switch_id: "{{ test_switch_ip_peer2 }}"
+    state: deleted
+  ignore_errors: true
+  tags: always
+
+- name: "SETUP: Pause for unpair convergence"
+  ansible.builtin.pause:
+    seconds: 30
+  tags: always
+
+- name: "SETUP: Create vPC pair"
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_pair_setup }}"
+    state: merged
+  tags: always
+
+- name: "SETUP: Pause for pair-establishment convergence"
+  ansible.builtin.pause:
+    seconds: 30
+  tags: always

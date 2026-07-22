@@ -1,0 +1,128 @@
+---
+- name: Test Entry Point - [nd_manage_vrfs - mcfg - deleted]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MCFG Deleted Tests - [nd_manage_vrfs]                  +"
+      - "----------------------------------------------------------------"
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted - Build Parent and Child Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    target_vrf_names:
+      - ansible-nd-vrf-mcfg-deleted
+      - ansible-mcfg-del-parent
+    nd_vrf_mcfg_delete_config:
+      - vrf_name: ansible-nd-vrf-mcfg-deleted
+        vrf_id: "{{ nd_vrf_base_id + 34 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 34 }}"
+        vrf_description: Ansible ND VRF MCFG deleted test
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: true
+            adv_default_routes: false
+            static_default_route: false
+      - vrf_name: ansible-mcfg-del-parent
+        vrf_id: "{{ nd_vrf_base_id + 35 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 35 }}"
+        vrf_description: Ansible ND VRF MCFG deleted parent-only test
+        max_bgp_paths: 2
+        max_ibgp_paths: 2
+        deploy: false
+  delegate_to: localhost
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted - Prepare Configuration
+  vars:
+    file: mcfg_delete
+    vrf_conf: "{{ nd_vrf_mcfg_delete_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC1 - Create VRF
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_mcfg_delete_conf }}"
+  register: mcfg_delete_seed_result
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC2 - Delete Parent VRF With Ignored Child Config
+  cisco.nd.nd_manage_vrfs: &mcfg_delete_conf
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
+    state: deleted
+    config: "{{ nd_vrf_mcfg_delete_conf }}"
+    output_level: debug
+  register: mcfg_delete_result
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC2 - Assert Delete Does Not Execute Child Tasks
+  ansible.builtin.assert:
+    that:
+      - mcfg_delete_result.changed == true
+      - mcfg_delete_result.fabric_type == "multicluster_parent"
+      - mcfg_delete_result.child_fabrics is not defined
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC2 - Gather Parent VRFs
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
+    state: gathered
+    config: []
+  register: mcfg_delete_gathered
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC2 - Validate VRF Removed
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ mcfg_delete_gathered }}"
+    test_data: "{{ nd_vrf_mcfg_delete_conf }}"
+    present: false
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC3 - Idempotence
+  cisco.nd.nd_manage_vrfs: *mcfg_delete_conf
+  register: mcfg_delete_idempotent
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted
+
+- name: MCFG Deleted TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - mcfg_delete_idempotent.changed == false
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - deleted

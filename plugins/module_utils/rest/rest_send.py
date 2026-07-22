@@ -24,7 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.sender imp
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
 
-class RestSend:
+class RestSend:  # pylint: disable=too-many-public-methods
     """
     # Summary
 
@@ -195,6 +195,22 @@ class RestSend:
             self.saved_check_mode = self.check_mode
         if self.timeout is not None:
             self.saved_timeout = self.timeout
+
+    def warn(self, message: str) -> None:
+        """
+        # Summary
+
+        Emit a user-visible warning through the underlying `AnsibleModule`. Used by orchestrators to surface non-fatal
+        preflight failures (e.g. capability preflight in check mode) without converting them into module errors.
+
+        Encapsulates the `sender.ansible_module.warn(...)` reach so callers don't need to know about the sender's
+        internals; one localized `# type: ignore` here keeps the orchestrator call sites clean.
+
+        ## Raises
+
+        None
+        """
+        self.sender.ansible_module.warn(message)  # type: ignore[attr-defined]
 
     def commit(self) -> None:
         """

@@ -5,19 +5,22 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
-from functools import reduce
 
-from copy import deepcopy
 import os
 import shutil
 import tempfile
-from ansible.module_utils.basic import json
-from ansible.module_utils.basic import env_fallback
-from ansible.module_utils.six import PY3
-from ansible.module_utils.six.moves.urllib.parse import urlencode
+from copy import deepcopy
+from functools import reduce
+
 from ansible.module_utils._text import to_native, to_text
+from ansible.module_utils.basic import json
 from ansible.module_utils.connection import Connection
+from ansible.module_utils.six.moves.urllib.parse import urlencode
 from ansible_collections.cisco.nd.plugins.module_utils.constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
+
+# nd_argument_spec is re-exported for backward compatibility: it was originally defined in this file and existing modules import it from here.
+# New code should import it from nd_argument_specs directly (see issue #384).
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import nd_argument_spec  # noqa: F401  pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 
@@ -62,31 +65,14 @@ def sanitize(obj_to_sanitize, keys=None, values=None, recursive=True, remove_non
         raise TypeError("object to sanitize can only be of type list or dict. Got {}".format(type(obj_to_sanitize)))
 
 
-if PY3:
-
-    def cmp(a, b):
-        return (a > b) - (a < b)
+def cmp(a, b):
+    return (a > b) - (a < b)
 
 
 def update_qs(params):
     """Append key-value pairs to self.filter_string"""
     accepted_params = dict((k, v) for (k, v) in params.items() if v is not None)
     return "?" + urlencode(accepted_params)
-
-
-def nd_argument_spec():
-    return dict(
-        host=dict(type="str", required=False, aliases=["hostname"], fallback=(env_fallback, ["ND_HOST"])),
-        port=dict(type="int", required=False, fallback=(env_fallback, ["ND_PORT"])),
-        username=dict(type="str", fallback=(env_fallback, ["ND_USERNAME", "ANSIBLE_NET_USERNAME"])),
-        password=dict(type="str", required=False, no_log=True, fallback=(env_fallback, ["ND_PASSWORD", "ANSIBLE_NET_PASSWORD"])),
-        output_level=dict(type="str", default="normal", choices=["debug", "info", "normal"], fallback=(env_fallback, ["ND_OUTPUT_LEVEL"])),
-        timeout=dict(type="int", default=30, fallback=(env_fallback, ["ND_TIMEOUT"])),
-        use_proxy=dict(type="bool", fallback=(env_fallback, ["ND_USE_PROXY"])),
-        use_ssl=dict(type="bool", fallback=(env_fallback, ["ND_USE_SSL"])),
-        validate_certs=dict(type="bool", fallback=(env_fallback, ["ND_VALIDATE_CERTS"])),
-        login_domain=dict(type="str", fallback=(env_fallback, ["ND_LOGIN_DOMAIN"])),
-    )
 
 
 # Copied from ansible's module uri.py (url): https://github.com/ansible/ansible/blob/cdf62edc65f564fff6b7e575e084026fa7faa409/lib/ansible/modules/uri.py

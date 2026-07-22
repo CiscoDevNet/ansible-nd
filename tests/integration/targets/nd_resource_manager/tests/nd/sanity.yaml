@@ -1,0 +1,301 @@
+---
+- name: BASE common pools - Set sanity resource config
+  ansible.builtin.set_fact:
+    rm_test_config:
+      - entity_name: "base_l3_vni_fabric"
+        pool_type: "ID"
+        pool_name: "L3_VNI"
+        scope_type: "fabric"
+        resource: "50051"
+
+      - entity_name: "base_l2_vni_fabric"
+        pool_type: "ID"
+        pool_name: "L2_VNI"
+        scope_type: "fabric"
+        resource: "30051"
+
+      - entity_name: "base_vpc_domain_fabric"
+        pool_type: "ID"
+        pool_name: "VPC_DOMAIN_ID"
+        scope_type: "fabric"
+        resource: "51"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+        pool_type: "SUBNET"
+        pool_name: "DCI subnet pool"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.33.10.0/30"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+        pool_type: "SUBNET"
+        pool_name: "IPv6 DCI subnet pool"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "fd00::a33:10/126"
+
+      - entity_name: "base_hypershield_ha_source_fabric"
+        pool_type: "IP"
+        pool_name: "HYPERSHIELD_HA_SOURCE_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.255.50.1"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}~{{ ansible_sno_2 }}~{{ intf_1_10 }}"
+        pool_type: "SUBNET"
+        pool_name: "HYPERSHIELD_HA_PEER_LINK_SUBNET_POOL"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.255.51.0/30"
+
+      - entity_name: "base_fex_device"
+        pool_type: "ID"
+        pool_name: "fexId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "151"
+
+      - entity_name: "base_loopback_device"
+        pool_type: "ID"
+        pool_name: "loopbackId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "151"
+
+      - entity_name: "base_port_channel_device"
+        pool_type: "ID"
+        pool_name: "portChannelId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "651"
+
+      - entity_name: "base_route_map_device"
+        pool_type: "ID"
+        pool_name: "ROUTE_MAP_SEQUENCE_NUMBER_POOL"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "151"
+
+      - entity_name: "base_network_vlan_device"
+        pool_type: "ID"
+        pool_name: "networkVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "2451"
+
+      - entity_name: "base_loopback0_fabric"
+        pool_type: "IP"
+        pool_name: "LOOPBACK0_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.2.0.51"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+        pool_type: "ID"
+        pool_name: "topDownL3Dot1q"
+        scope_type: "device_interface"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "151"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~base_vpc_id_pair"
+        pool_type: "ID"
+        pool_name: "vpcId"
+        scope_type: "device_pair"
+        switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+        resource: "51"
+    rm_test_delete_config:
+      - entity_name: "base_l3_vni_fabric"
+        pool_type: "ID"
+        pool_name: "L3_VNI"
+        scope_type: "fabric"
+
+      - entity_name: "base_l2_vni_fabric"
+        pool_type: "ID"
+        pool_name: "L2_VNI"
+        scope_type: "fabric"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+        pool_type: "SUBNET"
+        pool_name: "DCI subnet pool"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+        pool_type: "SUBNET"
+        pool_name: "IPv6 DCI subnet pool"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "base_hypershield_ha_source_fabric"
+        pool_type: "IP"
+        pool_name: "HYPERSHIELD_HA_SOURCE_IP_POOL"
+        scope_type: "fabric"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}~{{ ansible_sno_2 }}~{{ intf_1_10 }}"
+        pool_type: "SUBNET"
+        pool_name: "HYPERSHIELD_HA_PEER_LINK_SUBNET_POOL"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "base_fex_device"
+        pool_type: "ID"
+        pool_name: "fexId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "base_loopback_device"
+        pool_type: "ID"
+        pool_name: "loopbackId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "base_port_channel_device"
+        pool_type: "ID"
+        pool_name: "portChannelId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "base_route_map_device"
+        pool_type: "ID"
+        pool_name: "ROUTE_MAP_SEQUENCE_NUMBER_POOL"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "base_network_vlan_device"
+        pool_type: "ID"
+        pool_name: "networkVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "base_loopback0_fabric"
+        pool_type: "IP"
+        pool_name: "LOOPBACK0_IP_POOL"
+        scope_type: "fabric"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+        pool_type: "ID"
+        pool_name: "topDownL3Dot1q"
+        scope_type: "device_interface"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~base_vpc_id_pair"
+        pool_type: "ID"
+        pool_name: "vpcId"
+        scope_type: "device_pair"
+        switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+    rm_expected_resource_count: 15
+    rm_expected_entity_names:
+      - "base_l3_vni_fabric"
+      - "base_l2_vni_fabric"
+      - "base_vpc_domain_fabric"
+      - "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+      - "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+      - "base_hypershield_ha_source_fabric"
+      - "{{ ansible_sno_1 }}~{{ intf_1_10 }}~{{ ansible_sno_2 }}~{{ intf_1_10 }}"
+      - "base_fex_device"
+      - "base_loopback_device"
+      - "base_port_channel_device"
+      - "base_route_map_device"
+      - "base_network_vlan_device"
+      - "base_loopback0_fabric"
+      - "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+      - "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~base_vpc_id_pair"
+
+- block:
+    - name: BASE common pools - Sanity pre-clean
+      cisco.nd.nd_manage_resource_manager: &rm_delete
+        state: deleted
+        fabric_name: "{{ ansible_it_fabric }}"
+        config: "{{ rm_test_delete_config }}"
+      register: result
+
+    - name: BASE common pools - Assert sanity pre-clean
+      ansible.builtin.assert:
+        that:
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+    - name: BASE common pools - Sanity create resources
+      cisco.nd.nd_manage_resource_manager:
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config: "{{ rm_test_config }}"
+      register: result
+
+    - name: BASE common pools - Assert sanity create
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+          - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+    - name: BASE common pools - Sanity gather by entity names
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "base_l3_vni_fabric"
+          - entity_name: "base_l2_vni_fabric"
+          - entity_name: "base_vpc_domain_fabric"
+          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+          - entity_name: "base_hypershield_ha_source_fabric"
+          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}~{{ ansible_sno_2 }}~{{ intf_1_10 }}"
+          - entity_name: "base_fex_device"
+          - entity_name: "base_loopback_device"
+          - entity_name: "base_port_channel_device"
+          - entity_name: "base_route_map_device"
+          - entity_name: "base_network_vlan_device"
+          - entity_name: "base_loopback0_fabric"
+          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+          - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~base_vpc_id_pair"
+      register: result
+
+    - name: BASE common pools - Assert sanity gathered resources
+      ansible.builtin.assert:
+        that:
+          - '(result["gathered"] | length) == (rm_expected_entity_names | length)'
+
+    - name: BASE common pools - Sanity delete resources
+      cisco.nd.nd_manage_resource_manager: *rm_delete
+      register: result
+
+    - name: BASE common pools - Assert sanity delete
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+          - '(result["diff"][0]["deleted"] | length) == rm_expected_resource_count'
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+  always:
+    - name: BASE common pools - Sanity final cleanup
+      cisco.nd.nd_manage_resource_manager: *rm_delete
+      register: result
+
+    - name: BASE common pools - Assert sanity final cleanup
+      ansible.builtin.assert:
+        that:
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0

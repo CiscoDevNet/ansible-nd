@@ -1,0 +1,64 @@
+---
+# Variables for nd_manage_route_map integration tests.
+#
+# Override the following in tests/integration/inventory.networking [nd:vars] or extra-vars:
+#   nd_test_fabric_name              - fabric in which to create route maps
+#   nd_test_route_map_primary_name   - primary disposable route map name
+#   nd_test_route_map_secondary_name - secondary disposable route map name
+#   nd_test_route_map_tertiary_name  - tertiary disposable route map name
+#   nd_test_route_map_enable_overridden=true to run the destructive overridden-state test
+
+test_fabric_name: "{{ nd_test_fabric_name | default('SITE1') }}"
+test_route_map_primary_name: "{{ nd_test_route_map_primary_name | default('ANSIBLE_RM_PRIMARY') }}"
+test_route_map_secondary_name: "{{ nd_test_route_map_secondary_name | default('ANSIBLE_RM_SECONDARY') }}"
+test_route_map_tertiary_name: "{{ nd_test_route_map_tertiary_name | default('ANSIBLE_RM_TERTIARY') }}"
+
+route_map_primary:
+  name: "{{ test_route_map_primary_name }}"
+  entries:
+    - sequence_number: 10
+      action: permit
+      rule_entries:
+        - rule_type: setLocalPreference
+          value: 100
+
+route_map_primary_updated:
+  name: "{{ test_route_map_primary_name }}"
+  entries:
+    - sequence_number: 10
+      action: permit
+      rule_entries:
+        - rule_type: setLocalPreference
+          value: 200
+
+route_map_primary_replaced:
+  name: "{{ test_route_map_primary_name }}"
+  entries:
+    - sequence_number: 20
+      action: deny
+      rule_entries:
+        - rule_type: matchTag
+          tags:
+            - 65000
+
+route_map_secondary:
+  name: "{{ test_route_map_secondary_name }}"
+  entries:
+    - sequence_number: 10
+      action: permit
+      rule_entries:
+        - rule_type: setCommunity
+          community_numbers:
+            - "65000:100"
+          additive: true
+
+route_map_tertiary:
+  name: "{{ test_route_map_tertiary_name }}"
+  entries:
+    - sequence_number: 10
+      action: permit
+      rule_entries:
+        - rule_type: setIpv4NextHop
+          next_hop_ip_collection:
+            - 192.0.2.10
+          drop_on_fail: true
