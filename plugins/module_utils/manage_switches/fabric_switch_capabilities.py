@@ -29,6 +29,7 @@ class FabricSwitchCapability:
     platform_types: frozenset[PlatformType]
     roles: frozenset[SwitchRole]
     preserve_config_values: frozenset[bool]
+    roles_by_platform: dict[PlatformType, frozenset[SwitchRole]] | None = None
 
 
 ROUTED_ROLES = frozenset(
@@ -60,13 +61,17 @@ BROAD_FABRIC_ROLES = frozenset(
     }
 )
 
-CAMPUS_VXLAN_ROLES = frozenset(
+CAMPUS_VXLAN_IOS_XE_ROLES = frozenset({SwitchRole.LEAF, SwitchRole.SPINE})
+
+CAMPUS_VXLAN_NX_OS_ROLES = frozenset(
     {
         SwitchRole.BORDER_GATEWAY,
         SwitchRole.BORDER_GATEWAY_SPINE,
         SwitchRole.BORDER_GATEWAY_SUPER_SPINE,
     }
 )
+
+CAMPUS_VXLAN_ROLES = CAMPUS_VXLAN_IOS_XE_ROLES | CAMPUS_VXLAN_NX_OS_ROLES
 
 ENHANCED_CLASSIC_LAN_ROLES = frozenset({SwitchRole.ACCESS, SwitchRole.AGGREGATION})
 
@@ -114,6 +119,10 @@ CAPABILITIES = (
         platform_types=frozenset({PlatformType.NX_OS, PlatformType.IOS_XE}),
         roles=CAMPUS_VXLAN_ROLES,
         preserve_config_values=frozenset({False}),
+        roles_by_platform={
+            PlatformType.IOS_XE: CAMPUS_VXLAN_IOS_XE_ROLES,
+            PlatformType.NX_OS: CAMPUS_VXLAN_NX_OS_ROLES,
+        },
     ),
     FabricSwitchCapability(
         family="Enhanced Classic LAN",
@@ -161,6 +170,13 @@ def _bool_values(values: frozenset[bool]) -> str:
 def _enum_value(value: Any) -> str:
     """Return a stable display value for enum or string inputs."""
     return value.value if hasattr(value, "value") else str(value)
+
+
+def _supported_roles_for_platform(capability: FabricSwitchCapability, platform_type: PlatformType) -> frozenset[SwitchRole]:
+    """Return supported roles for the supplied platform within a fabric family."""
+    if capability.roles_by_platform is None:
+        return capability.roles
+    return capability.roles_by_platform.get(platform_type, capability.roles)
 
 
 def _normalize_fabric_type(value: str) -> str:
@@ -217,11 +233,12 @@ def validate_switch_configs_for_fabric_type(
                 f"{prefix}: platform_type '{_enum_value(cfg.platform_type)}' is not supported for {capability.family} fabric "
                 f"'{fabric_name}' (type '{fabric_type}'). Supported platform_type values: {_enum_values(capability.platform_types)}."
             )
-        if role is not None and role not in capability.roles:
+        supported_roles = _supported_roles_for_platform(capability, platform_type)
+        if role is not None and role not in supported_roles:
             role_display = _enum_value(cfg.role) if cfg.role else "<unspecified>"
             errors.append(
-                f"{prefix}: role '{role_display}' is not supported for {capability.family} fabric '{fabric_name}' "
-                f"(type '{fabric_type}'). Supported role values: {_enum_values(capability.roles)}."
+                f"{prefix}: role '{role_display}' is not supported for platform_type '{_enum_value(cfg.platform_type)}' in "
+                f"{capability.family} fabric '{fabric_name}' (type '{fabric_type}'). Supported role values: {_enum_values(supported_roles)}."
             )
         if cfg.preserve_config not in capability.preserve_config_values:
             errors.append(

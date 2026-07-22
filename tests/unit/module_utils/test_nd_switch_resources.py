@@ -432,6 +432,14 @@ def test_validate_configs_accepts_dict_and_rejects_duplicates():
     assert len(configs) == 1
     assert configs[0].role is None
 
+    argspec_normalized_config = SwitchDiffEngine.validate_configs(
+        {"seed_ip": "192.0.2.15", "username": "admin", "password": "password", "role": None},
+        "merged",
+        nd,
+        log,
+    )
+    assert argspec_normalized_config[0].role is None
+
     sha512_config = SwitchDiffEngine.validate_configs(
         {"seed_ip": "192.0.2.11", "username": "admin", "password": "password", "auth_proto": "SHA_512_AES_256"},
         "merged",
@@ -495,19 +503,44 @@ def test_fabric_capability_validation_rejects_campus_leaf_before_writes():
     )
     resource.fabric_ops = SimpleNamespace(save_config=lambda: raise_assertion("configSave should not run after capability validation failure"))
 
-    with pytest.raises(FailJsonError, match="role 'leaf' is not supported for Campus VXLAN"):
+    with pytest.raises(FailJsonError, match="role 'leaf' is not supported for platform_type 'nx-os' in Campus VXLAN"):
         resource.manage_state()
 
 
-def test_fabric_capability_validation_allows_campus_border_gateway():
-    """Campus VXLAN accepts the supported border-gateway role with preserve_config=false."""
-    capability = validate_switch_configs_for_fabric_type(
-        "Campus_AK",
-        "vxlanCampus",
-        [_cfg(role="border_gateway", preserve_config=False)],
-    )
+@pytest.mark.parametrize("role", ["leaf", "spine"])
+def test_fabric_capability_validation_allows_campus_ios_xe_leaf_spine(role):
+    """Campus VXLAN accepts leaf/spine roles for IOS-XE switches."""
+    capability = validate_switch_configs_for_fabric_type("Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="ios-xe", preserve_config=False)])
 
     assert capability.family == "Campus VXLAN"
+
+
+@pytest.mark.parametrize("role", ["border_gateway", "border_gateway_spine", "border_gateway_super_spine"])
+def test_fabric_capability_validation_allows_campus_nxos_border_gateway_roles(role):
+    """Campus VXLAN accepts border-gateway roles for NX-OS switches."""
+    capability = validate_switch_configs_for_fabric_type("Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="nx-os", preserve_config=False)])
+
+    assert capability.family == "Campus VXLAN"
+
+
+def test_fabric_capability_validation_rejects_campus_ios_xe_border_gateway():
+    """Campus VXLAN rejects border-gateway roles for IOS-XE switches."""
+    with pytest.raises(SwitchFabricCapabilityError, match="role 'borderGateway' is not supported for platform_type 'ios-xe' in Campus VXLAN"):
+        validate_switch_configs_for_fabric_type(
+            "Campus_AK",
+            "vxlanCampus",
+            [_cfg(role="border_gateway", platform_type="ios-xe", preserve_config=False)],
+        )
+
+
+def test_fabric_capability_validation_rejects_campus_nxos_leaf():
+    """Campus VXLAN rejects leaf role for NX-OS switches."""
+    with pytest.raises(SwitchFabricCapabilityError, match="role 'leaf' is not supported for platform_type 'nx-os' in Campus VXLAN"):
+        validate_switch_configs_for_fabric_type(
+            "Campus_AK",
+            "vxlanCampus",
+            [_cfg(role="leaf", platform_type="nx-os", preserve_config=False)],
+        )
 
 
 def test_fabric_capability_validation_allows_unspecified_role():

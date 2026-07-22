@@ -418,7 +418,11 @@ class SwitchDiffEngine:
         validated_configs: list[SwitchConfigModel] = []
         for idx, cfg in enumerate(configs_list):
             try:
-                validated = SwitchConfigModel.model_validate(cfg, context={"state": state})
+                cfg_for_validation = dict(cfg)
+                # AnsibleModule injects omitted suboptions as None; keep omitted role distinct for the model contract.
+                if cfg_for_validation.get("role") is None:
+                    cfg_for_validation.pop("role", None)
+                validated = SwitchConfigModel.model_validate(cfg_for_validation, context={"state": state})
                 validated_configs.append(validated)
             except ValidationError as e:
                 error_detail = e.errors() if hasattr(e, "errors") else str(e)

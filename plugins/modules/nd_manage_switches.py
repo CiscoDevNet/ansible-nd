@@ -296,8 +296,9 @@ notes:
 - C(preserve_config) must be C(true) for External fabrics.
 - C(preserve_config) can be C(true) or C(false) for DataCenter VXLAN and
   Enhanced Classic LAN fabrics.
-- Campus VXLAN supports only C(border_gateway), C(border_gateway_spine), and
-  C(border_gateway_super_spine) switch roles.
+- Campus VXLAN supports C(leaf) and C(spine) roles for IOS-XE switches.
+- Campus VXLAN supports C(border_gateway), C(border_gateway_spine), and
+  C(border_gateway_super_spine) roles for NX-OS switches.
 - IPFM supports C(leaf), C(spine), and C(tier2_leaf) switch roles.
 - Validation failures include the exact supported platform, provided C(role),
   and C(preserve_config) values for the target fabric type.
