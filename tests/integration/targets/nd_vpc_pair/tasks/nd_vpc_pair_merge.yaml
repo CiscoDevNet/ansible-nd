@@ -586,7 +586,7 @@
         (
           (tc6b_deployment_needed and (result.deployment.response is defined)
            and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/actions/configSave') | list | length) > 0)
-           and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/actions/deploy') | list | length) > 0))
+           and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy') | list | length) > 0))
           or
           ((not tc6b_deployment_needed) and (result.deployment.msg | default('') is search('skipping')))
         )
@@ -917,7 +917,7 @@
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) > 0
@@ -1582,7 +1582,7 @@
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) > 0
@@ -1640,7 +1640,7 @@
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) == 0
@@ -1783,7 +1783,7 @@
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) > 0
