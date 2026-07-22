@@ -70,10 +70,7 @@ class ActionModule(ActionBase):
         unknown_keys = sorted(set(value) - allowed_keys)
 
         if unknown_keys:
-            raise AnsibleActionFail(
-                "Unsupported keys in %s: %s"
-                % (argument_name, ", ".join(unknown_keys))
-            )
+            raise AnsibleActionFail("Unsupported keys in %s: %s" % (argument_name, ", ".join(unknown_keys)))
 
     def _parse_bool(self, value, argument_name):
         if isinstance(value, bool):
@@ -91,19 +88,13 @@ class ActionModule(ActionBase):
             if normalized in ("false", "no", "off", "0"):
                 return False
 
-        raise AnsibleActionFail(
-            "Argument %s must be a boolean, got %r"
-            % (argument_name, value)
-        )
+        raise AnsibleActionFail("Argument %s must be a boolean, got %r" % (argument_name, value))
 
     def _parse_int(self, value, argument_name):
         try:
             return int(value)
         except (TypeError, ValueError):
-            raise AnsibleActionFail(
-                "Argument %s must be an integer, got %r"
-                % (argument_name, value)
-            )
+            raise AnsibleActionFail("Argument %s must be an integer, got %r" % (argument_name, value))
 
     def _validate_arguments(self, args):
         if not isinstance(args, dict):
@@ -119,29 +110,21 @@ class ActionModule(ActionBase):
         state = args.get("state")
 
         if not isinstance(module_name, str) or not module_name.strip():
-            raise AnsibleActionFail(
-                "Argument module must be a non-empty string"
-            )
+            raise AnsibleActionFail("Argument module must be a non-empty string")
 
         if not isinstance(state, str) or not state.strip():
-            raise AnsibleActionFail(
-                "Argument state must be a non-empty string"
-            )
+            raise AnsibleActionFail("Argument state must be a non-empty string")
 
         for name in ("common_args", "module_args", "expected"):
             value = args.get(name, {})
 
             if not isinstance(value, dict):
-                raise AnsibleActionFail(
-                    "Argument %s must be a dictionary" % name
-                )
+                raise AnsibleActionFail("Argument %s must be a dictionary" % name)
 
         nd_queries = args.get("nd_queries", [])
 
         if not isinstance(nd_queries, list):
-            raise AnsibleActionFail(
-                "Argument nd_queries must be a list"
-            )
+            raise AnsibleActionFail("Argument nd_queries must be a list")
 
     def _normalize_expected(self, expected):
         self._reject_unknown_keys(
@@ -154,10 +137,7 @@ class ActionModule(ActionBase):
 
         for phase_name, phase_expectation in expected.items():
             if not isinstance(phase_expectation, dict):
-                raise AnsibleActionFail(
-                    "Argument expected.%s must be a dictionary"
-                    % phase_name
-                )
+                raise AnsibleActionFail("Argument expected.%s must be a dictionary" % phase_name)
 
             self._reject_unknown_keys(
                 phase_expectation,
@@ -184,10 +164,7 @@ class ActionModule(ActionBase):
     def _validate_nd_queries(self, nd_queries):
         for query_index, query in enumerate(nd_queries):
             if not isinstance(query, dict):
-                raise AnsibleActionFail(
-                    "nd_queries[%s] must be a dictionary"
-                    % query_index
-                )
+                raise AnsibleActionFail("nd_queries[%s] must be a dictionary" % query_index)
 
             self._reject_unknown_keys(
                 query,
@@ -198,10 +175,7 @@ class ActionModule(ActionBase):
             path = query.get("path")
 
             if not isinstance(path, str) or not path.strip():
-                raise AnsibleActionFail(
-                    "nd_queries[%s].path must be a non-empty string"
-                    % query_index
-                )
+                raise AnsibleActionFail("nd_queries[%s].path must be a non-empty string" % query_index)
 
             if "expected_failed" in query:
                 self._parse_bool(
@@ -212,39 +186,27 @@ class ActionModule(ActionBase):
             expectations = query.get("expect", [])
 
             if not isinstance(expectations, list):
-                raise AnsibleActionFail(
-                    "nd_queries[%s].expect must be a list"
-                    % query_index
-                )
+                raise AnsibleActionFail("nd_queries[%s].expect must be a list" % query_index)
 
             for expectation_index, expectation in enumerate(expectations):
                 if not isinstance(expectation, dict):
-                    raise AnsibleActionFail(
-                        "nd_queries[%s].expect[%s] must be a dictionary"
-                        % (query_index, expectation_index)
-                    )
+                    raise AnsibleActionFail("nd_queries[%s].expect[%s] must be a dictionary" % (query_index, expectation_index))
 
                 self._reject_unknown_keys(
                     expectation,
                     self.ALLOWED_ND_EXPECTATION_ARGUMENTS,
-                    "nd_queries[%s].expect[%s]"
-                    % (query_index, expectation_index),
+                    "nd_queries[%s].expect[%s]" % (query_index, expectation_index),
                 )
 
                 expression = expectation.get("jsonpath")
 
                 if not isinstance(expression, str) or not expression.strip():
-                    raise AnsibleActionFail(
-                        "nd_queries[%s].expect[%s].jsonpath "
-                        "must be a non-empty string"
-                        % (query_index, expectation_index)
-                    )
+                    raise AnsibleActionFail("nd_queries[%s].expect[%s].jsonpath " "must be a non-empty string" % (query_index, expectation_index))
 
                 if "exists" in expectation:
                     self._parse_bool(
                         expectation["exists"],
-                        "nd_queries[%s].expect[%s].exists"
-                        % (query_index, expectation_index),
+                        "nd_queries[%s].expect[%s].exists" % (query_index, expectation_index),
                     )
 
     def run(self, tmp=None, task_vars=None):
@@ -263,9 +225,7 @@ class ActionModule(ActionBase):
         common_args = args.get("common_args", {})
         module_args = args.get("module_args", {})
 
-        expected = self._normalize_expected(
-            args.get("expected", {})
-        )
+        expected = self._normalize_expected(args.get("expected", {}))
 
         run_check_mode = self._parse_bool(
             args.get("check_mode", True),
@@ -291,16 +251,10 @@ class ActionModule(ActionBase):
         self._validate_nd_queries(nd_queries)
 
         if idempotency_retries != 1:
-            raise AnsibleActionFail(
-                "Argument idempotency_retries must be 1 because "
-                "idempotency performs exactly one second application"
-            )
+            raise AnsibleActionFail("Argument idempotency_retries must be 1 because " + "idempotency performs exactly one second application")
 
         if idempotency_delay != 0:
-            raise AnsibleActionFail(
-                "Argument idempotency_delay must be 0 because "
-                "idempotency retries are not supported"
-            )
+            raise AnsibleActionFail("Argument idempotency_delay must be 0 because " + "idempotency retries are not supported")
 
         # Automatically require the second run to be unchanged.
         if run_idempotency:
@@ -309,14 +263,8 @@ class ActionModule(ActionBase):
                 {},
             )
 
-            if (
-                "changed" in idempotency_expected
-                and idempotency_expected["changed"] is not False
-            ):
-                raise AnsibleActionFail(
-                    "expected.idempotency.changed must be false "
-                    "when idempotency is enabled"
-                )
+            if "changed" in idempotency_expected and idempotency_expected["changed"] is not False:
+                raise AnsibleActionFail("expected.idempotency.changed must be false " + "when idempotency is enabled")
 
             idempotency_expected["changed"] = False
             idempotency_expected.setdefault("failed", False)
@@ -350,9 +298,7 @@ class ActionModule(ActionBase):
             "_play_context",
             None,
         )
-        global_check_mode = bool(
-            getattr(play_context, "check_mode", False)
-        )
+        global_check_mode = bool(getattr(play_context, "check_mode", False))
         original_check_mode = self._task.check_mode
 
         try:
@@ -427,27 +373,18 @@ class ActionModule(ActionBase):
                 )
 
                 # Run exactly one second application for idempotency.
-                if (
-                    run_idempotency
-                    and not bool(
-                        first_run_result.get("failed", False)
-                    )
-                ):
-                    second_run_result = (
-                        self._run_target_module(
-                            module_name=module_name,
-                            module_args=final_module_args,
-                            task_vars=task_vars,
-                        )
+                if run_idempotency and not bool(first_run_result.get("failed", False)):
+                    second_run_result = self._run_target_module(
+                        module_name=module_name,
+                        module_args=final_module_args,
+                        task_vars=task_vars,
                     )
                     idempotency_attempts = 1
 
                     self._assert_phase(
                         phase_name="idempotency",
                         module_result=second_run_result,
-                        phase_expectation=expected[
-                            "idempotency"
-                        ],
+                        phase_expectation=expected["idempotency"],
                         check_mode_result=check_mode_result,
                         first_run_result=first_run_result,
                         second_run_result=second_run_result,
@@ -455,12 +392,7 @@ class ActionModule(ActionBase):
                     )
 
                 # REST validation is performed only after a real apply.
-                if (
-                    nd_queries
-                    and not bool(
-                        first_run_result.get("failed", False)
-                    )
-                ):
+                if nd_queries and not bool(first_run_result.get("failed", False)):
                     nd_query_results = self._run_nd_queries(
                         nd_queries=nd_queries,
                         task_vars=task_vars,
@@ -469,18 +401,10 @@ class ActionModule(ActionBase):
         finally:
             self._task.check_mode = original_check_mode
 
-        reported_result = (
-            check_mode_result
-            if global_check_mode
-            else first_run_result
-        )
+        reported_result = check_mode_result if global_check_mode else first_run_result
         result.update(
             {
-                "changed": bool(
-                    reported_result
-                    and reported_result.get("changed", False)
-                ),
-
+                "changed": bool(reported_result and reported_result.get("changed", False)),
                 "check_mode_result": check_mode_result,
                 "first_run_result": first_run_result,
                 "second_run_result": second_run_result,
@@ -534,29 +458,17 @@ class ActionModule(ActionBase):
 
             if expected_status is not None:
                 if actual_status is None:
-                    raise AnsibleActionFail(
-                        "ND query %s expected status %s but the result did not contain a status"
-                        % (query_label, expected_status)
-                    )
+                    raise AnsibleActionFail("ND query %s expected status %s but the result did not contain a status" % (query_label, expected_status))
 
                 try:
                     status_matches = int(actual_status) == int(expected_status)
                 except (TypeError, ValueError):
-                    raise AnsibleActionFail(
-                        "ND query %s returned invalid status %s"
-                        % (query_label, actual_status)
-                    )
+                    raise AnsibleActionFail("ND query %s returned invalid status %s" % (query_label, actual_status))
 
                 if not status_matches:
-                    raise AnsibleActionFail(
-                        "ND query %s expected status %s but got %s"
-                        % (query_label, expected_status, actual_status)
-                    )
+                    raise AnsibleActionFail("ND query %s expected status %s but got %s" % (query_label, expected_status, actual_status))
             if actual_failed != expected_failed:
-                raise AnsibleActionFail(
-                    "ND query %s expected failed=%s but got failed=%s"
-                    % (query_label, expected_failed, actual_failed)
-                )
+                raise AnsibleActionFail("ND query %s expected failed=%s but got failed=%s" % (query_label, expected_failed, actual_failed))
 
             if not expected_failed:
                 self._assert_nd_query_expectations(query, query_result)
@@ -599,31 +511,21 @@ class ActionModule(ActionBase):
 
                 if actual_exists != expected_exists:
                     raise AnsibleActionFail(
-                        "ND query expectation failed for %s: expected exists=%s but got exists=%s"
-                        % (expression, expected_exists, actual_exists)
+                        "ND query expectation failed for %s: expected exists=%s but got exists=%s" % (expression, expected_exists, actual_exists)
                     )
 
             if "equals" in expectation:
                 expected_value = expectation["equals"]
 
                 if not values:
-                    raise AnsibleActionFail(
-                        "ND query expectation failed for %s: no value found, expected %s"
-                        % (expression, expected_value)
-                    )
+                    raise AnsibleActionFail("ND query expectation failed for %s: no value found, expected %s" % (expression, expected_value))
 
                 if values[0] != expected_value:
-                    raise AnsibleActionFail(
-                        "ND query expectation failed for %s: expected %s but got %s"
-                        % (expression, expected_value, values[0])
-                    )
+                    raise AnsibleActionFail("ND query expectation failed for %s: expected %s but got %s" % (expression, expected_value, values[0]))
 
     def _jsonpath_values(self, data, expression):
         if not HAS_JSONPATH_NG_PARSE:
-            raise AnsibleActionFail(
-                "Cannot use JSONPath validation because the jsonpath-ng "
-                "Python library is not available"
-            )
+            raise AnsibleActionFail("Cannot use JSONPath validation because the jsonpath-ng " + "Python library is not available")
         try:
             jsonpath_expression = parse(expression)
         except Exception as exc:
@@ -649,16 +551,11 @@ class ActionModule(ActionBase):
         idempotency_attempts,
     ):
         if module_result is None:
-            raise AnsibleActionFail(
-                "Expected phase %s was not executed"
-                % phase_name
-            )
+            raise AnsibleActionFail("Expected phase %s was not executed" % phase_name)
 
         if "failed" in phase_expectation:
             expected_failed = phase_expectation["failed"]
-            actual_failed = bool(
-                module_result.get("failed", False)
-            )
+            actual_failed = bool(module_result.get("failed", False))
 
             if actual_failed != expected_failed:
                 raise AnsibleActionFail(
@@ -680,9 +577,7 @@ class ActionModule(ActionBase):
 
         if "changed" in phase_expectation:
             expected_changed = phase_expectation["changed"]
-            actual_changed = bool(
-                module_result.get("changed", False)
-            )
+            actual_changed = bool(module_result.get("changed", False))
 
             if actual_changed != expected_changed:
                 raise AnsibleActionFail(
@@ -740,9 +635,7 @@ class ActionModule(ActionBase):
             value = module_result.get(key)
             if isinstance(value, list):
                 summary["%s_count" % key] = len(value)
-                summary["%s_items" % key] = [
-                    self._summarize_config_item(item) for item in value[:10]
-                ]
+                summary["%s_items" % key] = [self._summarize_config_item(item) for item in value[:10]]
             elif value is not None:
                 summary[key] = value
 

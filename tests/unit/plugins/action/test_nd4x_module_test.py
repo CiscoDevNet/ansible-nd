@@ -212,14 +212,10 @@ def test_normal_execution_runs_each_phase_once(action_plugin):
 
     def execute_module(**kwargs):
         del kwargs
-        observed_check_modes.append(
-            action_plugin._task.check_mode
-        )
+        observed_check_modes.append(action_plugin._task.check_mode)
         return next(responses)
 
-    action_plugin._execute_module = Mock(
-        side_effect=execute_module
-    )
+    action_plugin._execute_module = Mock(side_effect=execute_module)
 
     result = run_plugin(action_plugin)
 
@@ -298,9 +294,7 @@ def test_check_mode_restored_after_execution_error(
     action_plugin,
 ):
     action_plugin._task.check_mode = False
-    action_plugin._execute_module.side_effect = RuntimeError(
-        "simulated execution error"
-    )
+    action_plugin._execute_module.side_effect = RuntimeError("simulated execution error")
 
     with pytest.raises(
         RuntimeError,
