@@ -1,5 +1,5 @@
 [nd]
-nd ansible_host=10.122.84.112
+nd ansible_host=192.0.2.1
 
 [nd:vars]
 ansible_connection=ansible.netcommon.httpapi
