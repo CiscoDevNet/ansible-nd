@@ -1,6 +1,55 @@
 ---
 # Demo overridden state test using the shared ND 4.x action plugin pattern.
 
+- name: "OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_loopback_destructive_tests_enabled | bool
+    fail_msg: >-
+      The overridden test is fabric-wide and can delete managed loopbacks
+      omitted from the desired configuration. Run only on a dedicated test
+      fabric and set nd_loopback_destructive_tests_enabled=true.
+
+- name: "OVERRIDDEN PREFLIGHT: Inspect fabric-wide loopback scope"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_100_updated }}"
+    state: overridden
+  check_mode: true
+  changed_when: false
+  register: overridden_loopback_scope_probe
+
+- name: "OVERRIDDEN PREFLIGHT: Reject loopbacks outside reserved scope"
+  vars:
+    existing_switch_ips: >-
+      {{
+        overridden_loopback_scope_probe.before
+        | default([])
+        | map(attribute='switch_ip')
+        | unique
+        | list
+      }}
+    existing_test_switch_loopbacks: >-
+      {{
+        overridden_loopback_scope_probe.before
+        | default([])
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | map(attribute='interface_name')
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - existing_switch_ips | difference([test_switch_ip]) | length == 0
+      - existing_test_switch_loopbacks
+        | difference(nd4x_loopback_reserved_interfaces)
+        | length == 0
+    fail_msg: >-
+      Unsafe overridden testbed. Existing managed loopbacks were found on
+      another switch or outside the reserved loopback100-loopback109 test
+      range. No override was applied.
+
 - name: Run standardized nd_interface_loopback overridden tests
   block:
     - name: "OVERRIDDEN SETUP: Create loopback100 and loopback101"
