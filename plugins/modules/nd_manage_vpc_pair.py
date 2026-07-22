@@ -54,8 +54,10 @@ options:
                 default: true
             type:
                 description:
-                - Scope type for save/deploy action payload.
-                - Valid values are C(switch) and C(global).
+                - Deploy scope for configuration actions.
+                - C(switch) deploys only the switches left out-of-sync by the vPC pair changes using the per-switch deploy action.
+                - C(global) deploys the entire fabric.
+                - Configuration is saved at the fabric level before deploying for both scopes.
                 type: str
                 choices: [switch, global]
                 default: switch

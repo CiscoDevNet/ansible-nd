@@ -12,6 +12,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common im
     _raise_vpc_error,
     get_config_actions,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.query import (
+    _is_switch_config_in_sync,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.validation import (
+    _validate_fabric_switches,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule as NDModuleV2,
     NDModuleError,
@@ -107,13 +113,38 @@ def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
     return any(signature in message for signature in non_fatal_signatures)
 
 
+def _get_switches_needing_deploy(nd_v2: Any, fabric_name: str) -> list[str]:
+    """
+    Return serial numbers of fabric switches that require deployment.
+
+    Queries the fabric switch inventory and selects every switch whose
+    config-sync state is not confirmed in-sync. Any switch that is not
+    explicitly in-sync (including unknown or missing status) is treated as
+    needing deployment so a pending change is never silently skipped. This
+    mirrors the collection's switch-scoped deploy contract used elsewhere for
+    config_actions.type == "switch".
+
+    Args:
+        nd_v2: NDModuleV2 instance for RestSend
+        fabric_name: Fabric name to query
+
+    Returns:
+        Sorted list of unique switch serial numbers needing deployment
+    """
+    switches = _validate_fabric_switches(nd_v2, fabric_name)
+    switch_ids = [serial_number for serial_number, switch_data in switches.items() if _is_switch_config_in_sync(switch_data) is not True]
+    return sorted(set(switch_ids))
+
+
 def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dict[str, Any]:
     """
     Custom save/deploy action handler for vPC fabric changes using RestSend.
 
     - Smart action decision (_needs_deployment)
     - Optional Step 1: Save fabric configuration
-    - Optional Step 2: Deploy fabric with forceShowRun=true
+    - Optional Step 2: Deploy scope depends on config_actions.type:
+      * "global": deploy the whole fabric via .../actions/deploy (forceShowRun=true)
+      * "switch": deploy only affected switches via .../switchActions/deploy
     - Proper error handling with NDModuleError
     - Results aggregation
     - Executes only if there are actual changes or pending operations
@@ -168,8 +199,12 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
             save_path = FabricUtils.build_config_save_path(fabric_name)
             planned_actions.append(f"POST {save_path} payload={action_payload}")
         if deploy_enabled:
-            deploy_path = FabricUtils.build_config_deploy_path(fabric_name, force_show_run=True)
-            planned_actions.append(f"POST {deploy_path} payload={action_payload}")
+            if action_type == "switch":
+                deploy_path = FabricUtils.build_switch_deploy_path(fabric_name)
+                planned_actions.append(f'POST {deploy_path} payload={{"switchIds": [switches needing deployment]}}')
+            else:
+                deploy_path = FabricUtils.build_config_deploy_path(fabric_name, force_show_run=True)
+                planned_actions.append(f"POST {deploy_path} payload={action_payload}")
         if save_enabled and deploy_enabled:
             preview_msg = "CHECK MODE: Would save and deploy fabric configuration"
         elif save_enabled:
@@ -250,26 +285,63 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 _raise_vpc_error(msg=final_msg, **final_result)
 
     # Step 2: Deploy
+    #
+    # config_actions.type selects the deploy scope:
+    #   - "global": deploy the entire fabric via .../actions/deploy.
+    #   - "switch": deploy only the switches left out-of-sync by the vPC pair
+    #     changes above, via .../switchActions/deploy.
     if deploy_enabled:
-        deploy_path = fabric_utils.config_deploy_path(force_show_run=True)
+        if action_type == "switch":
+            deploy_path = fabric_utils.switch_deploy_path
+        else:
+            deploy_path = fabric_utils.config_deploy_path(force_show_run=True)
 
         try:
-            response = fabric_utils.deploy_config(action_payload, force_show_run=True)
-            register_action_api_call(
-                results=results,
-                request_path=deploy_path,
-                payload=action_payload,
-                return_code=response.get("status"),
-                message="Deployment successful",
-                success=True,
-                changed=True,
-            )
+            if action_type == "switch":
+                switch_ids = _get_switches_needing_deploy(nd_v2, fabric_name)
+                deploy_payload = {"switchIds": switch_ids}
+                if switch_ids:
+                    response = fabric_utils.deploy_switches(switch_ids)
+                    register_action_api_call(
+                        results=results,
+                        request_path=deploy_path,
+                        payload=deploy_payload,
+                        return_code=response.get("status"),
+                        message="Switch deployment successful",
+                        success=True,
+                        changed=True,
+                    )
+                else:
+                    # Switch scope requested but nothing is out-of-sync; record a
+                    # successful no-op instead of posting an empty switch list.
+                    register_action_api_call(
+                        results=results,
+                        request_path=deploy_path,
+                        payload=deploy_payload,
+                        return_code=None,
+                        message="No switches required switch-scoped deployment",
+                        success=True,
+                        changed=False,
+                    )
+            else:
+                deploy_payload = action_payload
+                response = fabric_utils.deploy_config(action_payload, force_show_run=True)
+                register_action_api_call(
+                    results=results,
+                    request_path=deploy_path,
+                    payload=deploy_payload,
+                    return_code=response.get("status"),
+                    message="Deployment successful",
+                    success=True,
+                    changed=True,
+                )
 
         except NDModuleError as error:
+            error_payload = {"switchIds": []} if action_type == "switch" else action_payload
             register_action_api_call(
                 results=results,
                 request_path=deploy_path,
-                payload=action_payload,
+                payload=error_payload,
                 return_code=error.status,
                 message=error.msg,
                 success=False,
