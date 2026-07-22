@@ -52,10 +52,15 @@
           - "{{ ethernet_41_updated }}"
 
         expected:
-          check_mode_changed: true
-          apply_changed: true
-          idempotency: true
-          failed: false
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
 
         nd_queries:
           - name: Validate replaced Ethernet1/41 from ND API
@@ -72,7 +77,6 @@
               - jsonpath: "$.current.configData.networkOS.policy.description"
                 equals: "Updated Ethernet1/41 description"
 
-        idempotency_retries: 1
       register: replaced_ethernet_41
 
     - name: "REPLACED VERIFY: Verify Ethernet1/41 exists"

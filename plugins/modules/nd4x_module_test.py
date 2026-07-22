@@ -15,8 +15,9 @@ short_description: Run standardized integration tests for ND 4.x modules
 version_added: "1.6.0"
 description:
   - Provides a common integration-test runner for Cisco ND 4.x modules.
-  - Runs the target module in check mode, applies the configuration, verifies
-    idempotency, and optionally validates the resulting ND REST API state.
+  - During normal execution, runs the target module in check mode, applies the
+    configuration, verifies idempotency, and optionally validates the resulting
+    ND REST API state.
   - Execution is handled by the corresponding nd4x_module_test action plugin.
 author:
   - Astha Awasthi (@astawast)
@@ -47,36 +48,34 @@ options:
     default: {}
   expected:
     description:
-      - Expected results from check mode, apply, idempotency, and failure validation.
-      - Supported keys include C(check_mode_changed), C(apply_changed),
-        C(first_run_changed), C(second_run_changed), C(idempotency), and C(failed).
+      - Expected result for each execution phase.
+      - Supported phase keys are C(check_mode), C(apply), and C(idempotency).
+      - Each phase is a dictionary that supports the C(changed) and C(failed)
+        expectation keys.
+      - When O(idempotency=true), the idempotency phase automatically requires
+        C(changed=false).
     type: dict
     default: {}
   check_mode:
     description:
-      - Whether to execute the target module in check mode before applying configuration.
+      - Whether to execute an internal check-mode phase before applying configuration.
+      - Global Ansible check mode always executes only the check-mode phase,
+        regardless of this option.
     type: bool
     default: true
   idempotency:
     description:
-      - Whether to run the target module again to validate idempotency.
+      - Whether to execute the target module exactly once after apply to validate
+        idempotency.
+      - The idempotency execution must report C(changed=false).
     type: bool
     default: true
-  idempotency_retries:
-    description:
-      - Maximum number of idempotency validation attempts.
-    type: int
-    default: 1
-  idempotency_delay:
-    description:
-      - Delay in seconds between idempotency attempts.
-    type: int
-    default: 0
   nd_queries:
     description:
-      - ND REST API queries executed after the target module completes.
+      - ND REST API queries executed after a successful real apply.
       - Query entries can contain C(path), C(method), C(expected_status),
         C(expected_failed), and JSONPath expectations.
+      - Queries are skipped when Ansible is running in global check mode.
     type: list
     elements: dict
     default: []
@@ -85,6 +84,10 @@ requirements:
 notes:
   - This is a documentation-only module. The corresponding action plugin
     performs the test execution.
+  - When Ansible is invoked with C(--check), only the check-mode phase executes;
+    apply, idempotency, and ND REST validation are skipped.
+  - Idempotency uses exactly one second real module execution and does not retry
+    module application.
 """
 
 EXAMPLES = r"""
@@ -100,10 +103,15 @@ EXAMPLES = r"""
         interface_name: loopback100
         ip_address: 10.100.100.1
     expected:
-      check_mode_changed: true
-      apply_changed: true
-      idempotency: true
-      failed: false
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
     nd_queries:
       - name: Validate loopback interface
         path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/interfaces/loopback100"
@@ -113,23 +121,28 @@ EXAMPLES = r"""
 
 RETURN = r"""
 changed:
-  description: Whether the first real target-module execution reported a change.
+  description:
+    - Whether the first real target-module execution reported a change during
+      normal execution.
+    - In global check mode, whether the check-mode execution predicted a change.
   type: bool
   returned: always
 check_mode_result:
   description: Result returned by the check-mode execution.
   type: dict
-  returned: when check mode is enabled
+  returned: when the check-mode phase executes
 first_run_result:
-  description: Result returned by the first real target-module execution.
+  description: Result returned by the first real apply execution.
   type: dict
-  returned: always
+  returned: when Ansible is not running in global check mode
 second_run_result:
-  description: Result returned by the idempotency execution.
+  description: Result returned by the single idempotency execution.
   type: dict
-  returned: when idempotency validation is enabled
+  returned: when idempotency is enabled and the real apply succeeds
 idempotency_attempts:
-  description: Number of idempotency attempts performed.
+  description:
+    - Number of idempotency executions performed.
+    - The value is C(0) when idempotency is skipped and C(1) when it executes.
   type: int
   returned: always
 nd_query_results:

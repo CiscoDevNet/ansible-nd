@@ -107,10 +107,15 @@
           - "{{ ethernet_41_overridden }}"
 
         expected:
-          check_mode_changed: true
-          apply_changed: true
-          idempotency: true
-          failed: false
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
 
         nd_queries:
           - name: Validate overridden Ethernet1/41
@@ -127,7 +132,6 @@
               - jsonpath: "$.current.configData.networkOS.policy.description"
                 equals: "Overridden Ethernet1/41"
 
-        idempotency_retries: 1
       register: overridden_ethernet
 
     - name: "OVERRIDDEN VERIFY: Verify only Ethernet1/41 remains"

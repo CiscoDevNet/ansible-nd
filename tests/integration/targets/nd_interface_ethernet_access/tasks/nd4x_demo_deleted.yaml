@@ -54,10 +54,16 @@
               - Ethernet1/41
 
         expected:
-          check_mode_changed: true
-          apply_changed: true
-          idempotency: true
-          failed: false
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+          
 
         nd_queries:
           - name: Verify physical Ethernet1/41 remains queryable
@@ -70,7 +76,7 @@
               - jsonpath: "$.current.interfaceType"
                 equals: ethernet
 
-        idempotency_retries: 1
+        
       register: deleted_ethernet_41
 
     - name: "DELETED VERIFY: Verify interface left managed accessHost state"

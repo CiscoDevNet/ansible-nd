@@ -22,10 +22,15 @@
         config:
           - "{{ loopback_100_updated }}"
         expected:
-          check_mode_changed: true
-          apply_changed: true
-          idempotency: true
-          failed: false
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
         nd_queries:
           - name: Validate loopback100 updated after overridden
             path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/loopback100"
@@ -37,8 +42,6 @@
                 equals: "10.100.100.2"
               - jsonpath: "$.current.configData.networkOS.policy.description"
                 equals: "Updated loopback100 description"
-        idempotency_retries: 6
-        idempotency_delay: 10
       register: overridden_loopbacks
 
     - name: "OVERRIDDEN VERIFY: Verify loopback100 updated"

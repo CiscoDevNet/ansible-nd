@@ -27,10 +27,15 @@
           - "{{ ethernet_42_43 }}"
 
         expected:
-          check_mode_changed: true
-          apply_changed: true
-          idempotency: true
-          failed: false
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
 
         nd_queries:
           - name: Validate Ethernet1/42
@@ -61,7 +66,6 @@
               - jsonpath: "$.current.configData.networkOS.policy.description"
                 equals: "Ansible integration test access ports"
 
-        idempotency_retries: 1
       register: merged_fanout
 
     - name: "MERGED FAN-OUT VERIFY: Verify both interfaces exist"

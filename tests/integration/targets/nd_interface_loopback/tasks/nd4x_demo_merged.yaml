@@ -17,10 +17,15 @@
         config:
           - "{{ loopback_100 }}"
         expected:
-          check_mode_changed: true
-          apply_changed: true
-          idempotency: true
-          failed: false
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
         nd_queries:
           - name: Validate loopback100 from ND API
             path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/loopback100"
@@ -30,9 +35,6 @@
                 equals: "loopback100"
               - jsonpath: "$.current.configData.networkOS.policy.ip"
                 equals: "10.100.100.1"
-       
-        idempotency_retries: 6
-        idempotency_delay: 10
       register: merged_create_100
       tags:
         - nd4x_demo
