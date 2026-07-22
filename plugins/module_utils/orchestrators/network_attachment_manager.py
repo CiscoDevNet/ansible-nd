@@ -235,9 +235,11 @@ class NetworkAttachmentManager:
 
     @staticmethod
     def _attachment_interfaces(attachment: dict[str, Any]) -> list[dict[str, Any]] | None:
+        if "interfaces" not in attachment:
+            return None
         interfaces = attachment.get("interfaces")
         if not interfaces:
-            return None
+            return []
         payloads = []
         for interface in interfaces:
             mapping_type = interface.get("mapping_type") or interface.get("mappingType")

@@ -147,7 +147,7 @@ def _mcfg_parent_orchestrator():
     )
 
 
-def test_network_config_model_requires_attachment_interfaces():
+def test_network_config_model_requires_attachment_interfaces_key():
     with pytest.raises(ValueError, match="interfaces"):
         NetworkConfigModel.from_config(
             {
@@ -161,6 +161,24 @@ def test_network_config_model_requires_attachment_interfaces():
                 ],
             }
         )
+
+
+def test_network_config_model_accepts_empty_attachment_interfaces():
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "BLUE_NET",
+            "is_l2only": True,
+            "vlan_id": 2301,
+            "attach": [
+                {
+                    "ip_address": "10.1.1.11",
+                    "interfaces": [],
+                }
+            ],
+        }
+    )
+
+    assert model.to_config()["attach"][0]["interfaces"] == []
 
 
 def test_network_parent_argument_spec_includes_child_config():
@@ -1306,6 +1324,28 @@ def test_tor_is_modeled_as_normal_attachment_payload():
             "nativeVlan": False,
         }
     ]
+
+
+def test_empty_attachment_interfaces_are_preserved_in_payload():
+    model = NetworkConfigModel.from_config(
+        {
+            "net_name": "EMPTY_ATTACH",
+            "is_l2only": True,
+            "attach": [
+                {
+                    "ip_address": "10.1.1.11",
+                    "interfaces": [],
+                }
+            ],
+        }
+    )
+    config = model.to_config()
+
+    manager = NetworkAttachmentManager(coordinator=None)
+    manager.resolve_switch_ids = lambda *_args: {"10.1.1.11": "LEAF123"}
+    desired = manager.desired_attachment_map({"config": [config]}, _orchestrator().strategy)
+
+    assert desired[("EMPTY_ATTACH", "LEAF123")]["interfaces"] == []
 
 
 def test_module_level_query_is_normalized_to_gathered():

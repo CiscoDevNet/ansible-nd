@@ -83,12 +83,6 @@ class NetworkAttachmentConfigModel(NDNestedModel):
     def _validate_vlan(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_vlan_id(v)
 
-    @model_validator(mode="after")
-    def _check_interfaces(self):
-        if not self.interfaces:
-            raise ValueError("interfaces is required for network attachments")
-        return self
-
 
 class NetworkChildConfigModel(NDNestedModel):
     """Per-child-fabric override entry for MSD/MFD parent workflows."""

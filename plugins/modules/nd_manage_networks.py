@@ -117,7 +117,10 @@ options:
             description: Attachment VLAN ID.
             type: int
           interfaces:
-            description: Interface attachment entries.
+            description:
+              - Interface attachment entries.
+              - Provide an empty list when attaching the Network to a switch without
+                per-interface bindings.
             type: list
             required: true
             elements: dict
