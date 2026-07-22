@@ -95,6 +95,8 @@ options:
                   ip:
                     description:
                     - The IPv4 address of the loopback interface.
+                    - Accepts bare (C(10.1.1.1)) or CIDR (C(10.1.1.1/32)) input. CIDR input is normalized to the bare address, which is
+                      what is sent to the controller and returned in module output, because ND rejects CIDR notation for this field.
                     - Applies to all policy_type values except C(iosXeLoopbackShutNoshut) and C(csr1kvLoopback).
                     type: str
                   description:
