@@ -32,7 +32,7 @@ interfaces inherit trunk-mode settings from the port-channel; users do not pre-c
 from __future__ import annotations
 
 import re
-from typing import Annotated, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
+from typing import Annotated, Any, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
@@ -230,6 +230,36 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
 
     - If the wrapped model serializer receives a non-`dict` from the handler (see `_strip_policy_type_in_config`).
     """
+
+    # ND 4.2.1 `int_port_channel_trunk_host` template defaults (schema-sourced via nd-openapi `intPortChannelTrunkHostTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        "allowedVlans": "none",
+        "bpduFilter": "default",
+        "bpduGuard": "enable",
+        "cdp": True,
+        "copyDescription": False,
+        "duplexMode": "auto",
+        "lacpPortPriority": 32768,
+        "lacpRate": "normal",
+        "lacpSuspend": False,
+        "linkType": "auto",
+        "monitor": False,
+        "mtu": "jumbo",
+        "negotiateAuto": True,
+        "netflow": False,
+        "orphanPort": False,
+        "pfc": False,
+        "portChannelMode": "active",
+        "portTypeEdgeTrunk": True,
+        "qos": False,
+        "speed": "auto",
+        "stormControl": False,
+        "stormControlAction": "default",
+        "vlanMapping": False,
+    }
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
     allowed_vlans: AllowedVlans = Field(

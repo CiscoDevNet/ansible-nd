@@ -8,7 +8,7 @@ from abc import ABC
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
-from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
+from ansible_collections.cisco.nd.plugins.module_utils.utils import has_removals, issubset
 
 
 def _strip_none_values(data):
@@ -71,6 +71,13 @@ class NDBaseModel(BaseModel, ABC):
     # Fields to explicitly exclude per mode
     payload_exclude_fields: ClassVar[Set[str]] = set()
     config_exclude_fields: ClassVar[Set[str]] = set()
+
+    # ND template defaults for the reverse pass of `get_diff` (issue #410), keyed by field ALIAS (wire key).
+    # ND echoes the schema-declared template default for every field the user never set, so an existing-side
+    # value equal to its declared default is normalized to absent during removal detection -- omitting it from
+    # proposed config is not a pending reset. Source the values from the ND OpenAPI template schema for the
+    # model's policyType (see the `nd-openapi` MCP); a wrong value here breaks replaced/overridden idempotency.
+    reverse_diff_defaults: ClassVar[Dict[str, Any]] = {}
 
     # --- Subclass Validation ---
 
@@ -221,6 +228,53 @@ class NDBaseModel(BaseModel, ABC):
             **kwargs,
         )
 
+    def to_reverse_diff_dict(self, **kwargs) -> Dict[str, Any]:
+        """
+        # Summary
+
+        Export for the reverse pass of `get_diff` (issue #410), scoped to payload shape: fields in `exclude_from_diff` or
+        `payload_exclude_fields` are excluded, so only fields the PUT body can express participate in removal detection.
+        Existing-side values equal to their `reverse_diff_defaults` entry are stripped (recursively, each nested model
+        applying its own table) because ND echoes template defaults for unset fields. Like `to_diff_dict`, the exclusion
+        sets apply at the top level only; models needing nested exclusions override `get_diff`.
+
+        ## Raises
+
+        None
+        """
+        data = self.model_dump(
+            by_alias=True,
+            exclude_none=True,
+            exclude=(self.exclude_from_diff | self.payload_exclude_fields) or None,
+            mode="json",
+            **kwargs,
+        )
+        self._strip_reverse_diff_defaults(data)
+        return data
+
+    def _strip_reverse_diff_defaults(self, data: Dict[str, Any]) -> None:
+        """
+        # Summary
+
+        Remove keys from `data` (an aliased dump of `self`) whose value equals the model's declared `reverse_diff_defaults`
+        entry, then recurse into nested `NDBaseModel` fields so each nested model applies its own table.
+
+        ## Raises
+
+        None
+        """
+        for alias, default in self.reverse_diff_defaults.items():
+            if alias in data and data[alias] == default:
+                del data[alias]
+        for field_name, field_info in type(self).model_fields.items():
+            value = getattr(self, field_name, None)
+            if isinstance(value, NDBaseModel):
+                alias = field_info.alias or field_name
+                nested = data.get(alias)
+                if isinstance(nested, dict):
+                    # Same-class recursion; pylint cannot infer `value` is an NDBaseModel from getattr.
+                    value._strip_reverse_diff_defaults(nested)  # pylint: disable=protected-access
+
     def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
         """Diff comparison.
 
@@ -234,11 +288,22 @@ class NDBaseModel(BaseModel, ABC):
                 to catch merge side effects the one-way subset test cannot see
                 (e.g. mutually exclusive counterpart fields that the merge
                 would clear).
+
+                When False (the ``replaced``/``overridden`` path), a subset
+                match is additionally cross-checked with ``has_removals`` over
+                the payload-scoped dumps (issue #410): a field present on
+                ``self`` (device) but absent from ``other`` (proposed) means
+                the full-payload PUT would reset it, so it must classify as a
+                difference. Empty existing values (``""``, ``[]``, ``{}``) are
+                normalized to absent so ND-echoed empty markers keep runs
+                idempotent.
         """
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
         is_subset = issubset(other_data, self_data)
         if is_subset and exclude_unset and self.merge_would_change(other):
+            return False
+        if is_subset and not exclude_unset and has_removals(self.to_reverse_diff_dict(), other.to_reverse_diff_dict()):
             return False
         return is_subset
 

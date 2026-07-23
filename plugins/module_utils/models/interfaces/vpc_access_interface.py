@@ -36,7 +36,7 @@ use the ND-native `peer1_*` / `peer2_*` naming where `peer1` corresponds to `swi
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -85,6 +85,34 @@ class AccessVpcHostPolicyModel(StormControlMutexMixin):
 
     None
     """
+
+    # ND 4.2.1 `int_vpc_access_host` template defaults (schema-sourced via nd-openapi `intVpcAccessHostTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        "bpduFilter": "default",
+        "bpduGuard": "enable",
+        "cdp": True,
+        "copyDescription": False,
+        "duplexMode": "auto",
+        "lacpPortPriority": 32768,
+        "lacpRate": "normal",
+        "lacpSuspend": False,
+        "lacpVpcConvergence": False,
+        "linkType": "auto",
+        "mirrorConfig": False,
+        "mtu": "jumbo",
+        "negotiateAuto": True,
+        "netflow": False,
+        "pfc": False,
+        "portChannelMode": "active",
+        "portTypeEdgeTrunk": True,
+        "qos": False,
+        "speed": "auto",
+        "stormControl": False,
+        "stormControlAction": "default",
+    }
 
     # --- Policy Discriminator ---
 
