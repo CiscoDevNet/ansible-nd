@@ -4,20 +4,21 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import List, Dict, Any, Optional, ClassVar, Literal
+from typing import Any, ClassVar, Dict, List, Literal, Optional
+
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    FieldSerializationInfo,
     SecretStr,
-    model_serializer,
+    SerializationInfo,
     field_serializer,
     field_validator,
+    model_serializer,
     model_validator,
-    FieldSerializationInfo,
-    SerializationInfo,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
 
 USER_ROLES_MAPPING = NDConstantMapping(
     {
@@ -80,6 +81,16 @@ class LocalUserModel(NDBaseModel):
     # --- Serialization Configuration ---
 
     exclude_from_diff: ClassVar[set] = {"user_password"}
+
+    # ND echoes these falsy defaults for a user created without the corresponding options set (lab-verified on
+    # 4.2.1; the module's integration tests assert exactly these `before` values). `False`/`0` are not "effectively
+    # empty", so without this table the reverse pass of `get_diff` (issue #410) would count each echo as a removal
+    # on every replaced run, breaking idempotency for playbooks that omit these options.
+    reverse_diff_defaults: ClassVar[Dict[str, Any]] = {
+        "xLaunch": False,
+        "reuseLimitation": 0,
+        "timeIntervalLimitation": 0,
+    }
     unwanted_keys: ClassVar[List] = [
         ["passwordPolicy", "passwordChangeTime"],
         ["userID"],

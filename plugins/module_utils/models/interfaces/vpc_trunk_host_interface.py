@@ -223,6 +223,11 @@ class TrunkVpcHostPolicyModel(StormControlMutexMixin):
     - If `allowed_vlans` is set and does not match `none`, `all`, or comma-separated VLAN ranges.
     """
 
+    # `peerSwitchId` is orchestrator-injected (resolved from the vPC pair record; not in the argspec), so the
+    # proposed config can never express it. ND echoes it on reads; without this exclusion the reverse pass of
+    # `get_diff` would count it as a removal on every replaced/overridden run, breaking idempotency.
+    reverse_diff_exclude: ClassVar[set[str]] = {"peerSwitchId"}
+
     # ND 4.2.1 `int_vpc_trunk_host` template defaults (schema-sourced via nd-openapi `intVpcTrunkHostTemplate`). ND echoes these
     # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
     # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.

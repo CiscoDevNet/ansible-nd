@@ -79,6 +79,13 @@ class NDBaseModel(BaseModel, ABC):
     # model's policyType (see the `nd-openapi` MCP); a wrong value here breaks replaced/overridden idempotency.
     reverse_diff_defaults: ClassVar[Dict[str, Any]] = {}
 
+    # Keys (field ALIASES / wire keys) stripped from this model's level of the reverse-pass dump regardless of
+    # value. For server-populated fields the proposed config can never express (e.g. the orchestrator-injected
+    # `peerSwitchId` on vPC policy models): their presence on the existing side is not a pending reset, and
+    # unlike `reverse_diff_defaults` they have no single constant value to match against. Applies at the
+    # declaring model's own nesting level, so nested models scope their own exclusions.
+    reverse_diff_exclude: ClassVar[Set[str]] = set()
+
     # --- Subclass Validation ---
 
     def __init_subclass__(cls, **kwargs):
@@ -234,9 +241,12 @@ class NDBaseModel(BaseModel, ABC):
 
         Export for the reverse pass of `get_diff` (issue #410), scoped to payload shape: fields in `exclude_from_diff` or
         `payload_exclude_fields` are excluded, so only fields the PUT body can express participate in removal detection.
-        Existing-side values equal to their `reverse_diff_defaults` entry are stripped (recursively, each nested model
-        applying its own table) because ND echoes template defaults for unset fields. Like `to_diff_dict`, the exclusion
-        sets apply at the top level only; models needing nested exclusions override `get_diff`.
+        The dump is then scrubbed recursively, each nested model applying its own declarations: values equal to their
+        `reverse_diff_defaults` entry are stripped (ND echoes template defaults for unset fields), keys in
+        `reverse_diff_exclude` are stripped unconditionally (server-populated fields the proposed config can never
+        express), and keys retained by `extra="allow"` are stripped (undeclared server keys are not expressible in
+        config and must not count as removals). Like `to_diff_dict`, the top-level exclusion sets apply at the top
+        level only; nested exclusions are declared on the nested model via `reverse_diff_exclude`.
 
         ## Raises
 
@@ -249,20 +259,27 @@ class NDBaseModel(BaseModel, ABC):
             mode="json",
             **kwargs,
         )
-        self._strip_reverse_diff_defaults(data)
+        self._scrub_reverse_diff_dict(data)
         return data
 
-    def _strip_reverse_diff_defaults(self, data: Dict[str, Any]) -> None:
+    def _scrub_reverse_diff_dict(self, data: Dict[str, Any]) -> None:
         """
         # Summary
 
-        Remove keys from `data` (an aliased dump of `self`) whose value equals the model's declared `reverse_diff_defaults`
-        entry, then recurse into nested `NDBaseModel` fields so each nested model applies its own table.
+        Scrub `data` (an aliased dump of `self`) for removal detection: drop keys listed in `reverse_diff_exclude`, keys
+        retained only via `extra="allow"` (undeclared server keys), and keys whose value equals the model's declared
+        `reverse_diff_defaults` entry, then recurse into nested `NDBaseModel` fields so each nested model applies its own
+        declarations.
 
         ## Raises
 
         None
         """
+        for alias in self.reverse_diff_exclude:
+            data.pop(alias, None)
+        # `model_extra` keys are stored under their wire spelling, matching the aliased dump.
+        for extra_key in getattr(self, "model_extra", None) or {}:
+            data.pop(extra_key, None)
         for alias, default in self.reverse_diff_defaults.items():
             if alias in data and data[alias] == default:
                 del data[alias]
@@ -273,7 +290,7 @@ class NDBaseModel(BaseModel, ABC):
                 nested = data.get(alias)
                 if isinstance(nested, dict):
                     # Same-class recursion; pylint cannot infer `value` is an NDBaseModel from getattr.
-                    value._strip_reverse_diff_defaults(nested)  # pylint: disable=protected-access
+                    value._scrub_reverse_diff_dict(nested)  # pylint: disable=protected-access
 
     def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
         """Diff comparison.

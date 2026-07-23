@@ -32,8 +32,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_ch
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_trunk_host_interface import PortChannelTrunkHostPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.subinterface_managed_interface import SubinterfaceManagedPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.svi_interface import SviPolicyModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_access_interface import AccessVpcHostPolicyModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_access_interface import AccessVpcHostInterfaceModel, AccessVpcHostPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import TrunkVpcHostPolicyModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import LocalUserModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel, VxlanEbgpManagementModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
 SWITCH_IP = "192.0.2.10"
@@ -458,3 +460,204 @@ def test_base_model_reverse_diff_00430(policy_cls) -> None:
     existing = policy_cls.from_response(echo)
     proposed = policy_cls.from_config({"admin_state": True})
     assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+# --- 005xx: server-populated existing-side data the proposed config can never express ---
+
+
+VPC_ACCESS_RESPONSE = {
+    "switchIp": "192.168.1.1",
+    "interfaceName": "vpc100",
+    "interfaceType": "vpc",
+    "configData": {
+        "mode": "access",
+        "networkOS": {
+            "networkOSType": "nx-os",
+            "policy": {
+                "policyType": "accessVpcHost",
+                "peerSwitchId": "FDOPEER0001",
+                "adminState": True,
+                "accessVlan": 10,
+                "peer1PortChannelId": 100,
+                "peer2PortChannelId": 100,
+                "lacpRate": "fast",
+            },
+        },
+    },
+}
+
+VPC_ACCESS_CONFIG = {
+    "switch_ip": "192.168.1.1",
+    "interface_name": "vpc100",
+    "config_data": {
+        "network_os": {
+            "policy": {
+                "admin_state": True,
+                "access_vlan": 10,
+                "peer1_port_channel_id": 100,
+                "peer2_port_channel_id": 100,
+                "lacp_rate": "fast",
+            },
+        },
+    },
+}
+
+
+def test_base_model_reverse_diff_00500() -> None:
+    """
+    # Summary
+
+    ND echoes the orchestrator-injected `peerSwitchId` inside the vPC policy block; a proposed config restating every
+    user-settable field identically must stay `no_diff` on the replaced/overridden path even though it can never
+    express `peer_switch_id` (not in the argspec; injected only at payload-build time).
+
+    ## Test
+
+    - An existing `AccessVpcHostInterfaceModel` built from a 4.2.1-wire-shaped response carrying `peerSwitchId`.
+    - A proposed model built from config restating every user-settable field with identical values.
+    - `get_diff(proposed, exclude_unset=False)` is `True` (no difference).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - NDBaseModel.to_reverse_diff_dict()
+    """
+    existing = AccessVpcHostInterfaceModel.from_response(VPC_ACCESS_RESPONSE)
+    proposed = AccessVpcHostInterfaceModel.from_config(VPC_ACCESS_CONFIG)
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+def test_base_model_reverse_diff_00510() -> None:
+    """
+    # Summary
+
+    The trunk vPC policy model carries the same orchestrator-injected `peerSwitchId` echo as the access variant and
+    must likewise stay `no_diff` when the proposed config restates all user-settable fields.
+
+    ## Test
+
+    - An existing `TrunkVpcHostPolicyModel` built from an echo carrying `peerSwitchId` and `adminState`.
+    - A proposed model built from config carrying only `admin_state`.
+    - `get_diff(proposed, exclude_unset=False)` is `True` (no difference).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - NDBaseModel.to_reverse_diff_dict()
+    """
+    existing = TrunkVpcHostPolicyModel.from_response({"policyType": "trunkVpcHost", "peerSwitchId": "FDOPEER0001", "adminState": True})
+    proposed = TrunkVpcHostPolicyModel.from_config({"admin_state": True})
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+def test_base_model_reverse_diff_00520() -> None:
+    """
+    # Summary
+
+    A genuine removal must still be detected on vPC models once `peerSwitchId` is excluded: existing carries a
+    user-settable field (`accessVlan`) the proposed config omits, so the reverse pass must report a difference.
+
+    ## Test
+
+    - The existing model from `test_base_model_reverse_diff_00500` (carries `accessVlan` and `peerSwitchId`).
+    - A proposed model built from the same config minus `access_vlan`.
+    - `get_diff(proposed, exclude_unset=False)` is `False` (difference detected).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - utils.has_removals()
+    """
+    existing = AccessVpcHostInterfaceModel.from_response(VPC_ACCESS_RESPONSE)
+    config = {
+        "switch_ip": "192.168.1.1",
+        "interface_name": "vpc100",
+        "config_data": {
+            "network_os": {
+                "policy": {
+                    "admin_state": True,
+                    "peer1_port_channel_id": 100,
+                    "peer2_port_channel_id": 100,
+                    "lacp_rate": "fast",
+                },
+            },
+        },
+    }
+    proposed = AccessVpcHostInterfaceModel.from_config(config)
+    assert existing.get_diff(proposed, exclude_unset=False) is False
+
+
+def test_base_model_reverse_diff_00530() -> None:
+    """
+    # Summary
+
+    Fabric models use `extra="allow"`, so ND GET responses populate undeclared keys on the existing side; those extras
+    can never appear in proposed config (argspec-validated) and must not count as removals on the replaced path.
+
+    ## Test
+
+    - An existing `FabricEbgpModel` carrying a top-level extra key (`metadata`) and a nested management extra key.
+    - A proposed model built from the same declared fields with no extras.
+    - `get_diff(proposed, exclude_unset=False)` is `True` (no difference).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - NDBaseModel.to_reverse_diff_dict()
+    """
+    existing = FabricEbgpModel(
+        fabric_name="F1",
+        management=VxlanEbgpManagementModel(bgp_asn="65001", **{"someServerField": "x"}),
+        **{"metadata": {"uuid": "abc-123"}},
+    )
+    proposed = FabricEbgpModel(fabric_name="F1", management=VxlanEbgpManagementModel(bgp_asn="65001"))
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+def test_base_model_reverse_diff_00540() -> None:
+    """
+    # Summary
+
+    ND echoes `xLaunch=false`, `reuseLimitation=0`, and `timeIntervalLimitation=0` for a local user created without
+    those options (lab-verified; the module's integration tests assert these `before` values). A proposed config
+    omitting them must stay `no_diff` on the replaced path -- `False`/`0` are not "effectively empty", so this
+    normalization must come from the model's `reverse_diff_defaults` table.
+
+    ## Test
+
+    - An existing `LocalUserModel` built from a response echoing the three falsy defaults.
+    - A proposed model built from config carrying only `login_id`.
+    - `get_diff(proposed, exclude_unset=False)` is `True` (no difference).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - NDBaseModel.to_reverse_diff_dict()
+    """
+    existing = LocalUserModel.from_response({"loginID": "jdoe", "xLaunch": False, "reuseLimitation": 0, "timeIntervalLimitation": 0})
+    proposed = LocalUserModel.from_config({"login_id": "jdoe"})
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+def test_base_model_reverse_diff_00550() -> None:
+    """
+    # Summary
+
+    A genuine pending reset must still be detected for local users: existing has `xLaunch=true` (non-default), the
+    proposed config omits `remote_user_authorization`, so the full-payload PUT would reset it and the reverse pass
+    must report a difference.
+
+    ## Test
+
+    - An existing `LocalUserModel` built from a response echoing `xLaunch=true`.
+    - A proposed model built from config carrying only `login_id`.
+    - `get_diff(proposed, exclude_unset=False)` is `False` (difference detected).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - utils.has_removals()
+    """
+    existing = LocalUserModel.from_response({"loginID": "jdoe", "xLaunch": True})
+    proposed = LocalUserModel.from_config({"login_id": "jdoe"})
+    assert existing.get_diff(proposed, exclude_unset=False) is False
