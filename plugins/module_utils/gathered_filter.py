@@ -123,11 +123,8 @@ def filter_gathered_response(
     Returned objects remain in API shape for NDConfigCollection.from_api_response().
     """
 
-    if not filters:
-        return response_data
-
     active_filters: list[dict[str, Any]] = []
-    for filter_item in filters:
+    for filter_item in (filters or []):
         if not isinstance(filter_item, dict):
             raise ValueError("Each gathered filter item must be a dictionary.")
 
@@ -145,10 +142,11 @@ def filter_gathered_response(
 
     for response_item in response_data:
         model = model_class.from_response(response_item)
-        candidate = model.to_config()
 
-        if not any(model_class.matches_gathered_filter(criteria, candidate) for criteria in active_filters):
-            continue
+        if active_filters:
+            candidate = model.to_config()
+            if not any(model_class.matches_gathered_filter(criteria, candidate) for criteria in active_filters):
+                continue
 
         identifier = model.get_identifier_value()
         if identifier in seen_identifiers:
@@ -158,3 +156,31 @@ def filter_gathered_response(
         filtered.append(response_item)
 
     return filtered
+
+def validate_gathered_filters(
+        filters: list[Any],
+        normalize_filter: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> None:
+    """ 
+    Pre-flight validation for gathered filter items.
+
+    Raises ValueError if any filter item is malformed or contains no actionable 
+    criteria. Call this before making API requests so that invalid input is r
+    rejected without wasted network I/O.
+    """
+    for idx, filter_item in enumerate(filters):
+        if not isinstance(filter_item, dict):
+            raise ValueError(
+                f"Each gathered filter item must be a dictionary, "
+                f"got {type(filter_item).__name__} at index {idx}."
+            )
+        normalized = deepcopy(filter_item)
+        if normalize_filter is not None:
+            normalized = normalize_filter(normalized)
+        
+        if not _contains_active_value(normalized):
+            raise ValueError(
+                f"Gathered filter item at index {idx} must contain "
+                f"at least one filtering criterion."
+            )
+
