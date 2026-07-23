@@ -7,7 +7,6 @@ import copy
 import logging
 import time
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -95,6 +94,9 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         self.fabric = nd.params.get("fabric_name") or nd.params.get("fabric")
         self.state = nd.params["state"]
         self.config = nd.params.get("config") or []
+        if self.state == "gathered":
+            self.config = ResourceManagerConfigModel.validate_gathered_config(self.config)
+
         self.fabric_type = None
         if self.config:
             self.fabric_type = self._get_fabric_type()
@@ -316,29 +318,10 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 fabric_type=fabric_type,
             )
 
-        for idx, item in enumerate(self.config):
-            try:
-                ResourceManagerConfigModel.model_validate(
-                    item,
-                    context={"state": self.state, "fabric_type": fabric_type},
-                )
-            except ValidationError as exc:
-                error_detail = exc.errors() if hasattr(exc, "errors") else str(exc)
-                error_msg = f"Gathered filter validation failed for config index {idx}: {error_detail}"
-                self.log.error(error_msg)
-                raise ValueError(error_msg) from exc
-            except Exception as exc:
-                error_msg = f"Gathered filter validation failed for config index {idx}: {str(exc)}"
-                self.log.error(error_msg)
-                raise ValueError(error_msg) from exc
-            self.log.debug(
-                "Gathered filter [%s] validated: entity_name=%s, pool_name=%s, switches=%s",
-                idx,
-                item.get("entity_name"),
-                item.get("pool_name"),
-                item.get("switches"),
-            )
-
+        self.config = ResourceManagerConfigModel.validate_gathered_config(
+            self.config,
+            fabric_type=fabric_type,
+        )
         return []
 
     # ------------------------------------------------------------------

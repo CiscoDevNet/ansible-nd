@@ -36,6 +36,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_ma
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.constants import is_pool_supported
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    ValidationError,
     field_validator,
     model_validator,
 )
@@ -64,6 +65,14 @@ class ResourceManagerConfigModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
+    GATHERED_FILTER_PROPERTIES: ClassVar[tuple[str, ...]] = (
+        "entity_name",
+        "pool_name",
+        "switches",
+        "resource",
+        "scope_type",
+        "pool_type",
+    )
 
     # Fields excluded from diff — operational input flags not present in gathered state.
     # entity_name, pool_type, pool_name, scope_type, resource and vrf_name
@@ -131,6 +140,81 @@ class ResourceManagerConfigModel(NDBaseModel):
     # -------------------------------------------------------------------------
     # Per-field validators
     # -------------------------------------------------------------------------
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_gathered_properties(cls, data: Any, info: Any) -> Any:
+        """Validate gathered filter keys before extra fields are discarded."""
+        state = (info.context or {}).get("state") if info else None
+        if state != "gathered" or not isinstance(data, dict):
+            return data
+
+        supplied_properties = set(data)
+        unsupported = sorted(supplied_properties - set(cls.GATHERED_FILTER_PROPERTIES))
+        if unsupported:
+            raise ValueError(
+                "unsupported gathered filter properties: {0}. Supported gathered filter properties: {1}".format(
+                    ", ".join("'{0}'".format(key) for key in unsupported),
+                    ", ".join("'{0}'".format(key) for key in cls.GATHERED_FILTER_PROPERTIES),
+                )
+            )
+
+        null_properties = sorted(key for key, value in data.items() if value is None)
+        if null_properties:
+            raise ValueError(
+                "gathered filter properties cannot be null: {0}".format(
+                    ", ".join("'{0}'".format(key) for key in null_properties)
+                )
+            )
+
+        active_properties = {key for key, value in data.items() if value is not None}
+        if not active_properties:
+            raise ValueError(
+                "gathered filter item must contain at least one supported property: {0}".format(
+                    ", ".join("'{0}'".format(key) for key in cls.GATHERED_FILTER_PROPERTIES)
+                )
+            )
+
+        return data
+
+    @classmethod
+    def validate_gathered_config(
+        cls,
+        config: list[dict[str, Any]] | None,
+        fabric_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Validate and normalize all gathered filter items."""
+        if not config:
+            return []
+
+        issues = []
+        validated_items = []
+        for idx, item in enumerate(config):
+            try:
+                validated = cls.model_validate(
+                    item,
+                    context={"state": "gathered", "fabric_type": fabric_type},
+                )
+            except ValidationError as exc:
+                error_detail = exc.errors() if hasattr(exc, "errors") else str(exc)
+                issues.append("config index {0}: {1}".format(idx, error_detail))
+                continue
+            except Exception as exc:
+                issues.append("config index {0}: {1}".format(idx, str(exc)))
+                continue
+
+            supplied_properties = set(item) if isinstance(item, dict) else set()
+            validated_items.append(
+                validated.model_dump(
+                    include=supplied_properties,
+                    exclude_none=True,
+                )
+            )
+
+        if issues:
+            raise ValueError("Gathered filter validation failed: {0}".format("; ".join(issues)))
+
+        return validated_items
 
     @field_validator("entity_name", mode="before")
     @classmethod

@@ -493,17 +493,7 @@ class ResourceManagerResourceHelpersMixin:
     @staticmethod
     def _filter_has_active_criteria(filter_item):
         """Return True when a gathered filter item has at least one criterion."""
-        return any(
-            filter_item.get(key)
-            for key in (
-                "entity_name",
-                "pool_name",
-                "switches",
-                "resource",
-                "scope_type",
-                "pool_type",
-            )
-        )
+        return any(filter_item.get(key) for key in ResourceManagerConfigModel.GATHERED_FILTER_PROPERTIES)
 
     def _resource_matches_filter(self, resource, filter_item):
         """Return True when a resource matches one gathered filter item."""
