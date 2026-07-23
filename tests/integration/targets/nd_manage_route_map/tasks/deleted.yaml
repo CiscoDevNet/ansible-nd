@@ -1,0 +1,32 @@
+---
+# Deleted state tests for nd_manage_route_map.
+
+- name: "DELETED: Delete primary route map (check mode)"
+  cisco.nd.nd_manage_route_map: &delete_primary
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ test_route_map_primary_name }}"
+    state: deleted
+  check_mode: true
+  register: cm_deleted_primary
+
+- name: "DELETED: Delete primary route map (normal mode)"
+  cisco.nd.nd_manage_route_map: *delete_primary
+  register: nm_deleted_primary
+
+- name: "DELETED: Verify primary route map removed"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_primary is changed
+      - nm_deleted_primary is changed
+      - nm_deleted_primary.after | selectattr('name', 'equalto', test_route_map_primary_name) | list | length == 0
+
+- name: "DELETED IDEMPOTENT: Delete primary route map again"
+  cisco.nd.nd_manage_route_map: *delete_primary
+  register: nm_deleted_idem_primary
+
+- name: "DELETED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_idem_primary is not changed

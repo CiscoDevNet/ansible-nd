@@ -243,26 +243,32 @@ options:
                   storm_control_broadcast_level:
                     description:
                     - Broadcast storm control level in percentage (0.00-100.00).
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_broadcast_level_pps).
                     type: float
                   storm_control_broadcast_level_pps:
                     description:
                     - Broadcast storm control level in packets per second (0-200000000).
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_broadcast_level).
                     type: int
                   storm_control_multicast_level:
                     description:
                     - Multicast storm control level in percentage (0.00-100.00).
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_multicast_level_pps).
                     type: float
                   storm_control_multicast_level_pps:
                     description:
                     - Multicast storm control level in packets per second (0-200000000).
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_multicast_level).
                     type: int
                   storm_control_unicast_level:
                     description:
                     - Unicast storm control level in percentage (0.00-100.00).
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_unicast_level_pps).
                     type: float
                   storm_control_unicast_level_pps:
                     description:
                     - Unicast storm control level in packets per second (0-200000000).
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_unicast_level).
                     type: int
   config_actions:
     description:

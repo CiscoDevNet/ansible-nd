@@ -22,6 +22,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_arg
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_attachment_manager import (
     NetworkAttachmentManager,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_config_utils import (
+    network_name_filter,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks import (
     NDNetworkOrchestrator,
 )
@@ -778,6 +781,44 @@ def test_network_query_all_scopes_targeted_state_reads_with_batch_filter():
     ]
     assert requested_paths == [
         "/api/v1/manage/fabrics/fab1/networks?max=10000&filter=%28BLUE_NET%20OR%20GREEN_NET%29",
+    ]
+
+
+def test_network_filter_builders_return_raw_expressions_for_endpoint_encoding():
+    names = ["GREEN/NET", "BLUE NET&50%"]
+
+    assert network_name_filter(names) == "(networkName:BLUE NET&50% OR networkName:GREEN/NET)"
+    assert NDNetworkOrchestrator._network_name_filter(names) == "(networkName:BLUE NET&50% OR networkName:GREEN/NET)"
+    assert NDNetworkOrchestrator._network_names_unfielded_filter(names) == "(BLUE NET&50% OR GREEN/NET)"
+
+
+def test_network_query_all_encodes_reserved_filter_characters_once():
+    network_name = "BLUE NET&50%"
+    strategy = StandaloneNetworkStrategy(
+        fabric_name="fab1",
+        fabric_data={"managementType": "vxlanIbgp"},
+    )
+    orchestrator = NDNetworkOrchestrator(
+        rest_send=RestSend(
+            {
+                "state": "replaced",
+                "config": [{"network_name": network_name}],
+                "check_mode": False,
+            }
+        ),
+        strategy=strategy,
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {"networks": [{"networkName": network_name}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    assert orchestrator.query_all() == [{"networkName": network_name}]
+    assert requested_paths == [
+        "/api/v1/manage/fabrics/fab1/networks?filter=networkName%3ABLUE%20NET%2650%25",
     ]
 
 

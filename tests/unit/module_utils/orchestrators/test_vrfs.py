@@ -33,6 +33,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_da
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrfs import (
     NDVrfOrchestrator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_config_utils import (
+    vrf_name_filter,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argument_specs import (
     _child_fabric_config_element_spec,
     vrf_base_argument_spec,
@@ -689,6 +692,36 @@ def test_vrfs_00081_query_all_scoped_single_name_uses_fielded_filter():
     assert orchestrator.query_all() == [{"vrfName": "ansible-vrf-a"}]
     assert requested_paths == [
         "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3Aansible-vrf-a",
+    ]
+
+
+def test_vrf_filter_builders_return_raw_expressions_for_endpoint_encoding():
+    names = ["VRF/SECOND", "VRF PRIMARY&50%"]
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+
+    assert vrf_name_filter(names) == "(vrfName:VRF PRIMARY&50% OR vrfName:VRF/SECOND)"
+    assert orchestrator._vrf_name_filter(names) == "(vrfName:VRF PRIMARY&50% OR vrfName:VRF/SECOND)"
+
+
+def test_vrf_query_all_encodes_reserved_filter_characters_once():
+    vrf_name = "VRF PRIMARY&50%"
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "replaced",
+            "config": [{"vrf_name": vrf_name}],
+        }
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {"vrfs": [{"vrfName": vrf_name}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    assert orchestrator.query_all() == [{"vrfName": vrf_name}]
+    assert requested_paths == [
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3AVRF%20PRIMARY%2650%25",
     ]
 
 

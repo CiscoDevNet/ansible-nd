@@ -154,6 +154,14 @@ def test_query_params_00050():
     assert result == "fabricName=MyFabric"
 
 
+def test_endpoint_query_params_url_encode_reserved_string_values():
+    """Reserved characters remain part of one endpoint-specific query value."""
+    with does_not_raise():
+        params = SampleEndpointParams(fabric_name="Fabric /?#&%")
+        result = params.to_query_string()
+    assert result == "fabricName=Fabric%20%2F%3F%23%26%25"
+
+
 def test_query_params_00060():
     """
     # Summary

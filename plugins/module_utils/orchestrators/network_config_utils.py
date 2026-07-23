@@ -8,8 +8,6 @@ components.
 
 from __future__ import annotations
 
-from urllib.parse import quote
-
 
 def configured_network_names(config: list[dict]) -> list[str]:
     """Return configured Network names in stable order."""
@@ -44,7 +42,7 @@ def deploy_type_by_network(config: list[dict]) -> dict[str, str]:
 
 
 def network_name_filter(network_names: list[str]) -> str:
-    """Build a URL-safe Lucene filter for Network names."""
+    """Build a raw Lucene filter for endpoint serialization."""
     terms = [f"networkName:{network_name}" for network_name in sorted(set(network_names))]
     expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
-    return quote(expression, safe="")
+    return expression

@@ -47,7 +47,7 @@ def test_manage_networks_00020() -> None:
     endpoint.endpoint_params.sort = "networkName:asc"
     endpoint.endpoint_params.service_network = True
 
-    assert endpoint.path == "/api/v1/manage/fabrics/fab1/networks?offset=10&max=25&sort=networkName:asc&serviceNetwork=true"
+    assert endpoint.path == "/api/v1/manage/fabrics/fab1/networks?offset=10&max=25&sort=networkName%3Aasc&serviceNetwork=true"
     assert endpoint.verb == HttpVerbEnum.GET
 
 

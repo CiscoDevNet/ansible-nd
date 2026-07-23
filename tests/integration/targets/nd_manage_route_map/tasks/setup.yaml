@@ -1,0 +1,14 @@
+---
+# Pre-test cleanup: delete route maps left over from prior failed runs.
+
+- name: "SETUP: Remove test route maps if present"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ test_route_map_primary_name }}"
+      - name: "{{ test_route_map_secondary_name }}"
+      - name: "{{ test_route_map_tertiary_name }}"
+    state: deleted
+  failed_when: false
+  tags: always

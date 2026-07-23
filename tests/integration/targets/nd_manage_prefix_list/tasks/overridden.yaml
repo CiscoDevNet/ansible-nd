@@ -1,0 +1,80 @@
+---
+# Overridden state tests for nd_manage_prefix_list
+# Copyright: (c) 2026, Gaspard Micol (@gmicol)
+#
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point PL-IPV4-BORDERS and PL-IPV6-DATACENTER exist from prior tests.
+# Override will reduce the full fabric prefix-list set to only what is specified.
+
+# Create a second IPv4 prefix list so overridden has something extra to remove.
+- name: "OVERRIDDEN PRE: Add PL-IPV4-DATACENTER via merged"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ prefix_list_ipv4_datacenter }}"
+    state: merged
+
+# --- OVERRIDDEN: REDUCE TO SINGLE PREFIX LIST ---
+
+- name: "OVERRIDDEN: Override to only PL-IPV4-BORDERS (check mode)"
+  cisco.nd.nd_manage_prefix_list: &override_ipv4_borders_only
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ prefix_list_ipv4_borders }}"
+    state: overridden
+  check_mode: true
+  register: cm_overridden_single
+
+- name: "OVERRIDDEN: Override to only PL-IPV4-BORDERS (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *override_ipv4_borders_only
+  register: nm_overridden_single
+
+- name: "OVERRIDDEN: Verify override removed all other prefix lists"
+  ansible.builtin.assert:
+    that:
+      - cm_overridden_single is changed
+      - nm_overridden_single is changed
+      # PL-IPV4-BORDERS should be present.
+      - nm_overridden_single.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length == 1
+      # PL-IPV4-DATACENTER and PL-IPV6-DATACENTER should have been removed.
+      - nm_overridden_single.after | selectattr('name', 'equalto', 'PL-IPV4-DATACENTER') | list | length == 0
+      - nm_overridden_single.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 0
+
+# --- OVERRIDDEN: IDEMPOTENCY ---
+
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply same overridden config (check mode)"
+  cisco.nd.nd_manage_prefix_list: *override_ipv4_borders_only
+  check_mode: true
+  register: cm_overridden_idem
+
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply same overridden config (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *override_ipv4_borders_only
+  register: nm_overridden_idem
+
+- name: "OVERRIDDEN IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_overridden_idem is not changed
+      - nm_overridden_idem is not changed
+
+# --- OVERRIDDEN: SWAP IPv4 FOR IPv6 ---
+
+- name: "OVERRIDDEN SWAP: Override to only PL-IPV6-DATACENTER, removing PL-IPV4-BORDERS"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ prefix_list_ipv6_datacenter }}"
+    state: overridden
+  register: nm_overridden_swap
+
+- name: "OVERRIDDEN SWAP: Verify PL-IPV4-BORDERS removed and PL-IPV6-DATACENTER present"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_swap is changed
+      - nm_overridden_swap.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length == 0
+      - nm_overridden_swap.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 1

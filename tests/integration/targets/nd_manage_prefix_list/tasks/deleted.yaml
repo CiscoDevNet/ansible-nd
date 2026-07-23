@@ -1,0 +1,161 @@
+---
+# Deleted state tests for nd_manage_prefix_list
+# Copyright: (c) 2026, Gaspard Micol (@gmicol)
+#
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point only PL-IPV6-DATACENTER exists from overridden tests.
+
+# --- DELETED: SINGLE PREFIX LIST ---
+
+- name: "DELETED: Delete PL-IPV6-DATACENTER (check mode)"
+  cisco.nd.nd_manage_prefix_list: &delete_ipv6_datacenter
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - ip_version: ipv6
+        name: PL-IPV6-DATACENTER
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "2001:db8::/32"
+    state: deleted
+  check_mode: true
+  register: cm_deleted_ipv6
+
+- name: "DELETED: Delete PL-IPV6-DATACENTER (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *delete_ipv6_datacenter
+  register: nm_deleted_ipv6
+
+- name: "DELETED: Verify PL-IPV6-DATACENTER was deleted"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_ipv6 is changed
+      - nm_deleted_ipv6 is changed
+      - nm_deleted_ipv6.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 0
+
+# --- DELETED: IDEMPOTENCY ---
+
+- name: "DELETED IDEMPOTENT: Delete PL-IPV6-DATACENTER again"
+  cisco.nd.nd_manage_prefix_list: *delete_ipv6_datacenter
+  register: nm_deleted_ipv6_idem
+
+- name: "DELETED IDEMPOTENT: Verify no change when already absent"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_ipv6_idem is not changed
+
+# --- DELETED: MULTIPLE PREFIX LISTS ---
+
+# Recreate both test prefix lists for the multi-delete test.
+- name: "SETUP: Recreate PL-IPV4-BORDERS and PL-IPV6-DATACENTER for multi-delete test"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ prefix_list_ipv4_borders }}"
+      - "{{ prefix_list_ipv6_datacenter }}"
+    state: merged
+
+- name: "DELETED MULTI: Delete both PL-IPV4-BORDERS and PL-IPV6-DATACENTER (check mode)"
+  cisco.nd.nd_manage_prefix_list: &delete_multi
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - ip_version: ipv4
+        name: PL-IPV4-BORDERS
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "10.0.0.0/8"
+      - ip_version: ipv6
+        name: PL-IPV6-DATACENTER
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "2001:db8::/32"
+    state: deleted
+  check_mode: true
+  register: cm_deleted_multi
+
+- name: "DELETED MULTI: Delete both PL-IPV4-BORDERS and PL-IPV6-DATACENTER (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *delete_multi
+  register: nm_deleted_multi
+
+- name: "DELETED MULTI: Verify all test prefix lists were deleted"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_multi is changed
+      - nm_deleted_multi is changed
+      - nm_deleted_multi.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length == 0
+      - nm_deleted_multi.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 0
+
+# --- DELETED: IDENTIFIER-ONLY (NO ENTRIES) ---
+# New ergonomic feature: delete can now use identifier-only config (ip_version + name)
+# without requiring the full entries list.
+
+# Setup: recreate prefix lists for identifier-only delete test
+- name: "SETUP: Recreate PL-IPV4-BORDERS and PL-IPV6-DATACENTER for identifier-only delete test"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ prefix_list_ipv4_borders }}"
+      - "{{ prefix_list_ipv6_datacenter }}"
+    state: merged
+
+- name: "DELETED IDENTIFIER-ONLY: Delete using only ip_version and name (check mode)"
+  cisco.nd.nd_manage_prefix_list: &delete_identifier_only
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - ip_version: ipv4
+        name: PL-IPV4-BORDERS
+      - ip_version: ipv6
+        name: PL-IPV6-DATACENTER
+    state: deleted
+  check_mode: true
+  register: cm_deleted_id_only
+
+- name: "DELETED IDENTIFIER-ONLY: Delete using only ip_version and name (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *delete_identifier_only
+  register: nm_deleted_id_only
+
+- name: "DELETED IDENTIFIER-ONLY: Verify deletion with identifier-only config"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_id_only is changed
+      - nm_deleted_id_only is changed
+      - nm_deleted_id_only.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length == 0
+      - nm_deleted_id_only.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 0
+
+- name: "DELETED IDENTIFIER-ONLY IDEMPOTENT: Re-apply identifier-only delete"
+  cisco.nd.nd_manage_prefix_list: *delete_identifier_only
+  register: nm_deleted_id_only_idem
+
+- name: "DELETED IDENTIFIER-ONLY IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_id_only_idem is not changed
+
+# --- DELETED: NON-EXISTENT PREFIX LIST ---
+
+- name: "DELETED NON-EXISTENT: Delete a prefix list that does not exist"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - ip_version: ipv4
+        name: PL-IPV4-NONEXISTENT
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "10.0.0.0/8"
+    state: deleted
+  register: nm_deleted_nonexistent
+
+- name: "DELETED NON-EXISTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_nonexistent is not changed

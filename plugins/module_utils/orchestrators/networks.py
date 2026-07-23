@@ -9,7 +9,6 @@ import json
 import time
 
 from typing import Any, Callable, ClassVar
-from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -584,13 +583,13 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     def _network_name_filter(network_names: list[str]) -> str:
         terms = [f"networkName:{name}" for name in sorted(set(network_names))]
         expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
-        return quote(expression, safe="")
+        return expression
 
     @staticmethod
     def _network_names_unfielded_filter(network_names: list[str]) -> str:
         terms = sorted(set(network_names))
         expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
-        return quote(expression, safe="")
+        return expression
 
     def _is_mcfg_parent(self) -> bool:
         return bool(getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False))

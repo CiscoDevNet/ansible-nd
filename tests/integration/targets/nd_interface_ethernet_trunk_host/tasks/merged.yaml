@@ -352,6 +352,146 @@
     that:
       - nm_merged_storm_idem is not changed
 
+# --- MERGED STORM-CONTROL LIFECYCLE (PR #360 review) ---
+# Percentage and pps are two representations of one NX-OS threshold. state:merged must
+# treat each pair as one logical setting: explicitly selecting one variant clears an
+# existing counterpart (reported as a change), and the follow-up idempotency re-apply
+# proves the counterpart was actually cleared on the wire -- if ND still echoed it, the
+# re-apply would classify the merge as a change and fail the "not changed" assert.
+
+- name: "MERGED STORM-CONTROL PCT->PPS: Switch broadcast storm control from percentage to pps"
+  cisco.nd.nd_interface_ethernet_trunk_host: &merge_eth48_storm_pps
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_48_storm_control_pps }}"
+    state: merged
+  register: nm_merged_storm_pct_to_pps
+
+- name: "MERGED STORM-CONTROL PCT->PPS: Extract Ethernet1/48 after-state"
+  ansible.builtin.set_fact:
+    eth48_pps_after: >-
+      {{ nm_merged_storm_pct_to_pps.after | selectattr('switch_ip', 'equalto', test_switch_ip)
+         | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first }}
+
+- name: "MERGED STORM-CONTROL PCT->PPS: Verify change reported, pps set, percentage cleared"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_storm_pct_to_pps is changed
+      - eth48_pps_after.config_data.network_os.policy.storm_control_broadcast_level_pps == 1000
+      - "'storm_control_broadcast_level' not in eth48_pps_after.config_data.network_os.policy"
+
+- name: "MERGED STORM-CONTROL PCT->PPS: Re-apply pps intent (proves ND cleared the percentage)"
+  cisco.nd.nd_interface_ethernet_trunk_host: *merge_eth48_storm_pps
+  register: nm_merged_storm_pps_idem
+
+- name: "MERGED STORM-CONTROL PCT->PPS: Verify idempotency"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_storm_pps_idem is not changed
+
+- name: "MERGED STORM-CONTROL PPS->PCT: Switch broadcast storm control back to percentage"
+  cisco.nd.nd_interface_ethernet_trunk_host: &merge_eth48_storm_pct_back
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_48_storm_control_pct_switch_back }}"
+    state: merged
+  register: nm_merged_storm_pps_to_pct
+
+- name: "MERGED STORM-CONTROL PPS->PCT: Extract Ethernet1/48 after-state"
+  ansible.builtin.set_fact:
+    eth48_pct_after: >-
+      {{ nm_merged_storm_pps_to_pct.after | selectattr('switch_ip', 'equalto', test_switch_ip)
+         | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first }}
+
+- name: "MERGED STORM-CONTROL PPS->PCT: Verify change reported, percentage set, pps cleared"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_storm_pps_to_pct is changed
+      - eth48_pct_after.config_data.network_os.policy.storm_control_broadcast_level == 42.5
+      - "'storm_control_broadcast_level_pps' not in eth48_pct_after.config_data.network_os.policy"
+
+- name: "MERGED STORM-CONTROL PPS->PCT: Re-apply percentage intent (proves ND cleared the pps)"
+  cisco.nd.nd_interface_ethernet_trunk_host: *merge_eth48_storm_pct_back
+  register: nm_merged_storm_pct_idem
+
+- name: "MERGED STORM-CONTROL PPS->PCT: Verify idempotency"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_storm_pct_idem is not changed
+
+# --- MERGED STORM-CONTROL DUAL-STATE REMEDIATION (issue #351 / PR #360 review) ---
+# Seed the exact controller state from issue #351 (both variants set for one class) via
+# raw nd_rest intent -- the module refuses to create it -- then verify the module can
+# read it, classifies matching single-variant intent as a change (the one-way subset
+# comparison alone would report no_diff), and remediates by clearing the percentage.
+
+- name: "MERGED STORM-CONTROL DUAL: Resolve test switch serial number"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: sc360_switches
+
+- name: "MERGED STORM-CONTROL DUAL: Extract switch id for {{ test_switch_ip }}"
+  ansible.builtin.set_fact:
+    sc360_switch_id: >-
+      {{ (sc360_switches.current.switches | selectattr('fabricManagementIp', 'equalto', test_switch_ip)
+         | first).switchId }}
+
+# The PUT body must carry a switchId matching the path segment -- ND rejects the request with
+# 400 "Invalid switch ID" otherwise (the module's update path injects it the same way). The id is
+# resolved at runtime from test_switch_ip above; never hardcode it (9000v serials change on reload).
+- name: "MERGED STORM-CONTROL DUAL: Seed dual-valued broadcast storm-control intent via raw PUT"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ sc360_switch_id }}/interfaces/Ethernet1%2F48"
+    method: put
+    content: "{{ ethernet_48_dual_seed_payload | combine({'switchId': sc360_switch_id}) }}"
+  register: sc360_dual_seed
+
+- name: "MERGED STORM-CONTROL DUAL: Read back seeded intent"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ sc360_switch_id }}/interfaces/Ethernet1%2F48"
+    method: get
+  register: sc360_dual_readback
+
+- name: "MERGED STORM-CONTROL DUAL: Verify ND accepted and echoes both variants (issue #351 behavior)"
+  ansible.builtin.assert:
+    that:
+      - sc360_dual_readback.current.configData.networkOS.policy.stormControlBroadcastLevel == 50.0
+      - sc360_dual_readback.current.configData.networkOS.policy.stormControlBroadcastLevelPps == 12345
+
+- name: "MERGED STORM-CONTROL DUAL: Apply pps intent matching the value ND already echoes"
+  cisco.nd.nd_interface_ethernet_trunk_host: &merge_eth48_storm_remediate
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_48_storm_control_pps_remediate }}"
+    state: merged
+  register: nm_merged_storm_remediate
+
+- name: "MERGED STORM-CONTROL DUAL: Extract Ethernet1/48 after-state"
+  ansible.builtin.set_fact:
+    eth48_remediate_after: >-
+      {{ nm_merged_storm_remediate.after | selectattr('switch_ip', 'equalto', test_switch_ip)
+         | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first }}
+
+- name: "MERGED STORM-CONTROL DUAL: Verify matching pps intent is a change and the percentage is cleared"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_storm_remediate is changed
+      - eth48_remediate_after.config_data.network_os.policy.storm_control_broadcast_level_pps == 12345
+      - "'storm_control_broadcast_level' not in eth48_remediate_after.config_data.network_os.policy"
+
+- name: "MERGED STORM-CONTROL DUAL: Re-apply pps intent (remediated state is stable)"
+  cisco.nd.nd_interface_ethernet_trunk_host: *merge_eth48_storm_remediate
+  register: nm_merged_storm_remediate_idem
+
+- name: "MERGED STORM-CONTROL DUAL: Verify idempotency after remediation"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_storm_remediate_idem is not changed
+
 # Clean up the storm-control test interface
 - name: "CLEANUP: Remove Ethernet1/48 (storm-control)"
   cisco.nd.nd_interface_ethernet_trunk_host:
