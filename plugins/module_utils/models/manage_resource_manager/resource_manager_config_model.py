@@ -161,11 +161,7 @@ class ResourceManagerConfigModel(NDBaseModel):
 
         null_properties = sorted(key for key, value in data.items() if value is None)
         if null_properties:
-            raise ValueError(
-                "gathered filter properties cannot be null: {0}".format(
-                    ", ".join("'{0}'".format(key) for key in null_properties)
-                )
-            )
+            raise ValueError("gathered filter properties cannot be null: {0}".format(", ".join("'{0}'".format(key) for key in null_properties)))
 
         active_properties = {key for key, value in data.items() if value is not None}
         if not active_properties:
