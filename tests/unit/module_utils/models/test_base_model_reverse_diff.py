@@ -661,3 +661,68 @@ def test_base_model_reverse_diff_00550() -> None:
     existing = LocalUserModel.from_response({"loginID": "jdoe", "xLaunch": True})
     proposed = LocalUserModel.from_config({"login_id": "jdoe"})
     assert existing.get_diff(proposed, exclude_unset=False) is False
+
+
+# --- 006xx: efficiency contract -- the reverse pass reuses the forward dumps ---
+
+
+def test_base_model_reverse_diff_00600(monkeypatch) -> None:
+    """
+    # Summary
+
+    The replaced/overridden no-diff path performs exactly one `model_dump` per side: the reverse pass derives its
+    payload-scoped dicts from the already-computed forward dumps instead of re-dumping both models. Guards the
+    PR #422 review's efficiency finding against regression -- a second dump per side doubles classification cost
+    for every no-diff item in a `query_all` inventory.
+
+    ## Test
+
+    - `NDBaseModel.model_dump` is wrapped with a call counter.
+    - `get_diff(proposed, exclude_unset=False)` runs on an idempotent loopback pair (the reverse pass executes).
+    - `no_diff` is reported and exactly 2 dumps are observed (one per side).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - NDBaseModel.to_diff_dict()
+    - NDBaseModel.to_reverse_diff_dict()
+    """
+    existing = LoopbackInterfaceModel.from_response(nd_loopback_response({"adminState": True, "description": "kept"}))
+    proposed = LoopbackInterfaceModel.from_config(loopback_config({"admin_state": True, "description": "kept"}))
+
+    calls = {"count": 0}
+    original_model_dump = NDBaseModel.model_dump
+
+    def counting_model_dump(self, *args, **kwargs):
+        calls["count"] += 1
+        return original_model_dump(self, *args, **kwargs)
+
+    monkeypatch.setattr(NDBaseModel, "model_dump", counting_model_dump)
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+    assert calls["count"] == 2, f"expected 2 model dumps (one per side), observed {calls['count']}"
+
+
+def test_base_model_reverse_diff_00610() -> None:
+    """
+    # Summary
+
+    `to_reverse_diff_dict` called standalone still yields the payload-scoped, scrubbed dict: top-level
+    `payload_exclude_fields` are absent (by alias), and `reverse_diff_defaults` matches are stripped, identical to
+    the dict `get_diff` derives internally.
+
+    ## Test
+
+    - A loopback model built from a response carrying `switchIp` (payload-excluded) and default-echo fields.
+    - `to_reverse_diff_dict()` omits `switchIp`, omits table-default matches, keeps non-default values.
+
+    ## Classes and Methods
+
+    - NDBaseModel.to_reverse_diff_dict()
+    """
+    existing = LoopbackInterfaceModel.from_response(nd_loopback_response({"adminState": True, "description": "kept", "routeMapTag": 12345}))
+    data = existing.to_reverse_diff_dict()
+    assert "switchIp" not in data
+    policy = data["configData"]["networkOS"]["policy"]
+    assert "adminState" not in policy  # reverse_diff_defaults: adminState True stripped
+    assert "routeMapTag" not in policy  # reverse_diff_defaults: "12345" (dumped form) stripped
+    assert policy["description"] == "kept"

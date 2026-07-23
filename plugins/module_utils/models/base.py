@@ -248,19 +248,34 @@ class NDBaseModel(BaseModel, ABC):
         config and must not count as removals). Like `to_diff_dict`, the top-level exclusion sets apply at the top
         level only; nested exclusions are declared on the nested model via `reverse_diff_exclude`.
 
+        Derived from `to_diff_dict` (one dump, then in-place scoping) rather than a second `model_dump`, so subclass
+        `to_diff_dict` overrides scope the reverse pass too, and `get_diff` can reuse its forward dumps instead of
+        re-dumping both models.
+
         ## Raises
 
         None
         """
-        data = self.model_dump(
-            by_alias=True,
-            exclude_none=True,
-            exclude=(self.exclude_from_diff | self.payload_exclude_fields) or None,
-            mode="json",
-            **kwargs,
-        )
-        self._scrub_reverse_diff_dict(data)
+        data = self.to_diff_dict(**kwargs)
+        self._apply_reverse_diff_scope(data)
         return data
+
+    def _apply_reverse_diff_scope(self, data: Dict[str, Any]) -> None:
+        """
+        # Summary
+
+        Convert a `to_diff_dict` export into the reverse-pass shape, in place: pop the aliases of top-level
+        `payload_exclude_fields` (already absent when a field is also in `exclude_from_diff`), then run
+        `_scrub_reverse_diff_dict` so each nested model applies its own exclusions/extras/defaults declarations.
+
+        ## Raises
+
+        None
+        """
+        for field_name in self.payload_exclude_fields:
+            field_info = type(self).model_fields.get(field_name)
+            data.pop(field_info.alias if field_info is not None and field_info.alias else field_name, None)
+        self._scrub_reverse_diff_dict(data)
 
     def _scrub_reverse_diff_dict(self, data: Dict[str, Any]) -> None:
         """
@@ -320,8 +335,14 @@ class NDBaseModel(BaseModel, ABC):
         is_subset = issubset(other_data, self_data)
         if is_subset and exclude_unset and self.merge_would_change(other):
             return False
-        if is_subset and not exclude_unset and has_removals(self.to_reverse_diff_dict(), other.to_reverse_diff_dict()):
-            return False
+        if is_subset and not exclude_unset:
+            # Reuse the forward dumps for the reverse pass (they are not read again): scoping them in place
+            # avoids a second full model_dump per side (PR #422 review, efficiency finding).
+            self._apply_reverse_diff_scope(self_data)
+            # Same-class access; pylint cannot infer `other` shares this NDBaseModel API.
+            other._apply_reverse_diff_scope(other_data)  # pylint: disable=protected-access
+            if has_removals(self_data, other_data):
+                return False
         return is_subset
 
     def merge_would_change(self, other: "NDBaseModel") -> bool:
