@@ -161,6 +161,11 @@ class NDConfigCollection:
             allow_superset: When True, list elements are matched
                 one-directionally so an existing item carrying extra list
                 elements (or extra dict keys) is not flagged as changed.
+
+        Both ``exclude_unset`` and ``allow_superset`` are forwarded to the
+        concrete model's ``get_diff``. Any model that overrides ``get_diff``
+        must accept these keywords; see the subclass contract on
+        ``NDBaseModel.get_diff``.
         """
         try:
             key = self._extract_key(new_item)
@@ -172,6 +177,10 @@ class NDConfigCollection:
         if existing is None:
             return "new"
 
+        # ``get_diff`` is dispatched to the concrete model, so every override
+        # must accept ``exclude_unset`` and ``allow_superset`` (see the subclass
+        # contract on ``NDBaseModel.get_diff``). A non-conforming override raises
+        # TypeError here by design; do not catch it or inspect the signature.
         is_subset = existing.get_diff(new_item, exclude_unset=exclude_unset, allow_superset=allow_superset)
 
         return "no_diff" if is_subset else "changed"

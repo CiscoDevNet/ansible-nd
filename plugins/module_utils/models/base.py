@@ -219,6 +219,18 @@ class NDBaseModel(BaseModel, ABC):
     def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False, allow_superset: bool = False) -> bool:
         """Diff comparison.
 
+        Subclass contract:
+            Any subclass that overrides ``get_diff`` MUST accept both the
+            ``exclude_unset`` and ``allow_superset`` keyword arguments.
+            ``NDConfigCollection.get_diff_config`` always forwards them to the
+            concrete model, and Python dispatches to the subclass override
+            rather than to this base method. An override may ignore
+            ``allow_superset`` when its comparison does not need superset
+            semantics (see ``MaintenanceModeModel``), but it must still accept
+            the keyword. A non-conforming override raises ``TypeError`` at diff
+            time; that failure is intentional and must not be masked by catching
+            ``TypeError`` or inspecting the method signature at runtime.
+
         Args:
             other: The model to compare against.
             exclude_unset: When True, only compare fields explicitly set in
