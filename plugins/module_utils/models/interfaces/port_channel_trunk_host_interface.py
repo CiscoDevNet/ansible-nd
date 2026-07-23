@@ -231,6 +231,7 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
     - If the wrapped model serializer receives a non-`dict` from the handler (see `_strip_policy_type_in_config`).
     """
 
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `int_port_channel_trunk_host` template defaults (schema-sourced via nd-openapi `intPortChannelTrunkHostTemplate`). ND echoes these
     # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
     # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.

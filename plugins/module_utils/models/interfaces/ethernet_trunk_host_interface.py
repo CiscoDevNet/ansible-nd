@@ -221,6 +221,7 @@ class EthernetTrunkHostPolicyModel(StormControlMutexMixin):
     - If both the percentage and pps level are set for the same storm-control class in a non-response context (via `StormControlMutexMixin`)
     """
 
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `int_trunk_host` template defaults (schema-sourced via nd-openapi `intTrunkHostTemplate`). ND echoes these
     # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
     # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.

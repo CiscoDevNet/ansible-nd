@@ -228,6 +228,7 @@ class TrunkVpcHostPolicyModel(StormControlMutexMixin):
     # `get_diff` would count it as a removal on every replaced/overridden run, breaking idempotency.
     reverse_diff_exclude: ClassVar[set[str]] = {"peerSwitchId"}
 
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `int_vpc_trunk_host` template defaults (schema-sourced via nd-openapi `intVpcTrunkHostTemplate`). ND echoes these
     # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
     # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.

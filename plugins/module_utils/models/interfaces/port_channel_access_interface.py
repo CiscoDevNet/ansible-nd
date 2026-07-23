@@ -81,6 +81,7 @@ class PortChannelAccessPolicyModel(StormControlMutexMixin):
     None
     """
 
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `int_port_channel_access_host` template defaults (schema-sourced via nd-openapi `intPortChannelAccessHostTemplate`). ND echoes these
     # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
     # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.

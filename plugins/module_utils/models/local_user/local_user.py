@@ -82,6 +82,7 @@ class LocalUserModel(NDBaseModel):
 
     exclude_from_diff: ClassVar[set] = {"user_password"}
 
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND echoes these falsy defaults for a user created without the corresponding options set (lab-verified on
     # 4.2.1; the module's integration tests assert exactly these `before` values). `False`/`0` are not "effectively
     # empty", so without this table the reverse pass of `get_diff` (issue #410) would count each echo as a removal
