@@ -122,8 +122,7 @@ def test_manage_community_lists_00050() -> None:
     item_endpoint.set_identifiers("CL1")
 
     assert list_endpoint.path == (
-        "/api/v1/manage/fabrics/SITE1/communityLists?"
-        "clusterName=cluster-1&filter=name:CL%20SALES&max=50&offset=10&sort=name%3Adesc"
+        "/api/v1/manage/fabrics/SITE1/communityLists?" "clusterName=cluster-1&filter=name:CL%20SALES&max=50&offset=10&sort=name%3Adesc"
     )
     assert item_endpoint.path == "/api/v1/manage/fabrics/SITE1/communityLists/CL1?clusterName=cluster-1"
 

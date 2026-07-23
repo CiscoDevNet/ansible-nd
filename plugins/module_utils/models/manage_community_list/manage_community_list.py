@@ -276,13 +276,11 @@ class CommunityListModel(NDBaseModel):
                 self.name = self.name[len(prefix) :]
             if len(self.api_name) > TENANT_COMMUNITY_LIST_API_NAME_MAX_LENGTH:
                 raise ValueError(
-                    f"tenant-scoped community list API name '{self.api_name}' must be "
-                    f"{TENANT_COMMUNITY_LIST_API_NAME_MAX_LENGTH} characters or fewer."
+                    f"tenant-scoped community list API name '{self.api_name}' must be " f"{TENANT_COMMUNITY_LIST_API_NAME_MAX_LENGTH} characters or fewer."
                 )
         elif len(self.name) > DEFAULT_TENANT_COMMUNITY_LIST_NAME_MAX_LENGTH:
             raise ValueError(
-                f"default-tenant community list name '{self.name}' must be "
-                f"{DEFAULT_TENANT_COMMUNITY_LIST_NAME_MAX_LENGTH} characters or fewer."
+                f"default-tenant community list name '{self.name}' must be " f"{DEFAULT_TENANT_COMMUNITY_LIST_NAME_MAX_LENGTH} characters or fewer."
             )
         return self
 

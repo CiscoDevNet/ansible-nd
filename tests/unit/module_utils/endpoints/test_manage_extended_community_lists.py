@@ -117,15 +117,12 @@ def test_manage_extended_community_lists_00050() -> None:
         lucene_params=LuceneQueryParams(filter="name:ECL SALES", max=50, offset=10, sort="name:desc"),
     )
     list_endpoint.fabric_name = "SITE1"
-    item_endpoint = EpManageExtendedCommunityListsGet(
-        endpoint_params=ExtendedCommunityListsEndpointParams(cluster_name="cluster-1")
-    )
+    item_endpoint = EpManageExtendedCommunityListsGet(endpoint_params=ExtendedCommunityListsEndpointParams(cluster_name="cluster-1"))
     item_endpoint.fabric_name = "SITE1"
     item_endpoint.set_identifiers("ECL1")
 
     assert list_endpoint.path == (
-        "/api/v1/manage/fabrics/SITE1/extendedCommunityLists?"
-        "clusterName=cluster-1&filter=name:ECL%20SALES&max=50&offset=10&sort=name%3Adesc"
+        "/api/v1/manage/fabrics/SITE1/extendedCommunityLists?" "clusterName=cluster-1&filter=name:ECL%20SALES&max=50&offset=10&sort=name%3Adesc"
     )
     assert item_endpoint.path == "/api/v1/manage/fabrics/SITE1/extendedCommunityLists/ECL1?clusterName=cluster-1"
 

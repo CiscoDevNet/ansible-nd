@@ -130,11 +130,7 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
         items = result.get("results")
         if not isinstance(items, list):
             return
-        failures = [
-            item
-            for item in items
-            if isinstance(item, dict) and str(item.get("status") or "").lower() in _FAILURE_STATUSES
-        ]
+        failures = [item for item in items if isinstance(item, dict) and str(item.get("status") or "").lower() in _FAILURE_STATUSES]
         if failures:
             details = ", ".join(f"{item.get('name')}: {item.get('status')} - {item.get('message')}" for item in failures)
             raise RuntimeError(f"Per-item failures in community list response: {details}")
