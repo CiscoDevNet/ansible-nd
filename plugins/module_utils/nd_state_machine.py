@@ -8,7 +8,7 @@ from __future__ import absolute_import, annotations, division, print_function
 from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import filter_gathered_response
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import filter_gathered_response, validate_gathered_filters
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
@@ -90,6 +90,12 @@ class NDStateMachine:
             query_kwargs = {}
             if lucene_candidate_filtering_enabled:
                 query_kwargs["gathered_filters"] = raw_config
+            
+            if gathered_filtering_enabled and raw_config:
+                validate_gathered_filters(
+                    filters=raw_config,
+                    normalize_filter=self.model_class.normalize_gathered_filter,
+                )
 
             response_data = self.model_orchestrator.query_all(**query_kwargs)
 
