@@ -341,13 +341,17 @@ def test_ethernet_routed_orchestrator_00310() -> None:
     """
     # Summary
 
-    Verify an explicitly named IOS-XE interface under `state: deleted` IS queued for reset — the merge-only skip applies
-    only to the fabric-wide `overridden` delete set, not to interfaces the user asked for by name.
+    Verify an explicitly named IOS-XE interface under `state: deleted` IS queued for reset — via the XE reset queue,
+    never the normalize queue: `interfaceActions/normalize` is structurally unusable for IOS-XE (its body requires
+    `mtu`, which C8000V rejects per-port; vault: c8000v-rejects-per-port-mtu). NX-OS interfaces keep the family
+    normalize path. The merge-only skip applies only to the fabric-wide `overridden` delete set, not to interfaces
+    the user asked for by name.
 
     ## Test
 
     - state is `deleted`; delete_bulk receives one NX-OS model and one IOS-XE model
-    - Both interfaces are queued for normalize
+    - The NX-OS interface is queued for normalize; the IOS-XE interface is queued for XE reset (and NOT normalize)
+    - Both are queued for deploy
 
     ## Classes and Methods
 
@@ -362,7 +366,66 @@ def test_ethernet_routed_orchestrator_00310() -> None:
     with does_not_raise():
         orchestrator.delete_bulk([_nx_model(), _xe_model()], existing_data={"interfaceName": "probe"})
     assert ("Ethernet1/31", "FDO11111AAA") in orchestrator._pending_normalizes
-    assert ("GigabitEthernet2", "FDO22222BBB") in orchestrator._pending_normalizes
+    assert ("GigabitEthernet2", "FDO22222BBB") in orchestrator._pending_xe_resets
+    assert all("GigabitEthernet2" not in pair for pair in orchestrator._pending_normalizes)
+    assert ("GigabitEthernet2", "FDO22222BBB") in orchestrator._pending_deploys
+
+
+def test_ethernet_routed_orchestrator_00315() -> None:
+    """
+    # Summary
+
+    Verify the XE reset payload is the lab-verified C8000V-safe body: a defaults-only `iosXeRoutedHost` policy with NO
+    `mtu` key anywhere (probe 2026-07-27: the mtu-less PUT returns 204 and ND injects the schema defaults, landing the
+    interface on the unconfigured-default signature so it leaves managed scope).
+
+    ## Test
+
+    - Payload carries interfaceName/interfaceType/switchId and mode "routed" / networkOSType "ios-xe"
+    - Policy is exactly {policyType: iosXeRoutedHost, adminState: true}
+    - No "mtu" key appears anywhere in the payload
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator._xe_reset_payload()
+    """
+    payload = EthernetRoutedInterfaceOrchestrator._xe_reset_payload("GigabitEthernet2", "FDO22222BBB")
+    assert payload["interfaceName"] == "GigabitEthernet2"
+    assert payload["interfaceType"] == "ethernet"
+    assert payload["switchId"] == "FDO22222BBB"
+    assert payload["configData"]["mode"] == "routed"
+    assert payload["configData"]["networkOS"]["networkOSType"] == "ios-xe"
+    assert payload["configData"]["networkOS"]["policy"] == {"policyType": "iosXeRoutedHost", "adminState": True}
+    assert "mtu" not in str(payload)
+
+
+def test_ethernet_routed_orchestrator_00320() -> None:
+    """
+    # Summary
+
+    Verify `remove_pending` flushes the XE reset queue via per-interface PUT and empties it. The single fixture
+    response covers the one PUT; any additional request would exhaust the generator and fail.
+
+    ## Test
+
+    - state is `deleted`; delete_bulk queues one IOS-XE interface
+    - `remove_pending` consumes exactly one PUT response and clears the XE reset queue
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.remove_pending()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_remove_pending_00320a")
+        yield responses_ethernet_routed("test_remove_pending_00320b")
+
+    gen_responses = ResponseGenerator(responses())
+    orchestrator = _build_orchestrator(gen_responses, params={"state": "deleted"})
+    with does_not_raise():
+        orchestrator.delete_bulk([_xe_model()], existing_data={"interfaceName": "probe"})
+        orchestrator.remove_pending()
+    assert orchestrator._pending_xe_resets == []
 
 
 # =============================================================================

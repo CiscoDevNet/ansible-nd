@@ -127,41 +127,147 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         """
         return {e.value for e in EthernetRoutedPolicyTypeEnum} | {e.value for e in XeEthernetRoutedPolicyTypeEnum}
 
+    def model_post_init(self, __context) -> None:
+        """
+        # Summary
+
+        Initialize the routed-specific XE reset queue after Pydantic model construction. Extends
+        `EthernetBaseOrchestrator.model_post_init` (normalize/reset queues) with `_pending_xe_resets`, initialized the
+        same way as the sibling queues.
+
+        ## Raises
+
+        None
+        """
+        super().model_post_init(__context)
+        self._pending_xe_resets: list[tuple[str, str]] = []
+
+    @staticmethod
+    def _xe_reset_payload(interface_name: str, switch_id: str) -> dict:
+        """
+        # Summary
+
+        Build the per-interface PUT body that resets an IOS-XE routed interface to its fabric default: a defaults-only
+        `iosXeRoutedHost` policy with no `mtu` key. ND injects the schema defaults (`mtu: 1500`, `speed: "auto"`) on the
+        echo, landing the interface on the unconfigured-default signature so it leaves this module's managed scope.
+
+        ## Raises
+
+        None
+        """
+        # TODO(4.2.1) c8000v-rejects-per-port-mtu
+        # interfaceActions/normalize is structurally unusable for IOS-XE: its body requires mtu (schema validation
+        # rejects an mtu-less body) and C8000V rejects the per-port mtu it carries. The lab-verified reset recipe is
+        # this per-interface PUT with mtu omitted (HTTP 204; probe 2026-07-27).
+        return {
+            "interfaceName": interface_name,
+            "interfaceType": "ethernet",
+            "switchId": switch_id,
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": "ios-xe", "policy": {"policyType": "iosXeRoutedHost", "adminState": True}},
+            },
+        }
+
+    def _queue_xe_reset(self, interface_name: str, switch_id: str) -> None:
+        """
+        # Summary
+
+        Queue an IOS-XE interface for deferred per-interface reset via `remove_pending`. Deduplicates on the
+        `(interface_name, switch_id)` pair like the sibling queues.
+
+        ## Raises
+
+        None
+        """
+        pair = (interface_name, switch_id)
+        if pair not in self._pending_xe_resets:
+            self._pending_xe_resets.append(pair)
+
     def delete_bulk(self, model_instances: list, **kwargs) -> None:
         """
         # Summary
 
-        Queue interfaces for deferred reset, treating IOS-XE interfaces as merge-only under `state: overridden`:
-        the fabric-wide overridden delete set never includes an `ios-xe` interface, because IOS-XE fabric links can
-        carry plain configured `iosXeRoutedHost` with no intent-side ownership marker (lab-verified 2026-07-27:
-        WAN1's multisite link) — a policy-type-scoped delete set would strip real fabric links. Skipped interfaces
-        are logged at INFO. Interfaces the user names explicitly under `state: deleted` are always honored.
+        Queue interfaces for deferred reset with per-OS routing:
 
-        NX-OS interfaces delegate unchanged to `EthernetBaseOrchestrator.delete_bulk` (port-channel guards,
-        normalize/reset queueing).
+        - Under `state: overridden`, IOS-XE interfaces are merge-only: the fabric-wide overridden delete set never
+          includes an `ios-xe` interface, because IOS-XE fabric links can carry plain configured `iosXeRoutedHost`
+          with no intent-side ownership marker (lab-verified 2026-07-27: WAN1's multisite link) — a policy-type-scoped
+          delete set would strip real fabric links. Skipped interfaces are logged at INFO.
+        - IOS-XE interfaces the user names explicitly under `state: deleted` are queued for the XE reset path
+          (per-interface PUT via `remove_pending`) plus deploy — never the family normalize, whose body is
+          structurally unusable on C8000V (see `_xe_reset_payload`).
+        - NX-OS interfaces delegate unchanged to `EthernetBaseOrchestrator.delete_bulk` (port-channel guards,
+          normalize/reset queueing).
 
         ## Raises
 
         ### RuntimeError
 
         - Propagated from `EthernetBaseOrchestrator.delete_bulk` (switch resolution, port-channel restrictions,
-          interface-list query failures).
+          interface-list query failures) or from `_resolve_switch_id` for IOS-XE items.
         """
         state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
-        if state == "overridden":
-            kept: list = []
-            for model_instance in model_instances:
-                network_os = model_instance.config_data.network_os if model_instance.config_data else None
-                if network_os is not None and network_os.network_os_type == "ios-xe":
+        nx_instances: list = []
+        for model_instance in model_instances:
+            network_os = model_instance.config_data.network_os if model_instance.config_data else None
+            if network_os is not None and network_os.network_os_type == "ios-xe":
+                if state == "overridden":
                     logger.info(
                         "Skipping IOS-XE interface %s on switch %s during state:overridden (IOS-XE interfaces are merge-only)",
                         model_instance.interface_name,
                         model_instance.switch_ip,
                     )
                     continue
-                kept.append(model_instance)
-            model_instances = kept
-        super().delete_bulk(model_instances, **kwargs)
+                switch_id = self._resolve_switch_id(model_instance.switch_ip)
+                self._queue_xe_reset(model_instance.interface_name, switch_id)
+                self._queue_deploy(model_instance.interface_name, switch_id)
+                continue
+            nx_instances.append(model_instance)
+        super().delete_bulk(nx_instances, **kwargs)
+
+    def remove_pending(self) -> list:
+        """
+        # Summary
+
+        Flush deferred delete-side work: reset queued IOS-XE interfaces one-at-a-time via per-interface PUT with the
+        C8000V-safe `_xe_reset_payload` body, then delegate to `EthernetBaseOrchestrator.remove_pending` for the NX-OS
+        normalize/reset queues.
+
+        Fail-fast: on the first XE PUT failure the remaining XE interfaces (and the NX-OS queues) are not attempted.
+        ND has no rollback for a per-interface PUT, so interfaces reset before the failure stay at fabric default; the
+        raised error names which XE interfaces succeeded, which one failed, and which were not attempted so the user
+        can reconcile the partial state.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If an XE reset PUT request fails (with partial-state detail as described above).
+        - Propagated from `EthernetBaseOrchestrator.remove_pending` on NX-OS normalize/reset failure.
+        """
+        results: list = []
+        succeeded: list[str] = []
+        for index, (interface_name, switch_id) in enumerate(self._pending_xe_resets):
+            api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
+            api_endpoint.set_identifiers(interface_name)
+            payload = self._xe_reset_payload(interface_name, switch_id)
+            try:
+                results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
+            except Exception as e:
+                not_attempted = [name for name, _switch_id in self._pending_xe_resets[index + 1 :]]
+                raise RuntimeError(
+                    f"IOS-XE reset failed at {interface_name} on {switch_id}: {e}. "
+                    f"Successfully reset before failure: {succeeded or 'none'}. "
+                    f"Not attempted: {not_attempted or 'none'}. "
+                    f"Interfaces reset before the failure are now at fabric default and were not rolled back."
+                ) from e
+            succeeded.append(interface_name)
+        self._pending_xe_resets = []
+        base_results = super().remove_pending()
+        if isinstance(base_results, list):
+            results.extend(base_results)
+        return results
 
     @staticmethod
     def _is_unconfigured_default(iface: dict) -> bool:

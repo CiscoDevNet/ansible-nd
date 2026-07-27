@@ -510,5 +510,36 @@
                 }
             ]
         }
+    },
+    "test_remove_pending_00320a": {
+        "TEST_NOTES": [
+            "Switch list for the XE reset flush test"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_remove_pending_00320b": {
+        "TEST_NOTES": [
+            "XE reset PUT response for GigabitEthernet2 (C8000V-safe mtu-less defaults-only body)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces/GigabitEthernet2",
+        "MESSAGE": "OK",
+        "DATA": {}
     }
 }

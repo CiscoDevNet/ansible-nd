@@ -207,9 +207,10 @@ options:
     - Use O(state=overridden) to enforce the configuration as the single source of truth.
       The resources on ND will be modified to exactly match the configuration.
       Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
-    - Use O(state=deleted) to reset the specified interfaces to their fabric default configuration via the
-      C(interfaceActions/normalize) API. Physical ethernet interfaces cannot be truly deleted from a switch;
-      the reset returns the interface to the fabric default C(trunkHost) policy, taking it out of routed mode.
+    - Use O(state=deleted) to reset the specified interfaces to their fabric default configuration. Physical
+      ethernet interfaces cannot be truly deleted from a switch. NX-OS interfaces reset to the fabric default
+      C(trunkHost) policy, taking them out of routed mode; IOS-XE interfaces reset to a default routed
+      configuration with all policy fields cleared.
     type: str
     default: merged
     choices: [ merged, replaced, overridden, deleted ]

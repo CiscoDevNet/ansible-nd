@@ -12,9 +12,10 @@
 # IOS-XE interfaces are merge-only under state: overridden (never reset when
 # absent from config), so this file establishes its baseline with state:
 # replaced rather than a delete pre-clean, and the overridden block asserts
-# the merge-only convergence behavior. The state: deleted block is gated OFF
-# pending a C8000V-safe reset recipe (vault: c8000v-rejects-per-port-mtu);
-# until then the XE test interface's steady state is the xe_routed base config.
+# the merge-only convergence behavior. state: deleted resets explicitly named
+# XE interfaces to their fabric default via the per-interface reset path, so
+# the deleted block runs last and leaves the XE test interface at its fabric
+# default between runs (the baseline replace restores it).
 
 # --- XE BASELINE ---
 
@@ -144,9 +145,39 @@
       - cm_xe_overridden is not changed
       - nm_xe_overridden is not changed
 
-# --- XE DELETED: GATED OFF ---
-# state: deleted for IOS-XE interfaces needs a C8000V-safe reset recipe
-# (vault: c8000v-rejects-per-port-mtu) - the family normalize path is rejected
-# by the platform. Re-enable this block when the reset recipe lands; until
-# then the XE test interface intentionally remains at the xe_routed base
-# config as its steady state.
+# --- XE DELETED ---
+# Explicitly named XE interfaces reset to the fabric default (defaults-only
+# routed policy), which takes them out of this module's managed scope.
+
+- name: "XE DELETED: Reset the XE interface (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &xe_delete
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ xe_routed.switch_ip }}"
+        interface_name: "{{ xe_routed.interface_name }}"
+    state: deleted
+  check_mode: true
+  register: cm_xe_deleted
+
+- name: "XE DELETED: Reset the XE interface (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *xe_delete
+  register: nm_xe_deleted
+
+- name: "XE DELETED: Verify the XE interface left managed scope"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_deleted is changed
+      - nm_xe_deleted is changed
+      - nm_xe_deleted.after | selectattr('interface_name', 'equalto', xe_routed.interface_name) | list | length == 0
+
+# --- XE DELETED: IDEMPOTENCY ---
+
+- name: "XE DELETED IDEMPOTENT: Re-reset the XE interface"
+  cisco.nd.nd_interface_ethernet_routed: *xe_delete
+  register: nm_xe_deleted_idem
+
+- name: "XE DELETED IDEMPOTENT: Verify no change when already at fabric default"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_deleted_idem is not changed
