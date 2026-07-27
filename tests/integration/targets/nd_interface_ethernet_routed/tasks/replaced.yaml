@@ -1,0 +1,67 @@
+---
+# Replaced state tests for nd_interface_ethernet_routed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Entry state (from merged.yaml): Ethernet1/31 carries routed_31_updated
+# (ip 10.99.31.5, routing_tag 54321); Ethernet1/32 and Ethernet1/33 carry
+# their base configs.
+
+# --- REPLACED ---
+# routed_31 omits routing_tag, which routed_31_updated set - replacing with
+# routed_31 must clear it (field-removal detection in replaced state).
+#
+# NOTE (post-#422 rebase checklist): actually clearing the omitted
+# routing_tag requires the replaced-state reverse diff pass (PR #422) plus
+# per-policy-model reverse_diff_defaults tables for the routed models. This
+# file passes before that rebase too (the ip/description changes drive the
+# forward diff), but the removal itself is unverified until then - after the
+# rebase, add an assertion that routing_tag is absent from the after state.
+# The REPLACED IDEMPOTENT block is the lab guard that the defaults tables
+# correctly normalize ND's echoed schema defaults.
+
+- name: "REPLACED: Replace Ethernet1/31 config entirely (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &replace_routed_31
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ routed_31 }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_31
+
+- name: "REPLACED: Replace Ethernet1/31 config entirely (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_31
+  register: nm_replaced_31
+
+- name: "REPLACED: Verify Ethernet1/31 was replaced"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_31 is changed
+      - nm_replaced_31 is changed
+
+- name: "REPLACED: Verify replaced values in after state"
+  vars:
+    routed_31_after: "{{ nm_replaced_31.after | selectattr('interface_name', 'equalto', 'Ethernet1/31') | first }}"
+  ansible.builtin.assert:
+    that:
+      - routed_31_after.config_data.network_os.policy.ip == "10.99.31.1"
+      - routed_31_after.config_data.network_os.policy.description == "Ansible integration test routed Ethernet1/31"
+
+# --- REPLACED IDEMPOTENCY ---
+
+- name: "REPLACED IDEMPOTENT: Re-apply Ethernet1/31 replacement (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_31
+  check_mode: true
+  register: cm_replaced_idem_31
+
+- name: "REPLACED IDEMPOTENT: Re-apply Ethernet1/31 replacement (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_31
+  register: nm_replaced_idem_31
+
+- name: "REPLACED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_idem_31 is not changed
+      - nm_replaced_idem_31 is not changed

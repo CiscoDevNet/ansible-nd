@@ -1,0 +1,115 @@
+---
+# Variables for nd_interface_ethernet_routed integration tests.
+#
+# Override fabric_name and switch_ip in your inventory or extra-vars
+# to match a real ND 4.2 testbed.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
+test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
+
+# Ethernet interfaces used across tests.
+# Ethernet1/31 through Ethernet1/34 are reserved for these integration tests
+# (Ethernet1/34 is a spare). These interfaces must exist on the test switch and
+# must NOT be port-channel members. Each routed interface needs a unique IP, so
+# configs are per-interface (no interface_names fan-out in this module).
+
+# --- Base configs ---
+
+routed_31:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: Ethernet1/31
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: routedHost
+        admin_state: true
+        ip: "10.99.31.1"
+        prefix: 30
+        description: "Ansible integration test routed Ethernet1/31"
+        pim_sparse: true
+        pim_dr_priority: 100
+
+routed_32:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: Ethernet1/32
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: routedHost
+        admin_state: true
+        ip: "10.99.32.1"
+        prefix: 30
+        description: "Ansible integration test routed Ethernet1/32"
+
+routed_33:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: Ethernet1/33
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: routedHost
+        admin_state: true
+        ip: "10.99.33.1"
+        prefix: 30
+        description: "Ansible integration test routed Ethernet1/33"
+
+# --- Updated configs for merge/replace tests ---
+
+routed_31_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: Ethernet1/31
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: routedHost
+        admin_state: true
+        ip: "10.99.31.5"
+        prefix: 30
+        description: "Updated routed Ethernet1/31 description"
+        routing_tag: "54321"
+
+# --- IOS-XE coverage ---
+# Set nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name and
+# nd_test_xe_interface_name) in inventory/extra-vars to enable; xe.yaml is
+# skipped when nd_test_xe_switch_ip is unset. The XE interface must exist on
+# the device and must not carry fabric intent (e.g. not a multi-site link
+# member).
+test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
+test_xe_interface_name: "{{ nd_test_xe_interface_name | default('GigabitEthernet3') }}"
+
+xe_routed:
+  switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+  interface_name: "{{ test_xe_interface_name }}"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeRoutedHost
+        admin_state: true
+        ip: "10.99.203.1"
+        prefix: 30
+        description: "Ansible integration test XE routed"
+
+xe_routed_updated:
+  switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+  interface_name: "{{ test_xe_interface_name }}"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeRoutedHost
+        admin_state: true
+        ip: "10.99.203.5"
+        prefix: 30
+        description: "Updated XE routed description"
+
+# --- Cleanup helper: all NX test interfaces ---
+
+cleanup_interface_names:
+  - Ethernet1/31
+  - Ethernet1/32
+  - Ethernet1/33

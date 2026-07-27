@@ -1,0 +1,158 @@
+---
+# Merged state tests for nd_interface_ethernet_routed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# The test interfaces start at the fabric default (trunk mode), so every
+# initial merge below also exercises the trunk -> routed mode flip.
+
+# --- MERGED CREATE ---
+
+- name: "MERGED CREATE: Configure routed Ethernet1/31 with full config (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &merge_routed_31
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ routed_31 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_31
+
+- name: "MERGED CREATE: Configure routed Ethernet1/31 with full config (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *merge_routed_31
+  register: nm_merged_create_31
+
+- name: "MERGED CREATE: Verify Ethernet1/31 routed configuration"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_31 is changed
+      - nm_merged_create_31 is changed
+      - nm_merged_create_31.after | length >= 1
+      - nm_merged_create_31.after | selectattr('interface_name', 'equalto', 'Ethernet1/31') | list | length == 1
+
+- name: "MERGED CREATE: Verify Ethernet1/31 carries the routedHost policy"
+  vars:
+    routed_31_after: "{{ nm_merged_create_31.after | selectattr('interface_name', 'equalto', 'Ethernet1/31') | first }}"
+  ansible.builtin.assert:
+    that:
+      - routed_31_after.config_data.network_os.policy.policy_type == "routedHost"
+      - routed_31_after.config_data.network_os.policy.ip == "10.99.31.1"
+      - routed_31_after.config_data.network_os.policy.prefix == 30
+
+- name: "MERGED CREATE: Configure multiple routed interfaces in a single task (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &merge_routed_32_33
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ routed_32 }}"
+      - "{{ routed_33 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_multi
+
+- name: "MERGED CREATE: Configure multiple routed interfaces in a single task (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *merge_routed_32_33
+  register: nm_merged_create_multi
+
+- name: "MERGED CREATE: Verify multiple routed interface configuration"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_multi is changed
+      - nm_merged_create_multi is changed
+      - nm_merged_create_multi.after | selectattr('interface_name', 'equalto', 'Ethernet1/32') | list | length == 1
+      - nm_merged_create_multi.after | selectattr('interface_name', 'equalto', 'Ethernet1/33') | list | length == 1
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Re-apply Ethernet1/31 configuration (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: *merge_routed_31
+  check_mode: true
+  register: cm_merged_idem_31
+
+- name: "MERGED IDEMPOTENT: Re-apply Ethernet1/31 configuration (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *merge_routed_31
+  register: nm_merged_idem_31
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_31 is not changed
+      - nm_merged_idem_31 is not changed
+
+# --- MERGED UPDATE ---
+
+- name: "MERGED UPDATE: Update Ethernet1/31 IP and description (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &merge_routed_31_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ routed_31_updated }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_update_31
+
+- name: "MERGED UPDATE: Update Ethernet1/31 IP and description (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *merge_routed_31_updated
+  register: nm_merged_update_31
+
+- name: "MERGED UPDATE: Verify Ethernet1/31 was updated"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update_31 is changed
+      - nm_merged_update_31 is changed
+
+- name: "MERGED UPDATE: Verify updated values in after state"
+  vars:
+    routed_31_after: "{{ nm_merged_update_31.after | selectattr('interface_name', 'equalto', 'Ethernet1/31') | first }}"
+  ansible.builtin.assert:
+    that:
+      - routed_31_after.config_data.network_os.policy.ip == "10.99.31.5"
+      - routed_31_after.config_data.network_os.policy.description == "Updated routed Ethernet1/31 description"
+      - routed_31_after.config_data.network_os.policy.routing_tag == "54321"
+
+- name: "MERGED UPDATE: Re-apply update for idempotency"
+  cisco.nd.nd_interface_ethernet_routed: *merge_routed_31_updated
+  register: nm_merged_update_31_idem
+
+- name: "MERGED UPDATE: Verify idempotency after update"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_31_idem is not changed
+
+# --- MERGED WITH deploy: false ---
+
+- name: "MERGED NO-DEPLOY: Configure with deploy disabled"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Ethernet1/34
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: routedHost
+              admin_state: true
+              ip: "10.99.34.1"
+              prefix: 30
+              description: "No-deploy test routed Ethernet1/34"
+    deploy: false
+    state: merged
+  register: nm_merged_no_deploy
+
+- name: "MERGED NO-DEPLOY: Verify change was staged"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_no_deploy is changed
+
+# Clean up the no-deploy test interface
+- name: "CLEANUP: Reset Ethernet1/34"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Ethernet1/34
+    state: deleted
