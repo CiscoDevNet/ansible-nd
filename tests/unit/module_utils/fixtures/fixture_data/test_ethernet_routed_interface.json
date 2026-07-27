@@ -1,0 +1,194 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for tests/unit/module_utils/orchestrators/test_ethernet_routed_interface.py",
+        "Response shapes mirror test_ethernet_trunk_host_interface.json (fabric summary -> switches -> per-switch interfaces).",
+        "The 00400 interface lists deliberately include system routed policy types (numbered, multiSiteLinkMember, vrfLiteLinkMember)",
+        "with configData.mode 'routed' to pin the underlay-safety filter: managed-set membership, not mode, decides scope."
+    ],
+    "test_query_all_routed_00400a": {
+        "TEST_NOTES": [
+            "Fabric summary: fabric exists (for validate_prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_query_all_routed_00400b": {
+        "TEST_NOTES": [
+            "Switch list: two switches in fabric_1 (one NX-OS leaf, one IOS-XE core router)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_query_all_routed_00400c": {
+        "TEST_NOTES": [
+            "Interfaces for switch FDO11111AAA (NX-OS): one managed routedHost, one trunkHost (different mode/module),",
+            "one system 'numbered' fabric link, one 'multiSiteLinkMember', one 'vrfLiteLinkMember' - the last three all",
+            "carry configData.mode 'routed' and MUST be excluded (underlay safety).",
+            "Expect: only Ethernet1/7 (routedHost) is retained."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/7",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "adminState": true,
+                                "ip": "10.99.99.1",
+                                "prefix": 30,
+                                "description": "routed uplink"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/8",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "allowedVlans": "1-100"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "numbered",
+                                "ip": "10.4.0.1",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/3",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "multiSiteLinkMember",
+                                "ip": "10.10.1.1",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/4",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "vrfLiteLinkMember",
+                                "ip": "10.33.0.1",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_query_all_routed_00400d": {
+        "TEST_NOTES": [
+            "Interfaces for switch FDO22222BBB (IOS-XE): one managed iosXeRoutedHost, one system csrMultisiteIfcMember",
+            "(mode routed, excluded), and a loopback (wrong interfaceType, excluded).",
+            "Expect: only GigabitEthernet3 (iosXeRoutedHost) is retained."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet3",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeRoutedHost",
+                                "adminState": true,
+                                "ip": "10.99.99.9",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "csrMultisiteIfcMember",
+                                "ip": "10.10.1.2",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "loopback0",
+                    "interfaceType": "loopback",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeLoopback",
+                                "ip": "10.2.0.2"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    }
+}
