@@ -20,6 +20,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     MappingType,
     NetworkType,
+    VlanNetworkType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.validators import (
     NetworkValidators,
@@ -30,6 +31,13 @@ _CUSTOM_NETWORK_TEMPLATE_FIELDS = (
     "network_extension_template_name",
     "network_template_config",
 )
+
+_NETWORK_TYPE_USER_DEFINED = NetworkType.USER_DEFINED.name.lower()
+
+
+def _snake_to_lower_camel(value: str) -> str:
+    parts = value.split("_")
+    return parts[0] + "".join(part.capitalize() for part in parts[1:])
 
 
 class NetworkInterfaceConfigModel(NDNestedModel):
@@ -143,6 +151,11 @@ class NetworkConfigModel(NDBaseModel):
     net_extension_template: str | None = None
     network_id: int | None = Field(default=None, alias="networkId")
     network_type: str | None = Field(default=None, alias="networkType")
+    vlan_network_type: str = Field(default=VlanNetworkType.NORMAL.value, alias="vlanNetworkType")
+    primary_network_id: int | None = Field(default=None, alias="primaryNetworkId")
+    primary_network_name: str | None = Field(default=None, alias="primaryNetworkName")
+    normal_network_id: int | None = Field(default=None, alias="normalNetworkId")
+    normal_network_name: str | None = Field(default=None, alias="normalNetworkName")
     display_name: str | None = Field(default=None, alias="displayName")
     vrf_name: str | None = Field(default=None, alias="vrfName", max_length=32)
     vlan_id: int | None = Field(default=None, alias="vlanId")
@@ -211,10 +224,12 @@ class NetworkConfigModel(NDBaseModel):
             if secondary:
                 normalized["secondary_gateway_ipv4_collection"] = secondary
 
-        normalized["dhcp_servers"] = cls._normalize_legacy_dhcp_servers(normalized)
+        dhcp_servers = cls._normalize_legacy_dhcp_servers(normalized)
+        if dhcp_servers is not None:
+            normalized["dhcp_servers"] = dhcp_servers
 
         network_type = normalized.get("network_type") or normalized.get("networkType")
-        if network_type == NetworkType.USER_DEFINED.value:
+        if network_type == _NETWORK_TYPE_USER_DEFINED:
             if normalized.get("net_template") and not normalized.get("network_template_name"):
                 normalized["network_template_name"] = normalized["net_template"]
             if normalized.get("net_extension_template") and not normalized.get("network_extension_template_name"):
@@ -225,6 +240,7 @@ class NetworkConfigModel(NDBaseModel):
     @staticmethod
     def _normalize_legacy_dhcp_servers(data: dict[str, Any]) -> list[dict[str, Any]] | None:
         """Normalize old DHCP server keys into API serverAddress/serverVrf shape."""
+        has_dhcp_input = "dhcp_servers" in data or "dhcpServers" in data or any(f"dhcp_srvr{index}_ip" in data for index in range(1, 4))
         normalized_servers: list[dict[str, Any]] = []
         for server in data.get("dhcp_servers") or data.get("dhcpServers") or []:
             if not isinstance(server, dict):
@@ -245,7 +261,9 @@ class NetworkConfigModel(NDBaseModel):
                 if vrf:
                     item["server_vrf"] = vrf
                 normalized_servers.append(item)
-        return normalized_servers or None
+        if normalized_servers:
+            return normalized_servers
+        return [] if has_dhcp_input else None
 
     @field_validator("network_name", mode="before")
     @classmethod
@@ -257,10 +275,32 @@ class NetworkConfigModel(NDBaseModel):
     def _validate_tenant_name(cls, v: str | None) -> str | None:
         return NetworkValidators.validate_tenant_name(v)
 
-    @field_validator("network_id", mode="before")
+    @field_validator("network_id", "primary_network_id", "normal_network_id", mode="before")
     @classmethod
     def _validate_network_id(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_network_id(v)
+
+    @field_validator("network_type", mode="before")
+    @classmethod
+    def _validate_network_type(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if v == NetworkType.USER_DEFINED.value:
+            return v
+        if v != _NETWORK_TYPE_USER_DEFINED:
+            raise ValueError("network_type must be omitted unless using user_defined")
+        return NetworkType(_snake_to_lower_camel(v)).value
+
+    @field_validator("vlan_network_type", mode="before")
+    @classmethod
+    def _validate_vlan_network_type(cls, v: str | None) -> str:
+        if v is None:
+            return VlanNetworkType.NORMAL.value
+        try:
+            return VlanNetworkType(_snake_to_lower_camel(v)).value
+        except ValueError as exc:
+            choices = sorted(item.name.lower() for item in VlanNetworkType)
+            raise ValueError(f"vlan_network_type must be one of {choices}, got: {v}") from exc
 
     @field_validator("vlan_id", mode="before")
     @classmethod
@@ -308,12 +348,72 @@ class NetworkConfigModel(NDBaseModel):
         custom_fields = {field: getattr(self, field) for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS}
         set_custom_fields = [field for field, value in custom_fields.items() if value is not None]
         if set_custom_fields and network_type != NetworkType.USER_DEFINED.value:
-            raise ValueError("network template fields require network_type=userDefined: " + ", ".join(set_custom_fields))
+            raise ValueError("network template fields require network_type=user_defined: " + ", ".join(set_custom_fields))
+        self._check_vlan_network_type_rules()
         if self.deploy_type not in ("switch", "network"):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
         if self.is_l2only is False and not self.vrf_name:
             raise ValueError("vrf_name is required for layer3 networks")
         return self
+
+    def _check_vlan_network_type_rules(self) -> None:
+        role = self.vlan_network_type
+        primary_refs = [name for name in ("primary_network_id", "primary_network_name") if getattr(self, name) is not None]
+        normal_refs = [name for name in ("normal_network_id", "normal_network_name") if getattr(self, name) is not None]
+
+        if role in (VlanNetworkType.NORMAL.value, VlanNetworkType.PRIVATE_PRIMARY.value):
+            refs = primary_refs + normal_refs
+            if refs:
+                raise ValueError(f"{role} networks do not use parent network references: {', '.join(refs)}")
+            return
+
+        if role in (VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value, VlanNetworkType.PRIMARY_SECONDARY_ISOLATED.value):
+            if not primary_refs:
+                raise ValueError(f"{role} requires primary_network_id or primary_network_name")
+            if normal_refs:
+                raise ValueError(f"{role} uses primary_network_id/name, not normal_network_id/name")
+            self._reject_l3_fields_for_vlan_network_type(role)
+            return
+
+        if role == VlanNetworkType.CHILD.value:
+            if network_type := self.network_type:
+                if network_type in (NetworkType.ACI.value, NetworkType.VXLAN_ACI.value):
+                    if not normal_refs:
+                        raise ValueError("child networks with network_type aci/vxlanAci require normal_network_id or normal_network_name")
+                    if primary_refs:
+                        raise ValueError("child networks with network_type aci/vxlanAci use normal_network_id/name, not primary_network_id/name")
+                else:
+                    if not primary_refs:
+                        raise ValueError("child networks require primary_network_id or primary_network_name")
+                    if normal_refs:
+                        raise ValueError("child networks use primary_network_id/name unless network_type is aci/vxlanAci")
+            elif not primary_refs and not normal_refs:
+                raise ValueError("child networks require a parent reference")
+            self._reject_l3_fields_for_vlan_network_type(role)
+
+    def _reject_l3_fields_for_vlan_network_type(self, role: str) -> None:
+        if self.layer == "layer3" or self.is_l2only is False:
+            raise ValueError(f"{role} networks do not support layer3 intent")
+        l3_fields = {
+            "gateway_ipv4_address",
+            "gateway_ipv6_address",
+            "secondary_gateway_ipv4_collection",
+            "secondary_gateway_ipv6_collection",
+            "vlan_intf_desc",
+            "mtu",
+            "arp_suppression",
+            "routing_tag",
+            "dhcp_servers",
+            "loopback_id",
+            "igmp_version",
+            "trm_enable",
+            "ipv6_trm",
+            "netflow_enable",
+            "gateway_on_border",
+        }
+        set_l3_fields = sorted(field for field in l3_fields if field in self.model_fields_set)
+        if set_l3_fields:
+            raise ValueError(f"{role} networks do not support L3 fields: {', '.join(set_l3_fields)}")
 
 
 class NetworkParentConfigModel(NetworkConfigModel):

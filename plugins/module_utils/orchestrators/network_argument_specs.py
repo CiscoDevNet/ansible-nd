@@ -7,8 +7,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
     MappingType,
     NetworkAttachmentMode,
     NetworkLayer,
-    NetworkType,
 )
+
+NETWORK_TYPE_CHOICES = ["user_defined"]
+VLAN_NETWORK_TYPE_CHOICES = [
+    "normal",
+    "private_primary",
+    "private_secondary_community",
+    "primary_secondary_isolated",
+    "child",
+]
 
 
 def _dhcp_server_spec():
@@ -120,7 +128,12 @@ def network_base_argument_spec():
     spec = dict(
         network_name=dict(type="str"),
         net_name=dict(type="str"),
-        network_type=dict(type="str", choices=NetworkType.choices()),
+        network_type=dict(type="str", choices=NETWORK_TYPE_CHOICES),
+        vlan_network_type=dict(type="str", choices=VLAN_NETWORK_TYPE_CHOICES),
+        primary_network_id=dict(type="int"),
+        primary_network_name=dict(type="str"),
+        normal_network_id=dict(type="int"),
+        normal_network_name=dict(type="str"),
         display_name=dict(type="str"),
         vrf_name=dict(type="str"),
         tenant_name=dict(type="str"),

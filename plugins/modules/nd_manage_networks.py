@@ -41,23 +41,41 @@ options:
         description: Compatibility alias for C(network_name).
         type: str
       network_type:
-        description: Network type.
+        description:
+          - User-defined Network type selector.
+          - Omit this option for standard fabrics; the module derives the API Network type from the target fabric.
+          - Set to C(user_defined) only when using custom Network template fields.
         type: str
         choices:
-          - vxlan
-          - vxlanIbgp
-          - vxlanEbgp
-          - vxlanCampus
-          - aimlVxlanIbgp
-          - aimlVxlanEbgp
-          - aimlRouted
-          - routed
-          - classicLanEnhanced
-          - userDefined
-          - vxlanAci
-          - aci
-          - externalConnectivity
-          - vxlanExternal
+          - user_defined
+      vlan_network_type:
+        description:
+          - VLAN network role for normal, PVLAN, and child networks.
+          - Defaults to C(normal) when omitted.
+          - Values C(private_secondary_community) and C(primary_secondary_isolated) require
+            C(primary_network_id) or C(primary_network_name).
+          - Value C(child) requires a parent reference. The module derives whether
+            the effective fabric Network type needs C(normal_network_id/name) or
+            C(primary_network_id/name).
+        type: str
+        choices:
+          - normal
+          - private_primary
+          - private_secondary_community
+          - primary_secondary_isolated
+          - child
+      primary_network_id:
+        description: Primary Network ID associated with a PVLAN secondary or non-ACI child Network.
+        type: int
+      primary_network_name:
+        description: Primary Network name associated with a PVLAN secondary or non-ACI child Network.
+        type: str
+      normal_network_id:
+        description: Normal Network ID associated with an ACI child Network.
+        type: int
+      normal_network_name:
+        description: Normal Network name associated with an ACI child Network.
+        type: str
       display_name:
         description: Display name.
         type: str
@@ -445,6 +463,31 @@ EXAMPLES = r"""
         gateway_ipv4_address: 10.10.20.1/24
         arp_suppression: true
         routing_tag: 12345
+        deploy: false
+
+- name: Create a private primary Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: merged
+    config:
+      - network_name: PVLAN_PRIMARY
+        vlan_network_type: private_primary
+        is_l2only: true
+        network_id: 50100
+        vlan_id: 2100
+        deploy: false
+
+- name: Create a private secondary community Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: merged
+    config:
+      - network_name: PVLAN_SECONDARY_COMMUNITY
+        vlan_network_type: private_secondary_community
+        primary_network_name: PVLAN_PRIMARY
+        is_l2only: true
+        network_id: 50101
+        vlan_id: 2101
         deploy: false
 
 - name: Create Network on a parent fabric with child fabric overrides

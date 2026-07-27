@@ -347,7 +347,7 @@ class NetworkBaseModel(NetworkCommonModel):
     """Generic model for components/schemas/networkBase discriminator payloads."""
 
     network_type: NetworkType | str | None = Field(default=None, alias="networkType")
-    vlan_network_type: VlanNetworkType | str | None = Field(default=None, alias="vlanNetworkType")
+    vlan_network_type: VlanNetworkType | str | None = Field(default=VlanNetworkType.NORMAL, alias="vlanNetworkType")
     primary_network_id: int | None = Field(default=None, alias="primaryNetworkId")
     primary_network_name: str | None = Field(default=None, alias="primaryNetworkName")
     normal_network_id: int | None = Field(default=None, alias="normalNetworkId")
@@ -446,7 +446,7 @@ class VxlanAciNetworkModel(NetworkBaseModel):
     """VXLAN ACI network model."""
 
     network_type: Literal[NetworkType.VXLAN_ACI] = Field(default=NetworkType.VXLAN_ACI, alias="networkType")
-    vlan_network_type: AciVlanNetworkType | str | None = Field(default=None, alias="vlanNetworkType")
+    vlan_network_type: AciVlanNetworkType | str | None = Field(default=AciVlanNetworkType.NORMAL, alias="vlanNetworkType")
 
 
 class AciNetworkModel(VxlanAciNetworkModel):
