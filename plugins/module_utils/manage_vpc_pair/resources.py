@@ -27,6 +27,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common im
     get_verify_iterations,
     get_verify_settings,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.actions import (
+    strip_inherited_details_for_blocked_fabric,
+    validate_proposed_details_support,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 """
@@ -59,6 +63,7 @@ class VpcPairStateMachine(NDStateMachine):
         Args:
             module: AnsibleModule instance with validated params
         """
+        self.fabric_type: str | None = None
         super().__init__(module=module, model_orchestrator=VpcPairOrchestrator)
         self.model_orchestrator.bind_state_machine(self)
 
@@ -341,6 +346,12 @@ class VpcPairStateMachine(NDStateMachine):
             try:
                 self.current_identifier = identifier
 
+                # Preflight: validate vpc_pair_details against fabric support
+                # using only the fields the user explicitly supplied, before the
+                # diff/no_diff decision so idempotent requests (values already
+                # matching controller state) are validated too.
+                validate_proposed_details_support(self, proposed_item)
+
                 existing_item = self.existing.get(identifier)
                 self.existing_config = existing_item.model_dump(by_alias=True, exclude_none=True) if existing_item else {}
 
@@ -375,6 +386,11 @@ class VpcPairStateMachine(NDStateMachine):
                     final_item = proposed_item
 
                 self.proposed_config = final_item.to_payload()
+
+                # On blocked iBGP/eBGP VXLAN fabrics, drop any vpc_pair_details
+                # inherited from existing controller state via merge() so an
+                # unsupported field is never sent back to Nexus Dashboard.
+                strip_inherited_details_for_blocked_fabric(self, proposed_item)
 
                 if diff_status == "changed":
                     response = self.model_orchestrator.update(final_item)

@@ -98,6 +98,8 @@
       type: switch
     config: "{{ nd_vpc_pair_merge_full_conf }}"
   register: result
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC1 - ASSERT - Check if changed flag is true
@@ -105,6 +107,8 @@
     that:
       - result.failed == false
       - result.changed == true
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC1 - ASSERT - Verify full config payload includes vpc_pair_details
@@ -116,6 +120,8 @@
       - result.logs | to_json is search('"switchKeepAliveLocalIp"')
       - result.logs | to_json is search('"peerSwitchKeepAliveLocalIp"')
       - result.logs | to_json is search('"keepAliveVrf"')
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC1 - GATHER - Get vPC pair state in ND
@@ -131,6 +137,8 @@
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
   register: verify_result
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC1 - VALIDATE - Verify vPC pair state in ND
@@ -139,17 +147,23 @@
     expected_data: "{{ nd_vpc_pair_merge_full_conf }}"
     changed: "{{ result.changed }}"
   register: validation
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC1 - ASSERT - Validation passed
   ansible.builtin.assert:
     that:
       - validation.failed == false
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC1 - conf - Idempotence
   cisco.nd.nd_manage_vpc_pair: *conf_full
   register: result
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC1 - ASSERT - Check if changed flag is false
@@ -166,6 +180,38 @@
           and (result.class_diff.updated | default([]) | length) > 0
           and ('vpcPairDetails' in (result.class_diff.updated[0].changed_properties | default([])))
         )
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
+  tags: merge
+
+# TC1 (VXLAN) - iBGP/eBGP VXLAN fabrics reject vpc_pair_details; ND auto-discovers
+# the physical peer-link when use_virtual_peer_link is false. Seed an ID-only pair
+# so the ID-only lifecycle cases below have state to operate on.
+- name: MERGE - TC1 - VXLAN - Create vPC pair with ID-only configuration
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: false
+  register: tc1_vxlan_result
+  when:
+    - vpc_pair_details_disallowed_fabric | default(false) | bool
+  tags: merge
+
+- name: MERGE - TC1 - VXLAN - ASSERT - ID-only create succeeds on disallowed fabrics
+  ansible.builtin.assert:
+    that:
+      - tc1_vxlan_result.failed == false
+      - tc1_vxlan_result.changed == true
+  when:
+    - vpc_pair_details_disallowed_fabric | default(false) | bool
   tags: merge
 
 # TC2 - Modify existing vPC pair configuration
@@ -540,7 +586,7 @@
         (
           (tc6b_deployment_needed and (result.deployment.response is defined)
            and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/actions/configSave') | list | length) > 0)
-           and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/actions/deploy') | list | length) > 0))
+           and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy') | list | length) > 0))
           or
           ((not tc6b_deployment_needed) and (result.deployment.msg | default('') is search('skipping')))
         )
@@ -567,6 +613,9 @@
           peer_switch_keep_alive_local_ip: "192.0.2.12"
           keep_alive_vrf: management
   register: result
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
 - name: MERGE - TC7 - ASSERT - Verify default vpc_pair_details path
@@ -580,6 +629,9 @@
       - result.logs | to_json is search('"switchKeepAliveLocalIp"')
       - result.logs | to_json is search('"peerSwitchKeepAliveLocalIp"')
       - result.logs | to_json is search('"keepAliveVrf"')
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
 - name: MERGE - TC7 - API - Query direct vpcPair state for switch1
@@ -587,6 +639,9 @@
     path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPair"
     method: get
   register: tc7_vpc_pair_direct
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
 - name: MERGE - TC7 - VALIDATE - Verify pair state after default details update
@@ -598,6 +653,9 @@
         use_virtual_peer_link: true
     mode: "exists"
   register: tc7_validation
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
 - name: MERGE - TC7 - ASSERT - Validation passed
@@ -606,6 +664,9 @@
       - tc7_vpc_pair_direct.failed == false
       - tc7_vpc_pair_direct.current is mapping
       - tc7_validation.failed == false
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
 # TC7b - Merge without vpc_pair_details should preserve existing details
@@ -624,7 +685,7 @@
         use_virtual_peer_link: false
   register: result
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -634,7 +695,7 @@
       - result.failed == false
       - result.changed == true
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -644,7 +705,7 @@
     method: get
   register: tc7b_vpc_pair_direct
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -658,7 +719,7 @@
     mode: "exists"
   register: tc7b_validation
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -669,7 +730,7 @@
       - tc7b_vpc_pair_direct.current is mapping
       - tc7b_validation.failed == false
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -695,6 +756,8 @@
             customConfig: "vpc domain 20"
   register: result
   failed_when: false
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC8 - ASSERT - Verify custom details update outcome
@@ -704,11 +767,15 @@
         (result.changed == true and result.failed == false)
         or
         (result.msg is defined and result.msg is search("templateDO"))
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC8 - SETUP - Track custom-template availability
   ansible.builtin.set_fact:
     tc8_template_unavailable: "{{ result.msg is defined and result.msg is search('templateDO') }}"
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC8 - ASSERT - Verify custom vpc_pair_details path
@@ -720,7 +787,9 @@
       - result.logs | to_json is search('"vpcPairDetails"')
       - result.logs | to_json is search('"templateName"')
       - result.logs | to_json is search('"templateConfig"')
-  when: result.changed == true
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
+    - result.changed == true
   tags: merge
 
 - name: MERGE - TC8 - API - Query direct vpcPair state for switch1
@@ -728,7 +797,9 @@
     path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPair"
     method: get
   register: tc8_vpc_pair_direct
-  when: result.changed == true
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
+    - result.changed == true
   tags: merge
 
 - name: MERGE - TC8 - VALIDATE - Verify pair state after custom details update
@@ -740,7 +811,9 @@
         use_virtual_peer_link: true
     mode: "exists"
   register: tc8_validation
-  when: result.changed == true
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
+    - result.changed == true
   tags: merge
 
 - name: MERGE - TC8 - ASSERT - Validation passed
@@ -749,7 +822,9 @@
       - tc8_vpc_pair_direct.failed == false
       - tc8_vpc_pair_direct.current is mapping
       - tc8_validation.failed == false
-  when: result.changed == true
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
+    - result.changed == true
   tags: merge
 
 # TC9 - Test invalid configurations
@@ -842,7 +917,7 @@
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) > 0
@@ -1155,6 +1230,8 @@
     config: "{{ nd_vpc_pair_merge_full_conf }}"
   check_mode: true
   register: result
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC12 - ASSERT - Verify check_mode invocation succeeded
@@ -1163,6 +1240,8 @@
       - result.failed == false
       - result.changed == true
       - result.deployment is not defined
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 # TC13 - check_mode + deploy preview should report deployment plan without applying
@@ -1178,6 +1257,8 @@
     config: "{{ nd_vpc_pair_merge_full_conf }}"
   check_mode: true
   register: result
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC13 - ASSERT - Verify check_mode deployment preview
@@ -1188,6 +1269,8 @@
       - result.deployment.would_deploy is defined
       - result.deployment.would_deploy | bool == true
       - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC13 - GATHER - Verify check_mode flows did not create vPC pair
@@ -1203,6 +1286,8 @@
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
   register: verify_result
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC13 - VALIDATE - Confirm no persistent changes from check_mode flows
@@ -1211,12 +1296,16 @@
     expected_data: []
     mode: "count_only"
   register: validation
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 - name: MERGE - TC13 - ASSERT - Validation passed
   ansible.builtin.assert:
     that:
       - validation.failed == false
+  when:
+    - vpc_pair_details_expected_supported | default(false) | bool
   tags: merge
 
 # TC14 - Validate vpcPairSupport enforcement path (isPairingAllowed == false)
@@ -1493,7 +1582,7 @@
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) > 0
@@ -1551,7 +1640,7 @@
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) == 0
@@ -1694,7 +1783,7 @@
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) > 0
@@ -1777,7 +1866,7 @@
         vpc_pair_details: "{{ vpc_pair_details_extended }}"
   register: result
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -1787,7 +1876,7 @@
     method: get
   register: tc23_vpc_pair_direct
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -1803,7 +1892,7 @@
     validate_vpc_pair_details: true
   register: tc23_validation
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
   tags: merge
 
@@ -1816,8 +1905,45 @@
       - tc23_vpc_pair_direct.current is mapping
       - tc23_validation.failed == false
   when:
-    - test_fabric_type == "LANClassic"
+    - vpc_pair_details_expected_supported | default(false) | bool
     - supports_vpc_fabric_peering | default(true) | bool
+  tags: merge
+
+# TC23b - Reject vpc_pair_details on iBGP/eBGP-type VXLAN fabrics
+- name: MERGE - TC23b - MERGE - Reject vpc_pair_details for disallowed fabric types
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: false
+        vpc_pair_details:
+          type: default
+          domain_id: 1
+          keep_alive_vrf: management
+          switch_keep_alive_local_ip: "192.0.2.11"
+          peer_switch_keep_alive_local_ip: "192.0.2.12"
+  register: tc23b_result
+  ignore_errors: true
+  when:
+    - vpc_pair_details_disallowed_fabric | default(false) | bool
+  tags: merge
+
+- name: MERGE - TC23b - ASSERT - Verify vpc_pair_details is blocked on disallowed fabrics
+  ansible.builtin.assert:
+    that:
+      - tc23b_result.failed == true
+      - tc23b_result.msg is defined
+      - tc23b_result.msg is search('vpc_pair_details')
+      - tc23b_result.msg is search('not supported')
+  when:
+    - vpc_pair_details_disallowed_fabric | default(false) | bool
   tags: merge
 
 ##############################################
