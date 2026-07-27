@@ -30,6 +30,7 @@ both the per-interface PUT and the bulk POST accept `routedHost` on a VXLAN leaf
 
 from __future__ import annotations
 
+import re
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -45,6 +46,42 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host
+
+# Leading alphabetic prefix + the remainder (digits, /, ., -) of an interface name.
+# TODO: issue #353 consolidates per-model interface-name normalization into shared helpers; this module's
+# normalizer is the first to canonicalize across BOTH network OS families and should seed that helper.
+_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
+
+# Wire-canonical interface-name prefixes this module manages (lab-verified 2026-07-27: ND echoes
+# `Ethernet1/7` on NX-OS and `GigabitEthernet3` on IOS-XE). A user-supplied prefix that is a
+# case-insensitive prefix of exactly ONE canonical name is expanded to it (e.g. `e1/7`, `eth1/7`,
+# `gi3`); anything else passes through verbatim so correctly-typed names of other XE interface
+# families (e.g. `TenGigabitEthernet1/1`) are never corrupted.
+_CANONICAL_INTERFACE_PREFIXES = ("Ethernet", "GigabitEthernet")
+
+
+def normalize_ethernet_interface_name(value):
+    """
+    # Summary
+
+    Normalize the leading alphabetic prefix of an interface name to its wire-canonical form (see
+    `EthernetRoutedInterfaceModel.normalize_interface_name` for examples). Shared between the model's field validator
+    and the orchestrator's config-name matching so both sides canonicalize identically.
+
+    ## Raises
+
+    None
+    """
+    if not isinstance(value, str) or not value:
+        return value
+    match = _INTERFACE_NAME_PREFIX_RE.match(value)
+    if not match:
+        return value
+    prefix, rest = match.groups()
+    expansions = [canonical for canonical in _CANONICAL_INTERFACE_PREFIXES if canonical.lower().startswith(prefix.lower())]
+    if len(expansions) == 1:
+        return expansions[0] + rest
+    return value
 
 
 class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
@@ -82,6 +119,25 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
     routing_tag: str | None = Field(default=None, alias="routingTag", description="Routing tag associated with the interface IP")
     speed: SpeedEnum | None = Field(default=None, alias="speed", description="Interface speed")
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+
+    # TODO(4.2.1) interface-get-field-normalization
+    # ND 4.2.1 GET echoes routingTag as an integer even though the template defines it as a string (string in,
+    # int out). Same drift as loopback routeMapTag - keep the coerce validators in sync.
+    @field_validator("routing_tag", mode="before")
+    @classmethod
+    def coerce_routing_tag(cls, value):
+        """
+        # Summary
+
+        Coerce `routing_tag` to a string. The ND API returns this field as an integer, but the template defines it as a string.
+
+        ## Raises
+
+        None
+        """
+        if value is None:
+            return value
+        return str(value)
 
 
 class XeEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
@@ -224,15 +280,22 @@ class EthernetRoutedInterfaceModel(NDBaseModel):
         """
         # Summary
 
-        Normalize interface name to lowercase to match ND API convention (e.g., Ethernet1/7 -> ethernet1/7).
+        Normalize the leading alphabetic prefix of an interface name to its wire-canonical form so that user-supplied
+        casing or abbreviations round-trip against the wire. A prefix matching (case-insensitively) exactly one of the
+        canonical names in `_CANONICAL_INTERFACE_PREFIXES` is expanded to it. Examples:
+
+        - `ethernet1/7`, `ETHERNET1/7`, `eth1/7`, `e1/7` -> `Ethernet1/7`
+        - `gigabitethernet3`, `gi3` -> `GigabitEthernet3`
+        - `Ethernet1/1.10` -> `Ethernet1/1.10` (idempotent; digits and separators preserved verbatim)
+
+        An ambiguous or unrecognized prefix (e.g. `t1/1`, `TenGigabitEthernet1/1`) passes through verbatim - never
+        re-cased - so correctly-typed names of interface families outside the canonical list are not corrupted.
 
         ## Raises
 
         None
         """
-        if isinstance(value, str):
-            return value.lower()
-        return value
+        return normalize_ethernet_interface_name(value)
 
     # --- Argument Spec ---
 

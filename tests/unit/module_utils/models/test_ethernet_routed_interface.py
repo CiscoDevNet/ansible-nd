@@ -43,7 +43,7 @@ def does_not_raise():
 
 SAMPLE_NX_API_RESPONSE = {
     "switchIp": "192.168.12.151",
-    "interfaceName": "ethernet1/7",
+    "interfaceName": "Ethernet1/7",
     "interfaceType": "ethernet",
     "configData": {
         "mode": "routed",
@@ -63,7 +63,7 @@ SAMPLE_NX_API_RESPONSE = {
 
 SAMPLE_XE_API_RESPONSE = {
     "switchIp": "192.168.12.112",
-    "interfaceName": "gigabitethernet3",
+    "interfaceName": "GigabitEthernet3",
     "interfaceType": "ethernet",
     "configData": {
         "mode": "routed",
@@ -475,18 +475,24 @@ def test_ethernet_routed_interface_00150():
     # Summary
 
     Verify top-level model shape: composite identifiers, frozen `interface_type` of "ethernet", frozen `mode` of "routed",
-    and lowercase interface-name normalization.
+    and wire-canonical interface-name normalization for BOTH network OS families. The ND wire echoes `Ethernet1/7` (NX-OS)
+    and `GigabitEthernet3` (IOS-XE) - lab-verified 2026-07-27 - so lowercased or abbreviated user input must normalize to
+    those forms or idempotency silently breaks, while an unrecognized prefix must pass through verbatim (never title-cased,
+    which would corrupt correct input like `TenGigabitEthernet1/1`).
 
     ## Test
 
     - `identifiers` == ["switch_ip", "interface_name"]; strategy "composite"; `switch_ip` payload-excluded
     - `interface_type` defaults to "ethernet"; `config_data.mode` defaults to "routed"
-    - `interface_name` "Ethernet1/7" normalizes to "ethernet1/7"
+    - NX: "ethernet1/7", "ETHERNET1/7", "eth1/7", "e1/7" all normalize to "Ethernet1/7"; "Ethernet1/7" is idempotent
+    - XE: "gigabitethernet3", "gi3" normalize to "GigabitEthernet3"; "GigabitEthernet3" is idempotent
+    - Unrecognized/ambiguous prefixes pass through verbatim: "TenGigabitEthernet1/1", "t1/1"
+    - Digits and separators preserved: "ethernet1/1.10" -> "Ethernet1/1.10"
 
     ## Classes and Methods
 
     - EthernetRoutedInterfaceModel
-    - EthernetRoutedConfigDataModel
+    - EthernetRoutedInterfaceModel.normalize_interface_name()
     """
     assert EthernetRoutedInterfaceModel.identifiers == ["switch_ip", "interface_name"]
     assert EthernetRoutedInterfaceModel.identifier_strategy == "composite"
@@ -495,9 +501,109 @@ def test_ethernet_routed_interface_00150():
         instance = EthernetRoutedInterfaceModel.from_response(SAMPLE_NX_API_RESPONSE)
     assert instance.interface_type == "ethernet"
     assert instance.config_data.mode == "routed"
+    cases = {
+        "ethernet1/7": "Ethernet1/7",
+        "ETHERNET1/7": "Ethernet1/7",
+        "eth1/7": "Ethernet1/7",
+        "e1/7": "Ethernet1/7",
+        "Ethernet1/7": "Ethernet1/7",
+        "ethernet1/1.10": "Ethernet1/1.10",
+        "gigabitethernet3": "GigabitEthernet3",
+        "gi3": "GigabitEthernet3",
+        "GigabitEthernet3": "GigabitEthernet3",
+        "TenGigabitEthernet1/1": "TenGigabitEthernet1/1",
+        "t1/1": "t1/1",
+    }
+    for supplied, expected in cases.items():
+        named = EthernetRoutedInterfaceModel(switch_ip="192.168.12.151", interface_name=supplied)
+        assert named.interface_name == expected, f"{supplied!r} normalized to {named.interface_name!r}, expected {expected!r}"
+
+
+def test_ethernet_routed_interface_00155():
+    """
+    # Summary
+
+    Verify merging a newly-set field onto an existing model whose corresponding field is unset (None). Regression test for
+    the `strip_none_valued_keys` x `validate_assignment=True` interaction: the first `setattr` inside `merge()` re-runs the
+    before-validator over the model's entire `__dict__`; a validator that drops ALL None-valued keys (declared ones
+    included) leaves `__dict__` missing those fields, so the next `getattr` raises `AttributeError` mid-merge. Declared
+    fields must survive the strip even when None - only undeclared keys may be dropped. Found by the first live
+    integration run (2026-07-27, MERGED UPDATE adding routing_tag/description to an existing defaults-only routedHost).
+
+    ## Test
+
+    - `existing` built from a wire response whose policy sets only adminState/mtu (description, routing_tag, ip unset)
+    - `proposed` sets description, routing_tag, ip, prefix
+    - `merge()` succeeds; the new fields land; the wire-present fields are retained
+
+    ## Classes and Methods
+
+    - NDBaseModel.merge()
+    - InterfacePolicyStrictBase.strip_none_valued_keys()
+    """
+    existing = EthernetRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.12.131",
+            "interfaceName": "Ethernet1/31",
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "routedHost", "adminState": True, "mtu": 9216}},
+            },
+        }
+    )
+    proposed = EthernetRoutedInterfaceModel.model_validate(
+        {
+            "switch_ip": "192.168.12.131",
+            "interface_name": "Ethernet1/31",
+            "config_data": {
+                "network_os": {
+                    "network_os_type": "nx-os",
+                    "policy": {"policy_type": "routedHost", "ip": "10.99.31.5", "prefix": 30, "description": "Updated", "routing_tag": "54321"},
+                }
+            },
+        }
+    )
     with does_not_raise():
-        named = EthernetRoutedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/7")
-    assert named.interface_name == "ethernet1/7"
+        existing.merge(proposed)
+    policy = existing.config_data.network_os.policy
+    assert policy.ip == "10.99.31.5"
+    assert policy.prefix == 30
+    assert policy.description == "Updated"
+    assert policy.routing_tag == "54321"
+    assert policy.admin_state is True
+    assert policy.mtu == 9216
+
+
+def test_ethernet_routed_interface_00156():
+    """
+    # Summary
+
+    Verify `routing_tag` is coerced to a string when ND's GET echoes it as an integer. ND 4.2.1 retypes `routingTag`
+    (string in, int out) on interface GETs (vault: interface-get-field-normalization) - without coercion,
+    `from_response` hard-fails on any existing routedHost carrying a routing tag. Same drift class as loopback
+    `route_map_tag`; keep the validators in sync. Found by the first live integration run (2026-07-27, MERGED UPDATE
+    idempotency re-query after writing routing_tag "54321").
+
+    ## Test
+
+    - `from_response` with integer `routingTag` does not raise; value is the string form
+    - String input passes through unchanged
+
+    ## Classes and Methods
+
+    - NexusEthernetRoutedPolicyModel.coerce_routing_tag()
+    """
+    import copy  # pylint: disable=import-outside-toplevel
+
+    response = copy.deepcopy(SAMPLE_NX_API_RESPONSE)
+    response["configData"]["networkOS"]["policy"]["routingTag"] = 54321
+    with does_not_raise():
+        instance = EthernetRoutedInterfaceModel.from_response(response)
+    assert instance.config_data.network_os.policy.routing_tag == "54321"
+    with does_not_raise():
+        result = NexusEthernetRoutedPolicyModel(policy_type="routedHost", routing_tag="100")
+    assert result.routing_tag == "100"
 
 
 def test_ethernet_routed_interface_00160():

@@ -224,8 +224,10 @@ notes:
   policy types (fabric links, multi-site link members, VRF-Lite link members, and similar) are never read or modified
   by this module, so O(state=overridden) cannot affect fabric underlay configuration.
 - Interfaces that are port-channel members have restricted mutability.
-- O(state=overridden) operates fabric-wide. An empty O(config) list resets every managed routed
-  interface in the fabric to its fabric default configuration.
+- O(state=overridden) operates fabric-wide for NX-OS interfaces. An empty O(config) list resets every managed
+  NX-OS routed interface in the fabric to its fabric default configuration.
+- IOS-XE interfaces are merge-only under O(state=overridden), they are converged when named in O(config) and
+  are never reset when absent from it. To reset an IOS-XE interface, name it explicitly under O(state=deleted).
 """
 
 EXAMPLES = r"""

@@ -26,6 +26,7 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 
 from __future__ import annotations
 
+import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import (
     EthernetRoutedInterfaceModel,
@@ -182,6 +183,189 @@ def test_ethernet_routed_orchestrator_00100() -> None:
 
 
 # =============================================================================
+# Test: _is_unconfigured_default (static)
+# =============================================================================
+
+
+NX_DEFAULTS_ONLY_POLICY = {
+    "policyType": "routedHost",
+    "adminState": True,
+    "fec": "auto",
+    "ipRedirects": False,
+    "mtu": 9216,
+    "netflow": False,
+    "pfc": False,
+    "pimDrPriority": 1,
+    "pimSparse": False,
+    "ptp": False,
+    "qos": False,
+    "speed": "auto",
+}
+
+
+@pytest.mark.parametrize(
+    "policy_overrides,expected",
+    [
+        ({}, True),
+        ({"policyType": "iosXeRoutedHost", "mtu": 1500}, True),
+        ({"ip": "10.99.31.1"}, False),
+        ({"prefix": 30}, False),
+        ({"description": "routed uplink"}, False),
+        ({"routingTag": "54321"}, False),
+        ({"vrfInterface": "blue"}, False),
+        ({"extraConfig": "no ip redirects"}, False),
+        ({"adminState": False}, False),
+        ({"mtu": 1500}, False),
+        ({"speed": "100Gb"}, False),
+        ({"pimSparse": True}, False),
+        ({"pimDrPriority": 100}, False),
+        ({"netflow": True}, False),
+        ({"qos": True}, False),
+        ({"fec": "off"}, False),
+        ({"ipRedirects": True}, False),
+    ],
+    ids=[
+        "nx_defaults_only",
+        "xe_defaults_only",
+        "ip_set",
+        "prefix_set",
+        "description_set",
+        "routing_tag_set",
+        "vrf_set",
+        "extra_config_set",
+        "admin_down",
+        "mtu_nondefault",
+        "speed_nondefault",
+        "pim_sparse_on",
+        "pim_dr_priority_set",
+        "netflow_on",
+        "qos_on",
+        "fec_nondefault",
+        "ip_redirects_on",
+    ],
+)
+def test_ethernet_routed_orchestrator_00200(policy_overrides, expected) -> None:
+    """
+    # Summary
+
+    Exercise the truth table for `_is_unconfigured_default`. On switches whose fabric default interface policy is
+    routed (lab-verified 2026-07-27: EVERY unused port on a borderGateway defaults to a defaults-only `routedHost`;
+    core-router IOS-XE ports default to `iosXeRoutedHost`), this predicate is the only thing keeping those ports out
+    of `before[]` - without it, `state: overridden` would normalize every unused port on the switch. Treat any
+    loosening as review-blocking. The ND-injected `ptp` key counts as default; the XE variant's `mtu` default is
+    1500 (per-policy-type defaults).
+
+    ## Test
+
+    - Matrix over the NX defaults-only signature with single-field overrides
+    - Defaults-only (NX and XE) -> True; any configured field or non-default value -> False
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator._is_unconfigured_default()
+    """
+    policy = dict(NX_DEFAULTS_ONLY_POLICY)
+    if policy_overrides.get("policyType") == "iosXeRoutedHost":
+        policy = {"policyType": "iosXeRoutedHost", "adminState": True, "speed": "auto"}
+    policy.update(policy_overrides)
+    iface = {"configData": {"mode": "routed", "networkOS": {"policy": policy}}}
+    assert EthernetRoutedInterfaceOrchestrator._is_unconfigured_default(iface) is expected
+
+
+# =============================================================================
+# Test: delete_bulk — IOS-XE interfaces are merge-only under state:overridden
+# =============================================================================
+
+
+def _nx_model(interface_name: str = "Ethernet1/31") -> EthernetRoutedInterfaceModel:
+    """Build a configured NX-OS routed model as it would come from before[]."""
+    return EthernetRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.1.1",
+            "interfaceName": interface_name,
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "routedHost", "ip": "10.99.31.1", "prefix": 30}},
+            },
+        }
+    )
+
+
+def _xe_model(interface_name: str = "GigabitEthernet2") -> EthernetRoutedInterfaceModel:
+    """Build a configured IOS-XE routed model as it would come from before[]."""
+    return EthernetRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.1.2",
+            "interfaceName": interface_name,
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": "ios-xe", "policy": {"policyType": "iosXeRoutedHost", "ip": "10.10.1.1", "prefix": 30}},
+            },
+        }
+    )
+
+
+def test_ethernet_routed_orchestrator_00300() -> None:
+    """
+    # Summary
+
+    Verify `state: overridden` never queues an IOS-XE interface for reset (XE merge-only). IOS-XE fabric links can carry
+    plain configured `iosXeRoutedHost` with no intent-side ownership marker (lab-verified 2026-07-27: WAN1's multisite
+    link GigabitEthernet2), so a fabric-wide overridden delete set computed from policy-type scope would strip real
+    fabric links. Treat any loosening as review-blocking.
+
+    ## Test
+
+    - state is `overridden`; delete_bulk receives one NX-OS model and one IOS-XE model
+    - Only the NX-OS interface is queued for normalize; the IOS-XE interface is skipped
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.delete_bulk()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_delete_bulk_00300a")
+
+    gen_responses = ResponseGenerator(responses())
+    orchestrator = _build_orchestrator(gen_responses, params={"state": "overridden"})
+    with does_not_raise():
+        orchestrator.delete_bulk([_nx_model(), _xe_model()], existing_data={"interfaceName": "probe"})
+    assert ("Ethernet1/31", "FDO11111AAA") in orchestrator._pending_normalizes
+    assert all("GigabitEthernet2" not in pair for pair in orchestrator._pending_normalizes)
+
+
+def test_ethernet_routed_orchestrator_00310() -> None:
+    """
+    # Summary
+
+    Verify an explicitly named IOS-XE interface under `state: deleted` IS queued for reset — the merge-only skip applies
+    only to the fabric-wide `overridden` delete set, not to interfaces the user asked for by name.
+
+    ## Test
+
+    - state is `deleted`; delete_bulk receives one NX-OS model and one IOS-XE model
+    - Both interfaces are queued for normalize
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.delete_bulk()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_delete_bulk_00310a")
+
+    gen_responses = ResponseGenerator(responses())
+    orchestrator = _build_orchestrator(gen_responses, params={"state": "deleted"})
+    with does_not_raise():
+        orchestrator.delete_bulk([_nx_model(), _xe_model()], existing_data={"interfaceName": "probe"})
+    assert ("Ethernet1/31", "FDO11111AAA") in orchestrator._pending_normalizes
+    assert ("GigabitEthernet2", "FDO22222BBB") in orchestrator._pending_normalizes
+
+
+# =============================================================================
 # Test: query_all — managed-set filter is the underlay-safety boundary
 # =============================================================================
 
@@ -230,3 +414,64 @@ def test_ethernet_routed_orchestrator_00400() -> None:
     assert kept == {("Ethernet1/7", "routedHost"), ("GigabitEthernet3", "iosXeRoutedHost")}
     switch_ips = {iface["interfaceName"]: iface["switchIp"] for iface in result}
     assert switch_ips == {"Ethernet1/7": "192.168.1.1", "GigabitEthernet3": "192.168.1.2"}
+
+
+def test_ethernet_routed_orchestrator_00410() -> None:
+    """
+    # Summary
+
+    Verify `state: overridden` scope excludes IOS-XE interfaces that are NOT named in the task config (XE merge-only):
+    they must be invisible to `before[]`, not merely skipped at delete time, so the module's changed/diff reporting
+    stays truthful — a delete-time-only skip would report the interface as removed while leaving it untouched.
+    A configured NX-OS interface stays in scope regardless, and a NAMED IOS-XE interface stays in scope (here the
+    config names GigabitEthernet3 in abbreviated lowercase to prove config names are canonicalized before matching).
+
+    ## Test
+
+    - state is `overridden`; config names Ethernet1/7 (NX) and gi3 (XE, abbreviated)
+    - The unnamed configured XE interface set (none in this fixture beyond GigabitEthernet3) plus the named one
+      resolve correctly: GigabitEthernet3 is retained because it is named
+    - Re-run with config naming ONLY Ethernet1/7: GigabitEthernet3 is excluded from the result
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.query_all()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_query_all_overridden_00410a")
+        yield responses_ethernet_routed("test_query_all_overridden_00410b")
+        yield responses_ethernet_routed("test_query_all_overridden_00410c")
+        yield responses_ethernet_routed("test_query_all_overridden_00410d")
+
+    gen_responses = ResponseGenerator(responses())
+    with does_not_raise():
+        orchestrator = _build_orchestrator(
+            gen_responses,
+            params={
+                "state": "overridden",
+                "config": [
+                    {"switch_ip": "192.168.1.1", "interface_name": "Ethernet1/7"},
+                    {"switch_ip": "192.168.1.2", "interface_name": "gi3"},
+                ],
+            },
+        )
+        result = orchestrator.query_all()
+    kept = {iface["interfaceName"] for iface in result}
+    assert kept == {"Ethernet1/7", "GigabitEthernet3"}
+
+    def responses_nx_only():
+        yield responses_ethernet_routed("test_query_all_overridden_00410a")
+        yield responses_ethernet_routed("test_query_all_overridden_00410b")
+        yield responses_ethernet_routed("test_query_all_overridden_00410c")
+        yield responses_ethernet_routed("test_query_all_overridden_00410d")
+
+    gen_responses_nx_only = ResponseGenerator(responses_nx_only())
+    with does_not_raise():
+        orchestrator = _build_orchestrator(
+            gen_responses_nx_only,
+            params={"state": "overridden", "config": [{"switch_ip": "192.168.1.1", "interface_name": "Ethernet1/7"}]},
+        )
+        result = orchestrator.query_all()
+    kept = {iface["interfaceName"] for iface in result}
+    assert kept == {"Ethernet1/7"}
