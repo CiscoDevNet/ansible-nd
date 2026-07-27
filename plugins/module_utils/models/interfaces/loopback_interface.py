@@ -75,9 +75,16 @@ class LoopbackPolicyStrictBase(NDNestedModel):
         """
         # Summary
 
-        Drop `None`-valued keys before validation so unset flat-argspec options do not trip `extra="forbid"`. On the read
-        path (validation `context={"mode": "read"}`, set by `from_response`), also drop keys not declared on this model so
-        ND-injected read-only keys (e.g. `linkStateRoutingTag`) do not trip `extra="forbid"` while write-side input stays strict.
+        Drop `None`-valued UNDECLARED keys before validation so unset flat-argspec options (wrong-branch fields arriving as
+        `None`) do not trip `extra="forbid"`. Declared keys are always kept, `None` or not: a declared `None` never trips
+        `forbid`, and dropping declared keys corrupts assignment-revalidation - with `validate_assignment=True`, every
+        `setattr` (e.g. inside `NDBaseModel.merge()`) re-runs this validator over the model's full `__dict__`, and any
+        declared field dropped here vanishes from the rebuilt `__dict__`, making the next `getattr` raise
+        `AttributeError` mid-merge (found live by the nd_interface_ethernet_routed integration run, 2026-07-27).
+
+        On the read path (validation `context={"mode": "read"}`, set by `from_response`), also drop keys not declared on
+        this model regardless of value, so ND-injected read-only keys (e.g. `linkStateRoutingTag`) do not trip
+        `extra="forbid"` while write-side input stays strict.
 
         ## Raises
 
@@ -85,9 +92,9 @@ class LoopbackPolicyStrictBase(NDNestedModel):
         """
         if not isinstance(data, dict):
             return data
-        data = {key: value for key, value in data.items() if value is not None}
+        allowed = set(cls.model_fields) | {field.alias for field in cls.model_fields.values() if field.alias}
+        data = {key: value for key, value in data.items() if value is not None or key in allowed}
         if info.context and info.context.get("mode") == "read":
-            allowed = set(cls.model_fields) | {field.alias for field in cls.model_fields.values() if field.alias}
             data = {key: value for key, value in data.items() if key in allowed}
         return data
 

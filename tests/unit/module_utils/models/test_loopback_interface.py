@@ -2333,3 +2333,59 @@ def test_xe_from_response_tolerates_injected_policy_key() -> None:
     assert isinstance(instance.config_data.network_os.policy, XeLoopbackPolicyModel)
     with pytest.raises(ValidationError):
         result = XeLoopbackPolicyModel(policyType="iosXeLoopback", ndInjectedKey="x")  # pylint: disable=unused-variable
+
+
+def test_loopback_interface_00740():
+    """
+    # Summary
+
+    Verify merging a newly-set field onto an existing model whose corresponding field is unset (None). Regression test for
+    the `strip_none_valued_keys` x `validate_assignment=True` interaction: the first `setattr` inside `merge()` re-runs the
+    before-validator over the model's entire `__dict__`; a validator that drops ALL None-valued keys (declared ones
+    included) leaves `__dict__` missing those fields, so the next `getattr` raises `AttributeError` mid-merge. Declared
+    fields must survive the strip even when None - only undeclared keys may be dropped. Found live by the
+    nd_interface_ethernet_routed integration run (2026-07-27), which shares this base's pattern; loopback lab flows never
+    merged a new field onto an existing-None field, so the bug was latent here.
+
+    ## Test
+
+    - `existing` built from a wire response whose policy sets only adminState/ip (description, route_map_tag, vrf unset)
+    - `proposed` sets description, route_map_tag, vrf
+    - `merge()` succeeds; the new fields land; the wire-present fields are retained
+
+    ## Classes and Methods
+
+    - NDBaseModel.merge()
+    - LoopbackPolicyStrictBase.strip_none_valued_keys()
+    """
+    existing = LoopbackInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.1.1",
+            "interfaceName": "loopback200",
+            "interfaceType": "loopback",
+            "configData": {
+                "mode": "managed",
+                "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "loopback", "adminState": True, "ip": "10.1.1.1"}},
+            },
+        }
+    )
+    proposed = LoopbackInterfaceModel.model_validate(
+        {
+            "switch_ip": "192.168.1.1",
+            "interface_name": "loopback200",
+            "config_data": {
+                "network_os": {
+                    "network_os_type": "nx-os",
+                    "policy": {"policy_type": "loopback", "description": "merged onto None", "route_map_tag": "54321", "vrf": "blue"},
+                }
+            },
+        }
+    )
+    with does_not_raise():
+        existing.merge(proposed)
+    policy = existing.config_data.network_os.policy
+    assert policy.description == "merged onto None"
+    assert policy.route_map_tag == "54321"
+    assert policy.vrf == "blue"
+    assert policy.admin_state is True
+    assert policy.ip == "10.1.1.1"
