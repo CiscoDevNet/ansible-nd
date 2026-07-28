@@ -65,16 +65,22 @@ options:
   verify:
     description:
     - Verification controls used by runtime query/deploy helpers.
+    - When O(verify.enabled=true) the module performs a single post-deploy state
+      refresh of the affected VRF Lite attachments. Retry-based polling until the
+      controller reports a converged state is not yet implemented; O(verify.retries)
+      is accepted for forward compatibility but does not currently re-poll for
+      convergence.
     type: dict
     suboptions:
       enabled:
         description:
-        - Enable post-deploy verification polling.
+        - Perform a single post-deploy state refresh of the affected VRF Lite attachments.
         type: bool
         default: true
       retries:
         description:
-        - Number of polling retries during verification.
+        - Reserved for future post-deploy convergence polling.
+        - Currently accepted but does not yet retry until controller state converges.
         type: int
         default: 5
       timeout:
@@ -356,10 +362,25 @@ def main() -> None:
 
         module.params["state"] = "overridden" if state == "replaced" else state
         nd_state_machine = NDStateMachine(module=module, model_orchestrator=ManageVrfLiteOrchestrator)
+        # Preflight the proposed attachments before reconciliation. In check mode the
+        # state machine skips all write methods (and their inline guardrails), so this
+        # runs the same read-only VRF-existence/switch-support validation to avoid a
+        # false-green plan that a real run would reject.
+        nd_state_machine.model_orchestrator.preflight_validate_check_mode(list(nd_state_machine.proposed))
         nd_state_machine.manage_state()
         module.params["state"] = state
 
-        module.params["_changed_vrfs"] = sorted({item.vrf_name for item in nd_state_machine.sent})
+        sent_entries = list(nd_state_machine.sent)
+        module.params["_changed_vrfs"] = sorted({item.vrf_name for item in sent_entries})
+        # Operation journal: every (vrf, switch) pair attached OR detached this run.
+        # Deletes are included (track_deletes_in_sent=True), so the deploy scope can
+        # cover switches whose attachment was removed by replaced/overridden/deleted
+        # and are therefore absent from the retained desired config.
+        module.params["_deploy_targets"] = [
+            {"vrf_name": item.vrf_name, "switch_ip": getattr(item, "switch_ip", None)}
+            for item in sent_entries
+            if getattr(item, "vrf_name", None) and getattr(item, "switch_ip", None)
+        ]
         log.info("state=%s: reconciliation complete, changed_vrfs=%s", state, module.params["_changed_vrfs"])
 
         result = nd_state_machine.output.format()

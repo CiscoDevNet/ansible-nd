@@ -23,6 +23,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_p
 )
 
 
+def _coerce_vlan(value: Any) -> int | None:
+    if value in (None, "", 0):
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
 def _parse_vrf_template_vlan(vrf_object: dict[str, Any]) -> int | None:
     template_cfg = vrf_object.get("vrfTemplateConfig")
     if not template_cfg:
@@ -36,14 +45,22 @@ def _parse_vrf_template_vlan(vrf_object: dict[str, Any]) -> int | None:
         except Exception:
             return None
 
-    vlan = parsed.get("vrfVlanId")
-    if vlan in (None, "", 0):
-        return None
+    return _coerce_vlan(parsed.get("vrfVlanId"))
 
-    try:
-        return int(vlan)
-    except Exception:
-        return None
+
+def _resolve_vrf_vlan(vrf_object: dict[str, Any]) -> int | None:
+    """Resolve the VRF VLAN id from a controller VRF object.
+
+    Prefer the current top-level ``vlanId`` field returned by the OpenAPI VRF
+    object and fall back to the legacy serialized ``vrfTemplateConfig.vrfVlanId``
+    for older controller response shapes. Without this, a VRF returned in the
+    current shape (``vlanId`` set, ``vrfTemplateConfig`` empty) would resolve to
+    a ``None`` VLAN and break otherwise-valid attach/detach payloads.
+    """
+    top_level = _coerce_vlan(vrf_object.get("vlanId"))
+    if top_level is not None:
+        return top_level
+    return _parse_vrf_template_vlan(vrf_object)
 
 
 def _result_list(data: Any, keys: tuple[str, ...]) -> list[Any]:
@@ -222,7 +239,7 @@ def query_vrf_lite_state(
 
         result_map[vrf_name] = {
             "vrf_name": vrf_name,
-            "vlan_id": _parse_vrf_template_vlan(vrf),
+            "vlan_id": _resolve_vrf_vlan(vrf),
             "deploy": False,
             "attach": [],
         }

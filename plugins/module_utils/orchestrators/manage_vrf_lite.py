@@ -212,6 +212,28 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                 seen_vrfs.add(entry.vrf_name)
             validate_vrf_lite_write_guardrails(module=module, model_instance=entry, rest_send=self.rest_send)
 
+    def preflight_validate_check_mode(self, proposed_entries: list[Any]) -> None:
+        """Run the non-mutating attach preflight during a check-mode run.
+
+        The generic state machine skips all write methods in check mode
+        (``_execute_operation`` only calls the operation ``if not check_mode``),
+        so the VRF-existence and switch role/support guardrails inside
+        ``_post_attach_entries`` are never reached. Without this, check mode
+        would approve a plan that references a nonexistent VRF or an
+        unsupported switch and then fail on the real run. This reuses the same
+        read-only ``_validate_attach_entries`` guardrails so check mode rejects
+        the same inputs the execution path would.
+        """
+        module = self._module()
+        if not module.check_mode:
+            return
+        state = module.params.get("_vrf_lite_requested_state") or module.params.get("state", "merged")
+        if state not in ("merged", "replaced", "overridden"):
+            return
+        attach_entries = [entry for entry in proposed_entries if getattr(entry, "switch_ip", None)]
+        if attach_entries:
+            self._validate_attach_entries(attach_entries)
+
     def _post_grouped_rows(self, rows_by_vrf: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         module = self._module()
         responses = []
@@ -402,22 +424,44 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             }
 
         requested_deploy_vrfs = set(_target_vrfs_for_deploy(module))
-        # Deploy only VRFs that both changed and have deploy enabled.  The intersection
-        # ensures we never push a VRF that the user asked to skip (deploy: false) and
-        # also prevents deploying stale VRFs that the run did not actually touch.
-        target_vrfs = sorted(set(module.params.get("_changed_vrfs") or []) & requested_deploy_vrfs)
+        changed_vrfs = set(module.params.get("_changed_vrfs") or [])
+
+        # Removed attachments (replaced/overridden/deleted) are absent from the retained
+        # config, so _target_vrfs_for_deploy cannot see them.  Recover the removed
+        # (vrf, switch) pairs from the state-machine operation journal (_deploy_targets,
+        # which includes detaches) so a remove-all still deploys and every removed switch
+        # is in scope.  Building the scope from config alone would leave the detach
+        # undeployed on those switches while the module still reports success.  Removals
+        # never carry deploy: false, so they always stay in scope.
+        ip_to_sn = module.params.get("_ip_to_sn_mapping") or {}
+        deploy_targets = module.params.get("_deploy_targets") or []
+        config_pairs = {
+            (str(item.get("vrf_name")), str(item.get("switch_ip")))
+            for item in module.params.get("config") or []
+            if isinstance(item, dict) and item.get("vrf_name") and item.get("switch_ip")
+        }
+        removed_pairs = {
+            (str(target.get("vrf_name")), str(target.get("switch_ip")))
+            for target in deploy_targets
+            if isinstance(target, dict) and target.get("vrf_name") and target.get("switch_ip")
+        } - config_pairs
+        removed_vrfs = {vrf_name for vrf_name, _switch_id in removed_pairs}
+
+        # Deploy VRFs that changed and are either deploy-enabled in the retained config
+        # or had an attachment removed this run.
+        target_vrfs = sorted(changed_vrfs & (requested_deploy_vrfs | removed_vrfs))
         logger.info("_execute_config_actions: save=%s deploy=%s target_vrfs=%s", save_enabled, deploy_enabled, target_vrfs)
 
         planned_actions = []
         if save_enabled:
             planned_actions.append("POST {0}".format(VrfLiteEndpoints.config_save(fabric_name)))
-        ip_to_sn = module.params.get("_ip_to_sn_mapping") or {}
         target_switch_ids = sorted(
             {
                 ip_to_sn.get(str(item.get("switch_ip")), str(item.get("switch_ip")))
                 for item in module.params.get("config") or []
                 if isinstance(item, dict) and item.get("vrf_name") in target_vrfs and item.get("switch_ip")
             }
+            | {ip_to_sn.get(switch_id, switch_id) for vrf_name, switch_id in removed_pairs if vrf_name in target_vrfs}
         )
 
         if deploy_enabled and target_vrfs:

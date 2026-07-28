@@ -50,6 +50,8 @@ def _is_border_role(role: str) -> bool:
 
 
 def _is_external_connectivity_switch(switch_data: dict[str, Any]) -> bool:
+    # TODO(#405): source the fabric type from the shared fabric_details_cache utility
+    # once #405 merges, instead of re-deriving it from the raw switch payload here.
     raw = switch_data.get("raw")
     fabric_type = switch_data.get("fabric_type")
     if not fabric_type and isinstance(raw, dict):
@@ -81,6 +83,9 @@ def _normalize_switch_inventory(response: Any) -> dict[str, dict[str, Any]]:
 
         inventory[serial_text] = {
             "role": _normalize_role(switch),
+            # TODO(#405): source fabric_type from the shared fabric_details_cache utility
+            # (added in #405) instead of re-deriving it from the raw switch payload here,
+            # so every module resolves the fabric type consistently.
             "fabric_type": switch.get("fabricType") or switch.get("fabric_type") or raw.get("fabricType") or raw.get("fabric_type"),
             "ip_address": switch.get("fabricManagementIp") or switch.get("ip_address") or raw.get("fabricManagementIp"),
             "raw": raw,

@@ -14,6 +14,7 @@ import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions import (
+    _ensure_vrf_exists,
     build_attach_payload_for_entry,
     build_detach_payload_for_entry,
     _post_attachment_payload,
@@ -28,6 +29,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy im
     _target_vrfs_for_deploy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
+    _coerce_vlan,
+    _resolve_vrf_vlan,
     query_vrf_lite_state,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_payloads import (
@@ -77,6 +80,14 @@ class _DummyWarnModule(_DummyModule):
         self.warnings.append(msg)
 
 
+class _StubEntry:
+    """Minimal attachment-entry stand-in for preflight validation tests."""
+
+    def __init__(self, vrf_name, switch_ip):
+        self.vrf_name = vrf_name
+        self.switch_ip = switch_ip
+
+
 def _vrf_lite_orchestrator(module):
     sender = Sender()
     sender.ansible_module = module
@@ -93,6 +104,41 @@ def _vrf_lite_orchestrator(module):
 
 def test_manage_vrf_lite_00050_model_exposes_module_argspec():
     assert VrfLiteModel.get_argument_spec() == VrfLitePlaybookConfigModel.get_argument_spec()
+
+
+def test_manage_vrf_lite_00060_existing_empty_vrf_passes_existence_check(monkeypatch):
+    """An existing VRF with no attachment rows must not be reported missing."""
+    module = _DummyModule({"fabric_name": "FABRIC1", "_known_vrfs": []})
+
+    def _query(**kwargs):
+        del kwargs
+        module.params["_known_vrfs"] = ["BLUE"]
+        return []
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions.query_vrf_lite_state",
+        _query,
+    )
+
+    _ensure_vrf_exists(module, rest_send=object(), vrf_name="BLUE")
+
+
+def test_manage_vrf_lite_00065_missing_vrf_fails_existence_check(monkeypatch):
+    """A VRF absent from the refreshed authoritative inventory is rejected."""
+    module = _DummyModule({"fabric_name": "FABRIC1", "_known_vrfs": []})
+
+    def _query(**kwargs):
+        del kwargs
+        module.params["_known_vrfs"] = ["GREEN"]
+        return []
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions.query_vrf_lite_state",
+        _query,
+    )
+
+    with pytest.raises(VrfLiteResourceError, match="does not exist"):
+        _ensure_vrf_exists(module, rest_send=object(), vrf_name="BLUE")
 
 
 def test_manage_vrf_lite_00075_orchestrator_prepares_runtime_params():
@@ -491,6 +537,39 @@ def test_manage_vrf_lite_00481_query_enriches_pending_attachment_from_switch_det
     assert module.params["_raw_vrf_attachment_map"]["BLUE"]["SN1"]["vlan"] == 2
 
 
+def test_manage_vrf_lite_00482_vlan_prefers_top_level_vlanid():
+    """The current OpenAPI VRF object exposes the VLAN at top-level ``vlanId``."""
+    vrf_object = {"vlanId": 500, "vrfTemplateConfig": '{"vrfVlanId":999}'}
+    # Top-level wins even when the legacy serialized value disagrees.
+    assert _resolve_vrf_vlan(vrf_object) == 500
+
+
+def test_manage_vrf_lite_00483_vlan_falls_back_to_legacy_template_config():
+    """Older controller shapes omit ``vlanId`` and carry the VLAN inside the
+    serialized ``vrfTemplateConfig.vrfVlanId``."""
+    assert _resolve_vrf_vlan({"vrfTemplateConfig": '{"vrfVlanId":777}'}) == 777
+    assert _resolve_vrf_vlan({"vrfTemplateConfig": {"vrfVlanId": 888}}) == 888
+
+
+def test_manage_vrf_lite_00484_vlan_top_level_unassigned_falls_back():
+    """A top-level ``vlanId`` of 0 means unassigned, so fall back to the legacy value."""
+    assert _resolve_vrf_vlan({"vlanId": 0, "vrfTemplateConfig": '{"vrfVlanId":123}'}) == 123
+
+
+def test_manage_vrf_lite_00485_vlan_absent_resolves_to_none():
+    assert _resolve_vrf_vlan({}) is None
+    assert _resolve_vrf_vlan({"vrfTemplateConfig": "{}"}) is None
+    assert _resolve_vrf_vlan({"vlanId": "", "vrfTemplateConfig": ""}) is None
+
+
+def test_manage_vrf_lite_00486_coerce_vlan_normalizes_values():
+    assert _coerce_vlan(None) is None
+    assert _coerce_vlan("") is None
+    assert _coerce_vlan(0) is None
+    assert _coerce_vlan("500") == 500
+    assert _coerce_vlan(500) == 500
+
+
 def test_manage_vrf_lite_00490_deploy_needed_when_state_machine_changed_without_changed_vrf_marker():
     module = _DummyModule({})
 
@@ -610,6 +689,85 @@ def test_manage_vrf_lite_00492b_global_scope_deploy_omits_switch_ids(monkeypatch
 
     # Global-scoped deploy omits switchIds so the controller deploys fabric-wide.
     assert deploy_call["payload"] == {"vrfNames": ["GREEN"]}
+    assert "switchIds" not in deploy_call["payload"]
+
+
+def test_manage_vrf_lite_00492c_replaced_partial_removal_deploys_removed_switch(monkeypatch):
+    """A replaced/overridden run that drops one switch must still deploy the detach on it.
+
+    The removed attachment is gone from the retained config, so the deploy scope is
+    recovered from the operation journal (_deploy_targets, which includes detaches).
+    """
+    captured = _capture_config_action_requests(monkeypatch)
+    module = _DummyModule(
+        {
+            "state": "replaced",
+            "fabric_name": "FABRIC1",
+            "_changed_vrfs": ["GREEN"],
+            "_ip_to_sn_mapping": {"10.0.0.1": "SN1", "10.0.0.2": "SN2"},
+            "config_actions": {"save": True, "deploy": True, "type": "switch"},
+            # SN1 stays attached; SN2 was removed this run and is absent from config.
+            "config": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.1"}],
+            "_deploy_targets": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.2"}],
+        }
+    )
+
+    _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
+
+    deploy_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1"))
+    # The removed switch (SN2) is deployed alongside the retained one so the detach lands.
+    assert deploy_call["payload"] == {"vrfNames": ["GREEN"], "switchIds": ["SN1", "SN2"]}
+
+
+def test_manage_vrf_lite_00492d_overridden_remove_all_deploys_every_removed_switch(monkeypatch):
+    """Removing every attachment (empty config for the VRF) must still deploy the
+    detach on all previously-attached switches under switch scope."""
+    captured = _capture_config_action_requests(monkeypatch)
+    module = _DummyModule(
+        {
+            "state": "overridden",
+            "fabric_name": "FABRIC1",
+            "_changed_vrfs": ["TENANT"],
+            "_ip_to_sn_mapping": {"10.0.0.1": "SN1", "10.0.0.2": "SN2"},
+            "config_actions": {"save": True, "deploy": True, "type": "switch"},
+            # Every TENANT attachment was removed: nothing remains in the retained config.
+            "config": [],
+            "_deploy_targets": [
+                {"vrf_name": "TENANT", "switch_ip": "10.0.0.1"},
+                {"vrf_name": "TENANT", "switch_ip": "10.0.0.2"},
+            ],
+        }
+    )
+
+    _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
+
+    deploy_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1"))
+    assert deploy_call["payload"] == {"vrfNames": ["TENANT"], "switchIds": ["SN1", "SN2"]}
+
+
+def test_manage_vrf_lite_00492e_remove_all_global_scope_still_deploys_vrf(monkeypatch):
+    """Remove-all under global deploy scope still deploys the VRF fabric-wide (no
+    switchIds) even though the retained config is empty."""
+    captured = _capture_config_action_requests(monkeypatch)
+    module = _DummyModule(
+        {
+            "state": "replaced",
+            "fabric_name": "FABRIC1",
+            "_changed_vrfs": ["TENANT"],
+            "_ip_to_sn_mapping": {"10.0.0.1": "SN1", "10.0.0.2": "SN2"},
+            "config_actions": {"save": True, "deploy": True, "type": "global"},
+            "config": [],
+            "_deploy_targets": [
+                {"vrf_name": "TENANT", "switch_ip": "10.0.0.1"},
+                {"vrf_name": "TENANT", "switch_ip": "10.0.0.2"},
+            ],
+        }
+    )
+
+    _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
+
+    deploy_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1"))
+    assert deploy_call["payload"] == {"vrfNames": ["TENANT"]}
     assert "switchIds" not in deploy_call["payload"]
 
 
@@ -1182,3 +1340,61 @@ def test_manage_vrf_lite_00850_attachment_post_rejects_controller_failed_body():
             vrf_name="BLUE",
             lan_attach_list=[{"serialNumber": "SN1"}],
         )
+
+
+def test_manage_vrf_lite_00900_check_mode_preflight_validates_vrf_existence(monkeypatch):
+    """Check mode must reject a nonexistent VRF the same way the real run would.
+
+    The generic state machine skips every write in check mode, so the attach
+    guardrails are reached only through preflight_validate_check_mode.
+    """
+    seen = []
+
+    def _boom(module, rest_send, vrf_name):
+        del module, rest_send
+        seen.append(vrf_name)
+        raise VrfLiteResourceError("VRF {0} does not exist".format(vrf_name))
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite._ensure_vrf_exists",
+        _boom,
+    )
+    module = _DummyModule({"check_mode": True, "state": "merged", "fabric_name": "F1"})
+    orchestrator = _vrf_lite_orchestrator(module)
+
+    with pytest.raises(VrfLiteResourceError, match="does not exist"):
+        orchestrator.preflight_validate_check_mode([_StubEntry("MISSING", "10.0.0.1")])
+    assert seen == ["MISSING"]
+
+
+def test_manage_vrf_lite_00910_preflight_is_noop_outside_check_mode(monkeypatch):
+    """Outside check mode the write path performs validation, so the preflight must
+    not run (and must not double-validate)."""
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("preflight must not validate outside check mode")
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite._ensure_vrf_exists",
+        _fail,
+    )
+    module = _DummyModule({"check_mode": False, "state": "merged", "fabric_name": "F1"})
+    orchestrator = _vrf_lite_orchestrator(module)
+
+    orchestrator.preflight_validate_check_mode([_StubEntry("BLUE", "10.0.0.1")])
+
+
+def test_manage_vrf_lite_00920_preflight_skips_non_write_states(monkeypatch):
+    """deleted/gathered runs perform no attaches, so the attach preflight is skipped."""
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("preflight must not validate for non-write states")
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite._ensure_vrf_exists",
+        _fail,
+    )
+    module = _DummyModule({"check_mode": True, "state": "deleted", "fabric_name": "F1"})
+    orchestrator = _vrf_lite_orchestrator(module)
+
+    orchestrator.preflight_validate_check_mode([_StubEntry("BLUE", "10.0.0.1")])
