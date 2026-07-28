@@ -193,7 +193,7 @@
 - name: Assert pre-clean response codes
   ansible.builtin.assert:
     that:
-      - 'item["RETURN_CODE"] == 200'
+      - 'item["RETURN_CODE"] == (207 if result.changed else 200)'
   loop: "{{ result.api_response | default([]) }}"
   when: result.api_response is defined
 
@@ -216,7 +216,7 @@
     - name: Assert create response codes
       ansible.builtin.assert:
         that:
-          - 'item["RETURN_CODE"] == 200'
+          - 'item["RETURN_CODE"] == 207'
       loop: "{{ result.api_response | default([]) }}"
       when: result.api_response is defined
 
@@ -267,6 +267,6 @@
     - name: Assert cleanup response codes
       ansible.builtin.assert:
         that:
-          - 'item["RETURN_CODE"] == 200'
+          - 'item["RETURN_CODE"] == (207 if result.changed else 200)'
       loop: "{{ result.api_response | default([]) }}"
       when: result.api_response is defined

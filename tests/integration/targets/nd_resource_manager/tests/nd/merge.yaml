@@ -216,7 +216,7 @@
 - name: Assert pre-clean API response codes
   ansible.builtin.assert:
     that:
-      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', (207 if result.changed else 200)) | list | length == 0
   when: result.api_response is defined
 
 - block:
@@ -316,7 +316,7 @@
     - name: Assert merge response codes
       ansible.builtin.assert:
         that:
-          - 'item["RETURN_CODE"] == 200'
+          - 'item["RETURN_CODE"] == 207'
       loop: "{{ result.api_response | default([]) }}"
       when: result.api_response is defined
 
@@ -415,6 +415,6 @@
     - name: Assert cleanup response codes
       ansible.builtin.assert:
         that:
-          - 'item["RETURN_CODE"] == 200'
+          - 'item["RETURN_CODE"] == (207 if result.changed else 200)'
       loop: "{{ result.api_response | default([]) }}"
       when: result.api_response is defined

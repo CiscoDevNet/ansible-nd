@@ -922,6 +922,7 @@ def _mock_nd_module(fabric="fabric-1", state="merged", config=None, check_mode=F
     nd.module = MagicMock()
     nd.module.check_mode = check_mode
     nd.request = MagicMock(return_value=[])
+    nd.status = 200
 
     def _request_side_effect(path, *args, **kwargs):
         if isinstance(path, str):
@@ -2893,6 +2894,21 @@ def test_register_result_includes_diff():
     assert module.results is not None
 
 
+def test_register_result_uses_explicit_return_code():
+    """_register_result stores the ND return code supplied by a live request."""
+    module, unused_nd = _resource_manager_with_nd()
+
+    module._register_result(  # pylint: disable=protected-access
+        action="create",
+        operation_type=OperationType.CREATE,
+        message="Created",
+        changed=True,
+        return_code=207,
+    )
+
+    assert module.results.responses[-1]["RETURN_CODE"] == 207
+
+
 def test_resolve_switch_ids_fabric_scope_no_switches():
     """_resolve_switch_ids_in_config skips processing for fabric scope without switches."""
     module, unused_nd = _resource_manager_with_nd()
@@ -3428,6 +3444,28 @@ def test_manage_merged_with_single_new_resource():
 
     # Should call create via POST
     assert nd.request.called
+
+
+def test_manage_merged_propagates_nd_return_code():
+    """Batch create propagates ND's HTTP status to item and registered responses."""
+    module, nd = _resource_manager_with_nd(config=[_config()], all_resources=[])
+    nd.status = 207
+    nd.request.return_value = {
+        "resources": [
+            {
+                "resourceId": 101,
+                "entityName": "loopback0",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": "10",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+            }
+        ]
+    }
+
+    module.manage_merged()
+
+    assert module.api_responses[-1]["RETURN_CODE"] == 207
+    assert module.results.responses[-1]["RETURN_CODE"] == 207
 
 
 def test_manage_merged_with_existing_matches_idempotent():
@@ -4047,6 +4085,43 @@ def test_manage_merged_update_removes_existing_id_before_create():
     assert len(module.changed_dict[0]["merged"]) == 1
 
 
+def test_manage_merged_update_keeps_request_local_return_codes():
+    """Update removal and creation retain their own ND return codes."""
+    module, nd = _resource_manager_with_nd(config=[])
+    cfg = _config(resource="20")
+    module.proposed = [cfg]
+    module.existing = [_response(resource_value="10")]
+    fake_changes = {
+        "idempotent": [],
+        "to_update": [(cfg, "SER1", {"resourceId": 101, "resourceValue": "10"})],
+        "to_add": [],
+        "to_delete": [],
+        "debugs": [],
+    }
+    responses = [
+        (207, {"resources": [{"resourceValue": "10", "status": "deleted"}]}),
+        (207, {"resources": [{"entityName": "loopback0", "status": "created"}]}),
+    ]
+
+    def request_with_status(*args, **kwargs):
+        return_code, response = responses.pop(0)
+        nd.status = return_code
+        return response
+
+    nd.request.side_effect = request_with_status
+
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
+        (
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+            "nd_manage_resource_manager_resources.ResourceManagerDiffEngine.validate_resource_api_fields"
+        ),
+    ):
+        module.manage_merged()
+
+    assert [entry["RETURN_CODE"] for entry in module.api_responses] == [207, 207]
+    assert [entry["RETURN_CODE"] for entry in module.results.responses[-2:]] == [207, 207]
+
+
 def test_manage_merged_update_delete_validation_failure_prevents_create():
     """Merged update replacement does not create when remove response validation fails."""
     module, nd = _resource_manager_with_nd(config=[])
@@ -4451,6 +4526,29 @@ def test_manage_deleted_success_parses_remove_response_items():
         module.manage_deleted()
 
     assert any(entry.get("DATA", {}).get("resourceId") == 101 for entry in module.api_responses)
+
+
+def test_manage_deleted_propagates_nd_return_code():
+    """Live deletion propagates ND's HTTP status to item and registered responses."""
+    module, nd = _resource_manager_with_nd(state="deleted", config=[])
+    cfg = _config()
+    module.proposed = [cfg]
+    module.existing = []
+    fake_changes = {
+        "idempotent": [(cfg, "SER1", {"resourceId": 101})],
+        "to_update": [],
+        "to_add": [],
+        "to_delete": [],
+        "debugs": [],
+    }
+    nd.status = 207
+    nd.request.return_value = {"resources": [{"resourceValue": "10", "status": "deleted"}]}
+
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes):
+        module.manage_deleted()
+
+    assert module.api_responses[-1]["RETURN_CODE"] == 207
+    assert module.results.responses[-1]["RETURN_CODE"] == 207
 
 
 def test_manage_deleted_raises_on_partial_delete_response():

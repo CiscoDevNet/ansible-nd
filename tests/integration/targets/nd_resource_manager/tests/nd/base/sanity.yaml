@@ -233,7 +233,7 @@
       ansible.builtin.assert:
         that:
           - 'result.failed | default(false) == false'
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', (207 if result.changed else 200)) | list | length == 0
 
     - name: BASE common pools - Sanity create resources
       cisco.nd.nd_manage_resource_manager:
@@ -248,7 +248,7 @@
           - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
           - 'result.failed | default(false) == false'
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 207) | list | length == 0
 
     - name: BASE common pools - Sanity gather by entity names
       cisco.nd.nd_manage_resource_manager:
@@ -301,7 +301,7 @@
           - 'result.changed == true'
           - '(result["diff"][0]["deleted"] | length) == rm_expected_resource_count'
           - 'result.failed | default(false) == false'
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 207) | list | length == 0
 
   always:
     - name: BASE common pools - Sanity final cleanup
@@ -312,4 +312,4 @@
       ansible.builtin.assert:
         that:
           - 'result.failed | default(false) == false'
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', (207 if result.changed else 200)) | list | length == 0

@@ -123,7 +123,7 @@
         - name: LOAD - Assert bulk create response codes
           ansible.builtin.assert:
             that:
-              - 'item["RETURN_CODE"] == 200'
+              - 'item["RETURN_CODE"] == 207'
           loop: "{{ rm_load_create_result.api_response | default([]) }}"
 
         - name: LOAD - Assert optional bulk create performance threshold
@@ -205,7 +205,7 @@
       - name: LOAD - Assert bulk delete response codes
         ansible.builtin.assert:
           that:
-            - 'item["RETURN_CODE"] == 200'
+            - 'item["RETURN_CODE"] == 207'
         loop: "{{ rm_load_delete_result.api_response | default([]) }}"
         when: rm_load_delete_result.api_response is defined
 
