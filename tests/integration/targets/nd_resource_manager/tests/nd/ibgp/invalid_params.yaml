@@ -117,8 +117,7 @@
         that:
           - invalid_gathered_null_property is failed
           - invalid_gathered_null_property.msg is defined
-          - invalid_gathered_null_property.msg is search("cannot be null")
-          - invalid_gathered_null_property.msg is search("pool_name")
+          - invalid_gathered_null_property.msg is search("must contain at least one supported property")
 
     - name: iBGP gathered filters - Valid property mixed with null
       cisco.nd.nd_manage_resource_manager:
@@ -127,13 +126,9 @@
         config:
           - entity_name: "ibgp_invalid_gathered"
             pool_name: null
-      register: invalid_gathered_mixed_null_property
-      ignore_errors: true
+      register: valid_gathered_mixed_null_property
 
-    - name: iBGP gathered filters - Assert mixed null property failed
+    - name: iBGP gathered filters - Assert mixed null property was ignored
       ansible.builtin.assert:
         that:
-          - invalid_gathered_mixed_null_property is failed
-          - invalid_gathered_mixed_null_property.msg is defined
-          - invalid_gathered_mixed_null_property.msg is search("cannot be null")
-          - invalid_gathered_mixed_null_property.msg is search("pool_name")
+          - valid_gathered_mixed_null_property is not failed

@@ -17,6 +17,7 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
     NDModuleError,
 )
+from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import HAS_PYDANTIC
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_resources import (
     EpManageFabricResourcesGet,
@@ -525,27 +526,32 @@ def test_resource_manager_model_rejects_propertyless_gathered_items(item):
         ResourceManagerConfigModel.validate_gathered_config([item])
 
 
-@pytest.mark.parametrize("property_name", ResourceManagerConfigModel.GATHERED_FILTER_PROPERTIES)
-def test_resource_manager_model_rejects_null_gathered_properties(property_name):
-    """Every explicitly null gathered property is rejected."""
-    with pytest.raises(ValueError) as exc_info:
-        ResourceManagerConfigModel.validate_gathered_config([{property_name: None}])
-
-    message = str(exc_info.value)
-    assert "config index 0" in message
-    assert "cannot be null" in message
-    assert property_name in message
+def test_resource_manager_model_rejects_null_only_gathered_filter():
+    """A gathered item containing no active filter property is rejected."""
+    with pytest.raises(ValueError, match="must contain at least one supported property"):
+        ResourceManagerConfigModel.validate_gathered_config([{"pool_name": None}])
 
 
-def test_resource_manager_model_rejects_null_property_mixed_with_valid_filter():
-    """A valid gathered criterion does not hide another explicitly null field."""
-    with pytest.raises(ValueError) as exc_info:
-        ResourceManagerConfigModel.validate_gathered_config([{"entity_name": "loopback0", "pool_name": None}])
+def test_resource_manager_model_ignores_null_property_mixed_with_valid_filter():
+    """Null placeholders are ignored when an active gathered filter is present."""
+    validated = ResourceManagerConfigModel.validate_gathered_config([{"entity_name": "loopback0", "pool_name": None}])
 
-    message = str(exc_info.value)
-    assert "config index 0" in message
-    assert "cannot be null" in message
-    assert "pool_name" in message
+    assert validated == [{"entity_name": "loopback0"}]
+
+
+def test_resource_manager_model_accepts_ansible_normalized_gathered_filter():
+    """Omitted suboptions populated with None by Ansible are not treated as supplied."""
+    validator = ArgumentSpecValidator(ResourceManagerConfigModel.get_argument_spec())
+    result = validator.validate(
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": [{"entity_name": "loopback0"}],
+        }
+    )
+
+    assert result.error_messages == []
+    assert ResourceManagerConfigModel.validate_gathered_config(result.validated_parameters["config"]) == [{"entity_name": "loopback0"}]
 
 
 def test_resource_manager_config_allows_auto_allocation_without_resource():
@@ -2812,18 +2818,11 @@ def test_gathered_rejects_unsupported_properties_before_api_calls(field, value):
     nd.request.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    "config",
-    [
-        {"pool_name": None},
-        {"entity_name": "loopback0", "pool_name": None},
-    ],
-)
-def test_gathered_rejects_null_properties_before_api_calls(config):
-    """Gathered null validation runs before fabric or resource API calls."""
-    nd = _mock_nd_module(state="gathered", config=[config])
+def test_gathered_rejects_null_only_filter_before_api_calls():
+    """Gathered empty-filter validation runs before fabric or resource API calls."""
+    nd = _mock_nd_module(state="gathered", config=[{"pool_name": None}])
 
-    with pytest.raises(ValueError, match="pool_name"):
+    with pytest.raises(ValueError, match="must contain at least one supported property"):
         NDResourceManagerModule(nd, Results(), log=LOG)
 
     nd.request.assert_not_called()

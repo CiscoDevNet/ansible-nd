@@ -45,8 +45,9 @@ options:
       - "For C(state=gathered): C(config) may be omitted entirely to retrieve all resources, or provided with optional filter fields.
         Each config item can include any combination of C(entity_name), C(pool_name), C(switches), C(resource), C(scope_type), C(pool_type).
         Filter fields act as match criteria; only those provided are used to select resources. Each provided item must contain at least one
-        supported filter property, and provided filter properties cannot be null. Unsupported or null properties cause the module to fail
-        before resources are queried. An explicit empty list has the same gather-all behavior as omitting C(config)."
+        supported filter property with a non-null value. Null-valued properties are ignored because Ansible represents omitted suboptions as
+        null after argument validation. Active unsupported properties cause the module to fail before resources are queried. An explicit empty
+        list has the same gather-all behavior as omitting C(config)."
     type: list
     elements: dict
     suboptions:
@@ -137,11 +138,6 @@ notes:
   - Idempotence checking compares the existing resource value to the desired value.
   - Entity name matching is order-insensitive for tilde-separated serial numbers.
   - For C(state=gathered), partial filter entries are supported (e.g., just C(entity_name) or just C(switches)) to retrieve specific subsets of resources.
-  - "Gathered filter support matrix (GET query / Lucene / local match): C(entity_name) (no / no / yes),
-    C(pool_name) (yes / no / yes), C(switches) (yes / no / yes), C(resource) (no / no / yes),
-    C(scope_type) (no / no / yes), and C(pool_type) (no / no / yes)."
-  - Gathered filters use the C(poolName) and C(switchId) GET query parameters. Lucene filtering is not used because exact server-side matching
-    cannot preserve normalized entity matching for device-pair and link resources.
 """
 
 EXAMPLES = """

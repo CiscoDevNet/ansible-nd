@@ -744,10 +744,8 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 continue
 
             pool_name = filter_item.get("pool_name")
-            # Entity names are intentionally matched locally. ND may return canonical
-            # endpoint order for multi-switch resources, and some simple entity-only
-            # Lucene filters can exclude resources that should match after local
-            # normalization.
+            # TODO: resource-manager-gathered-server-filtering: Revisit Lucene filtering when exact server-side matching preserves
+            # normalized entity matching for device-pair and link resources.
             # Kept this filter_expr for future reference in case if we have any filter props with exact match
             filter_expr = None
             filter_switches = filter_item.get("switches") or [None]

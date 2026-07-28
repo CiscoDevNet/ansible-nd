@@ -17,7 +17,7 @@ Fields map directly to the module's config suboptions:
   switch           → switch          (list of switch IPs/serials; required for non-fabric scopes)
 
 State-aware validation is supported when model_validate() is called with
-context={"state": "merged|deleted|query|gathered"}.
+context={"state": "merged|deleted|gathered"}.
 """
 
 from __future__ import annotations
@@ -50,14 +50,15 @@ class ResourceManagerConfigModel(NDBaseModel):
 
     Provides full per-field and cross-field validation for resource allocation
     configuration. Supports state-aware validation when model_validate() is
-    called with context={"state": "merged|deleted|query|gathered"}.
+    called with context={"state": "merged|deleted|gathered"}.
 
     Field requirements by state:
       merged:          entity_name, pool_type, pool_name, scope_type required;
                        switch required for non-fabric scopes.
       deleted:         entity_name, pool_type, pool_name, scope_type required;
                        switch required for non-fabric scopes.
-      query/gathered:  all fields optional (used as filters).
+      gathered:        config may be omitted or empty; each provided filter item
+                       requires at least one supported, non-null property.
 
     Note: The nd_manage_resource_manager module performs its own mandatory field
     checks before calling from_config(). This model adds per-field normalization
@@ -149,8 +150,8 @@ class ResourceManagerConfigModel(NDBaseModel):
         if state != "gathered" or not isinstance(data, dict):
             return data
 
-        supplied_properties = set(data)
-        unsupported = sorted(supplied_properties - set(cls.GATHERED_FILTER_PROPERTIES))
+        active_properties = {key for key, value in data.items() if value is not None}
+        unsupported = sorted(active_properties - set(cls.GATHERED_FILTER_PROPERTIES))
         if unsupported:
             raise ValueError(
                 "unsupported gathered filter properties: {0}. Supported gathered filter properties: {1}".format(
@@ -159,11 +160,6 @@ class ResourceManagerConfigModel(NDBaseModel):
                 )
             )
 
-        null_properties = sorted(key for key, value in data.items() if value is None)
-        if null_properties:
-            raise ValueError("gathered filter properties cannot be null: {0}".format(", ".join("'{0}'".format(key) for key in null_properties)))
-
-        active_properties = {key for key, value in data.items() if value is not None}
         if not active_properties:
             raise ValueError(
                 "gathered filter item must contain at least one supported property: {0}".format(
@@ -485,8 +481,9 @@ class ResourceManagerConfigModel(NDBaseModel):
         When model_validate(context={"state": "merged"}) or
         model_validate(context={"state": "deleted"}) is passed, the model
         enforces that entity_name, pool_type, pool_name, and scope_type are
-        all provided. For 'query' / 'gathered' state (or no context), all
-        fields remain optional and serve as filters.
+        all provided. For 'gathered' state, individual fields are optional, but
+        each provided filter item must contain at least one supported, non-null
+        property.
         """
         state = (info.context or {}).get("state") if info else None
         if state in ("merged", "deleted"):
