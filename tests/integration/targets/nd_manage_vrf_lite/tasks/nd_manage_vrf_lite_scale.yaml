@@ -1,0 +1,816 @@
+---
+# Opt-in scale tests for nd_manage_vrf_lite.
+#
+# Example:
+#   ansible-playbook -i hosts.yaml tasks/main.yaml \
+#     -e testcase=nd_manage_vrf_lite_scale \
+#     -e nd_vrf_lite_run_scale=true \
+#     -e nd_vrf_lite_scale_count=200
+
+- name: SCALE - Skip unless explicitly enabled
+  ansible.builtin.debug:
+    msg: "Skipping VRF Lite scale test. Set nd_vrf_lite_run_scale=true to run it."
+  when: not (nd_vrf_lite_run_scale | default(false) | bool)
+  tags: scale
+
+- name: SCALE - Run opt-in VRF Lite scale test
+  when: nd_vrf_lite_run_scale | default(false) | bool
+  tags: scale
+  block:
+    - name: SCALE - Import nd_manage_vrf_lite base tasks
+      ansible.builtin.import_tasks: base_tasks.yaml
+      tags:
+        - scale_single_switch
+        - scale_two_switch
+        - scale_many_vrfs
+
+    - name: SCALE - Set nd_info defaults
+      ansible.builtin.set_fact:
+        nd_info: &nd_info
+          output_level: '{{ api_key_output_level | default("debug") }}'
+      tags:
+        - scale_single_switch
+        - scale_two_switch
+        - scale_many_vrfs
+
+    - name: SCALE - Set scale defaults
+      ansible.builtin.set_fact:
+        scale_vrf_name: "{{ nd_vrf_lite_scale_vrf_name | default(test_vrf) }}"
+        scale_peer_vrf_name: "{{ nd_vrf_lite_scale_peer_vrf | default(test_peer_vrf) }}"
+        scale_vlan_id: "{{ nd_vrf_lite_scale_vlan_id | default(test_vlan_id) | int }}"
+        scale_link_count: "{{ nd_vrf_lite_scale_count | default(200) | int }}"
+        scale_dot1q_start: "{{ nd_vrf_lite_scale_dot1q_start | default(test_dot1q) | int }}"
+        scale_interface: "{{ nd_vrf_lite_scale_interface | default(test_interface) }}"
+        scale_timeout: "{{ nd_vrf_lite_scale_timeout | default(1800) | int }}"
+        scale_two_switch_enabled: >-
+          {{
+            (nd_vrf_lite_scale_two_switch_enabled | default(switch2_vrf_lite_enabled | default(false)) | bool)
+            and (test_switch2 | default('') | length > 0)
+          }}
+        scale_two_switch_count: "{{ nd_vrf_lite_scale_two_switch_count | default(nd_vrf_lite_scale_count | default(200)) | int }}"
+        scale_many_vrfs_enabled: "{{ nd_vrf_lite_scale_many_vrfs_enabled | default(false) | bool }}"
+        scale_many_vrfs_count: "{{ nd_vrf_lite_scale_many_vrfs_count | default(50) | int }}"
+        scale_many_vrfs_prefix: "{{ nd_vrf_lite_scale_many_vrfs_prefix | default('VRF_LITE_SCALE_') }}"
+      delegate_to: localhost
+      tags:
+        - scale_single_switch
+        - scale_two_switch
+        - scale_many_vrfs
+
+    - name: SCALE - Validate scale input ranges
+      ansible.builtin.assert:
+        that:
+          - scale_link_count | int > 0
+          - scale_two_switch_count | int > 0
+          - scale_dot1q_start | int >= 2
+          - (scale_dot1q_start | int + scale_link_count | int - 1) <= 4093
+          - (scale_dot1q_start | int + scale_two_switch_count | int - 1) <= 4093
+          - scale_vlan_id | int >= 1
+          - scale_vlan_id | int <= 4094
+        fail_msg: >-
+          Invalid scale values. Keep dot1q values inside 2-4093 and VLAN
+          inside 1-4094. Current start={{ scale_dot1q_start }},
+          count={{ scale_link_count }}, two_switch_count={{ scale_two_switch_count }},
+          vlan={{ scale_vlan_id }}.
+      tags:
+        - scale_single_switch
+        - scale_two_switch
+        - scale_many_vrfs
+
+    - name: SCALE - Initialize generated payload lists
+      ansible.builtin.set_fact:
+        scale_switch1_links: []
+        scale_switch2_links: []
+        scale_single_link_conf: []
+        scale_single_switch_conf: []
+        scale_two_switch_conf: []
+        scale_many_vrfs_conf: []
+      delegate_to: localhost
+      tags:
+        - scale_single_switch
+        - scale_two_switch
+        - scale_many_vrfs
+
+    - name: SCALE - Generate single-switch VRF Lite rows
+      ansible.builtin.set_fact:
+        scale_switch1_links: >-
+          {{
+            scale_switch1_links
+            + [
+              {
+                'interface': scale_interface,
+                'dot1q': scale_dot1q_start | int + item,
+                'ipv4_addr': '10.250.' ~ ((item // 64) | int) ~ '.' ~ (((item % 64) * 4 + 2) | int) ~ '/30',
+                'neighbor_ipv4': '10.250.' ~ ((item // 64) | int) ~ '.' ~ (((item % 64) * 4 + 1) | int),
+                'peer_vrf': scale_peer_vrf_name
+              }
+            ]
+          }}
+      loop: "{{ range(0, scale_link_count | int) | list }}"
+      delegate_to: localhost
+      tags:
+        - scale_single_switch
+        - scale_two_switch
+
+    - name: SCALE - Generate second-switch VRF Lite rows
+      ansible.builtin.set_fact:
+        scale_switch2_links: >-
+          {{
+            scale_switch2_links
+            + [
+              {
+                'interface': scale_interface,
+                'dot1q': scale_dot1q_start | int + item,
+                'ipv4_addr': '10.251.' ~ ((item // 64) | int) ~ '.' ~ (((item % 64) * 4 + 2) | int) ~ '/30',
+                'neighbor_ipv4': '10.251.' ~ ((item // 64) | int) ~ '.' ~ (((item % 64) * 4 + 1) | int),
+                'peer_vrf': scale_peer_vrf_name
+              }
+            ]
+          }}
+      loop: "{{ (range(0, scale_two_switch_count | int) | list) if (scale_two_switch_enabled | bool) else [] }}"
+      delegate_to: localhost
+      tags: scale_two_switch
+
+    - name: SCALE - Build single-switch config
+      ansible.builtin.set_fact:
+        scale_single_switch_conf:
+          - vrf_name: "{{ scale_vrf_name }}"
+            vlan_id: "{{ scale_vlan_id | int }}"
+            attach:
+              - ip_address: "{{ test_switch1 }}"
+                deploy: true
+                vrf_lite: "{{ scale_switch1_links }}"
+      delegate_to: localhost
+      tags:
+        - scale_single_switch
+        - scale_two_switch
+
+    - name: SCALE - Build single-link timing config
+      ansible.builtin.set_fact:
+        scale_single_link_conf:
+          - vrf_name: "{{ scale_vrf_name }}"
+            vlan_id: "{{ scale_vlan_id | int }}"
+            attach:
+              - ip_address: "{{ test_switch1 }}"
+                deploy: true
+                vrf_lite: "{{ [scale_switch1_links[0]] }}"
+      delegate_to: localhost
+      tags: scale_single_switch
+
+    - name: SCALE - Build two-switch config
+      ansible.builtin.set_fact:
+        scale_two_switch_conf:
+          - vrf_name: "{{ scale_vrf_name }}"
+            vlan_id: "{{ scale_vlan_id | int }}"
+            attach:
+              - ip_address: "{{ test_switch1 }}"
+                deploy: false
+                vrf_lite: "{{ scale_switch1_links }}"
+              - ip_address: "{{ test_switch2 }}"
+                deploy: false
+                vrf_lite: "{{ scale_switch2_links }}"
+      when: scale_two_switch_enabled | bool
+      delegate_to: localhost
+      tags: scale_two_switch
+
+    - name: SCALE - Generate many-VRF one-link config
+      ansible.builtin.set_fact:
+        scale_many_vrfs_conf: >-
+          {{
+            scale_many_vrfs_conf
+            + [
+              {
+                'vrf_name': scale_many_vrfs_prefix ~ ('%03d' | format(item + 1)),
+                'vlan_id': scale_vlan_id | int + item,
+                'attach': [
+                  {
+                    'ip_address': test_switch1,
+                    'deploy': false,
+                    'vrf_lite': [
+                      {
+                        'interface': scale_interface,
+                        'dot1q': scale_dot1q_start | int + item,
+                        'ipv4_addr': '10.252.' ~ ((item // 64) | int) ~ '.' ~ (((item % 64) * 4 + 2) | int) ~ '/30',
+                        'neighbor_ipv4': '10.252.' ~ ((item // 64) | int) ~ '.' ~ (((item % 64) * 4 + 1) | int),
+                        'peer_vrf': scale_peer_vrf_name
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }}
+      loop: "{{ (range(0, scale_many_vrfs_count | int) | list) if (scale_many_vrfs_enabled | bool) else [] }}"
+      delegate_to: localhost
+      tags: scale_many_vrfs
+
+    - name: SCALE - Display scale plan
+      ansible.builtin.debug:
+        msg:
+          - "VRF={{ scale_vrf_name }}"
+          - "switch1={{ test_switch1 }}, links={{ scale_switch1_links | length }}"
+          - "switch2={{ test_switch2 | default('') }}, enabled={{ scale_two_switch_enabled }}, links={{ scale_switch2_links | length }}"
+          - "many_vrfs_enabled={{ scale_many_vrfs_enabled }}, many_vrfs={{ scale_many_vrfs_conf | length }}"
+          - "dot1q={{ scale_dot1q_start }}-{{ (scale_dot1q_start | int) + (scale_link_count | int) - 1 }}"
+      tags:
+        - scale_single_switch
+        - scale_two_switch
+        - scale_many_vrfs
+
+    - name: SCALE - Execute single-switch scale scenario
+      tags: scale_single_switch
+      block:
+        - name: SCALE - TC1 - CHECK MODE - Plan single-switch scale create
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: merged
+            config_actions:
+              save: true
+              deploy: true
+              type: switch
+            verify:
+              enabled: false
+            config: "{{ scale_single_switch_conf }}"
+          check_mode: true
+          register: scale_single_check
+
+        - name: SCALE - TC1 - ASSERT - Check mode planned single-switch scale
+          ansible.builtin.assert:
+            that:
+              - scale_single_check.failed == false
+              - scale_single_check.changed == true
+
+        - name: SCALE TIMING - Mark single-link create/deploy start
+          ansible.builtin.set_fact:
+            scale_timing_single_create_deploy_start: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: SCALE - TC2 - MERGE - Create and deploy one VRF Lite row on one switch
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: merged
+            config_actions:
+              save: true
+              deploy: true
+              type: switch
+            verify:
+              enabled: false
+            config: "{{ scale_single_link_conf }}"
+          register: scale_single_link_create_deploy
+
+        - name: SCALE TIMING - Record single-link create/deploy seconds
+          ansible.builtin.set_fact:
+            scale_timing_single_create_deploy_end: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: SCALE TIMING - Calculate single-link create/deploy seconds
+          ansible.builtin.set_fact:
+            scale_timing_single_create_deploy_seconds: >-
+              {{
+                (scale_timing_single_create_deploy_end | int)
+                - (scale_timing_single_create_deploy_start | int)
+              }}
+
+        - name: SCALE - TC2 - ASSERT - Single-link create and deploy changed
+          ansible.builtin.assert:
+            that:
+              - scale_single_link_create_deploy.failed == false
+              - scale_single_link_create_deploy.changed == true
+
+        - name: SCALE - TC2 - GATHER - Query single-link VRF Lite row
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: gathered
+            config_actions:
+              save: false
+              deploy: false
+              type: switch
+            verify:
+              enabled: false
+            config:
+              - vrf_name: "{{ scale_vrf_name }}"
+          register: scale_single_link_gather
+
+        - name: SCALE - TC2 - Select gathered single-link attachment
+          ansible.builtin.set_fact:
+            scale_single_link_attach_entries: >-
+              {{
+                (
+                  scale_single_link_gather.gathered | default([])
+                  | selectattr('vrf_name', 'equalto', scale_vrf_name)
+                  | list
+                  | first
+                  | default({})
+                ).attach | default([])
+                | selectattr('ip_address', 'equalto', test_switch1)
+                | list
+              }}
+
+        - name: SCALE - TC2 - ASSERT - Gathered single-link count matches
+          ansible.builtin.assert:
+            that:
+              - scale_single_link_gather.failed == false
+              - scale_single_link_attach_entries | length == 1
+              - (scale_single_link_attach_entries[0].vrf_lite | default([]) | length) == 1
+
+        - name: SCALE TIMING - Mark single-link delete/deploy start
+          ansible.builtin.set_fact:
+            scale_timing_single_delete_deploy_start: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: SCALE - TC2b - DELETE - Remove and deploy one VRF Lite row on one switch
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: deleted
+            config_actions:
+              save: true
+              deploy: true
+              type: switch
+            verify:
+              enabled: false
+            config:
+              - vrf_name: "{{ scale_vrf_name }}"
+                attach:
+                  - ip_address: "{{ test_switch1 }}"
+                    deploy: true
+          register: scale_single_link_delete_deploy
+
+        - name: SCALE TIMING - Record single-link delete/deploy seconds
+          ansible.builtin.set_fact:
+            scale_timing_single_delete_deploy_end: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: SCALE TIMING - Calculate single-link delete/deploy seconds
+          ansible.builtin.set_fact:
+            scale_timing_single_delete_deploy_seconds: >-
+              {{
+                (scale_timing_single_delete_deploy_end | int)
+                - (scale_timing_single_delete_deploy_start | int)
+              }}
+
+        - name: SCALE - TC2b - ASSERT - Single-link delete and deploy changed
+          ansible.builtin.assert:
+            that:
+              - scale_single_link_delete_deploy.failed == false
+              - scale_single_link_delete_deploy.changed == true
+
+        - name: SCALE TIMING - Mark scaled create/deploy start
+          ansible.builtin.set_fact:
+            scale_timing_scaled_create_deploy_start: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: SCALE - TC3 - MERGE - Create and deploy scaled VRF Lite rows on one switch
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: merged
+            config_actions:
+              save: true
+              deploy: true
+              type: switch
+            verify:
+              enabled: false
+            config: "{{ scale_single_switch_conf }}"
+          register: scale_single_create
+
+        - name: SCALE TIMING - Record scaled create/deploy seconds
+          ansible.builtin.set_fact:
+            scale_timing_scaled_create_deploy_end: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: SCALE TIMING - Calculate scaled create/deploy seconds
+          ansible.builtin.set_fact:
+            scale_timing_scaled_create_deploy_seconds: >-
+              {{
+                (scale_timing_scaled_create_deploy_end | int)
+                - (scale_timing_scaled_create_deploy_start | int)
+              }}
+
+        - name: SCALE - TC3 - ASSERT - Single-switch scale create and deploy changed
+          ansible.builtin.assert:
+            that:
+              - scale_single_create.failed == false
+              - scale_single_create.changed == true
+
+        - name: SCALE - TC3 - GATHER - Query scaled VRF Lite rows
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: gathered
+            config_actions:
+              save: false
+              deploy: false
+              type: switch
+            verify:
+              enabled: false
+            config:
+              - vrf_name: "{{ scale_vrf_name }}"
+          register: scale_single_gather
+
+        - name: SCALE - TC3 - Select gathered single-switch attachment
+          ansible.builtin.set_fact:
+            scale_single_vrf_entries: >-
+              {{
+                scale_single_gather.gathered | default([])
+                | selectattr('vrf_name', 'equalto', scale_vrf_name)
+                | list
+              }}
+            scale_single_attach_entries: >-
+              {{
+                (
+                  scale_single_gather.gathered | default([])
+                  | selectattr('vrf_name', 'equalto', scale_vrf_name)
+                  | list
+                  | first
+                  | default({})
+                ).attach | default([])
+                | selectattr('ip_address', 'equalto', test_switch1)
+                | list
+              }}
+
+        - name: SCALE - TC3 - ASSERT - Gathered single-switch count matches
+          ansible.builtin.assert:
+            that:
+              - scale_single_gather.failed == false
+              - scale_single_vrf_entries | length == 1
+              - scale_single_attach_entries | length == 1
+              - (scale_single_attach_entries[0].vrf_lite | default([]) | length) == (scale_link_count | int)
+
+        - name: SCALE - TC4 - MERGE - Re-run single-switch scale for idempotence
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: merged
+            config_actions:
+              save: true
+              deploy: true
+              type: switch
+            verify:
+              enabled: false
+            config: "{{ scale_single_switch_conf }}"
+          register: scale_single_idempotent
+
+        - name: SCALE - TC4 - ASSERT - Single-switch scale is idempotent
+          ansible.builtin.assert:
+            that:
+              - scale_single_idempotent.failed == false
+              - scale_single_idempotent.changed == false
+
+        - name: SCALE TIMING - Mark scaled delete/deploy start
+          ansible.builtin.set_fact:
+            scale_timing_scaled_delete_deploy_start: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: SCALE - TC5 - DELETE - Remove and deploy scaled VRF Lite rows on one switch
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: deleted
+            config_actions:
+              save: true
+              deploy: true
+              type: switch
+            verify:
+              enabled: false
+            config:
+              - vrf_name: "{{ scale_vrf_name }}"
+                attach:
+                  - ip_address: "{{ test_switch1 }}"
+                    deploy: true
+          register: scale_single_delete
+
+        - name: SCALE TIMING - Record scaled delete/deploy seconds
+          ansible.builtin.set_fact:
+            scale_timing_scaled_delete_deploy_end: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: SCALE TIMING - Calculate scaled delete/deploy seconds
+          ansible.builtin.set_fact:
+            scale_timing_scaled_delete_deploy_seconds: >-
+              {{
+                (scale_timing_scaled_delete_deploy_end | int)
+                - (scale_timing_scaled_delete_deploy_start | int)
+              }}
+
+        - name: SCALE - TC5 - ASSERT - Single-switch scale delete and deploy changed
+          ansible.builtin.assert:
+            that:
+              - scale_single_delete.failed == false
+              - scale_single_delete.changed == true
+
+        - name: SCALE - TC5 - GATHER - Query after single-switch scale delete
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: gathered
+            config_actions:
+              save: false
+              deploy: false
+              type: switch
+            verify:
+              enabled: false
+            config:
+              - vrf_name: "{{ scale_vrf_name }}"
+          register: scale_single_delete_gather
+
+        - name: SCALE - TC5 - Select gathered single-switch attachment after delete
+          ansible.builtin.set_fact:
+            scale_single_delete_vrf_entries: >-
+              {{
+                scale_single_delete_gather.gathered | default([])
+                | selectattr('vrf_name', 'equalto', scale_vrf_name)
+                | list
+              }}
+            scale_single_delete_attach_entries: >-
+              {{
+                (
+                  scale_single_delete_gather.gathered | default([])
+                  | selectattr('vrf_name', 'equalto', scale_vrf_name)
+                  | list
+                  | first
+                  | default({})
+                ).attach | default([])
+                | selectattr('ip_address', 'equalto', test_switch1)
+                | list
+              }}
+
+        - name: SCALE - TC5 - ASSERT - Single-switch scale delete removed attachment
+          ansible.builtin.assert:
+            that:
+              - scale_single_delete_gather.failed == false
+              - scale_single_delete_vrf_entries | length == 1
+              - scale_single_delete_attach_entries | length == 0
+      always:
+        - name: SCALE - TC CLEANUP - Remove single-switch scaled VRF Lite rows
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: deleted
+            config_actions:
+              save: true
+              deploy: true
+              type: switch
+            verify:
+              enabled: false
+            config:
+              - vrf_name: "{{ scale_vrf_name }}"
+                attach:
+                  - ip_address: "{{ test_switch1 }}"
+                    deploy: true
+          failed_when: false
+
+    - name: SCALE TIMING - Calculate total measured single-switch deploy seconds
+      ansible.builtin.set_fact:
+        scale_timing_total_deploy_seconds: >-
+          {{
+            (scale_timing_single_create_deploy_seconds | default(0) | int)
+            + (scale_timing_single_delete_deploy_seconds | default(0) | int)
+            + (scale_timing_scaled_create_deploy_seconds | default(0) | int)
+            + (scale_timing_scaled_delete_deploy_seconds | default(0) | int)
+          }}
+      tags: scale_single_switch
+
+    - name: SCALE TIMING - SUMMARY - Single-switch create/deploy/delete/deploy
+      ansible.builtin.debug:
+        msg:
+          - "TIMING SUMMARY: VRF Lite single-switch create/deploy/delete/deploy"
+          - "fabric={{ test_fabric }}"
+          - "vrf={{ scale_vrf_name }}"
+          - "switch={{ test_switch1 }}"
+          - "single_rows=1 create_deploy_seconds={{ scale_timing_single_create_deploy_seconds | default('not_run') }}"
+          - "single_rows=1 delete_deploy_seconds={{ scale_timing_single_delete_deploy_seconds | default('not_run') }}"
+          - "scale_rows={{ scale_link_count }} create_deploy_seconds={{ scale_timing_scaled_create_deploy_seconds | default('not_run') }}"
+          - "scale_rows={{ scale_link_count }} delete_deploy_seconds={{ scale_timing_scaled_delete_deploy_seconds | default('not_run') }}"
+          - "total_measured_seconds={{ scale_timing_total_deploy_seconds | default('not_run') }}"
+      tags: scale_single_switch
+
+    - name: SCALE - Execute two-switch scale scenario
+      when: scale_two_switch_enabled | bool
+      tags: scale_two_switch
+      block:
+        - name: SCALE - TC4 - MERGE - Create scaled VRF Lite rows on two switches
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: merged
+            config_actions:
+              save: false
+              deploy: false
+              type: switch
+            verify:
+              enabled: false
+            config: "{{ scale_two_switch_conf }}"
+          register: scale_two_switch_create
+
+        - name: SCALE - TC4 - ASSERT - Two-switch scale create changed
+          ansible.builtin.assert:
+            that:
+              - scale_two_switch_create.failed == false
+              - scale_two_switch_create.changed == true
+
+        - name: SCALE - TC4 - GATHER - Query two-switch scale rows
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: gathered
+            config_actions:
+              save: false
+              deploy: false
+              type: switch
+            verify:
+              enabled: false
+            config:
+              - vrf_name: "{{ scale_vrf_name }}"
+          register: scale_two_switch_gather
+
+        - name: SCALE - TC4 - Select gathered two-switch attachments
+          ansible.builtin.set_fact:
+            scale_two_switch_vrf_entries: >-
+              {{
+                scale_two_switch_gather.gathered | default([])
+                | selectattr('vrf_name', 'equalto', scale_vrf_name)
+                | list
+              }}
+            scale_two_switch_attach1_entries: >-
+              {{
+                (
+                  scale_two_switch_gather.gathered | default([])
+                  | selectattr('vrf_name', 'equalto', scale_vrf_name)
+                  | list
+                  | first
+                  | default({})
+                ).attach | default([])
+                | selectattr('ip_address', 'equalto', test_switch1)
+                | list
+              }}
+            scale_two_switch_attach2_entries: >-
+              {{
+                (
+                  scale_two_switch_gather.gathered | default([])
+                  | selectattr('vrf_name', 'equalto', scale_vrf_name)
+                  | list
+                  | first
+                  | default({})
+                ).attach | default([])
+                | selectattr('ip_address', 'equalto', test_switch2)
+                | list
+              }}
+
+        - name: SCALE - TC4 - ASSERT - Gathered two-switch counts match
+          ansible.builtin.assert:
+            that:
+              - scale_two_switch_gather.failed == false
+              - scale_two_switch_vrf_entries | length == 1
+              - scale_two_switch_attach1_entries | length == 1
+              - scale_two_switch_attach2_entries | length == 1
+              - (scale_two_switch_attach1_entries[0].vrf_lite | default([]) | length) == (scale_link_count | int)
+              - (scale_two_switch_attach2_entries[0].vrf_lite | default([]) | length) == (scale_two_switch_count | int)
+
+        - name: SCALE - TC4b - DELETE - Remove scaled VRF Lite rows on two switches
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: deleted
+            config_actions:
+              save: false
+              deploy: false
+              type: switch
+            verify:
+              enabled: false
+            config:
+              - vrf_name: "{{ scale_vrf_name }}"
+                attach:
+                  - ip_address: "{{ test_switch1 }}"
+                  - ip_address: "{{ test_switch2 }}"
+          register: scale_two_switch_delete
+
+        - name: SCALE - TC4b - ASSERT - Two-switch scale delete changed
+          ansible.builtin.assert:
+            that:
+              - scale_two_switch_delete.failed == false
+              - scale_two_switch_delete.changed == true
+
+        - name: SCALE - TC4b - GATHER - Query after two-switch scale delete
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: gathered
+            config_actions:
+              save: false
+              deploy: false
+              type: switch
+            verify:
+              enabled: false
+            config:
+              - vrf_name: "{{ scale_vrf_name }}"
+          register: scale_two_switch_delete_gather
+
+        - name: SCALE - TC4b - Select gathered two-switch attachments after delete
+          ansible.builtin.set_fact:
+            scale_two_switch_delete_vrf_entries: >-
+              {{
+                scale_two_switch_delete_gather.gathered | default([])
+                | selectattr('vrf_name', 'equalto', scale_vrf_name)
+                | list
+              }}
+            scale_two_switch_delete_attach1_entries: >-
+              {{
+                (
+                  scale_two_switch_delete_gather.gathered | default([])
+                  | selectattr('vrf_name', 'equalto', scale_vrf_name)
+                  | list
+                  | first
+                  | default({})
+                ).attach | default([])
+                | selectattr('ip_address', 'equalto', test_switch1)
+                | list
+              }}
+            scale_two_switch_delete_attach2_entries: >-
+              {{
+                (
+                  scale_two_switch_delete_gather.gathered | default([])
+                  | selectattr('vrf_name', 'equalto', scale_vrf_name)
+                  | list
+                  | first
+                  | default({})
+                ).attach | default([])
+                | selectattr('ip_address', 'equalto', test_switch2)
+                | list
+              }}
+
+        - name: SCALE - TC4b - ASSERT - Two-switch scale delete removed attachments
+          ansible.builtin.assert:
+            that:
+              - scale_two_switch_delete_gather.failed == false
+              - scale_two_switch_delete_vrf_entries | length == 1
+              - scale_two_switch_delete_attach1_entries | length == 0
+              - scale_two_switch_delete_attach2_entries | length == 0
+      always:
+        - name: SCALE - TC CLEANUP - Remove two-switch scaled VRF Lite rows
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: deleted
+            config_actions:
+              save: false
+              deploy: false
+              type: switch
+            verify:
+              enabled: false
+            config:
+              - vrf_name: "{{ scale_vrf_name }}"
+                attach:
+                  - ip_address: "{{ test_switch1 }}"
+                  - ip_address: "{{ test_switch2 }}"
+          failed_when: false
+
+    - name: SCALE - Execute many-VRF one-link scenario
+      when: scale_many_vrfs_enabled | bool
+      tags: scale_many_vrfs
+      block:
+        - name: SCALE - TC5 - MERGE - Create one VRF Lite row across many pre-created VRFs
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: merged
+            config_actions:
+              save: false
+              deploy: false
+              type: switch
+            verify:
+              enabled: false
+            config: "{{ scale_many_vrfs_conf }}"
+          register: scale_many_vrfs_create
+
+        - name: SCALE - TC5 - ASSERT - Many-VRF create changed
+          ansible.builtin.assert:
+            that:
+              - scale_many_vrfs_create.failed == false
+              - scale_many_vrfs_create.changed == true
+      always:
+        - name: SCALE - TC CLEANUP - Remove many-VRF scaled rows
+          cisco.nd.nd_manage_vrf_lite:
+            <<: *nd_info
+            timeout: "{{ scale_timeout }}"
+            fabric_name: "{{ test_fabric }}"
+            state: deleted
+            config_actions:
+              save: false
+              deploy: false
+              type: switch
+            verify:
+              enabled: false
+            config: "{{ scale_many_vrfs_conf }}"
+          failed_when: false

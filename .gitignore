@@ -392,6 +392,3 @@ $RECYCLE.BIN/
 
 # Ansible Collection tarball
 cisco-nd-*.tar.gz
-
-# Local scratch directory - not part of the collection
-delete_temp/

@@ -1,0 +1,269 @@
+##############################################
+##                 SETUP                    ##
+##############################################
+
+- name: Import nd_manage_vrf_lite Base Tasks
+  ansible.builtin.import_tasks: base_tasks.yaml
+  tags: bulk
+
+- name: BULK - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vrf_lite_module_timeout | default(600) }}"
+  tags: bulk
+
+##############################################
+##       Setup Bulk TestCase Variables      ##
+##############################################
+
+- name: BULK - Setup multi-link VRF Lite config
+  ansible.builtin.set_fact:
+    bulk_vrf_lite_conf:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "{{ test_ipv4_addr }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+                peer_vrf: "{{ test_peer_vrf }}"
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q2 | int }}"
+                ipv4_addr: "{{ test_ipv4_addr2 }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4_2 }}"
+                peer_vrf: "{{ test_peer_vrf }}"
+  delegate_to: localhost
+  tags: bulk
+
+##############################################
+##                 BULK                     ##
+##############################################
+
+# TC1 - Create two VRF Lite links in one module call.
+- name: BULK - TC1 - MERGE - Bulk create two VRF Lite links
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ bulk_vrf_lite_conf }}"
+  register: bulk_create_result
+  tags: bulk
+
+- name: BULK - TC1 - ASSERT - Verify bulk create changed
+  ansible.builtin.assert:
+    that:
+      - bulk_create_result.failed == false
+      - bulk_create_result.changed == true
+      - bulk_create_result.deployment is not defined
+  tags: bulk
+
+- name: BULK - TC1 - GATHER - Verify bulk create result in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: bulk_create_verify_result
+  tags: bulk
+
+- name: BULK - TC1 - ASSERT - Verify first bulk-created link
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ bulk_create_verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_attach_count: 1
+    vrf_lite_assert_connection_count: 2
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: bulk
+
+- name: BULK - TC1 - ASSERT - Verify second bulk-created link
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ bulk_create_verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_attach_count: 1
+    vrf_lite_assert_connection_count: 2
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q2 }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr2 }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4_2 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: bulk
+
+# TC2 - Query the two links with one gathered call.
+- name: BULK - TC2 - GATHER - Bulk query VRF Lite links
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  register: bulk_query_result
+  tags: bulk
+
+- name: BULK - TC2 - ASSERT - Verify bulk query output
+  ansible.builtin.assert:
+    that:
+      - bulk_query_result.failed == false
+      - bulk_query_result.changed == false
+      - bulk_query_result.gathered is defined
+      - bulk_query_result.gathered | length == 1
+      - bulk_query_result.gathered[0].vrf_name == test_vrf
+      - bulk_query_result.gathered[0].attach | default([]) | length == 1
+      - bulk_query_result.gathered[0].attach[0].vrf_lite | default([]) | length == 2
+      - >
+        (
+          bulk_query_result.gathered[0].attach[0].vrf_lite
+          | selectattr('interface', 'equalto', test_interface)
+          | list
+          | length
+        ) == 2
+      - >
+        (
+          bulk_query_result.gathered[0].attach[0].vrf_lite
+          | selectattr('dot1q', 'equalto', test_dot1q | int)
+          | list
+          | length
+        ) == 1
+      - >
+        (
+          bulk_query_result.gathered[0].attach[0].vrf_lite
+          | selectattr('dot1q', 'equalto', test_dot1q2 | int)
+          | list
+          | length
+        ) == 1
+  tags: bulk
+
+# TC3 - Delete the bulk-created attachment in one module call.
+- name: BULK - TC3 - DELETE - Bulk delete VRF Lite links
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ bulk_vrf_lite_conf }}"
+  register: bulk_delete_result
+  tags: bulk
+
+- name: BULK - TC3 - ASSERT - Verify bulk delete changed
+  ansible.builtin.assert:
+    that:
+      - bulk_delete_result.failed == false
+      - bulk_delete_result.changed == true
+      - bulk_delete_result.deployment is not defined
+  tags: bulk
+
+- name: BULK - TC3 - GATHER - Verify bulk delete result in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: bulk_delete_verify_result
+  tags: bulk
+
+- name: BULK - TC3 - ASSERT - Verify attachments are deleted
+  ansible.builtin.assert:
+    that:
+      - bulk_delete_verify_result.failed == false
+      - bulk_delete_verify_result.gathered is defined
+      - bulk_delete_verify_result.gathered | length == 1
+      - bulk_delete_verify_result.gathered[0].vrf_name == test_vrf
+      - bulk_delete_verify_result.gathered[0].attach | default([]) | length == 0
+  tags: bulk
+
+# TC4 - Re-run bulk delete to verify idempotence.
+- name: BULK - TC4 - DELETE - Re-run bulk delete
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ bulk_vrf_lite_conf }}"
+  register: bulk_delete_idempotent_result
+  tags: bulk
+
+- name: BULK - TC4 - ASSERT - Verify bulk delete idempotence
+  ansible.builtin.assert:
+    that:
+      - bulk_delete_idempotent_result.failed == false
+      - bulk_delete_idempotent_result.changed == false
+      - bulk_delete_idempotent_result.deployment is not defined
+  tags: bulk
+
+##############################################
+##                 CLEAN-UP                 ##
+##############################################
+
+- name: BULK - END - ensure primary clean state
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  when: cleanup_at_end | default(true)
+  tags: bulk
+
+- name: BULK - END - ensure secondary clean state
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch2 }}"
+  failed_when: false
+  when:
+    - cleanup_at_end | default(true)
+    - test_switch2 | length > 0
+  tags: bulk
