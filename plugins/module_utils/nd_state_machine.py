@@ -107,11 +107,12 @@ class NDStateMachine:
             query_kwargs = {}
             if lucene_candidate_filtering_enabled:
                 query_kwargs["gathered_filters"] = raw_config
-            
+
             if gathered_filtering_enabled and raw_config:
                 validate_gathered_filters(
                     filters=raw_config,
                     normalize_filter=self.model_class.normalize_gathered_filter,
+                    supported_properties=self.model_class.gathered_filter_properties,
                 )
 
             response_data = self.model_orchestrator.query_all(**query_kwargs)
