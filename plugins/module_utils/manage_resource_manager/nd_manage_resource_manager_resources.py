@@ -744,9 +744,12 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 continue
 
             pool_name = filter_item.get("pool_name")
-            # TODO: resource-manager-gathered-server-filtering: Revisit Lucene filtering when exact server-side matching preserves
-            # normalized entity matching for device-pair and link resources.
-            # Kept this filter_expr for future reference in case if we have any filter props with exact match
+            # TODO(4.2.1) resource-manager-gathered-entity-order-lucene: ND GET may canonicalize endpoint order in
+            # devicePair/link entityName values. Exact Lucene filter=entityName:... can then silently omit an existing
+            # resource stored under an equivalent endpoint ordering. Gather paginated candidates using poolName and
+            # switchId only, then match entity_name locally through _entity_names_match/_normalize_entity_key. Link
+            # normalization reverses complete serial/interface endpoint pairs rather than sorting individual segments.
+            # Keep filter_expr unset until server-side filtering is verified to preserve equivalent endpoint orderings.
             filter_expr = None
             filter_switches = filter_item.get("switches") or [None]
             for switch_id in filter_switches:
