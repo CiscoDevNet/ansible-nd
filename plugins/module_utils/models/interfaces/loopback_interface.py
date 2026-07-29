@@ -134,6 +134,14 @@ class LoopbackInterfaceModel(NDBaseModel):
     # --- Gathered Filtering Configuration ---
 
     supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.ip",
+        "config_data.network_os.policy.ipv6",
+        "config_data.network_os.policy.vrf",
+    )
 
     # --- Serialization Configuration ---
 

@@ -6,7 +6,7 @@ from copy import deepcopy
 
 import pytest
 
-from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import filter_gathered_response
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import filter_gathered_response, validate_gathered_filters
 from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import LocalUserModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.local_user import LocalUserOrchestrator
 
@@ -60,16 +60,19 @@ def test_password_is_excluded_from_config_but_included_in_payload():
 @pytest.mark.parametrize(
     "filter_item",
     [
-        {"email": "user1@example.com"},
         {"user_password": "Password1!"},
         {"reuse_limitation": 0},
         {"remote_user_authorization": False},
         {"security_domains": [{"name": "all"}]},
     ],
 )
-def test_non_login_id_gathered_filters_are_rejected(filter_item):
-    with pytest.raises(ValueError, match="Only login_id can be used"):
-        LocalUserModel.normalize_gathered_filter(filter_item)
+def test_unsupported_gathered_filters_are_rejected(filter_item):
+    with pytest.raises(ValueError, match="unsupported properties"):
+        validate_gathered_filters(
+            filters=[filter_item],
+            normalize_filter=LocalUserModel.normalize_gathered_filter,
+            supported_properties=LocalUserModel.gathered_filter_properties,
+        )
 
 
 def test_ansible_injected_null_option_is_not_treated_as_a_filter():
@@ -78,7 +81,12 @@ def test_ansible_injected_null_option_is_not_treated_as_a_filter():
         "user_password": None,
     }
 
-    assert LocalUserModel.normalize_gathered_filter(filter_item) == filter_item
+    # Null values are ignored by property validation — no error raised
+    validate_gathered_filters(
+        filters=[filter_item],
+        normalize_filter=LocalUserModel.normalize_gathered_filter,
+        supported_properties=LocalUserModel.gathered_filter_properties,
+    )
 
 
 def test_api_deserialization_does_not_mutate_response():

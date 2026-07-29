@@ -81,25 +81,12 @@ class LocalUserModel(NDBaseModel):
     # --- Gathered Filtering Configuration ---
 
     supports_gathered_filtering: ClassVar[bool] = True
-
-    @classmethod
-    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
-        """
-        Validate that one gathered-state filter contains only login_id.
-        """
-        normalized = deepcopy(filter_item)
-
-        unsupported_fields = [
-            field_name
-            for field_name, value in normalized.items()
-            if field_name != "login_id" and value not in (None, "", [])
-        ]
-        if unsupported_fields:
-            raise ValueError(
-                "Only login_id can be used as a gathered-state filter for "
-                f"local users. Unsupported fields: {unsupported_fields}"
-            )
-        return normalized
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "login_id",
+        "email",
+        "first_name",
+        "last_name", 
+    )
 
     # --- Serialization Configuration ---
 

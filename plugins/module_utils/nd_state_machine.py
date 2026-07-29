@@ -95,6 +95,7 @@ class NDStateMachine:
                 validate_gathered_filters(
                     filters=raw_config,
                     normalize_filter=self.model_class.normalize_gathered_filter,
+                    supported_properties=self.model_class.gathered_filter_properties,
                 )
 
             response_data = self.model_orchestrator.query_all(**query_kwargs)
@@ -136,8 +137,10 @@ class NDStateMachine:
             get_argument_spec = getattr(self.model_class, "get_argument_spec", None)
             if callable(get_argument_spec):
                 gathered_spec = get_argument_spec().get("config", {}).get("options", {}) or {}
+            
+            gathered_transform = getattr(self.model_orchestrator, "gathered_transform", None)
 
-            self.output.assign(after=self.existing, before=self.before, proposed=self.proposed, gathered_spec=gathered_spec)
+            self.output.assign(after=self.existing, before=self.before, proposed=self.proposed, gathered_spec=gathered_spec, gathered_transform=gathered_transform)
 
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}") from e

@@ -20,8 +20,9 @@ options:
   config:
     description:
     - The list of the local users to configure.
-    - When O(state=gathered), O(config) may be omitted to return all local users or contain O(config.login_id) to filter the results.
-      Other configuration options are not supported as gathered-state filters.
+    - When O(state=gathered), O(config) may be omitted to return all local users or provided with filter criteria.
+      Supported gathered filter properties are O(config.login_id), O(config.email), O(config.first_name), and O(config.last_name).
+      Unsupported filter properties cause the module to fail before any API requests are made.
     type: list
     elements: dict
     required: false
@@ -29,6 +30,7 @@ options:
       email:
         description:
         - The email address of the local user.
+        - Optional filter for O(state=gathered).
         type: str
       login_id:
         description:
@@ -41,10 +43,12 @@ options:
       first_name:
         description:
         - The first name of the local user.
+        - Optional filter for O(state=gathered).
         type: str
       last_name:
         description:
         - The last name of the local user.
+        - Optional filter for O(state=gathered).
         type: str
       user_password:
         description:

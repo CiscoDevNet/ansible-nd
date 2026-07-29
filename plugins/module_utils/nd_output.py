@@ -25,6 +25,10 @@ class NDOutput:
         # Argument-spec ``config.options`` mapping used to prune gathered output
         # down to valid module arguments so it round-trips as ``config``.
         self._gathered_spec: Dict[str, Any] = {}
+        # Optional callable that reshapes each gathered item before pruning.
+        # Used by modules whose input format differs from the model's internal
+        # representation (e.g. interface_names plural vs interface_name singular).
+        self._gathered_transform = None
 
     def format(self, **kwargs) -> Dict[str, Any]:
         # Read-only gathered state follows the Ansible resource-module
@@ -32,6 +36,8 @@ class NDOutput:
         # omit the change-oriented before/after/diff/proposed keys.
         if self._state == "gathered":
             gathered_items = self._after.to_ansible_config() if isinstance(self._after, NDConfigCollection) else self._after
+            if self._gathered_transform and isinstance(gathered_items, list):
+                gathered_items = [self._gathered_transform(item) for item in gathered_items]
             if self._gathered_spec and isinstance(gathered_items, list):
                 gathered_items = [prune_to_spec(item, self._gathered_spec) for item in gathered_items]
             gathered_output = {
@@ -126,6 +132,7 @@ class NDOutput:
         proposed: Optional[NDConfigCollection] = None,
         logs: Optional[List] = None,
         gathered_spec: Optional[Dict[str, Any]] = None,
+        gathered_transform=None,
         **kwargs,
     ) -> None:
         if isinstance(after, NDConfigCollection):
@@ -140,4 +147,6 @@ class NDOutput:
             self._logs = logs
         if isinstance(gathered_spec, dict):
             self._gathered_spec = gathered_spec
+        if gathered_transform is not None:
+            self._gathered_transform = gathered_transform
         self._extra.update(**kwargs)
