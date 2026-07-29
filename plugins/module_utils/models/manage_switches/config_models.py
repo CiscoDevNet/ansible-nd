@@ -769,7 +769,6 @@ class SwitchConfigModel(NDBaseModel):
                             "edge_router",
                             "core_router",
                             "tor",
-                            "tier2_leaf",
                         ],
                     ),
                     preserve_config=dict(type="bool"),

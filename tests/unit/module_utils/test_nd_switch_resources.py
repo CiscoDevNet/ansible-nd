@@ -577,7 +577,6 @@ def test_fabric_capability_validation_rejects_external_without_preserve_config()
         ("vxlanCampus", False),
         ("aimlVxlan", False),
         ("aimlRouted", False),
-        ("ipfm", False),
         ("externalConnectivity", True),
         ("vxlan", True),
         ("enhancedClassicLan", True),
@@ -600,17 +599,6 @@ def test_fabric_capability_validation_rejects_routed_non_nxos():
             "routed",
             [_cfg(platform_type="ios-xe")],
         )
-
-
-def test_fabric_capability_validation_allows_ipfm_tier2_leaf():
-    """IPFM exposes tier2_leaf as a supported user-facing role."""
-    capability = validate_switch_configs_for_fabric_type(
-        "IPFM1",
-        "ipfm",
-        [_cfg(role="tier2_leaf", preserve_config=False)],
-    )
-
-    assert capability.family == "IPFM"
 
 
 def test_compute_changes_classifies_normal_switches():
