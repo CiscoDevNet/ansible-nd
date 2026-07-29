@@ -320,15 +320,15 @@ class SwitchConfigModel(NDBaseModel):
         default=None,
         description="Role to assign to the switch. Omit to use the controller default.",
     )
-    preserve_config: bool = Field(
-        default=False,
+    preserve_config: bool | None = Field(
+        default=None,
         alias="preserveConfig",
-        description="Set to false for greenfield, true for brownfield deployment",
+        description="Set to false for greenfield, true for brownfield deployment. Omit to derive from fabric type.",
     )
-    platform_type: PlatformType = Field(
-        default=PlatformType.NX_OS,
+    platform_type: PlatformType | None = Field(
+        default=None,
         alias="platformType",
-        description="Platform type of the switch (nx-os, ios-xe, etc.)",
+        description="Platform type of the switch (nx-os, ios-xe, etc.). Omit to use nx-os for add operations.",
     )
 
     # POAP, Pre-provision and RMA configurations
@@ -591,7 +591,7 @@ class SwitchConfigModel(NDBaseModel):
 
     @field_validator("platform_type", mode="before")
     @classmethod
-    def normalize_platform_type(cls, v: str | PlatformType | None) -> PlatformType:
+    def normalize_platform_type(cls, v: str | PlatformType | None) -> PlatformType | None:
         """
         # Summary
 
@@ -611,7 +611,7 @@ class SwitchConfigModel(NDBaseModel):
         return platform_type
 
     @staticmethod
-    def _normalize_config_platform_type(value: str | PlatformType | None) -> PlatformType:
+    def _normalize_config_platform_type(value: str | PlatformType | None) -> PlatformType | None:
         """
         # Summary
 
@@ -623,7 +623,7 @@ class SwitchConfigModel(NDBaseModel):
             ``PlatformType``.
         """
         if value is None:
-            return PlatformType.NX_OS
+            return None
         if isinstance(value, PlatformType):
             return value
         if isinstance(value, str):
@@ -680,18 +680,19 @@ class SwitchConfigModel(NDBaseModel):
     def to_gathered_dict(self) -> dict[str, Any]:
         """Return a config dict suitable for gathered output.
 
-        platform_type is excluded (internal detail not needed by the user).
+        platform_type is included when present so gathered non-NX switches can be
+        replayed without changing their platform identity.
         username and password are replaced with placeholders so the returned
         data is immediately usable as ``config:`` input after substituting
         real credentials.
 
         ## Returns
 
-        - Dict with seed_ip, role, auth_proto, preserve_config,
+        - Dict with seed_ip, role, auth_proto, platform_type,
             username set to ``"<username>"``, password set to ``"<password>"``.
         """
         result = self.to_config()
-        for key in ("platform_type", "poap", "preprovision", "rma", "operation_type"):
+        for key in ("poap", "preprovision", "rma", "operation_type"):
             result.pop(key, None)
         result["username"] = "<username>"
         result["password"] = "<password>"
@@ -771,10 +772,9 @@ class SwitchConfigModel(NDBaseModel):
                             "tier2_leaf",
                         ],
                     ),
-                    preserve_config=dict(type="bool", default=False),
+                    preserve_config=dict(type="bool"),
                     platform_type=dict(
                         type="str",
-                        default="nx-os",
                         choices=[
                             "nx-os",
                             "ios-xe",

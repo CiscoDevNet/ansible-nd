@@ -1552,7 +1552,8 @@ class SwitchFabricOps:
         ready_without_reload: list[tuple[str, SwitchConfigModel]] = []
 
         for serial_number, cfg in switch_actions:
-            if cfg.platform_type == PlatformType.NX_OS:
+            platform_type = cfg.platform_type or PlatformType.NX_OS
+            if platform_type == PlatformType.NX_OS:
                 if cfg.preserve_config:
                     nxos_preserve.append((serial_number, cfg))
                 else:
@@ -2737,7 +2738,7 @@ class NDSwitchResourceModule:
         """Convert an inventory collection (SwitchDataModel) to gathered-format config dicts.
 
         Produces the same shape as gathered state output: seed_ip, role, auth_proto,
-        preserve_config, username/password placeholders.  Built directly from
+        platform_type, username/password placeholders.  Built directly from
         SwitchDataModel fields to avoid re-running Pydantic validators.
         """
         result = []
@@ -2745,16 +2746,17 @@ class NDSwitchResourceModule:
             if not sw.fabric_management_ip:
                 continue
             role = sw.switch_role
-            result.append(
-                {
-                    "seed_ip": sw.fabric_management_ip,
-                    "role": getattr(role, "value", str(role)) if role else "leaf",
-                    "auth_proto": "MD5",
-                    "preserve_config": False,
-                    "username": "<username>",
-                    "password": "<password>",
-                }
-            )
+            platform_type = sw.additional_data.platform_type if sw.additional_data and hasattr(sw.additional_data, "platform_type") else None
+            entry = {
+                "seed_ip": sw.fabric_management_ip,
+                "role": getattr(role, "value", str(role)) if role else "leaf",
+                "auth_proto": "MD5",
+                "username": "<username>",
+                "password": "<password>",
+            }
+            if platform_type is not None:
+                entry["platform_type"] = getattr(platform_type, "value", str(platform_type))
+            result.append(entry)
         return result
 
     def _proposed_to_config_list(self, configs: list["SwitchConfigModel"]) -> list[dict[str, Any]]:
@@ -2763,7 +2765,6 @@ class NDSwitchResourceModule:
         for cfg in configs:
             try:
                 entry = cfg.to_config()
-                entry.pop("platform_type", None)
                 entry.pop("operation_type", None)
                 entry["password"] = "<password>"
                 result.append(entry)
@@ -2827,13 +2828,15 @@ class NDSwitchResourceModule:
                 if not sw.fabric_management_ip:
                     continue
                 role = sw.switch_role
-                diff_list.append(
-                    {
-                        "seed_ip": sw.fabric_management_ip,
-                        "role": getattr(role, "value", str(role)) if role else "leaf",
-                        "_action": "deleted",
-                    }
-                )
+                platform_type = sw.additional_data.platform_type if sw.additional_data and hasattr(sw.additional_data, "platform_type") else None
+                entry = {
+                    "seed_ip": sw.fabric_management_ip,
+                    "role": getattr(role, "value", str(role)) if role else "leaf",
+                    "_action": "deleted",
+                }
+                if platform_type is not None:
+                    entry["platform_type"] = getattr(platform_type, "value", str(platform_type))
+                diff_list.append(entry)
 
             # Switches that would be added (normal to_add + POAP/preprov/rma)
             adds: list[SwitchConfigModel] = (
@@ -2842,7 +2845,6 @@ class NDSwitchResourceModule:
             for cfg in adds:
                 try:
                     entry = cfg.to_config()
-                    entry.pop("platform_type", None)
                     entry.pop("operation_type", None)
                     entry["password"] = "<password>"
                     entry["_action"] = "added"
@@ -2854,7 +2856,6 @@ class NDSwitchResourceModule:
             for cfg in plan.to_update:
                 try:
                     entry = cfg.to_config()
-                    entry.pop("platform_type", None)
                     entry.pop("operation_type", None)
                     entry["password"] = "<password>"
                     entry["_action"] = "updated"
@@ -2871,16 +2872,20 @@ class NDSwitchResourceModule:
                 # poap/preprovision sub-blocks since those reflect the user's
                 # desired discovery method, not the resulting inventory state.
                 role = cfg.role
-                after_list.append(
-                    {
-                        "seed_ip": cfg.seed_ip,
-                        "role": getattr(role, "value", str(role)) if role else "leaf",
-                        "auth_proto": "MD5",
-                        "preserve_config": bool(getattr(cfg, "preserve_config", False)),
-                        "username": "<username>",
-                        "password": "<password>",
-                    }
-                )
+                entry = {
+                    "seed_ip": cfg.seed_ip,
+                    "role": getattr(role, "value", str(role)) if role else "leaf",
+                    "auth_proto": "MD5",
+                    "username": "<username>",
+                    "password": "<password>",
+                }
+                platform_type = getattr(cfg, "platform_type", None)
+                preserve_config = getattr(cfg, "preserve_config", None)
+                if platform_type is not None:
+                    entry["platform_type"] = getattr(platform_type, "value", str(platform_type))
+                if preserve_config is not None:
+                    entry["preserve_config"] = preserve_config
+                after_list.append(entry)
             # Apply role updates in-place
             update_role_map = {cfg.seed_ip: cfg for cfg in plan.to_update}
             for entry in after_list:
@@ -2895,13 +2900,15 @@ class NDSwitchResourceModule:
                 if not sw.fabric_management_ip:
                     continue
                 role = sw.switch_role
-                diff_list.append(
-                    {
-                        "seed_ip": sw.fabric_management_ip,
-                        "role": getattr(role, "value", str(role)) if role else "leaf",
-                        "_action": "deleted",
-                    }
-                )
+                platform_type = sw.additional_data.platform_type if sw.additional_data and hasattr(sw.additional_data, "platform_type") else None
+                entry = {
+                    "seed_ip": sw.fabric_management_ip,
+                    "role": getattr(role, "value", str(role)) if role else "leaf",
+                    "_action": "deleted",
+                }
+                if platform_type is not None:
+                    entry["platform_type"] = getattr(platform_type, "value", str(platform_type))
+                diff_list.append(entry)
 
         changed = bool(diff_list)
         output_level = self.module.params.get("output_level", "normal")
@@ -2955,20 +2962,21 @@ class NDSwitchResourceModule:
                 if not sw.fabric_management_ip:
                     continue
                 role = sw.switch_role
+                platform_type = sw.additional_data.platform_type if sw.additional_data and hasattr(sw.additional_data, "platform_type") else None
                 entry = {
                     "seed_ip": sw.fabric_management_ip,
                     "role": getattr(role, "value", str(role)) if role else "leaf",
                     "auth_proto": "MD5",
-                    "preserve_config": False,
                     "username": "<username>",
                     "password": "<password>",
                     "_action": "deleted",
                 }
+                if platform_type is not None:
+                    entry["platform_type"] = getattr(platform_type, "value", str(platform_type))
                 diff_list.append(entry)
             for cfg in self.sent_adds:
                 try:
                     entry = cfg.to_config()
-                    entry.pop("platform_type", None)
                     entry.pop("operation_type", None)
                     entry["password"] = "<password>"
                     entry["_action"] = "added"

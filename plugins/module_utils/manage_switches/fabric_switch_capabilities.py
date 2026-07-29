@@ -29,6 +29,7 @@ class FabricSwitchCapability:
     platform_types: frozenset[PlatformType]
     roles: frozenset[SwitchRole]
     preserve_config_values: frozenset[bool]
+    default_preserve_config: bool
     roles_by_platform: dict[PlatformType, frozenset[SwitchRole]] | None = None
 
 
@@ -98,6 +99,7 @@ CAPABILITIES = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=ROUTED_ROLES,
         preserve_config_values=frozenset({False}),
+        default_preserve_config=False,
     ),
     FabricSwitchCapability(
         family="External",
@@ -105,6 +107,7 @@ CAPABILITIES = (
         platform_types=frozenset({PlatformType.NX_OS, PlatformType.IOS_XE, PlatformType.IOS_XR, PlatformType.OTHER}),
         roles=BROAD_FABRIC_ROLES,
         preserve_config_values=frozenset({True}),
+        default_preserve_config=True,
     ),
     FabricSwitchCapability(
         family="DataCenter VXLAN",
@@ -112,6 +115,7 @@ CAPABILITIES = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=BROAD_FABRIC_ROLES,
         preserve_config_values=frozenset({False, True}),
+        default_preserve_config=True,
     ),
     FabricSwitchCapability(
         family="Campus VXLAN",
@@ -119,6 +123,7 @@ CAPABILITIES = (
         platform_types=frozenset({PlatformType.NX_OS, PlatformType.IOS_XE}),
         roles=CAMPUS_VXLAN_ROLES,
         preserve_config_values=frozenset({False}),
+        default_preserve_config=False,
         roles_by_platform={
             PlatformType.IOS_XE: CAMPUS_VXLAN_IOS_XE_ROLES,
             PlatformType.NX_OS: CAMPUS_VXLAN_NX_OS_ROLES,
@@ -130,6 +135,7 @@ CAPABILITIES = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=ENHANCED_CLASSIC_LAN_ROLES,
         preserve_config_values=frozenset({False, True}),
+        default_preserve_config=True,
     ),
     FabricSwitchCapability(
         family="AI VXLAN",
@@ -137,6 +143,7 @@ CAPABILITIES = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=AI_VXLAN_ROLES,
         preserve_config_values=frozenset({False}),
+        default_preserve_config=False,
     ),
     FabricSwitchCapability(
         family="AI Routed",
@@ -144,6 +151,7 @@ CAPABILITIES = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=ROUTED_ROLES,
         preserve_config_values=frozenset({False}),
+        default_preserve_config=False,
     ),
     FabricSwitchCapability(
         family="IPFM",
@@ -151,6 +159,7 @@ CAPABILITIES = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=IPFM_ROLES,
         preserve_config_values=frozenset({False}),
+        default_preserve_config=False,
     ),
 )
 
@@ -177,6 +186,16 @@ def _supported_roles_for_platform(capability: FabricSwitchCapability, platform_t
     if capability.roles_by_platform is None:
         return capability.roles
     return capability.roles_by_platform.get(platform_type, capability.roles)
+
+
+def _resolve_preserve_config(capability: FabricSwitchCapability, preserve_config: bool | None) -> bool:
+    """Return explicit preserve_config or the fabric-derived default."""
+    return capability.default_preserve_config if preserve_config is None else preserve_config
+
+
+def _resolve_platform_type(platform_type: PlatformType | None) -> PlatformType:
+    """Return explicit platform_type or the add-operation default."""
+    return PlatformType.NX_OS if platform_type is None else platform_type
 
 
 def _normalize_fabric_type(value: str) -> str:
@@ -226,6 +245,7 @@ def validate_switch_configs_for_fabric_type(
     errors: list[str] = []
     for cfg in configs:
         prefix = f"{cfg.seed_ip}"
+        cfg.platform_type = _resolve_platform_type(cfg.platform_type)
         platform_type = cfg.platform_type
         role = SwitchRole.normalize(cfg.role) if cfg.role else None
         if platform_type not in capability.platform_types:
@@ -240,6 +260,7 @@ def validate_switch_configs_for_fabric_type(
                 f"{prefix}: role '{role_display}' is not supported for platform_type '{_enum_value(cfg.platform_type)}' in "
                 f"{capability.family} fabric '{fabric_name}' (type '{fabric_type}'). Supported role values: {_enum_values(supported_roles)}."
             )
+        cfg.preserve_config = _resolve_preserve_config(capability, cfg.preserve_config)
         if cfg.preserve_config not in capability.preserve_config_values:
             errors.append(
                 f"{prefix}: preserve_config '{str(cfg.preserve_config).lower()}' is not supported for {capability.family} fabric "

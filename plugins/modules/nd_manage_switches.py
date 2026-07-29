@@ -120,19 +120,20 @@ options:
                 - edge_router
                 - core_router
                 - tor
-                - tier2_leaf
             preserve_config:
                 description:
                 - Set to C(false) for greenfield deployment, C(true) for brownfield.
-                - Supported values depend on the target fabric type. See C(notes).
+                - When omitted, the module derives the value from the target fabric
+                  type after querying the fabric.
+                - Supported explicit values depend on the target fabric type. See
+                  C(notes).
                 type: bool
-                default: false
             platform_type:
                 description:
                 - Platform type of the switch.
+                - When omitted for add operations, the module uses C(nx-os).
                 - Supported values depend on the target fabric type. See C(notes).
                 type: str
-                default: nx-os
                 choices:
                 - nx-os
                 - ios-xe
@@ -287,19 +288,21 @@ notes:
   default applies on add.
 - The module validates switch platform, provided C(role), and C(preserve_config)
   against the resolved fabric type before discovery or write operations.
-- 'NX-OS only fabrics: Routed, DataCenter VXLAN, Enhanced Classic LAN, AI VXLAN,
-  AI Routed, and IPFM.'
-- 'NX-OS and IOS-XE fabrics: Campus VXLAN.'
-- 'NX-OS, IOS-XE, IOS-XR, and other platform fabrics: External.'
+- NX-OS only fabrics - Routed, DataCenter VXLAN, Enhanced Classic LAN, AI VXLAN,
+  AI Routed.
+- NX-OS and IOS-XE fabrics - Campus VXLAN.
+- NX-OS, IOS-XE, IOS-XR, and other platform fabrics - External.
 - C(preserve_config) must be C(false) for Routed, Campus VXLAN, AI VXLAN,
-  AI Routed, and IPFM fabrics.
+  AI Routed.
 - C(preserve_config) must be C(true) for External fabrics.
 - C(preserve_config) can be C(true) or C(false) for DataCenter VXLAN and
   Enhanced Classic LAN fabrics.
+- When C(preserve_config) is omitted, the module derives C(false) for Routed,
+  Campus VXLAN, AI VXLAN, AI Routed and derives C(true) for
+  External, DataCenter VXLAN, and Enhanced Classic LAN fabrics.
 - Campus VXLAN supports C(leaf) and C(spine) roles for IOS-XE switches.
 - Campus VXLAN supports C(border_gateway), C(border_gateway_spine), and
   C(border_gateway_super_spine) roles for NX-OS switches.
-- IPFM supports C(leaf), C(spine), and C(tier2_leaf) switch roles.
 - Validation failures include the exact supported platform, provided C(role),
   and C(preserve_config) values for the target fabric type.
 """

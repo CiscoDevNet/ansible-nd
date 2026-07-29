@@ -488,7 +488,7 @@ def test_switch_argument_spec_exposes_supported_platform_type_choices():
     """Playbook argspec exposes platform_type while excluding unsupported enum values."""
     platform_spec = SwitchConfigModel.get_argument_spec()["config"]["options"]["platform_type"]
 
-    assert platform_spec["default"] == "nx-os"
+    assert "default" not in platform_spec
     assert platform_spec["choices"] == ["nx-os", "ios-xe", "ios-xr", "other"]
 
 
@@ -568,6 +568,28 @@ def test_fabric_capability_validation_rejects_external_without_preserve_config()
             "externalConnectivity",
             [_cfg(preserve_config=False)],
         )
+
+
+@pytest.mark.parametrize(
+    ("fabric_type", "expected"),
+    [
+        ("routed", False),
+        ("vxlanCampus", False),
+        ("aimlVxlan", False),
+        ("aimlRouted", False),
+        ("ipfm", False),
+        ("externalConnectivity", True),
+        ("vxlan", True),
+        ("enhancedClassicLan", True),
+    ],
+)
+def test_fabric_capability_validation_derives_omitted_preserve_config(fabric_type, expected):
+    """Omitted preserve_config is derived from the resolved fabric type."""
+    cfg = _cfg_without_role()
+
+    validate_switch_configs_for_fabric_type("FAB1", fabric_type, [cfg])
+
+    assert cfg.preserve_config is expected
 
 
 def test_fabric_capability_validation_rejects_routed_non_nxos():
@@ -1199,9 +1221,9 @@ def test_resource_module_check_mode_output_and_deleted_state():
 
     output = resource._build_check_mode_output()
     assert output["changed"] is True
-    assert output["diff"] == [{"seed_ip": "192.0.2.10", "role": "leaf", "_action": "deleted"}]
+    assert output["diff"] == [{"seed_ip": "192.0.2.10", "role": "leaf", "_action": "deleted", "platform_type": "nx-os"}]
     assert output["after"] == [
-        {"seed_ip": "192.0.2.11", "role": "spine", "auth_proto": "MD5", "preserve_config": False, "username": "<username>", "password": "<password>"}
+        {"seed_ip": "192.0.2.11", "role": "spine", "auth_proto": "MD5", "username": "<username>", "password": "<password>", "platform_type": "nx-os"}
     ]
 
 

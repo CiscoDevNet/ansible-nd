@@ -137,6 +137,7 @@ def test_switch_config_state_defaults_and_gathered_output_mask_credentials():
     assert gathered["password"] == "<password>"
     assert "role" not in gathered
     assert "platform_type" not in gathered
+    assert "preserve_config" not in gathered
 
 
 def test_switch_config_rejects_explicit_null_role():
@@ -234,3 +235,4 @@ def test_switch_config_from_switch_data_uses_live_role_and_platform():
     assert cfg.seed_ip == "192.0.2.10"
     assert cfg.role == "leaf"
     assert cfg.platform_type == "nx-os"
+    assert cfg.to_gathered_dict()["platform_type"] == "nx-os"
