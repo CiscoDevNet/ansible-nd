@@ -60,6 +60,7 @@ class NDBaseModel(BaseModel, ABC):
     # --- Gathered Filtering Configuration ---
 
     supports_gathered_filtering: ClassVar[bool] = False
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = ()
 
     @classmethod
     def normalize_gathered_filter(cls, filter_item: dict) -> dict:

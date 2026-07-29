@@ -135,7 +135,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         },
     )
 
-
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
     delete_endpoint: type[NDEndpointBaseModel] = NDEndpointBaseModel  # unused; delete() uses bulk remove
@@ -317,12 +316,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         if interface.get("interfaceType") != "loopback":
             return False
 
-        policy_type = (
-            interface.get("configData", {})
-            .get("networkOS", {})
-            .get("policy", {})
-            .get("policyType")
-        )
+        policy_type = interface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType")
 
         managed_policy_types = {pt.value for pt in LoopbackPolicyTypeEnum} | {pt.value for pt in XeLoopbackPolicyTypeEnum}
         return policy_type in managed_policy_types
@@ -383,10 +377,11 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     ) -> list[dict]:
         """Query every page for one Lucene expression."""
         page_size = 500
+        max_pages = 100
         offset = 0
         candidates: list[dict] = []
 
-        while True:
+        for _page_number in range(max_pages):
             api_endpoint = self._configure_endpoint(
                 self.query_all_endpoint(),
                 switch_sn=switch_id,
@@ -411,18 +406,25 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             page = result.get("interfaces", []) or []
             candidates.extend(page)
 
-            meta = result.get("meta") or {}
-            counts = meta.get("counts") or {}
-            try:
-                remaining = int(counts.get("remaining", 0))
-            except (TypeError, ValueError):
-                remaining = 0
-
-            if not page or remaining <= 0:
+            if not page:
                 break
 
-            offset += len(page)
+            meta = result.get("meta") or {}
+            counts = meta.get("counts") or {}
+            remaining_raw = counts.get("remaining")
 
+            if remaining_raw is not None:
+                try:
+                    remaining = int(remaining_raw)
+                except (TypeError, ValueError):
+                    remaining = None
+            else:
+                remaining = None
+            if remaining is not None and remaining <= 0:
+                break
+            if remaining is None and len(page) < page_size:
+                break
+            offset += len(page)
         return candidates
 
     def query_all(

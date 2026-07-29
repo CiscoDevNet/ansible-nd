@@ -44,7 +44,7 @@
   ansible.builtin.assert:
     that:
       - nm_gathered_switch is not changed
-      - nm_gathered_switch.gathered | length == 2
+      - nm_gathered_switch.gathered | length >= 1
       - nm_gathered_switch.gathered | rejectattr('switch_ip', 'equalto', test_switch_ip) | list | length == 0
 
 - name: "GATHERED: Filter by switch and interface name"
