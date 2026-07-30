@@ -115,7 +115,7 @@ def test_manage_community_list_00050() -> None:
             "name": "tenantA~CL-TENANT",
             "tenant_name": "tenantA",
             "type": "standard",
-            "entries": [{"sequence_number": 10, "action": "permit"}],
+            "entries": [{"sequence_number": 10, "action": "permit", "internet": True}],
         }
     )
 
@@ -182,7 +182,7 @@ def test_manage_community_list_00090() -> None:
         {
             "name": "CL1",
             "type": "standard",
-            "entries": [{"sequence_number": 10, "action": "permit"}],
+            "entries": [{"sequence_number": 10, "action": "permit", "internet": True}],
         },
         context={"state": "merged"},
     )
@@ -244,15 +244,104 @@ def test_manage_community_list_00110() -> None:
         {
             "name": "CL1",
             "type": "standard",
-            "entries": [{"sequenceNumber": 10, "action": "permit", "noExport": True}],
+            "entries": [
+                {
+                    "sequenceNumber": 10,
+                    "action": "permit",
+                    "communityNumbers": ["100:200"],
+                    "noExport": True,
+                }
+            ],
         }
     )
     proposed = CommunityListModel.from_config(
         {
             "name": "CL1",
             "type": "standard",
-            "entries": [{"sequence_number": 10, "action": "permit", "no_export": False}],
+            "entries": [
+                {
+                    "sequence_number": 10,
+                    "action": "permit",
+                    "community_numbers": ["100:200"],
+                    "no_export": False,
+                }
+            ],
         }
     )
 
     assert current.get_diff(proposed, exclude_unset=True) is False
+
+
+@pytest.mark.parametrize(
+    "entry",
+    (
+        {"sequence_number": 10, "action": "permit"},
+        {"sequence_number": 10, "action": "permit", "community_numbers": []},
+        {
+            "sequence_number": 10,
+            "action": "permit",
+            "no_advertise": False,
+            "blackhole": False,
+            "no_export": False,
+            "internet": False,
+            "graceful_shutdown": False,
+            "local_asn": False,
+        },
+    ),
+)
+def test_manage_community_list_00120(entry: dict[str, object]) -> None:
+    """Verify standard config entries require a community number or an enabled flag."""
+    with pytest.raises(ValueError, match="must set at least one community number or enable at least one well-known community flag"):
+        CommunityListModel.from_config(
+            {
+                "name": "CL-STANDARD",
+                "type": "standard",
+                "entries": [entry],
+            },
+            context={"state": "merged"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    (
+        ("community_numbers", ["100:200"]),
+        ("no_advertise", True),
+        ("blackhole", True),
+        ("no_export", True),
+        ("internet", True),
+        ("graceful_shutdown", True),
+        ("local_asn", True),
+    ),
+)
+def test_manage_community_list_00130(field_name: str, field_value: object) -> None:
+    """Verify every supported standard-entry match selector satisfies validation."""
+    entry = {
+        "sequence_number": 10,
+        "action": "permit",
+        field_name: field_value,
+    }
+
+    instance = CommunityListModel.from_config(
+        {
+            "name": "CL-STANDARD",
+            "type": "standard",
+            "entries": [entry],
+        },
+        context={"state": "merged"},
+    )
+
+    assert getattr(instance.entries[0], field_name) == field_value
+
+
+def test_manage_community_list_00140() -> None:
+    """Verify flagless standard entries remain parseable as controller responses."""
+    instance = CommunityListModel.from_response(
+        {
+            "name": "CL-STANDARD",
+            "type": "standard",
+            "entries": [{"sequenceNumber": 10, "action": "permit"}],
+        }
+    )
+
+    assert instance.entries[0].sequence_number == 10

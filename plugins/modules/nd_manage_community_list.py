@@ -67,6 +67,7 @@ options:
         - Required for create and update operations; not required when O(state=deleted).
         - Each entry defines a permit/deny action and the community or regular
           expression to match.
+        - Every standard entry must set at least one explicit community number or enable at least one well-known community flag.
         type: list
         elements: dict
         suboptions:
@@ -161,8 +162,8 @@ extends_documentation_fragment:
 notes:
 - This module is only supported on Nexus Dashboard version 4.2.1 or higher.
 - Community lists are created and deleted in bulk via separate API endpoints.
-- Standard entries that set none of the well-known community flags and leave
-  O(config.entries.community_numbers) empty are valid (match all communities).
+- Every standard entry must set at least one explicit community number or enable
+  at least one well-known community flag.
 - O(config.entries.community_number_regex) is required for every entry when
   O(config.type=expanded); standard-only fields must not be set on expanded entries.
 """

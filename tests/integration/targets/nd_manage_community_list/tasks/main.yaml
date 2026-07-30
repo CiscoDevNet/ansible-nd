@@ -27,6 +27,9 @@
     - name: Pre-test cleanup
       ansible.builtin.include_tasks: setup.yaml
 
+    - name: Run validation tests
+      ansible.builtin.include_tasks: validation.yaml
+
     - name: Run merged state tests
       ansible.builtin.include_tasks: merged.yaml
 

@@ -58,6 +58,14 @@ _STANDARD_FALSE_DEFAULT_ALIASES = (
     "gracefulShutdown",
     "localAsn",
 )
+_STANDARD_WELL_KNOWN_FIELDS = (
+    "no_advertise",
+    "blackhole",
+    "no_export",
+    "internet",
+    "graceful_shutdown",
+    "local_asn",
+)
 
 
 class CommunityListEntryModel(NDNestedModel):
@@ -334,6 +342,14 @@ class CommunityListModel(NDBaseModel):
                         f"entries[{i}].community_number_regex must not be set "
                         "for type='standard'. Use community_numbers or "
                         "well-known community flags instead."
+                    )
+                has_community_number = bool(entry.community_numbers)
+                has_well_known_flag = any(getattr(entry, field_name) is True for field_name in _STANDARD_WELL_KNOWN_FIELDS)
+                if not has_community_number and not has_well_known_flag:
+                    raise ValueError(
+                        f"entries[{i}] must set at least one community number or "
+                        "enable at least one well-known community flag for "
+                        "type='standard'."
                     )
         return self
 
