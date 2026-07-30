@@ -1187,3 +1187,82 @@ def test_l3out_00970() -> None:
     model = L3OutModel(name="test-l3out")
     with does_not_raise():
         instance._resolve_links(model)
+
+
+def test_l3out_00980() -> None:
+    """
+    # Summary
+
+    Verify a terminal per-item attach failure is submitted exactly once (no inner or outer replay).
+
+    ## Test
+
+    - attach POST returns 207 with a non-not-found per-item failure
+    - RestSend timeout (10) exceeds send_interval (1), so only the terminal break prevents inner replay
+    - attach_l3outs re-raises immediately (message lacks "not found"), so the outer loop does not retry
+    - Exactly one response is consumed: the generator holds only one, and a replay would exhaust it with a different error
+
+    ## Classes and Methods
+
+    - L3OutOrchestrator.attach_l3outs()
+    - RestSend._commit_normal_mode()
+    """
+
+    def responses():
+        yield {
+            "RETURN_CODE": 207,
+            "MESSAGE": "Multi-Status",
+            "DATA": {"results": [{"name": "L3Out1", "status": "failed", "message": "L3Out already attached"}]},
+        }
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.timeout = 10
+    rest_send.send_interval = 1
+    instance = L3OutOrchestrator(rest_send=rest_send)
+
+    match = r"already attached"
+    with pytest.raises(Exception, match=match):
+        instance.attach_l3outs([{"name": "L3Out1", "attach": True}], max_retries=2, retry_delay=0)
+
+
+def test_l3out_00990() -> None:
+    """
+    # Summary
+
+    Verify the eventual-consistency outer retry still works for not-found per-item failures.
+
+    ## Test
+
+    - First attach POST returns 207 whose per-item failure message contains "not found"
+    - attach_l3outs catches the raised failure, retries the outer loop, and the second POST succeeds
+    - Each outer attempt submits exactly once (two responses total)
+
+    ## Classes and Methods
+
+    - L3OutOrchestrator.attach_l3outs()
+    - RestSend._commit_normal_mode()
+    """
+
+    def responses():
+        yield {
+            "RETURN_CODE": 207,
+            "MESSAGE": "Multi-Status",
+            "DATA": {"results": [{"name": "L3Out1", "status": "failed", "message": "L3Out L3Out1 not found"}]},
+        }
+        yield {
+            "RETURN_CODE": 200,
+            "MESSAGE": "OK",
+            "DATA": {"results": [{"name": "L3Out1", "status": "success"}]},
+        }
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.timeout = 10
+    rest_send.send_interval = 1
+    instance = L3OutOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.attach_l3outs([{"name": "L3Out1", "attach": True}], max_retries=1, retry_delay=0)
+
+    assert result.get("results", [{}])[0].get("status") == "success"
