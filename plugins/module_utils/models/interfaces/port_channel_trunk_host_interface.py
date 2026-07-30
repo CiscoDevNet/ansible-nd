@@ -262,6 +262,14 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
         "vlanMapping": False,
     }
 
+    # TODO(4.2.1) interface-get-undocumented-ptp-field
+    # ND injects a `ptp` boolean into every port-channel policy GET even though intPortChannelTrunkHostTemplate
+    # declares no such property. The value is not interface state: it reads false until a fabric-PTP deploy, after
+    # which ND rewrites ALL physical/port-channel records to true fabric-wide. Because `ptp` is a declared field on
+    # this model, the echo survives from_response and would count as a pending removal in the reverse pass, so it is
+    # stripped unconditionally (a defaults-table entry of False would re-break after the fabric-wide true rewrite).
+    reverse_diff_exclude: ClassVar[set[str]] = {"ptp"}
+
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
     allowed_vlans: AllowedVlans = Field(
         default=None,

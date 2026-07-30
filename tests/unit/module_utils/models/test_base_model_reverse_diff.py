@@ -663,6 +663,96 @@ def test_base_model_reverse_diff_00550() -> None:
     assert existing.get_diff(proposed, exclude_unset=False) is False
 
 
+# The ND-injected `ptp` echo observed on port-channel policy GETs (deviation: interface-get-undocumented-ptp-field).
+# `ptp` is a declared field on PortChannelTrunkHostPolicyModel, so unlike the sibling models (where the injected key
+# lands in `model_extra` and is scrubbed as an extra) it survives `from_response` and must be stripped explicitly.
+PORT_CHANNEL_TRUNK_HOST_PTP_ECHO = {
+    "policyType": "trunkPoHost",
+    "adminState": True,
+    "allowedVlans": "100-110",
+    "ports": ["Ethernet1/1", "Ethernet1/2"],
+}
+
+PORT_CHANNEL_TRUNK_HOST_PTP_CONFIG = {
+    "admin_state": True,
+    "allowed_vlans": "100-110",
+    "ports": ["Ethernet1/1", "Ethernet1/2"],
+}
+
+
+def test_base_model_reverse_diff_00560() -> None:
+    """
+    # Summary
+
+    ND injects `ptp: false` into port-channel trunkPoHost policy GETs even though `intPortChannelTrunkHostTemplate`
+    declares no `ptp` property (deviation: interface-get-undocumented-ptp-field). Because `ptp` is a declared field
+    on `PortChannelTrunkHostPolicyModel`, the echo survives `from_response`; a proposed config omitting `ptp` must
+    still be `no_diff` on the replaced/overridden path (PR #422 review finding).
+
+    ## Test
+
+    - An existing `PortChannelTrunkHostPolicyModel` built from a response carrying the injected `ptp: false`.
+    - A proposed model re-stating the configured fields but omitting `ptp`.
+    - `get_diff(proposed, exclude_unset=False)` is `True` (no difference).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - NDBaseModel.to_reverse_diff_dict()
+    """
+    existing = PortChannelTrunkHostPolicyModel.from_response({**PORT_CHANNEL_TRUNK_HOST_PTP_ECHO, "ptp": False})
+    proposed = PortChannelTrunkHostPolicyModel.from_config(dict(PORT_CHANNEL_TRUNK_HOST_PTP_CONFIG))
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+def test_base_model_reverse_diff_00570() -> None:
+    """
+    # Summary
+
+    After a fabric-PTP deploy, ND rewrites the injected `ptp` to `true` fabric-wide on ALL existing physical and
+    port-channel records, even on interfaces with no PTP configuration (deviation:
+    interface-get-undocumented-ptp-field). The strip must therefore be value-independent (`reverse_diff_exclude`,
+    not a `reverse_diff_defaults` entry of `False`) so idempotency also holds against the `true` rewrite.
+
+    ## Test
+
+    - An existing `PortChannelTrunkHostPolicyModel` built from a response carrying the rewritten `ptp: true`.
+    - A proposed model re-stating the configured fields but omitting `ptp`.
+    - `get_diff(proposed, exclude_unset=False)` is `True` (no difference).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - NDBaseModel.to_reverse_diff_dict()
+    """
+    existing = PortChannelTrunkHostPolicyModel.from_response({**PORT_CHANNEL_TRUNK_HOST_PTP_ECHO, "ptp": True})
+    proposed = PortChannelTrunkHostPolicyModel.from_config(dict(PORT_CHANNEL_TRUNK_HOST_PTP_CONFIG))
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+def test_base_model_reverse_diff_00580() -> None:
+    """
+    # Summary
+
+    The `ptp` strip is reverse-pass-only: a user-set `ptp` that differs from the existing-side echo must still be
+    detected by the forward diff, so explicit PTP configuration keeps working.
+
+    ## Test
+
+    - An existing `PortChannelTrunkHostPolicyModel` built from a response carrying `ptp: false`.
+    - A proposed model explicitly setting `ptp: true`.
+    - `get_diff(proposed, exclude_unset=False)` is `False` (difference detected).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - NDBaseModel.to_diff_dict()
+    """
+    existing = PortChannelTrunkHostPolicyModel.from_response({**PORT_CHANNEL_TRUNK_HOST_PTP_ECHO, "ptp": False})
+    proposed = PortChannelTrunkHostPolicyModel.from_config({**PORT_CHANNEL_TRUNK_HOST_PTP_CONFIG, "ptp": True})
+    assert existing.get_diff(proposed, exclude_unset=False) is False
+
+
 # --- 006xx: efficiency contract -- the reverse pass reuses the forward dumps ---
 
 
