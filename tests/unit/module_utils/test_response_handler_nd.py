@@ -2179,3 +2179,153 @@ def test_response_handler_nd_01100():
     instance.commit()
     assert instance.result["success"] is False
     assert instance.result["found"] is False
+
+
+def test_response_handler_nd_01400():
+    """
+    # Summary
+
+    Verify a mixed 207 POST (one success, one failed item) is classified as a terminal failure.
+
+    ## Test
+
+    - POST 207 with results[] holding one success and one failed item
+    - success is False and retryable is False (success-code response with embedded per-item failure cannot succeed on replay)
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "acl_new", "status": "success", "message": "created successfully"},
+                {"name": "acl_seed", "status": "failed", "message": "ACL already exists"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["retryable"] is False
+
+
+def test_response_handler_nd_01410():
+    """
+    # Summary
+
+    Verify a POST failing with a non-success HTTP code remains retryable.
+
+    ## Test
+
+    - POST returns 500
+    - success is False and retryable is True (transient transport-level failures keep today's retry behavior)
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 500,
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "backend unavailable"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["retryable"] is True
+
+
+def test_response_handler_nd_01420():
+    """
+    # Summary
+
+    Verify a fully successful POST carries retryable=False.
+
+    ## Test
+
+    - POST 200 with all items succeeding
+    - success is True and retryable is False (key present on every mutation result for a consistent shape)
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {"results": [{"name": "acl_new", "status": "success"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+    assert instance.result["retryable"] is False
+
+
+def test_response_handler_nd_01430():
+    """
+    # Summary
+
+    Verify DATA.error on a success code is classified as a terminal failure.
+
+    ## Test
+
+    - POST 200 with DATA.error set (pre-existing embedded-error shape)
+    - success is False and retryable is False — the application definitively rejected the request
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {"error": "VRF does not exist"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["retryable"] is False
+
+
+def test_response_handler_nd_01440():
+    """
+    # Summary
+
+    Verify GET results carry no retryable key (GET retry semantics are unchanged).
+
+    ## Test
+
+    - GET returns 500
+    - result has no "retryable" key, so RestSend's .get("retryable", True) default preserves today's GET retry behavior
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 500,
+        "MESSAGE": "Internal Server Error",
+        "DATA": {},
+    }
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert "retryable" not in instance.result
