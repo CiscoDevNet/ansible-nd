@@ -37,8 +37,7 @@ class NDStateMachine:
         """
         if state in cls.WRITE_STATES_REQUIRING_CONFIG and config is None:
             raise NDStateMachineError(
-                f"config must be provided and cannot be null for state '{state}'. "
-                "Use config: [] only when intentionally managing an explicit empty set."
+                f"config must be provided and cannot be null for state '{state}'. " "Use config: [] only when intentionally managing an explicit empty set."
             )
 
     def __init__(self, module: AnsibleModule, model_orchestrator: type[NDBaseOrchestrator] | NDBaseOrchestrator):

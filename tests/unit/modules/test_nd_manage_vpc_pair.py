@@ -132,19 +132,13 @@ def _run_composed_vpc_pair_module(module_args):
                 "inventory": {
                     "syncStatus": {"pending": 0, "outOfSync": 0, "inProgress": 0},
                     "vpcInterfaceCount": 0,
-                }
+                },
             }
         raise AssertionError((method, path, data))
 
-    with patch.object(ansible_basic, "_ANSIBLE_ARGS", raw_args), patch.object(
-        nd_manage_vpc_pair.AnsibleModule, "exit_json", exit_json
-    ), patch.object(
+    with patch.object(ansible_basic, "_ANSIBLE_ARGS", raw_args), patch.object(nd_manage_vpc_pair.AnsibleModule, "exit_json", exit_json), patch.object(
         nd_manage_vpc_pair.AnsibleModule, "fail_json", fail_json
-    ), patch.object(
-        nd_manage_vpc_pair, "setup_logging"
-    ), patch.object(
-        NDModule, "request", nd_request
-    ):
+    ), patch.object(nd_manage_vpc_pair, "setup_logging"), patch.object(NDModule, "request", nd_request):
         try:
             nd_manage_vpc_pair.main()
         except _ModuleFailure as exc:
@@ -199,16 +193,9 @@ def test_vpc_pair_wrapper_explicit_empty_overridden_deletes_existing_pairs():
     assert run["result"]["changed"] is True
     assert len(run["result"]["deleted"]) == 2
 
-    put_calls = [
-        (path, data)
-        for method, path, data in run["controller_calls"]
-        if method == "PUT"
-    ]
+    put_calls = [(path, data) for method, path, data in run["controller_calls"] if method == "PUT"]
     assert len(put_calls) == 2
-    unpair_calls = {
-        path: data
-        for path, data in put_calls
-    }
+    unpair_calls = dict(put_calls)
     assert unpair_calls == {
         "/api/v1/manage/fabrics/fab1/switches/SWA/vpcPair": {
             "vpcAction": "unPair",
@@ -221,7 +208,4 @@ def test_vpc_pair_wrapper_explicit_empty_overridden_deletes_existing_pairs():
             "peerSwitchId": "SWD",
         },
     }
-    assert all(
-        method in {"GET", "PUT"}
-        for method, _path, _data in run["controller_calls"]
-    )
+    assert all(method in {"GET", "PUT"} for method, _path, _data in run["controller_calls"])
