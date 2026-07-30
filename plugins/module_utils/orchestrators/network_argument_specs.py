@@ -14,8 +14,6 @@ VLAN_NETWORK_TYPE_CHOICES = [
     "normal",
     "private_primary",
     "private_secondary_community",
-    "primary_secondary_isolated",
-    "child",
 ]
 
 
@@ -48,8 +46,7 @@ def _attachment_spec():
     )
 
 
-def _shared_network_fields(defaults=True):
-    bool_default = False if defaults else None
+def _shared_network_fields():
     return dict(
         network_id=dict(type="int"),
         net_id=dict(type="int"),
@@ -67,10 +64,10 @@ def _shared_network_fields(defaults=True):
         secondary_gateway_ipv6_collection=dict(type="list", elements="str"),
         vlan_intf_desc=dict(type="str"),
         int_desc=dict(type="str"),
-        mtu=dict(type="int", default=9216) if defaults else dict(type="int"),
-        mtu_l3intf=dict(type="int", default=9216) if defaults else dict(type="int"),
-        arp_suppression=dict(type="bool", default=bool_default) if defaults else dict(type="bool"),
-        arp_suppress=dict(type="bool", default=bool_default) if defaults else dict(type="bool"),
+        mtu=dict(type="int"),
+        mtu_l3intf=dict(type="int"),
+        arp_suppression=dict(type="bool"),
+        arp_suppress=dict(type="bool"),
         routing_tag=dict(type="int"),
         dhcp_servers=dict(type="list", elements="dict", options=_dhcp_server_spec()),
         dhcp_srvr1_ip=dict(type="str"),
@@ -84,13 +81,13 @@ def _shared_network_fields(defaults=True):
         igmp_version=dict(type="int", choices=[1, 2, 3]),
         trm_enable=dict(type="bool"),
         ipv6_trm=dict(type="bool"),
-        route_target_both=dict(type="bool", default=bool_default) if defaults else dict(type="bool"),
+        route_target_both=dict(type="bool"),
         l2_fabric_data=dict(type="dict"),
         stretch=dict(type="str"),
-        enable_ir=dict(type="bool", default=False) if defaults else dict(type="bool"),
+        enable_ir=dict(type="bool"),
         multicast_group_address=dict(type="str"),
         ds_vni=dict(type="int"),
-        netflow_enable=dict(type="bool", default=bool_default) if defaults else dict(type="bool"),
+        netflow_enable=dict(type="bool"),
         intfvlan_nf_monitor=dict(type="str"),
         vlan_nf_monitor=dict(type="str"),
         gateway_on_border=dict(type="bool"),
@@ -131,9 +128,6 @@ def network_base_argument_spec():
         network_type=dict(type="str", choices=NETWORK_TYPE_CHOICES),
         vlan_network_type=dict(type="str", choices=VLAN_NETWORK_TYPE_CHOICES),
         primary_network_id=dict(type="int"),
-        primary_network_name=dict(type="str"),
-        normal_network_id=dict(type="int"),
-        normal_network_name=dict(type="str"),
         display_name=dict(type="str"),
         vrf_name=dict(type="str"),
         tenant_name=dict(type="str"),
@@ -150,7 +144,7 @@ def network_base_argument_spec():
         deploy_type=dict(type="str", default="switch", choices=["switch", "network"]),
         attach=dict(type="list", elements="dict", options=_attachment_spec()),
     )
-    spec.update(_shared_network_fields(defaults=True))
+    spec.update(_shared_network_fields())
     return spec
 
 

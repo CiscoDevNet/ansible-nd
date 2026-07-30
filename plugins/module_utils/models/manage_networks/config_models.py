@@ -153,9 +153,6 @@ class NetworkConfigModel(NDBaseModel):
     network_type: str | None = Field(default=None, alias="networkType")
     vlan_network_type: str = Field(default=VlanNetworkType.NORMAL.value, alias="vlanNetworkType")
     primary_network_id: int | None = Field(default=None, alias="primaryNetworkId")
-    primary_network_name: str | None = Field(default=None, alias="primaryNetworkName")
-    normal_network_id: int | None = Field(default=None, alias="normalNetworkId")
-    normal_network_name: str | None = Field(default=None, alias="normalNetworkName")
     display_name: str | None = Field(default=None, alias="displayName")
     vrf_name: str | None = Field(default=None, alias="vrfName", max_length=32)
     vlan_id: int | None = Field(default=None, alias="vlanId")
@@ -275,7 +272,7 @@ class NetworkConfigModel(NDBaseModel):
     def _validate_tenant_name(cls, v: str | None) -> str | None:
         return NetworkValidators.validate_tenant_name(v)
 
-    @field_validator("network_id", "primary_network_id", "normal_network_id", mode="before")
+    @field_validator("network_id", "primary_network_id", mode="before")
     @classmethod
     def _validate_network_id(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_network_id(v)
@@ -358,38 +355,24 @@ class NetworkConfigModel(NDBaseModel):
 
     def _check_vlan_network_type_rules(self) -> None:
         role = self.vlan_network_type
-        primary_refs = [name for name in ("primary_network_id", "primary_network_name") if getattr(self, name) is not None]
-        normal_refs = [name for name in ("normal_network_id", "normal_network_name") if getattr(self, name) is not None]
+        primary_refs = [name for name in ("primary_network_id",) if getattr(self, name) is not None]
 
         if role in (VlanNetworkType.NORMAL.value, VlanNetworkType.PRIVATE_PRIMARY.value):
-            refs = primary_refs + normal_refs
-            if refs:
-                raise ValueError(f"{role} networks do not use parent network references: {', '.join(refs)}")
+            if primary_refs:
+                raise ValueError(f"{role} networks do not use parent network references: {', '.join(primary_refs)}")
             return
 
-        if role in (VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value, VlanNetworkType.PRIMARY_SECONDARY_ISOLATED.value):
+        if role == VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value:
             if not primary_refs:
-                raise ValueError(f"{role} requires primary_network_id or primary_network_name")
-            if normal_refs:
-                raise ValueError(f"{role} uses primary_network_id/name, not normal_network_id/name")
+                raise ValueError(f"{role} requires primary_network_id")
             self._reject_l3_fields_for_vlan_network_type(role)
             return
+
+        if role == VlanNetworkType.PRIMARY_SECONDARY_ISOLATED.value:
+            raise ValueError("primary_secondary_isolated networks are not supported by this module")
 
         if role == VlanNetworkType.CHILD.value:
-            if network_type := self.network_type:
-                if network_type in (NetworkType.ACI.value, NetworkType.VXLAN_ACI.value):
-                    if not normal_refs:
-                        raise ValueError("child networks with network_type aci/vxlanAci require normal_network_id or normal_network_name")
-                    if primary_refs:
-                        raise ValueError("child networks with network_type aci/vxlanAci use normal_network_id/name, not primary_network_id/name")
-                else:
-                    if not primary_refs:
-                        raise ValueError("child networks require primary_network_id or primary_network_name")
-                    if normal_refs:
-                        raise ValueError("child networks use primary_network_id/name unless network_type is aci/vxlanAci")
-            elif not primary_refs and not normal_refs:
-                raise ValueError("child networks require a parent reference")
-            self._reject_l3_fields_for_vlan_network_type(role)
+            raise ValueError("child networks require ACI normal-network association fields and are not supported by this module")
 
     def _reject_l3_fields_for_vlan_network_type(self, role: str) -> None:
         if self.layer == "layer3" or self.is_l2only is False:

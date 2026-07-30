@@ -83,12 +83,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         "vlanNetworkType",
         "primary_network_id",
         "primaryNetworkId",
-        "primary_network_name",
-        "primaryNetworkName",
-        "normal_network_id",
-        "normalNetworkId",
-        "normal_network_name",
-        "normalNetworkName",
         "display_name",
         "displayName",
         "vrf_name",
@@ -171,39 +165,13 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if is_l2only is True:
             return NetworkLayer.LAYER2.value
         vlan_network_type = self._value(config, "vlan_network_type", "vlanNetworkType")
-        if vlan_network_type in (
-            VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value,
-            VlanNetworkType.PRIMARY_SECONDARY_ISOLATED.value,
-            VlanNetworkType.CHILD.value,
-        ):
+        if vlan_network_type in (VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value,):
             return NetworkLayer.LAYER2.value
         return NetworkLayer.LAYER3.value
 
     @staticmethod
     def _allows_l3_data(vlan_network_type: str | None) -> bool:
         return vlan_network_type in (None, VlanNetworkType.NORMAL.value, VlanNetworkType.PRIVATE_PRIMARY.value)
-
-    def _validate_effective_vlan_network_association(self, config: dict[str, Any], network_type: str) -> None:
-        vlan_network_type = self._value(config, "vlan_network_type", "vlanNetworkType", default=VlanNetworkType.NORMAL.value)
-        primary_refs = [
-            name for name in ("primary_network_id", "primaryNetworkId", "primary_network_name", "primaryNetworkName") if self._value(config, name) is not None
-        ]
-        normal_refs = [
-            name for name in ("normal_network_id", "normalNetworkId", "normal_network_name", "normalNetworkName") if self._value(config, name) is not None
-        ]
-
-        if vlan_network_type != VlanNetworkType.CHILD.value:
-            return
-        if network_type in (NetworkType.ACI.value, NetworkType.VXLAN_ACI.value):
-            if not normal_refs:
-                raise ValueError("child networks on aci/vxlanAci fabrics require normal_network_id or normal_network_name")
-            if primary_refs:
-                raise ValueError("child networks on aci/vxlanAci fabrics use normal_network_id/name, not primary_network_id/name")
-            return
-        if not primary_refs:
-            raise ValueError("child networks require primary_network_id or primary_network_name")
-        if normal_refs:
-            raise ValueError("child networks use primary_network_id/name unless the fabric network type is aci/vxlanAci")
 
     def _l2_data(self, config: dict[str, Any], network_type: str) -> dict[str, Any] | None:
         fabric_data_payload = None
@@ -317,7 +285,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             }
 
         network_type = self._value(config, "network_type", "networkType", default=self._default_network_type())
-        self._validate_effective_vlan_network_association(config, network_type)
         transformed: dict[str, Any] = {
             "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
             "network_name": self._value(config, "network_name", "networkName"),
@@ -331,9 +298,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             "network_id": ("network_id", "networkId"),
             "vlan_network_type": ("vlan_network_type", "vlanNetworkType"),
             "primary_network_id": ("primary_network_id", "primaryNetworkId"),
-            "primary_network_name": ("primary_network_name", "primaryNetworkName"),
-            "normal_network_id": ("normal_network_id", "normalNetworkId"),
-            "normal_network_name": ("normal_network_name", "normalNetworkName"),
         }.items():
             value = self._value(config, *names)
             if value is not None:
@@ -392,7 +356,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         for entry in raw_config:
             if isinstance(entry, dict):
                 if not (self.strategy and self.strategy.is_child) and self.has_network_definition_intent(entry):
-                    entry = self.strategy.config_model_cls.from_config(entry).to_config()
+                    entry = self.strategy.config_model_cls.from_config(entry).to_config(exclude_unset=True)
                 transformed = self._transform_config_to_payload_model_data(entry, fabric_name)
                 if self.strategy and self.strategy.is_child and transformed.get("network_name"):
                     self._child_payload_source_by_name[transformed["network_name"]] = transformed
@@ -657,7 +621,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             normalized["networkType"] = self._default_network_type()
         if normalized.get("networkStatus") == "NA":
             normalized["networkStatus"] = "notApplicable"
-        for optional_id in ("primaryNetworkId", "normalNetworkId"):
+        for optional_id in ("primaryNetworkId",):
             if normalized.get(optional_id) in (0, "0", ""):
                 normalized.pop(optional_id, None)
 

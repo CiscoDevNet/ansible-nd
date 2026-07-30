@@ -50,32 +50,17 @@ options:
           - user_defined
       vlan_network_type:
         description:
-          - VLAN network role for normal, PVLAN, and child networks.
+          - VLAN network role for normal and PVLAN networks.
           - Defaults to C(normal) when omitted.
-          - Values C(private_secondary_community) and C(primary_secondary_isolated) require
-            C(primary_network_id) or C(primary_network_name).
-          - Value C(child) requires a parent reference. The module derives whether
-            the effective fabric Network type needs C(normal_network_id/name) or
-            C(primary_network_id/name).
+          - Value C(private_secondary_community) requires C(primary_network_id).
         type: str
         choices:
           - normal
           - private_primary
           - private_secondary_community
-          - primary_secondary_isolated
-          - child
       primary_network_id:
-        description: Primary Network ID associated with a PVLAN secondary or non-ACI child Network.
+        description: Primary Network ID associated with a PVLAN secondary Network.
         type: int
-      primary_network_name:
-        description: Primary Network name associated with a PVLAN secondary or non-ACI child Network.
-        type: str
-      normal_network_id:
-        description: Normal Network ID associated with an ACI child Network.
-        type: int
-      normal_network_name:
-        description: Normal Network name associated with an ACI child Network.
-        type: str
       display_name:
         description: Display name.
         type: str
@@ -484,7 +469,7 @@ EXAMPLES = r"""
     config:
       - network_name: PVLAN_SECONDARY_COMMUNITY
         vlan_network_type: private_secondary_community
-        primary_network_name: PVLAN_PRIMARY
+        primary_network_id: 50100
         is_l2only: true
         network_id: 50101
         vlan_id: 2101

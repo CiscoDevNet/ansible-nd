@@ -266,7 +266,7 @@ class NetworkWorkflowCoordinator:
             try:
                 operational_only = isinstance(entry, dict) and not NDNetworkOrchestrator.has_network_definition_intent(entry)
                 model = model_cls.from_config(entry)
-                parsed_config = model.to_config()
+                parsed_config = model.to_config(exclude_unset=True)
                 if operational_only:
                     sparse_config = {"network_name": parsed_config["network_name"]}
                     for key in ("attach", "deploy", "deploy_type"):

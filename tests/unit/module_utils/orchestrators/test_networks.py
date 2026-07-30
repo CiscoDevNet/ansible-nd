@@ -204,18 +204,17 @@ def test_network_parent_argument_spec_includes_child_config():
         "normal",
         "private_primary",
         "private_secondary_community",
-        "primary_secondary_isolated",
-        "child",
     ]
     assert "primary_network_id" in spec
-    assert "primary_network_name" in spec
-    assert "normal_network_id" in spec
-    assert "normal_network_name" in spec
+    assert "primary_network_name" not in spec
+    assert "normal_network_id" not in spec
+    assert "normal_network_name" not in spec
     assert "network_id" not in child_spec
     assert "vlan_id" not in child_spec
     assert "vlan_name" not in child_spec
     assert "vlan_network_type" not in child_spec
     assert "primary_network_name" not in child_spec
+    assert "normal_network_id" not in child_spec
     assert "normal_network_name" not in child_spec
     assert "vrf_name" not in child_spec
     assert "gateway_ipv4_address" not in child_spec
@@ -253,7 +252,7 @@ def test_network_config_model_defaults_vlan_network_type_to_normal():
 
 
 def test_private_secondary_network_requires_primary_reference_and_rejects_l3_fields():
-    with pytest.raises(ValueError, match="requires primary_network_id or primary_network_name"):
+    with pytest.raises(ValueError, match="requires primary_network_id"):
         NetworkConfigModel.from_config(
             {
                 "network_name": "PVLAN_SECONDARY",
@@ -266,55 +265,29 @@ def test_private_secondary_network_requires_primary_reference_and_rejects_l3_fie
             {
                 "network_name": "PVLAN_SECONDARY",
                 "vlan_network_type": "private_secondary_community",
-                "primary_network_name": "PVLAN_PRIMARY",
+                "primary_network_id": 50100,
                 "gateway_ipv4_address": "192.0.2.1/24",
             }
         )
 
 
-def test_child_network_reference_validation_defers_fabric_type_to_orchestrator():
-    config_model = NetworkConfigModel.from_config(
-        {
-            "network_name": "CHILD_NET",
-            "vlan_network_type": "child",
-            "normal_network_name": "NORMAL_NET",
-        }
-    )
-    assert config_model.to_config()["normal_network_name"] == "NORMAL_NET"
-
-    config_model = NetworkConfigModel.from_config(
-        {
-            "network_name": "CHILD_NET",
-            "vlan_network_type": "child",
-            "primary_network_name": "PVLAN_PRIMARY",
-        }
-    )
-    assert config_model.to_config()["primary_network_name"] == "PVLAN_PRIMARY"
-
-    with pytest.raises(ValueError, match="primary_network_id or primary_network_name"):
-        _orchestrator().prepare_config_data(
-            [
-                {
-                    "network_name": "BAD_CHILD",
-                    "vlan_network_type": "child",
-                    "normal_network_name": "NORMAL_NET",
-                }
-            ]
+def test_unsupported_vlan_network_types_are_not_playbook_supported():
+    with pytest.raises(ValueError, match="primary_secondary_isolated networks are not supported"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "BAD_ISOLATED",
+                "vlan_network_type": "primary_secondary_isolated",
+                "primary_network_id": 50100,
+            }
         )
 
-    aci_orchestrator = NDNetworkOrchestrator(
-        rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}),
-        strategy=StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanAci"}),
-    )
-    with pytest.raises(ValueError, match="normal_network_id or normal_network_name"):
-        aci_orchestrator.prepare_config_data(
-            [
-                {
-                    "network_name": "BAD_ACI_CHILD",
-                    "vlan_network_type": "child",
-                    "primary_network_name": "PVLAN_PRIMARY",
-                }
-            ]
+    with pytest.raises(ValueError, match="child networks require ACI normal-network association fields"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "BAD_CHILD",
+                "vlan_network_type": "child",
+                "primary_network_id": 50100,
+            }
         )
 
     with pytest.raises(ValueError, match="network_type must be omitted"):
@@ -351,7 +324,7 @@ def test_private_secondary_payload_maps_pvlan_fields_and_omits_l3_data():
                 "network_id": 50101,
                 "vlan_id": 2101,
                 "vlan_network_type": "private_secondary_community",
-                "primary_network_name": "PVLAN_PRIMARY",
+                "primary_network_id": 50100,
             }
         ]
     )[0]
@@ -362,34 +335,8 @@ def test_private_secondary_payload_maps_pvlan_fields_and_omits_l3_data():
     assert payload["networkName"] == "PVLAN_SECONDARY"
     assert payload["networkType"] == "vxlanIbgp"
     assert payload["vlanNetworkType"] == "privateSecondaryCommunity"
-    assert payload["primaryNetworkName"] == "PVLAN_PRIMARY"
-    assert payload["layer"] == "layer2"
-    assert "l3Data" not in payload
-
-
-def test_aci_child_payload_maps_normal_network_reference():
-    orchestrator = NDNetworkOrchestrator(
-        rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}),
-        strategy=StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanAci"}),
-    )
-    transformed = orchestrator.prepare_config_data(
-        [
-            {
-                "network_name": "ACI_CHILD",
-                "network_id": 50102,
-                "vlan_id": 2102,
-                "vlan_network_type": "child",
-                "normal_network_name": "NORMAL_NET",
-            }
-        ]
-    )[0]
-    model = NDNetworkOrchestrator.model_class.from_config(transformed)
-
-    payload = orchestrator._create_or_update_payload(model)
-
-    assert payload["networkType"] == "vxlanAci"
-    assert payload["vlanNetworkType"] == "child"
-    assert payload["normalNetworkName"] == "NORMAL_NET"
+    assert payload["primaryNetworkId"] == 50100
+    assert "primaryNetworkName" not in payload
     assert payload["layer"] == "layer2"
     assert "l3Data" not in payload
 
@@ -816,10 +763,8 @@ def test_parse_config_preserves_attachment_only_shape_before_transform():
                         {
                             "mode": "trunk",
                             "interface_range": "Ethernet1/1",
-                            "native_vlan": False,
                         }
                     ],
-                    "deploy": True,
                 }
             ],
             "deploy": True,
@@ -921,14 +866,14 @@ def test_child_task_exception_returns_structured_network_failure():
     assert child["workflow_trace"][-1]["exception"] == "RuntimeError"
 
 
-def test_argument_spec_uses_manage_json_defaults():
+def test_argument_spec_leaves_contextual_defaults_to_models():
     spec = network_parent_argument_spec()
 
-    assert spec["mtu"]["default"] == 9216
-    assert spec["mtu_l3intf"]["default"] == 9216
+    assert "default" not in spec["mtu"]
+    assert "default" not in spec["mtu_l3intf"]
     assert "default" not in spec["trm_enable"]
     assert "default" not in spec["ipv6_trm"]
-    assert spec["enable_ir"]["default"] is False
+    assert "default" not in spec["enable_ir"]
     assert spec["dhcp_servers"]["options"]["server_address"]["required"] is True
 
 
@@ -1681,6 +1626,47 @@ def test_mcfg_parent_network_create_uses_onemanage_manage_schema_payload():
         "secondaryGatewayIpv4Collection": None,
         "routingTag": 12345,
     }
+
+
+def test_mcfg_parent_private_secondary_network_create_preserves_primary_id_for_onemanage():
+    orchestrator = _mcfg_parent_orchestrator()
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        return {"results": [{"networkName": "PVLAN_SECONDARY", "status": "success"}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+    model = NDNetworkOrchestrator.model_class.from_config(
+        orchestrator.prepare_config_data(
+            [
+                {
+                    "network_name": "PVLAN_SECONDARY",
+                    "network_id": 901031,
+                    "vlan_id": 3131,
+                    "vlan_network_type": "private_secondary_community",
+                    "primary_network_id": 901030,
+                    "is_l2only": True,
+                    "vrf_name": "NA",
+                }
+            ]
+        )[0]
+    )
+
+    result = orchestrator.create_bulk([model])
+
+    assert result == {"results": [{"networkName": "PVLAN_SECONDARY", "status": "success"}]}
+    assert requests[0]["path"] == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks"
+    payload = requests[0]["data"]["networks"][0]
+    assert payload["networkName"] == "PVLAN_SECONDARY"
+    assert payload["fabricName"] == "MCFG_FAB"
+    assert payload["networkType"] == "vxlan"
+    assert payload["networkMode"] == "layer2"
+    assert payload["vlanNetworkType"] == "privateSecondaryCommunity"
+    assert payload["primaryNetworkId"] == 901030
+    assert "primaryNetworkName" not in payload
+    assert "vlanId" not in payload
+    assert "l3Data" not in payload
 
 
 def test_mcfg_parent_network_update_uses_l2_onemanage_manage_schema_payload():
