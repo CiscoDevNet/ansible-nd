@@ -178,10 +178,7 @@ class ExtendedCommunityListEntryModel(NDNestedModel):
         for packed_route_targets in v:
             for route_target in str(packed_route_targets).split(","):
                 if not _ROUTE_TARGET_RE.match(route_target):
-                    raise ValueError(
-                        f"route_target_collection entry '{packed_route_targets}' "
-                        "must contain only ASN2:NN, ASN4:NN, or IPv4:NN values."
-                    )
+                    raise ValueError(f"route_target_collection entry '{packed_route_targets}' " "must contain only ASN2:NN, ASN4:NN, or IPv4:NN values.")
                 normalized.append(route_target)
         return normalized
 

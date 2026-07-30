@@ -347,9 +347,7 @@ class CommunityListModel(NDBaseModel):
                 has_well_known_flag = any(getattr(entry, field_name) is True for field_name in _STANDARD_WELL_KNOWN_FIELDS)
                 if not has_community_number and not has_well_known_flag:
                     raise ValueError(
-                        f"entries[{i}] must set at least one community number or "
-                        "enable at least one well-known community flag for "
-                        "type='standard'."
+                        f"entries[{i}] must set at least one community number or " "enable at least one well-known community flag for " "type='standard'."
                     )
         return self
 
