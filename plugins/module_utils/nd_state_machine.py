@@ -25,6 +25,22 @@ class NDStateMachine:
     Generic State Machine for Nexus Dashboard (Bulk Support).
     """
 
+    WRITE_STATES_REQUIRING_CONFIG = frozenset({"merged", "replaced", "overridden"})
+
+    @classmethod
+    def validate_config_presence(cls, state: str, config: Any) -> None:
+        """
+        Reject omitted or null config before production wrappers normalize it.
+
+        An explicit empty list remains valid because it can represent an
+        intentional empty desired set.
+        """
+        if state in cls.WRITE_STATES_REQUIRING_CONFIG and config is None:
+            raise NDStateMachineError(
+                f"config must be provided and cannot be null for state '{state}'. "
+                "Use config: [] only when intentionally managing an explicit empty set."
+            )
+
     def __init__(self, module: AnsibleModule, model_orchestrator: type[NDBaseOrchestrator] | NDBaseOrchestrator):
         """
         Initialize the ND State Machine.
@@ -59,12 +75,7 @@ class NDStateMachine:
         self.model_class = self.model_orchestrator.model_class
         self.state = self.module.params["state"]
         raw_config = self.module.params.get("config")
-
-        if self.state in ["merged", "replaced", "overridden"] and raw_config is None:
-            raise NDStateMachineError(
-                f"config must be provided and cannot be null for state '{self.state}'. "
-                "Use config: [] only when intentionally managing an explicit empty set."
-            )
+        self.validate_config_presence(self.state, raw_config)
 
         # Cached flags
         self.check_mode = self.module.check_mode

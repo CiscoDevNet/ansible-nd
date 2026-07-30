@@ -8,6 +8,7 @@ import pytest
 
 from unittest.mock import patch
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
     NetworkConfigModel,
@@ -55,6 +56,9 @@ class _Module:
 
     def fail_json(self, **kwargs):
         raise AssertionError(kwargs)
+
+
+_MISSING_CONFIG = object()
 
 
 class _ParentStrategy:
@@ -125,6 +129,50 @@ def test_network_workflow_coordinator_resolves_strategy_with_gen3_restsend():
     assert resolver_rest_send.send_interval == 1
     assert events == [("NetworkFabricResolver", resolver_rest_send, "fab1"), ("resolve",)]
     assert coordinator.workflow_trace[0]["event"] == "fabric_resolver_start"
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(
+    "config",
+    [
+        pytest.param(_MISSING_CONFIG, id="omitted"),
+        pytest.param(None, id="null"),
+    ],
+)
+def test_network_workflow_rejects_missing_config_before_resolution(config, check_mode):
+    """Production Network workflows must not normalize missing config to []."""
+    params = {"fabric_name": "fab1", "state": "overridden"}
+    if config is not _MISSING_CONFIG:
+        params["config"] = config
+    module = _Module(params)
+    module.check_mode = check_mode
+    coordinator = NetworkWorkflowCoordinator(module=module)
+
+    with patch.object(coordinator, "_resolve_strategy") as resolve_strategy:
+        with pytest.raises(NDStateMachineError, match=r"config must be provided and cannot be null"):
+            coordinator.run()
+
+    resolve_strategy.assert_not_called()
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_network_workflow_accepts_explicit_empty_config(check_mode):
+    """An explicit empty desired set remains valid through the Network wrapper."""
+    module = _Module({"fabric_name": "fab1", "state": "overridden", "config": []})
+    module.check_mode = check_mode
+    strategy = StandaloneNetworkStrategy(
+        fabric_name="fab1",
+        fabric_data={"managementType": "vxlanIbgp"},
+    )
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
+    expected = {"changed": check_mode}
+
+    with patch.object(coordinator, "_handle_standalone_workflow", return_value=expected) as handler:
+        result = coordinator.run()
+
+    handler.assert_called_once()
+    assert handler.call_args.args[0]["config"] == []
+    assert result["changed"] is check_mode
 
 
 def _mcfg_parent_orchestrator():

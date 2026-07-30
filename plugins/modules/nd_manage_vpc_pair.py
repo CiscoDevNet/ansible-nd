@@ -90,6 +90,8 @@ options:
     config:
         description:
         - List of vPC pair configuration dictionaries.
+        - Required and must not be null for states V(merged), V(replaced), and V(overridden).
+        - With state V(overridden), an explicit empty list removes all managed vPC pairs in scope.
         type: list
         elements: dict
         suboptions:
@@ -353,7 +355,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_l
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+    NDStateMachine,
+)
 
 # Service layer imports
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.resources import (
@@ -460,6 +468,11 @@ def main() -> None:
 
     # State-specific parameter validations
     state = module_config.state
+    try:
+        NDStateMachine.validate_config_presence(state, module_config.config)
+    except NDStateMachineError as e:
+        module.fail_json(msg=str(e))
+
     config_actions = get_config_actions(module)
     verify_settings = get_verify_settings(module)
     raw_module_args = _get_raw_module_args()
@@ -507,7 +520,7 @@ def main() -> None:
         module.warn("Parameter 'force' only applies to state 'deleted'. " f"Ignoring force for state '{state}'.")
 
     # Normalize config keys for runtime/state-machine model handling.
-    normalized_config = [item.to_runtime_config() for item in (module_config.config or [])]
+    normalized_config = [] if module_config.config is None else [item.to_runtime_config() for item in module_config.config]
 
     module.params["config"] = normalized_config
 

@@ -449,11 +449,13 @@ def test_overridden_deletes_non_proposed_items():
     assert _names(sm.sent) == ["b", "c"]
 
 
-def test_overridden_explicit_empty_config_deletes_all_existing():
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_overridden_explicit_empty_config_deletes_all_existing(check_mode):
     """An explicit empty overridden config means delete every existing item."""
     orch = _FakeOrchestrator(supports_bulk_delete=False)
     sm = _make_state_machine(
         state="overridden",
+        check_mode=check_mode,
         orchestrator=orch,
         existing=[_model("a", "x"), _model("b", "y")],
         proposed=[],
@@ -461,9 +463,13 @@ def test_overridden_explicit_empty_config_deletes_all_existing():
 
     sm.manage_state()
 
-    assert _names(orch.calls["delete"]) == ["a", "b"]
     assert len(sm.existing) == 0
-    assert _names(sm.sent) == ["a", "b"]
+    if check_mode:
+        assert orch.calls["delete"] == []
+        assert len(sm.sent) == 0
+    else:
+        assert _names(orch.calls["delete"]) == ["a", "b"]
+        assert _names(sm.sent) == ["a", "b"]
 
 
 # =============================================================================
@@ -544,9 +550,16 @@ def test_state_machine_accepts_explicit_empty_config(state):
     assert len(sm.proposed) == 0
 
 
-def test_deleted_state_tolerates_null_config_as_empty():
-    """Null delete config is non-destructive: it targets no proposed items."""
-    module = _FakeModule(state="deleted", config=None)
+@pytest.mark.parametrize(
+    "config",
+    [
+        pytest.param(_MISSING, id="missing"),
+        pytest.param(None, id="null"),
+    ],
+)
+def test_deleted_state_tolerates_missing_or_null_config_as_empty(config):
+    """Missing/null delete config is non-destructive: it targets no proposed items."""
+    module = _FakeModule(state="deleted", config=config)
     sm = NDStateMachine(module=module, model_orchestrator=_InitFakeOrchestrator)
 
     assert len(sm.proposed) == 0
