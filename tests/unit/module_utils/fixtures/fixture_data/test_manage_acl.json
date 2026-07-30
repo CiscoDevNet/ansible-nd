@@ -1,0 +1,188 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for orchestrators/test_manage_acl.py (orchestrator tests).",
+        "Response shapes mirror the ND Manage Access Control List API:",
+        "  - List GET returns {\"accessControlLists\": [...]} with an 'entries' key per item.",
+        "  - Bulk create (POST .../accessControlLists) returns HTTP 207 with {\"results\": [{name, status, message}]}.",
+        "  - Bulk delete (POST .../accessControlListActions/remove) returns HTTP 207 with {\"results\": [...]}.",
+        "Suffix order within a test matches the order RestSend.commit() consumes responses."
+    ],
+
+    "acls_ok": {
+        "TEST_NOTES": ["Reusable ACL list response from the collection endpoint"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "accessControlLists": [
+                {
+                    "type": "ipv4",
+                    "name": "ACL-IPV4-WEB",
+                    "description": "IPv4 web ACL",
+                    "entries": [
+                        {"sequenceNumber": 10, "action": "permit", "protocol": "tcp", "src": "any", "dst": "10.0.0.0/24", "dstPortAction": "equalTo", "dstPort": 80},
+                        {"sequenceNumber": 20, "action": "deny", "protocol": "ip", "src": "any", "dst": "any"}
+                    ],
+                    "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+                }
+            ]
+        }
+    },
+
+    "empty_acls": {
+        "TEST_NOTES": ["Empty response from the ACL query_all"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "accessControlLists": []
+        }
+    },
+
+    "acls_page_1": {
+        "TEST_NOTES": ["Pagination page 1 of 3: a full page (== page size) so query_all fetches the next offset"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlLists?max=2&offset=0",
+        "MESSAGE": "OK",
+        "DATA": {
+            "accessControlLists": [
+                {"type": "ipv4", "name": "ACL-PAGE-1", "entries": [{"sequenceNumber": 10, "action": "permit", "protocol": "ip", "src": "any", "dst": "any"}]},
+                {"type": "ipv4", "name": "ACL-PAGE-2", "entries": [{"sequenceNumber": 10, "action": "permit", "protocol": "ip", "src": "any", "dst": "any"}]}
+            ]
+        }
+    },
+
+    "acls_page_2": {
+        "TEST_NOTES": ["Pagination page 2 of 3: another full page (== page size) so query_all continues"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlLists?max=2&offset=2",
+        "MESSAGE": "OK",
+        "DATA": {
+            "accessControlLists": [
+                {"type": "ipv6", "name": "ACL-PAGE-3", "entries": [{"sequenceNumber": 10, "action": "permit", "protocol": "ipv6", "src": "any", "dst": "any"}]},
+                {"type": "ipv4", "name": "ACL-PAGE-4", "entries": [{"sequenceNumber": 10, "action": "permit", "protocol": "ip", "src": "any", "dst": "any"}]}
+            ]
+        }
+    },
+
+    "acls_page_3": {
+        "TEST_NOTES": ["Pagination page 3 of 3: a short page (< page size) that terminates the walk"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlLists?max=2&offset=4",
+        "MESSAGE": "OK",
+        "DATA": {
+            "accessControlLists": [
+                {"type": "ipv4", "name": "ACL-PAGE-5", "entries": [{"sequenceNumber": 10, "action": "permit", "protocol": "ip", "src": "any", "dst": "any"}]}
+            ]
+        }
+    },
+
+    "acls_dup_page": {
+        "TEST_NOTES": ["Full page whose rows duplicate a prior page: models a controller ignoring offset; query_all must stop, not loop"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlLists?max=2&offset=2",
+        "MESSAGE": "OK",
+        "DATA": {
+            "accessControlLists": [
+                {"type": "ipv4", "name": "ACL-PAGE-1", "entries": [{"sequenceNumber": 10, "action": "permit", "protocol": "ip", "src": "any", "dst": "any"}]},
+                {"type": "ipv4", "name": "ACL-PAGE-2", "entries": [{"sequenceNumber": 10, "action": "permit", "protocol": "ip", "src": "any", "dst": "any"}]}
+            ]
+        }
+    },
+
+    "single_acl": {
+        "TEST_NOTES": ["Single ACL via the GET item endpoint"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlLists/ACL-IPV4-WEB",
+        "MESSAGE": "OK",
+        "DATA": {
+            "type": "ipv4",
+            "name": "ACL-IPV4-WEB",
+            "description": "IPv4 web ACL",
+            "entries": [
+                {"sequenceNumber": 10, "action": "permit", "protocol": "tcp", "src": "any", "dst": "10.0.0.0/24", "dstPortAction": "equalTo", "dstPort": 80},
+                {"sequenceNumber": 20, "action": "deny", "protocol": "ip", "src": "any", "dst": "any"}
+            ],
+            "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+        }
+    },
+
+    "create_207_success": {
+        "TEST_NOTES": ["Bulk create ACLs -- 207 Multi-Status, all success"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlLists",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "ACL-IPV4-WEB", "status": "success", "message": "Successfully created ACL ACL-IPV4-WEB"}
+            ]
+        }
+    },
+
+    "create_207_partial_failure": {
+        "TEST_NOTES": ["Bulk create ACLs -- 207 Multi-Status with one per-item failure"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlLists",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "ACL-OK", "status": "success", "message": "Successfully created ACL ACL-OK"},
+                {"name": "ACL-BAD", "status": "failed", "message": "Failed to create ACL ACL-BAD"}
+            ]
+        }
+    },
+
+    "update_acl": {
+        "TEST_NOTES": ["PUT response for an ACL update"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlLists/ACL-IPV4-WEB",
+        "MESSAGE": "OK",
+        "DATA": {
+            "type": "ipv4",
+            "name": "ACL-IPV4-WEB",
+            "description": "Updated IPv4 web ACL",
+            "entries": [
+                {"sequenceNumber": 10, "action": "permit", "protocol": "tcp", "src": "any", "dst": "10.0.0.0/24", "dstPortAction": "equalTo", "dstPort": 80},
+                {"sequenceNumber": 30, "action": "permit", "protocol": "tcp", "src": "any", "dst": "10.0.0.0/24", "dstPortAction": "equalTo", "dstPort": 443}
+            ],
+            "lastUpdateTimestamp": "2026-06-12T12:00:00Z"
+        }
+    },
+
+    "bulk_delete_207_success": {
+        "TEST_NOTES": ["Bulk delete ACLs -- POST .../accessControlListActions/remove, 207 success"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlListActions/remove",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "ACL-IPV4-WEB", "status": "success", "message": "Successfully deleted ACL ACL-IPV4-WEB"}
+            ]
+        }
+    },
+
+    "bulk_delete_207_partial_failure": {
+        "TEST_NOTES": ["Bulk delete ACLs -- 207 Multi-Status with one per-item failure"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/accessControlListActions/remove",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "ACL-OK", "status": "success", "message": "Successfully deleted ACL ACL-OK"},
+                {"name": "ACL-BAD", "status": "failed", "message": "Failed to delete ACL ACL-BAD"}
+            ]
+        }
+    }
+}

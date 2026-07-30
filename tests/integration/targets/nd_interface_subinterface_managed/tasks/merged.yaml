@@ -1,0 +1,122 @@
+---
+# Merged state tests for nd_interface_subinterface_managed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- MERGED CREATE: SINGLE SUBINTERFACE (ETHERNET PARENT) ---
+
+- name: "MERGED CREATE: Create Eth.2 subinterface (check mode)"
+  cisco.nd.nd_interface_subinterface_managed: &merge_eth_2
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ subif_eth_2 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_eth_2
+
+- name: "MERGED CREATE: Create Eth.2 subinterface (normal mode)"
+  cisco.nd.nd_interface_subinterface_managed: *merge_eth_2
+  register: nm_merged_create_eth_2
+
+- name: "MERGED CREATE: Verify Eth.2 creation"
+  vars:
+    expected_name: "{{ ethernet_parent }}.2"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_eth_2 is changed
+      - nm_merged_create_eth_2 is changed
+      - nm_merged_create_eth_2.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', expected_name) | list | length == 1
+
+# --- MERGED CREATE: MULTIPLE SUBINTERFACES IN ONE TASK ---
+
+- name: "MERGED CREATE: Create Eth.3 and Eth.4 in one task"
+  cisco.nd.nd_interface_subinterface_managed: &merge_eth_3_4
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ subif_eth_3 }}"
+      - "{{ subif_eth_4 }}"
+    state: merged
+  register: nm_merged_create_eth_3_4
+
+- name: "MERGED CREATE: Verify Eth.3 and Eth.4 creation"
+  vars:
+    eth_3_name: "{{ ethernet_parent }}.3"
+    eth_4_name: "{{ ethernet_parent }}.4"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_create_eth_3_4 is changed
+      - nm_merged_create_eth_3_4.after | selectattr('interface_name', 'equalto', eth_3_name) | list | length == 1
+      - nm_merged_create_eth_3_4.after | selectattr('interface_name', 'equalto', eth_4_name) | list | length == 1
+
+# --- MERGED CREATE: SUBINTERFACE ON PORT-CHANNEL PARENT ---
+
+- name: "MERGED CREATE: Create subinterface on Port-channel parent"
+  cisco.nd.nd_interface_subinterface_managed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ subif_pc_5 }}"
+    state: merged
+  register: nm_merged_create_pc_5
+
+- name: "MERGED CREATE: Verify Port-channel subinterface creation"
+  vars:
+    pc_5_name: "{{ port_channel_parent }}.5"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_create_pc_5 is changed
+      - nm_merged_create_pc_5.after | selectattr('interface_name', 'equalto', pc_5_name) | list | length == 1
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Re-apply Eth.2 (check mode)"
+  cisco.nd.nd_interface_subinterface_managed: *merge_eth_2
+  check_mode: true
+  register: cm_merged_idem_eth_2
+
+- name: "MERGED IDEMPOTENT: Re-apply Eth.2 (normal mode)"
+  cisco.nd.nd_interface_subinterface_managed: *merge_eth_2
+  register: nm_merged_idem_eth_2
+
+- name: "MERGED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_eth_2 is not changed
+      - nm_merged_idem_eth_2 is not changed
+
+# --- MERGED UPDATE ---
+
+- name: "MERGED UPDATE: Change description, ip, pim_sparse, pim_dr_priority on Eth.2"
+  cisco.nd.nd_interface_subinterface_managed: &merge_eth_2_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ subif_eth_2_updated }}"
+    state: merged
+  register: nm_merged_update_eth_2
+
+- name: "MERGED UPDATE: Verify Eth.2 was updated"
+  vars:
+    eth_2_name: "{{ ethernet_parent }}.2"
+    eth_2_after: "{{ nm_merged_update_eth_2.after | selectattr('interface_name', 'equalto', eth_2_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_eth_2 is changed
+      - eth_2_after.config_data.network_os.policy.description == "Updated subif Eth.2"
+      - eth_2_after.config_data.network_os.policy.ip == "192.168.50.51"
+      - eth_2_after.config_data.network_os.policy.ip_redirects == false
+      - eth_2_after.config_data.network_os.policy.pim_sparse == true
+      - eth_2_after.config_data.network_os.policy.pim_dr_priority == 50
+      - eth_2_after.config_data.network_os.policy.routing_tag == "12345"
+
+- name: "MERGED UPDATE: Re-apply update for idempotency"
+  cisco.nd.nd_interface_subinterface_managed: *merge_eth_2_updated
+  register: nm_merged_update_eth_2_idem
+
+- name: "MERGED UPDATE: Verify idempotency after update"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_eth_2_idem is not changed

@@ -172,6 +172,48 @@ class TestNDOutputFormat:
         assert result["before"] == []
         assert result["diff"] == []
 
+    def test_format_changed_when_after_removes_a_field(self):
+        """
+        # Summary
+
+        `changed` is True when an operation only REMOVES a field from an item (PR #360 review follow-up).
+
+        The one-way subset comparison previously used by `get_diff_collection` classified an after-item that
+        lost a field (e.g. the storm-control percentage cleared by the pct/pps merge) as `no_diff` because a
+        strict subset still satisfies `issubset(after, before)` — so a real controller update was reported as
+        `changed: false`. Lab-verified against ND: the update executed and cleared the field, but the module
+        said nothing changed.
+
+        ## Test
+
+        - `before` holds a dual-valued storm-control policy (percentage and pps, as ND echoes for issue #351).
+        - `after` holds the remediated policy: same pps, percentage cleared.
+        - `format()` reports `changed` is True.
+
+        ## Classes and Methods
+
+        - NDOutput.format()
+        - NDConfigCollection.get_diff_collection()
+        """
+        from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
+            EthernetTrunkHostInterfaceModel,
+        )
+        from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+
+        def response(policy):
+            return {"switchIp": "192.0.2.10", "interfaceName": "Ethernet1/1", "configData": {"networkOS": {"policy": policy}}}
+
+        before_item = EthernetTrunkHostInterfaceModel.from_response(
+            response({"policyType": "trunkHost", "stormControlBroadcastLevel": 50.0, "stormControlBroadcastLevelPps": 12345})
+        )
+        after_item = EthernetTrunkHostInterfaceModel.from_response(response({"policyType": "trunkHost", "stormControlBroadcastLevelPps": 12345}))
+        before = NDConfigCollection(model_class=EthernetTrunkHostInterfaceModel, items=[before_item])
+        after = NDConfigCollection(model_class=EthernetTrunkHostInterfaceModel, items=[after_item])
+
+        output = NDOutput("normal")
+        output.assign(before=before, after=after)
+        assert output.format()["changed"] is True
+
 
 # =============================================================================
 # Test: NDOutput.assign

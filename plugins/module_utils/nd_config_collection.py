@@ -4,8 +4,9 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Optional, List, Dict, Any, Literal
 from copy import deepcopy
+from typing import Any, Dict, List, Literal, Optional
+
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
@@ -179,6 +180,11 @@ class NDConfigCollection:
     def get_diff_collection(self, other: "NDConfigCollection") -> bool:
         """
         Check if two collections differ.
+
+        The per-item comparison runs in both directions because `get_diff_config` is a one-way subset test:
+        an `other` item that merely LOST a field relative to its `self` counterpart (e.g. a storm-control
+        percentage cleared by the pct/pps merge, PR #360 review) still satisfies the forward subset check and
+        would be misreported as unchanged. The reverse pass catches removals.
         """
         if not isinstance(other, NDConfigCollection):
             raise TypeError("Argument must be NDConfigCollection")
@@ -190,8 +196,8 @@ class NDConfigCollection:
             if self.get_diff_config(item) != "no_diff":
                 return True
 
-        for key in self.keys():
-            if other.get(key) is None:
+        for item in self:
+            if other.get_diff_config(item) != "no_diff":
                 return True
 
         return False

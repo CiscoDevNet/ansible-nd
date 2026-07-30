@@ -1,0 +1,76 @@
+---
+# Replaced state tests for nd_interface_subinterface_unmanaged
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# At this point Eth.20, Eth.21, Eth.22, and PC.25 exist from merged.yaml.
+#
+# For unmanaged subinterfaces, `replaced` against an existing subinterface is
+# effectively a no-op because there are no user-configurable fields to overwrite.
+# Against a missing subinterface, `replaced` falls back to create. This file
+# exercises both paths.
+
+# --- REPLACED NO-OP: existing subinterface, no fields to change ---
+
+- name: "REPLACED NO-OP: Replace existing Eth.20 (check mode)"
+  cisco.nd.nd_interface_subinterface_unmanaged: &replace_eth_20
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ subif_eth_20 }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_eth_20
+
+- name: "REPLACED NO-OP: Replace existing Eth.20 (normal mode)"
+  cisco.nd.nd_interface_subinterface_unmanaged: *replace_eth_20
+  register: nm_replaced_eth_20
+
+- name: "REPLACED NO-OP: Verify no change on existing subinterface"
+  vars:
+    eth_20_name: "{{ ethernet_parent }}.20"
+    eth_20_after: "{{ nm_replaced_eth_20.after | selectattr('interface_name', 'equalto', eth_20_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_eth_20 is not changed
+      - nm_replaced_eth_20 is not changed
+      - eth_20_after.config_data.network_os.policy.policy_type == "monitorSubinterface"
+
+# --- REPLACED FALL-BACK-TO-CREATE: missing subinterface, replaced creates it ---
+
+- name: "REPLACED CREATE: Replace missing Eth.29 (check mode)"
+  cisco.nd.nd_interface_subinterface_unmanaged: &replace_eth_29
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ subif_eth_29 }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_eth_29
+
+- name: "REPLACED CREATE: Replace missing Eth.29 (normal mode)"
+  cisco.nd.nd_interface_subinterface_unmanaged: *replace_eth_29
+  register: nm_replaced_eth_29
+
+- name: "REPLACED CREATE: Verify Eth.29 created via replaced fall-back"
+  vars:
+    eth_29_name: "{{ ethernet_parent }}.29"
+    eth_29_after: "{{ nm_replaced_eth_29.after | selectattr('interface_name', 'equalto', eth_29_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_eth_29 is changed
+      - nm_replaced_eth_29 is changed
+      - nm_replaced_eth_29.after | selectattr('interface_name', 'equalto', eth_29_name) | list | length == 1
+      - eth_29_after.config_data.network_os.policy.policy_type == "monitorSubinterface"
+
+# --- REPLACED IDEMPOTENT: re-apply on Eth.29 (now existing) ---
+
+- name: "REPLACED IDEMPOTENT: Re-apply replaced for Eth.29"
+  cisco.nd.nd_interface_subinterface_unmanaged: *replace_eth_29
+  register: nm_replaced_eth_29_idem
+
+- name: "REPLACED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_eth_29_idem is not changed

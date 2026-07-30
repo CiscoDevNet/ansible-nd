@@ -5,9 +5,24 @@
 from __future__ import annotations
 
 from abc import ABC
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
 from typing import Any, ClassVar, Literal
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
 from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
+
+
+def _strip_none_values(data):
+    """Recursively remove keys with None values from dicts.
+
+    This ensures Ansible's implicit None defaults (for unspecified options)
+    are not passed to pydantic, allowing default_factory and model defaults
+    to take effect without polluting model_fields_set.
+    """
+    if isinstance(data, dict):
+        return {k: _strip_none_values(v) for k, v in data.items() if v is not None}
+    if isinstance(data, list):
+        return [_strip_none_values(item) for item in data]
+    return data
 
 
 class NDBaseModel(BaseModel, ABC):
@@ -128,13 +143,23 @@ class NDBaseModel(BaseModel, ABC):
 
     @classmethod
     def from_response(cls, response: dict[str, Any], **kwargs) -> "NDBaseModel":
-        """Create model instance from API response dict."""
-        return cls.model_validate(response, by_alias=True, **kwargs)
+        """Create model instance from API response dict (validation context ``mode=response``)."""
+        context = {"mode": "response", **(kwargs.pop("context", None) or {})}
+        return cls.model_validate(response, by_alias=True, context=context, **kwargs)
 
     @classmethod
     def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "NDBaseModel":
-        """Create model instance from Ansible config dict."""
-        return cls.model_validate(ansible_config, by_name=True, **kwargs)
+        """Create model instance from Ansible config dict.
+
+        Strips None values recursively before validation so that Ansible's
+        default None for unspecified options does not override pydantic
+        default_factory values or pollute model_fields_set. Validation runs with
+        context ``mode=config`` so config-only validators (e.g. the storm-control
+        percentage/pps mutex) fire on config input but not on ND responses.
+        """
+        cleaned = _strip_none_values(ansible_config)
+        context = {"mode": "config", **(kwargs.pop("context", None) or {})}
+        return cls.model_validate(cleaned, by_name=True, context=context, **kwargs)
 
     # --- Identifier Access ---
 
@@ -215,7 +240,34 @@ class NDBaseModel(BaseModel, ABC):
         """
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
-        return issubset(other_data, self_data, allow_superset=allow_superset)
+        is_subset = issubset(other_data, self_data, allow_superset=allow_superset)
+        if is_subset and exclude_unset and self.merge_would_change(other):
+            return False
+        return is_subset
+
+    def merge_would_change(self, other: "NDBaseModel") -> bool:
+        """
+        # Summary
+
+        Return True when `merge(other)` would mutate `self` in a way the one-way dict-subset comparison in `get_diff`
+        cannot detect. The default implementation has no such side effects itself; it only recurses into nested
+        `NDBaseModel` fields explicitly set on `other` so that nested models overriding `merge` (e.g.
+        `StormControlMutexMixin`, which clears the counterpart of a mutually exclusive pair) can surface their
+        merge side effects to the top-level diff.
+
+        ## Raises
+
+        None
+        """
+        for field_name in other.model_fields_set:
+            value = getattr(other, field_name, None)
+            if value is None:
+                continue
+            current = getattr(self, field_name, None)
+            if isinstance(current, NDBaseModel) and isinstance(value, NDBaseModel):
+                if current.merge_would_change(value):
+                    return True
+        return False
 
     def merge(self, other: "NDBaseModel") -> "NDBaseModel":
         """

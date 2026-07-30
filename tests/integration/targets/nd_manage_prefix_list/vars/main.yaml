@@ -1,0 +1,108 @@
+---
+# Variables for nd_manage_prefix_list integration tests.
+#
+# Copyright: (c) 2026, Gaspard Micol (@gmicol)
+#
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
+# A fabric matching test_fabric_name must already exist on the target Nexus Dashboard.
+# Use cisco.nd.nd_manage_fabric to create it before running this suite.
+#
+# Override the following in your inventory or extra-vars to match a real ND 4.2 testbed:
+#
+#   nd_test_fabric_name   (str, default: "SITE1")
+#     Name of the NDFC fabric in which to create and delete prefix lists.
+#
+# Prefix list names used across tests (PL-IPV4-BORDERS, PL-IPV4-DATACENTER,
+# PL-IPV6-DATACENTER) are reserved for this test suite and cleaned up by setup.yaml.
+# Do NOT re-use these names in other concurrent test runs.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('SITE1') }}"
+
+# ---------------------------------------------------------------------------
+# IPv4 prefix list configs
+# ---------------------------------------------------------------------------
+
+prefix_list_ipv4_borders:
+  ip_version: ipv4
+  name: PL-IPV4-BORDERS
+  description: "Ansible integration test - border router IPv4 prefixes"
+  entries:
+    - sequence_number: 10
+      action: permit
+      prefix: "10.0.0.0/8"
+    - sequence_number: 20
+      action: permit
+      prefix: "172.16.0.0/12"
+      min_prefix_length: 24
+      max_prefix_length: 32
+    - sequence_number: 30
+      action: deny
+      prefix: "0.0.0.0/0"
+
+# Updated version: description changed + extra entry added (seq 40).
+prefix_list_ipv4_borders_updated:
+  ip_version: ipv4
+  name: PL-IPV4-BORDERS
+  description: "Ansible integration test - updated border router IPv4 prefixes"
+  entries:
+    - sequence_number: 10
+      action: permit
+      prefix: "10.0.0.0/8"
+    - sequence_number: 20
+      action: permit
+      prefix: "172.16.0.0/12"
+      min_prefix_length: 24
+      max_prefix_length: 32
+    - sequence_number: 30
+      action: deny
+      prefix: "0.0.0.0/0"
+    - sequence_number: 40
+      action: permit
+      prefix: "192.168.0.0/16"
+      exact_length: 32
+
+# Second IPv4 prefix list - used in overridden tests to provide an object
+# that must be removed when overriding with only PL-IPV4-BORDERS.
+prefix_list_ipv4_datacenter:
+  ip_version: ipv4
+  name: PL-IPV4-DATACENTER
+  description: "Ansible integration test - datacenter IPv4 prefixes"
+  entries:
+    - sequence_number: 10
+      action: permit
+      prefix: "192.168.0.0/16"
+
+# ---------------------------------------------------------------------------
+# IPv6 prefix list configs
+# ---------------------------------------------------------------------------
+
+prefix_list_ipv6_datacenter:
+  ip_version: ipv6
+  name: PL-IPV6-DATACENTER
+  description: "Ansible integration test - datacenter IPv6 prefixes"
+  entries:
+    - sequence_number: 10
+      action: permit
+      prefix: "2001:db8::/32"
+      exact_length: 48
+    - sequence_number: 20
+      action: deny
+      prefix: "::/0"
+
+# Updated version: extra entry added (seq 30).
+prefix_list_ipv6_datacenter_updated:
+  ip_version: ipv6
+  name: PL-IPV6-DATACENTER
+  description: "Ansible integration test - updated datacenter IPv6 prefixes"
+  entries:
+    - sequence_number: 10
+      action: permit
+      prefix: "2001:db8::/32"
+      exact_length: 48
+    - sequence_number: 20
+      action: deny
+      prefix: "::/0"
+    - sequence_number: 30
+      action: permit
+      prefix: "fc00::/7"

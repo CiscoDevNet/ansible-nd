@@ -18,6 +18,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
 
 
+class AclNameMixin(BaseModel):
+    """Mixin for endpoints that require acl_name parameter."""
+
+    acl_name: str | None = Field(default=None, min_length=1, max_length=115, description="ACL name")
+
+
 class ClusterNameMixin(BaseModel):
     """Mixin for endpoints that require cluster_name parameter."""
 
@@ -90,10 +96,10 @@ class OffsetMixin(BaseModel):
     offset: int | None = Field(default=None, ge=0, description="Pagination offset")
 
 
-class NodeNameMixin(BaseModel):
-    """Mixin for endpoints that require node_name parameter."""
+class SwitchIdMixin(BaseModel):
+    """Mixin for endpoints that require switch_id parameter."""
 
-    node_name: str | None = Field(default=None, min_length=1, description="Node name")
+    switch_id: str | None = Field(default=None, min_length=1, description="Switch serial number or ID")
 
 
 class SwitchSerialNumberMixin(BaseModel):
@@ -114,16 +120,28 @@ class UpdateGroupNameMixin(BaseModel):
     update_group_name: str | None = Field(default=None, min_length=1, description="Update group name")
 
 
+class PrefixListNameMixin(BaseModel):
+    """Mixin for endpoints that require prefix_list_name parameter."""
+
+    prefix_list_name: str | None = Field(default=None, min_length=1, max_length=115, description="Prefix list name")
+
+
+class RouteMapNameMixin(BaseModel):
+    """Mixin for endpoints that require route_map_name parameter."""
+
+    route_map_name: str | None = Field(default=None, min_length=1, max_length=115, description="Route map name")
+
+
+class TenantNameMixin(BaseModel):
+    """Mixin for endpoints that require tenant_name parameter."""
+
+    tenant_name: str | None = Field(default=None, min_length=1, description="Tenant name")
+
+
 class VrfNameMixin(BaseModel):
     """Mixin for endpoints that require vrf_name parameter."""
 
     vrf_name: str | None = Field(default=None, min_length=1, max_length=64, description="VRF name")
-
-
-class SwitchIdMixin(BaseModel):
-    """Mixin for endpoints that require switch_id parameter."""
-
-    switch_id: str | None = Field(default=None, min_length=1, description="Switch serial number")
 
 
 class PeerSwitchIdMixin(BaseModel):
@@ -157,3 +175,25 @@ class ViewMixin(BaseModel):
     """Mixin for endpoints that support view parameter."""
 
     view: str | None = Field(default=None, description="Optional view type for filtering results")
+
+
+class NodeNameMixin(BaseModel):
+    """Mixin for endpoints that require node_name parameter."""
+
+    node_name: str | None = Field(default=None, min_length=1, description="Node name")
+
+
+class PolicyIdMixin(BaseModel):
+    """Mixin for endpoints that require policy_id parameter."""
+
+    policy_id: str | None = Field(default=None, min_length=1, description="Policy ID (e.g., POLICY-12345)")
+
+
+class PolicyGroupIdMixin(BaseModel):
+    """Mixin for endpoints that require policy_group_id parameter."""
+
+    policy_group_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Policy Group ID (e.g., POLICY-GROUP-143310)",
+    )

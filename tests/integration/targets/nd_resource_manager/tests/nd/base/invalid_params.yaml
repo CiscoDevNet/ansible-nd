@@ -1,0 +1,44 @@
+---
+- name: BASE common pools - Invalid parameter tests
+  block:
+    - name: BASE common pools - Invalid pool type
+      cisco.nd.nd_manage_resource_manager:
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "base_invalid_pool_type"
+            pool_type: "IDLE"
+            pool_name: "L3_VNI"
+            scope_type: "fabric"
+            resource: "101"
+      register: invalid_pool_type
+      ignore_errors: true
+
+    - name: BASE common pools - Assert invalid pool type failed
+      ansible.builtin.assert:
+        that:
+          - invalid_pool_type is failed
+          - invalid_pool_type.msg is defined
+          - invalid_pool_type.msg is search("pool_type")
+          - invalid_pool_type.msg is search("IDLE")
+
+    - name: BASE common pools - Unsupported pool for fabric type
+      cisco.nd.nd_manage_resource_manager:
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "base_unsupported_pool"
+            pool_type: "ID"
+            pool_name: "WRONG_POOL"
+            scope_type: "fabric"
+            resource: "999"
+      register: invalid_pool_name
+      ignore_errors: true
+
+    - name: BASE common pools - Assert unsupported pool failed
+      ansible.builtin.assert:
+        that:
+          - invalid_pool_name is failed
+          - invalid_pool_name.msg is defined
+          - invalid_pool_name.msg is search("Unsupported pool_name")
+          - invalid_pool_name.msg is search("WRONG_POOL")

@@ -1,0 +1,168 @@
+---
+- name: Test Entry Point - [nd_manage_networks - mcfg - replaced]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MCFG Replaced Tests - [nd_manage_networks]       +"
+      - "----------------------------------------------------------------"
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced - Build Parent and Child Network Config
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_mcfg_parent_fabric }}"
+    target_network_delete_config:
+      - network_name: ansible-nd-net-mcfg-replaced
+        is_l2only: true
+    nd_network_mcfg_replace_base:
+      - network_name: ansible-nd-net-mcfg-replaced
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 251 }}"
+        vlan_id: "{{ nd_network_base_vlan + 251 }}"
+        vlan_name: ans_nd_net_mcfg_repl_base
+        rt_auto: false
+        enable_ir: false
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+            enable_ir: false
+    nd_network_mcfg_replace_config:
+      - network_name: ansible-nd-net-mcfg-replaced
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 251 }}"
+        vlan_id: "{{ nd_network_base_vlan + 251 }}"
+        vlan_name: ans_nd_net_mcfg_repl_upd
+        rt_auto: true
+        enable_ir: false
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+            enable_ir: false
+  delegate_to: localhost
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced - Prepare Base Configuration
+  vars:
+    file: mcfg_replace_base
+    network_conf: "{{ nd_network_mcfg_replace_base }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced - Prepare Replacement Configuration
+  vars:
+    file: mcfg_replace
+    network_conf: "{{ nd_network_mcfg_replace_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC1 - Create Base Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_mcfg_replace_base_conf }}"
+  register: mcfg_replace_base_result
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Replace Parent and Child Network
+  cisco.nd.nd_manage_networks: &mcfg_replace_conf
+    fabric_name: "{{ target_fabric }}"
+    state: replaced
+    config: "{{ nd_network_mcfg_replace_conf }}"
+    output_level: debug
+  register: mcfg_replace_result
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - mcfg_replace_result.changed == true
+      - mcfg_replace_result.fabric_type == "multicluster_parent"
+      - mcfg_replace_result.child_fabrics is not defined
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Gather Parent Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_mcfg_replace_conf }}"
+  register: mcfg_replace_parent_gathered
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Validate Parent Network
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ mcfg_replace_parent_gathered }}"
+    test_data: "{{ nd_network_mcfg_replace_conf }}"
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Gather Child Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+    state: gathered
+    config: []
+  register: mcfg_replace_child_gathered
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Validate Child Network
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ mcfg_replace_child_gathered }}"
+    test_data:
+      - network_name: ansible-nd-net-mcfg-replaced
+        network_id: "{{ nd_network_base_id + 251 }}"
+        vlan_id: "{{ nd_network_base_vlan + 251 }}"
+        vlan_name: ans_nd_net_mcfg_repl_upd
+        enable_ir: false
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC3 - Idempotence
+  cisco.nd.nd_manage_networks: *mcfg_replace_conf
+  register: mcfg_replace_idempotent
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - mcfg_replace_idempotent.changed == false
+  when: nd_network_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced

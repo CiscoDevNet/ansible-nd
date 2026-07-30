@@ -1,0 +1,8 @@
+CONF: |
+  spanning-tree pathcost method long
+  spanning-tree port type edge default
+  spanning-tree port type edge bpduguard default
+  spanning-tree port type edge bpdufilter default
+  spanning-tree bridge assurance
+  spanning-tree loopguard default
+  spanning-tree vlan 1-3967 priority 8192

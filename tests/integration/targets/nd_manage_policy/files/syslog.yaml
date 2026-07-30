@@ -1,0 +1,8 @@
+CONF: |
+  logging server 10.0.0.11 5 use-vrf management facility local3
+  logging server 10.0.0.12 5 use-vrf management facility local3
+  logging level local3 5
+  logging source-interface mgmt0
+  logging timestamp milliseconds
+  no logging console
+  no logging monitor

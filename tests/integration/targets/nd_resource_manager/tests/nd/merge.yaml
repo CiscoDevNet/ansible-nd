@@ -1,0 +1,420 @@
+---
+- name: Set VXLAN iBGP all-pool resource config
+  ansible.builtin.set_fact:
+    rm_expected_resource_count: 26
+    rm_ibgp_all_pools_config:
+      - entity_name: "ibgp_all_l3_vni_fabric"
+        pool_type: "ID"
+        pool_name: "L3_VNI"
+        scope_type: "fabric"
+        resource: "50061"
+
+      - entity_name: "ibgp_all_l2_vni_fabric"
+        pool_type: "ID"
+        pool_name: "L2_VNI"
+        scope_type: "fabric"
+        resource: "30061"
+
+      - entity_name: "ibgp_all_vpc_domain_fabric"
+        pool_type: "ID"
+        pool_name: "VPC_DOMAIN_ID"
+        scope_type: "fabric"
+        resource: "61"
+
+      - entity_name: "ibgp_all_bgp_asn_fabric"
+        pool_type: "ID"
+        pool_name: "BGP_ASN_ID"
+        scope_type: "fabric"
+        resource: "10061"
+
+      - entity_name: "ibgp_all_anycast_rp_fabric"
+        pool_type: "IP"
+        pool_name: "ANYCAST_RP_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.254.254.61"
+
+      - entity_name: "ibgp_all_mcast_fabric"
+        pool_type: "IP"
+        pool_name: "MCAST_IP_POOL"
+        scope_type: "fabric"
+        resource: "239.1.1.61"
+
+      - entity_name: "ibgp_all_mpls_loopback_fabric"
+        pool_type: "IP"
+        pool_name: "MPLS_LOOPBACK_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.255.0.61"
+
+      - entity_name: "ibgp_all_hypershield_ha_source_fabric"
+        pool_type: "IP"
+        pool_name: "HYPERSHIELD_HA_SOURCE_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.255.60.1"
+
+      - entity_name: "ibgp_all_loopback0_fabric"
+        pool_type: "IP"
+        pool_name: "LOOPBACK0_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.2.0.61"
+
+      - entity_name: "ibgp_all_fex_device"
+        pool_type: "ID"
+        pool_name: "fexId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "161"
+
+      - entity_name: "ibgp_all_loopback_device"
+        pool_type: "ID"
+        pool_name: "loopbackId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "162"
+
+      - entity_name: "ibgp_all_port_channel_device"
+        pool_type: "ID"
+        pool_name: "portChannelId"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "661"
+
+      - entity_name: "ibgp_all_route_map_device"
+        pool_type: "ID"
+        pool_name: "ROUTE_MAP_SEQUENCE_NUMBER_POOL"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "163"
+
+      - entity_name: "ibgp_all_network_vlan_device"
+        pool_type: "ID"
+        pool_name: "networkVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "2461"
+
+      - entity_name: "ibgp_all_object_tracking_device"
+        pool_type: "ID"
+        pool_name: "OBJECT_TRACKING_NUMBER_POOL"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "164"
+
+      - entity_name: "ibgp_all_sla_device"
+        pool_type: "ID"
+        pool_name: "SLA_ID"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10061"
+
+      - entity_name: "ibgp_all_service_network_vlan_device"
+        pool_type: "ID"
+        pool_name: "serviceNetworkVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "3061"
+
+      - entity_name: "ibgp_all_vrf_vlan_device"
+        pool_type: "ID"
+        pool_name: "vrfVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "2061"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+        pool_type: "IP"
+        pool_name: "LOOPBACK1_IP_POOL"
+        scope_type: "device_interface"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.3.0.61"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}"
+        pool_type: "ID"
+        pool_name: "topDownL3Dot1q"
+        scope_type: "device_interface"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "161"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~ibgp_all_vpc_id_pair"
+        pool_type: "ID"
+        pool_name: "vpcId"
+        scope_type: "device_pair"
+        switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+        resource: "61"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~ibgp_all_vpc_peer_link_vlan_pair"
+        pool_type: "ID"
+        pool_name: "vpcPeerLinkVlan"
+        scope_type: "device_pair"
+        switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+        resource: "3600"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+        pool_type: "SUBNET"
+        pool_name: "DCI subnet pool"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.33.61.0/30"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+        pool_type: "SUBNET"
+        pool_name: "IPv6 DCI subnet pool"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "fd00::a61:10/126"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}~{{ ansible_sno_2 }}~{{ intf_1_10 }}"
+        pool_type: "SUBNET"
+        pool_name: "HYPERSHIELD_HA_PEER_LINK_SUBNET_POOL"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.255.61.0/30"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+        pool_type: "SUBNET"
+        pool_name: "SUBNET"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.4.61.0/30"
+
+- name: Assert VXLAN iBGP all-pool fixture
+  ansible.builtin.assert:
+    that:
+      - '(rm_ibgp_all_pools_config | length) == rm_expected_resource_count'
+      - '(rm_ibgp_all_pools_config | map(attribute="entity_name") | unique | list | length) == rm_expected_resource_count'
+
+- name: Delete VXLAN iBGP all-pool resources before merge
+  cisco.nd.nd_manage_resource_manager: &rm_ibgp_all_pools_delete
+    state: deleted
+    fabric_name: "{{ ansible_it_fabric }}"
+    config: "{{ rm_ibgp_all_pools_config }}"
+  register: result
+
+- name: Assert pre-clean completed
+  ansible.builtin.assert:
+    that:
+      - 'result.failed | default(false) == false'
+
+- name: Assert pre-clean API response codes
+  ansible.builtin.assert:
+    that:
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+  when: result.api_response is defined
+
+- block:
+    - name: Create VXLAN iBGP all-pool resources
+      cisco.nd.nd_manage_resource_manager: &rm_ibgp_all_pools_merge
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config: "{{ rm_ibgp_all_pools_config }}"
+      register: result
+
+    - name: Assert merge result
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+          - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
+          - '(result["diff"][0]["deleted"] | length) == 0'
+          - '(result["diff"][0]["debugs"] | length) == 0'
+          - >-
+            (result["diff"][0]["merged"] | map(attribute="entityName") | sort | list)
+            ==
+            (rm_ibgp_all_pools_config | map(attribute="entity_name") | sort | list)
+          - >-
+            (result["diff"][0]["merged"] | map(attribute="poolName") | sort | list)
+            ==
+            (rm_ibgp_all_pools_config | map(attribute="pool_name") | sort | list)
+          - >-
+            (result["diff"][0]["merged"] | map(attribute="resourceValue") | sort | list)
+            ==
+            (rm_ibgp_all_pools_config | map(attribute="resource") | sort | list)
+          - >-
+            (
+              result["diff"][0]["merged"]
+              | map(attribute="scopeDetails.scopeType")
+              | map("lower")
+              | map("replace", "_", "")
+              | sort
+              | list
+            )
+            ==
+            (
+              rm_ibgp_all_pools_config
+              | map(attribute="scope_type")
+              | map("lower")
+              | map("replace", "_", "")
+              | sort
+              | list
+            )
+          - 'result.failed | default(false) == false'
+
+    - name: Assert merge API output field consistency
+      ansible.builtin.assert:
+        that:
+          - '(result.api_result is defined) == (result.api_response is defined)'
+          - '(result.api_diff is defined) == (result.api_response is defined)'
+          - '(result.api_payload is defined) == (result.api_response is defined)'
+
+    - name: Assert merge API result details
+      ansible.builtin.assert:
+        that:
+          - '(result["api_response"] | length) == 1'
+          - 'result["api_result"][0]["success"] == true'
+          - '(result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
+          - '(result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
+          - >-
+            (result["api_payload"][0]["resources"] | map(attribute="entityName") | sort | list)
+            ==
+            (result["diff"][0]["merged"] | map(attribute="entityName") | sort | list)
+      when:
+        - result.api_response is defined
+        - result.api_result is defined
+        - result.api_diff is defined
+        - result.api_payload is defined
+
+    - name: Assert merge state snapshot
+      ansible.builtin.assert:
+        that:
+          - '(result["after"] | length) >= rm_expected_resource_count'
+          - >-
+            (
+              rm_ibgp_all_pools_config
+              | map(attribute="entity_name")
+              | map("split", "~")
+              | map("sort")
+              | map("join", "~")
+              | difference(
+                result["after"]
+                | map(attribute="entity_name")
+                | map("split", "~")
+                | map("sort")
+                | map("join", "~")
+                | list
+              )
+              | length
+            )
+            == 0
+
+    - name: Assert merge response codes
+      ansible.builtin.assert:
+        that:
+          - 'item["RETURN_CODE"] == 200'
+      loop: "{{ result.api_response | default([]) }}"
+      when: result.api_response is defined
+
+    - name: Create VXLAN iBGP all-pool resources - Idempotence
+      cisco.nd.nd_manage_resource_manager: *rm_ibgp_all_pools_merge
+      register: result
+
+    - name: Assert merge idempotence
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == false'
+          - '(result["diff"][0]["merged"] | length) == 0'
+          - '(result["diff"][0]["deleted"] | length) == 0'
+          - '(result["diff"][0]["debugs"] | length) == 0'
+          - 'result.failed | default(false) == false'
+
+    - name: Assert merge idempotence API output field consistency
+      ansible.builtin.assert:
+        that:
+          - '(result.api_result is defined) == (result.api_response is defined)'
+          - '(result.api_diff is defined) == (result.api_response is defined)'
+          - '(result.api_payload is defined) == (result.api_response is defined)'
+
+    - name: Assert merge idempotence API result details
+      ansible.builtin.assert:
+        that:
+          - '(result["api_response"] | length) == 1'
+          - 'result["api_result"][0]["success"] == true'
+          - 'result["api_diff"][0]["merged"] is not defined'
+          - 'result["api_payload"][0] is none'
+      when:
+        - result.api_response is defined
+        - result.api_result is defined
+        - result.api_diff is defined
+        - result.api_payload is defined
+
+    - name: Assert merge idempotence state snapshots
+      ansible.builtin.assert:
+        that:
+          - '(result["after"] | length) >= rm_expected_resource_count'
+          - '(result["before"] | length) >= rm_expected_resource_count'
+          - >-
+            (
+              rm_ibgp_all_pools_config
+              | map(attribute="entity_name")
+              | map("split", "~")
+              | map("sort")
+              | map("join", "~")
+              | difference(
+                result["after"]
+                | map(attribute="entity_name")
+                | map("split", "~")
+                | map("sort")
+                | map("join", "~")
+                | list
+              )
+              | length
+            )
+            == 0
+          - >-
+            (
+              rm_ibgp_all_pools_config
+              | map(attribute="entity_name")
+              | map("split", "~")
+              | map("sort")
+              | map("join", "~")
+              | difference(
+                result["before"]
+                | map(attribute="entity_name")
+                | map("split", "~")
+                | map("sort")
+                | map("join", "~")
+                | list
+              )
+              | length
+            )
+            == 0
+
+    - name: Assert merge idempotence response codes
+      ansible.builtin.assert:
+        that:
+          - 'item["RETURN_CODE"] == 200'
+      loop: "{{ result.api_response | default([]) }}"
+      when: result.api_response is defined
+
+  always:
+    - name: Delete VXLAN iBGP all-pool resources after merge
+      cisco.nd.nd_manage_resource_manager: *rm_ibgp_all_pools_delete
+      register: result
+
+    - name: Assert cleanup completed
+      ansible.builtin.assert:
+        that:
+          - 'result.failed | default(false) == false'
+
+    - name: Assert cleanup response codes
+      ansible.builtin.assert:
+        that:
+          - 'item["RETURN_CODE"] == 200'
+      loop: "{{ result.api_response | default([]) }}"
+      when: result.api_response is defined

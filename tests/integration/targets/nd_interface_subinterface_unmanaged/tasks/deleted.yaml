@@ -1,0 +1,61 @@
+---
+# Deleted state tests for nd_interface_subinterface_unmanaged
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# At this point Eth.20 and PC.25 exist (from overridden reduce). Delete actually
+# removes the subinterfaces from ND via interfaceActions/remove + deploy.
+
+- name: "DELETED: Delete Eth.20 (check mode)"
+  cisco.nd.nd_interface_subinterface_unmanaged: &delete_eth_20
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ subif_eth_20 }}"
+    state: deleted
+  check_mode: true
+  register: cm_deleted_eth_20
+
+- name: "DELETED: Delete Eth.20 (normal mode)"
+  cisco.nd.nd_interface_subinterface_unmanaged: *delete_eth_20
+  register: nm_deleted_eth_20
+
+- name: "DELETED: Verify Eth.20 was removed"
+  vars:
+    eth_20_name: "{{ ethernet_parent }}.20"
+    eth_20_after: "{{ nm_deleted_eth_20.after | selectattr('interface_name', 'equalto', eth_20_name) | list }}"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_eth_20 is changed
+      - nm_deleted_eth_20 is changed
+      - eth_20_after | length == 0
+
+- name: "DELETED IDEMPOTENT: Delete Eth.20 again"
+  cisco.nd.nd_interface_subinterface_unmanaged: *delete_eth_20
+  register: nm_deleted_eth_20_idem
+
+- name: "DELETED IDEMPOTENT: Verify no change when subinterface already gone"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_eth_20_idem is not changed
+
+# --- DELETED: BULK CLEANUP (FINAL TEARDOWN) ---
+
+- name: "DELETED CLEANUP: Remove any remaining test subinterfaces"
+  cisco.nd.nd_interface_subinterface_unmanaged:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ cleanup_config }}"
+    state: deleted
+  register: nm_deleted_cleanup
+
+- name: "DELETED CLEANUP: Verify all test subinterfaces are gone"
+  vars:
+    remaining: >-
+      {{ nm_deleted_cleanup.after
+         | selectattr('interface_name', 'in', cleanup_config | map(attribute='interface_name') | list)
+         | list }}
+  ansible.builtin.assert:
+    that:
+      - remaining | length == 0

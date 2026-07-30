@@ -34,10 +34,201 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runtime_p
     _build_vpc_pair_payload,
     _get_api_field_value,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
+    FabricTypeEnum,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule as NDModuleV2,
     NDModuleError,
 )
+
+_BLOCKED_FABRIC_TYPES_FOR_VPC_PAIR_DETAILS = {
+    FabricTypeEnum.VXLAN_IBGP.value,
+    FabricTypeEnum.VXLAN_EBGP.value,
+}
+
+
+def _first_exception_line(error: Exception) -> str:
+    """Return the first message line for an exception."""
+    if not isinstance(error, Exception):
+        raise TypeError("error must be an exception")
+    text = str(error).strip()
+    return text.splitlines()[0] if text else type(error).__name__
+
+
+def _resolve_fabric_type(nd_v2: NDModuleV2, fabric_name: str) -> str:
+    """
+    Resolve the canonical fabric type from the authoritative fabric endpoint.
+
+    Nexus Dashboard returns the fabric type in ``management.type`` from
+    ``GET /api/v1/manage/fabrics/<name>``. Failure to determine the type is
+    fatal because callers use it to reject unsupported ``vpc_pair_details``
+    before attempting a write.
+    """
+    details_path: str | None = None
+    try:
+        details_path = VpcPairEndpoints.fabric_details(fabric_name)
+        details = nd_v2.request(details_path, HttpVerbEnum.GET)
+    except NDModuleError as error:
+        _raise_vpc_error(
+            msg=(f"Unable to determine fabric type for '{fabric_name}' while validating " f"vpc_pair_details: {_first_exception_line(error)}"),
+            fabric=fabric_name,
+            path=details_path,
+            status=error.status,
+            exception_type=type(error).__name__,
+        )
+    except (TypeError, ValueError) as error:
+        _raise_vpc_error(
+            msg=(f"Unable to determine fabric type for '{fabric_name}' while validating " f"vpc_pair_details: {_first_exception_line(error)}"),
+            fabric=fabric_name,
+            path=details_path,
+            exception_type=type(error).__name__,
+        )
+
+    if not isinstance(details, dict):
+        _raise_vpc_error(
+            msg=(
+                f"Unable to determine fabric type for '{fabric_name}' while validating "
+                f"vpc_pair_details: expected a dictionary response, got {type(details).__name__}"
+            ),
+            fabric=fabric_name,
+            path=details_path,
+            response_type=type(details).__name__,
+        )
+
+    management = details.get("management")
+    if not isinstance(management, dict):
+        _raise_vpc_error(
+            msg=(f"Unable to determine fabric type for '{fabric_name}' while validating " "vpc_pair_details: response does not contain 'management.type'"),
+            fabric=fabric_name,
+            path=details_path,
+            missing_field="management.type",
+        )
+
+    fabric_type = management.get("type")
+    if not isinstance(fabric_type, str) or not fabric_type.strip():
+        _raise_vpc_error(
+            msg=(
+                f"Unable to determine fabric type for '{fabric_name}' while validating "
+                "vpc_pair_details: response does not contain a non-empty 'management.type'"
+            ),
+            fabric=fabric_name,
+            path=details_path,
+            missing_field="management.type",
+        )
+    return fabric_type.strip()
+
+
+def _ensure_fabric_type(nrm: Any, nd_v2: NDModuleV2, fabric_name: str) -> str:
+    """
+    Resolve the fabric type once and cache it on the state machine.
+
+    The resolved value is stored on ``nrm.fabric_type`` so repeated validation
+    and payload-sanitization passes across the proposed items in a single run
+    trigger at most one controller lookup.
+    """
+    fabric_type = nrm.fabric_type
+    if fabric_type is None:
+        fabric_type = _resolve_fabric_type(nd_v2, fabric_name)
+        nrm.fabric_type = fabric_type
+    return fabric_type
+
+
+def _get_proposed_vpc_pair_details(proposed_config: Any) -> dict[str, Any] | None:
+    """Return non-empty proposed vpc_pair_details (snake_case or API key)."""
+    if not isinstance(proposed_config, dict):
+        return None
+
+    details = proposed_config.get("vpc_pair_details")
+    if details is None:
+        details = proposed_config.get(VpcFieldNames.VPC_PAIR_DETAILS)
+    if not isinstance(details, dict) or not details:
+        return None
+    return details
+
+
+def _get_explicit_proposed_details(proposed_item: Any) -> dict[str, Any] | None:
+    """
+    Return non-empty vpc_pair_details only when the user explicitly supplied it.
+
+    ``proposed_item`` is the raw user-intent model built directly from the
+    playbook config, so ``model_dump(exclude_unset=True)`` reflects exactly the
+    fields the user set; defaults and merge-inherited values are excluded. A
+    plain dict is also accepted for convenience.
+    """
+    if hasattr(proposed_item, "model_dump"):
+        explicit_config = proposed_item.model_dump(by_alias=True, exclude_none=True, exclude_unset=True)
+    else:
+        explicit_config = proposed_item
+    return _get_proposed_vpc_pair_details(explicit_config)
+
+
+def validate_proposed_details_support(nrm: Any, proposed_item: Any) -> None:
+    """
+    Reject vpc_pair_details on blocked fabrics using only raw user intent.
+
+    This preflight check runs before the state machine computes diffs, so an
+    unsupported field is rejected even when the requested value happens to match
+    existing controller state; an idempotent request must not silently accept a
+    prohibited field. Only fields the user explicitly supplied are considered, so
+    inherited/merged details never cause a false rejection. The fabric type is
+    resolved and cached lazily and only when explicit details are present, so the
+    common id-only path performs no extra controller lookup.
+    """
+    proposed_details = _get_explicit_proposed_details(proposed_item)
+    if proposed_details is None:
+        return
+
+    fabric_name = nrm.module.params.get("fabric_name")
+    nd_v2 = NDModuleV2(nrm.module)
+    fabric_type = _ensure_fabric_type(nrm, nd_v2, fabric_name)
+
+    if fabric_type in _BLOCKED_FABRIC_TYPES_FOR_VPC_PAIR_DETAILS:
+        _raise_vpc_error(
+            msg=(
+                "Invalid nd_manage_vpc_pair input: 'vpc_pair_details' is not supported "
+                "for iBGP/eBGP VXLAN fabrics. Use only peer switch IDs and "
+                "'use_virtual_peer_link' for this fabric type."
+            ),
+            fabric=fabric_name,
+            fabric_type=fabric_type,
+            unsupported_field="vpc_pair_details",
+        )
+
+
+def strip_inherited_details_for_blocked_fabric(nrm: Any, proposed_item: Any) -> None:
+    """
+    Drop merge-inherited vpc_pair_details from the outgoing payload on blocked fabrics.
+
+    When a user omits vpc_pair_details on an update, ``merge()`` re-adds the
+    vpcPairDetails carried by existing controller state into the reconciled
+    payload. On iBGP/eBGP VXLAN fabrics that inherited field must never be sent
+    back to Nexus Dashboard. Explicitly supplied details are left untouched here
+    because they are already validated by :func:`validate_proposed_details_support`
+    and remain permitted on External/ISN/LANClassic fabrics. The fabric lookup is
+    performed only when the payload actually carries details.
+    """
+    if not isinstance(nrm.proposed_config, dict):
+        return
+
+    payload_details = nrm.proposed_config.get(VpcFieldNames.VPC_PAIR_DETAILS)
+    if payload_details is None:
+        payload_details = nrm.proposed_config.get("vpc_pair_details")
+    if not payload_details:
+        return
+
+    if _get_explicit_proposed_details(proposed_item) is not None:
+        # User explicitly supplied details; preflight already validated them and
+        # supported fabrics must keep them.
+        return
+
+    fabric_name = nrm.module.params.get("fabric_name")
+    nd_v2 = NDModuleV2(nrm.module)
+    fabric_type = _ensure_fabric_type(nrm, nd_v2, fabric_name)
+
+    if fabric_type in _BLOCKED_FABRIC_TYPES_FOR_VPC_PAIR_DETAILS:
+        nrm.proposed_config.pop(VpcFieldNames.VPC_PAIR_DETAILS, None)
+        nrm.proposed_config.pop("vpc_pair_details", None)
 
 
 def _build_compare_payloads(nrm: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -104,9 +295,6 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
         ValueError: If fabric_name or switch_id is not provided
         AnsibleModule.fail_json: If validation fails
     """
-    if nrm.module.check_mode:
-        return nrm.proposed_config
-
     fabric_name = nrm.module.params.get("fabric_name")
     switch_id = nrm.proposed_config.get(VpcFieldNames.SWITCH_ID)
     peer_switch_id = nrm.proposed_config.get(VpcFieldNames.PEER_SWITCH_ID)
@@ -118,6 +306,12 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
         raise ValueError("switch_id is required but was not provided")
     if not peer_switch_id:
         raise ValueError("peer_switch_id is required but was not provided")
+
+    # Initialize RestSend via NDModuleV2.
+    nd_v2 = NDModuleV2(nrm.module)
+
+    if nrm.module.check_mode:
+        return nrm.proposed_config
 
     # Validation Step 1: both switches must exist in discovered fabric inventory.
     _validate_switches_exist_in_fabric(
@@ -141,8 +335,6 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
             nrm.module.warn(f"VPC pair {nrm.current_identifier} already exists in desired state - skipping create")
             return nrm.existing_config
 
-    # Initialize RestSend via NDModuleV2
-    nd_v2 = NDModuleV2(nrm.module)
     use_virtual_peer_link = nrm.proposed_config.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False)
 
     # Validate pairing support using dedicated endpoint.
@@ -168,7 +360,7 @@ def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
     except VpcPairResourceError:
         raise
     except Exception as support_error:
-        nrm.module.warn(f"Pairing support check failed for switch {switch_id}: " f"{str(support_error).splitlines()[0]}. Continuing with create operation.")
+        nrm.module.warn(f"Pairing support check failed for switch {switch_id}: " f"{_first_exception_line(support_error)}. Continuing with create operation.")
 
     # Validate fabric peering support if virtual peer link is requested.
     _validate_fabric_peering_support(
@@ -238,9 +430,6 @@ def custom_vpc_update(nrm: Any) -> dict[str, Any] | None:
     Raises:
         ValueError: If fabric_name or switch_id is not provided
     """
-    if nrm.module.check_mode:
-        return nrm.proposed_config
-
     fabric_name = nrm.module.params.get("fabric_name")
     switch_id = nrm.proposed_config.get(VpcFieldNames.SWITCH_ID)
     peer_switch_id = nrm.proposed_config.get(VpcFieldNames.PEER_SWITCH_ID)
@@ -252,6 +441,12 @@ def custom_vpc_update(nrm: Any) -> dict[str, Any] | None:
         raise ValueError("switch_id is required but was not provided")
     if not peer_switch_id:
         raise ValueError("peer_switch_id is required but was not provided")
+
+    # Initialize RestSend via NDModuleV2.
+    nd_v2 = NDModuleV2(nrm.module)
+
+    if nrm.module.check_mode:
+        return nrm.proposed_config
 
     # Validation Step 1: both switches must exist in discovered fabric inventory.
     _validate_switches_exist_in_fabric(
@@ -278,8 +473,6 @@ def custom_vpc_update(nrm: Any) -> dict[str, Any] | None:
             nrm.module.warn(f"VPC pair {nrm.current_identifier} is already in desired state - skipping update")
             return nrm.existing_config
 
-    # Initialize RestSend via NDModuleV2
-    nd_v2 = NDModuleV2(nrm.module)
     use_virtual_peer_link = nrm.proposed_config.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False)
 
     # Validate fabric peering support if virtual peer link is requested.
