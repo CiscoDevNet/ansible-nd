@@ -37,6 +37,9 @@ T = TypeVar("T")
 # interface / switchActions/deploy), "error" (breakout), and "failure" (acl / maintenance_mode).
 _MULTISTATUS_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 
+# Per-item status literal that marks a successful item in a Multi-Status body.
+_MULTISTATUS_SUCCESS_STATUSES = frozenset({"success"})
+
 # DATA envelope keys whose items carry a per-item `status`. Three known shapes:
 # - `results`   -> batch interface POST / breakout action
 # - `switchIds` -> switchActions/deploy (per-switch outcome)
@@ -120,6 +123,39 @@ def _first_non_empty(mapping: Mapping[str, Any], keys: Iterable[str]) -> str | N
     return None
 
 
+def _multistatus_items_with_status(response: dict, statuses: frozenset[str]) -> list[dict[str, Any]]:
+    """
+    # Summary
+
+    Return the per-item entries in a Multi-Status body whose `status` is in `statuses`.
+
+    ## Description
+
+    Scans the known ND Multi-Status envelope arrays (`DATA.results[]`, `DATA.switchIds[]`, and `DATA.links[]`) and returns every item whose `status`
+    matches one of `statuses` (case-insensitive, whitespace-tolerant). Returns an empty list when `DATA` is not a dict, none of the arrays is
+    present, or no item matches.
+
+    ## Parameters
+
+    - response: Response dict with keys RETURN_CODE, MESSAGE, DATA, etc.
+    - statuses: The status literals to match (already lowercase)
+
+    ## Returns
+
+    - List of matching item dicts (empty list when none match)
+
+    ## Raises
+
+    None
+    """
+    matched: list[dict[str, Any]] = []
+    data = _get_typed_value(response, "DATA", dict, {})
+    for key in _MULTISTATUS_ITEM_KEYS:
+        items = _get_typed_value(data, key, list, [])
+        matched.extend(item for item in items if isinstance(item, dict) and str(item.get("status") or "").strip().lower() in statuses)
+    return matched
+
+
 def _failed_multistatus_items(response: dict) -> list[dict[str, Any]]:
     """
     # Summary
@@ -128,9 +164,8 @@ def _failed_multistatus_items(response: dict) -> list[dict[str, Any]]:
 
     ## Description
 
-    Scans the known ND Multi-Status envelope arrays (`DATA.results[]`, `DATA.switchIds[]`, and `DATA.links[]`) and returns every item whose `status`
-    is a failure literal (`failed`/`failure`/`error`, case-insensitive, whitespace-tolerant). Returns an empty list when `DATA` is not a dict, none of
-    the arrays is present, or every item succeeded.
+    Thin wrapper around `_multistatus_items_with_status` matching the failure literals in `_MULTISTATUS_FAILURE_STATUSES`
+    (`failed`/`failure`/`error`).
 
     ## Parameters
 
@@ -144,12 +179,7 @@ def _failed_multistatus_items(response: dict) -> list[dict[str, Any]]:
 
     None
     """
-    failed: list[dict[str, Any]] = []
-    data = _get_typed_value(response, "DATA", dict, {})
-    for key in _MULTISTATUS_ITEM_KEYS:
-        items = _get_typed_value(data, key, list, [])
-        failed.extend(item for item in items if isinstance(item, dict) and str(item.get("status") or "").strip().lower() in _MULTISTATUS_FAILURE_STATUSES)
-    return failed
+    return _multistatus_items_with_status(response, _MULTISTATUS_FAILURE_STATUSES)
 
 
 class NdV1Strategy:
@@ -355,6 +385,40 @@ class NdV1Strategy:
         if modified is None:
             return True
         return str(modified).lower() != "false"
+
+    def is_changed_on_failure(self, response: dict) -> bool:
+        """
+        # Summary
+
+        Report whether a failed mutation nevertheless changed controller state.
+
+        ## Description
+
+        Called for POST/PUT/DELETE responses after `is_success` has returned `False`. A Multi-Status body can mix successful and failed per-item
+        outcomes, so an aggregate failure does not imply nothing changed. The `modified` response header, when present and parseable, is
+        authoritative (mirroring `is_changed`); otherwise any per-item `status` of `success` in the recognized envelope arrays (`DATA.results[]`,
+        `DATA.switchIds[]`, `DATA.links[]`) reports `True`. Non-itemized failures (e.g. `DATA.error` on a 200) report `False`, preserving the
+        conservative historical default.
+
+        ## Parameters
+
+        - response: Response dict with keys RETURN_CODE, MESSAGE, DATA, and any HTTP response headers (lowercased) forwarded by the HttpAPI plugin.
+
+        ## Returns
+
+        - True if the `modified` header is `"true"`, or (header absent or unparseable) at least one per-item status is `success`
+        - False if the `modified` header is `"false"`, or no per-item status is `success`
+
+        ## Raises
+
+        None
+        """
+        modified = str(response.get("modified") or "").strip().lower()
+        if modified == "true":
+            return True
+        if modified == "false":
+            return False
+        return len(_multistatus_items_with_status(response, _MULTISTATUS_SUCCESS_STATUSES)) > 0
 
     def extract_error_message(self, response: dict) -> Optional[str]:
         """

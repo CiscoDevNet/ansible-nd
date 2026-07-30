@@ -211,7 +211,8 @@ class ResponseHandler:
         -   `self.result` is a dict containing:
             -   `changed`:
                 -   True if RETURN_CODE in (200, 201, 202, 204, 207) and no embedded error
-                -   False otherwise
+                -   On failure: True when the `modified` header or a per-item `success` status shows state changed (mixed
+                    Multi-Status batches), False otherwise
             -   `success`:
                 -   True if RETURN_CODE in (200, 201, 202, 204, 207) and no embedded error
                 -   False otherwise
@@ -240,7 +241,7 @@ class ResponseHandler:
             # A failure on a non-success RETURN_CODE keeps the historical retry behavior.
             return_code = self.response.get("RETURN_CODE", -1)
             result["success"] = False
-            result["changed"] = False
+            result["changed"] = self._strategy.is_changed_on_failure(self.response)
             result["retryable"] = return_code not in self._strategy.success_codes
 
         self.result = copy.copy(result)

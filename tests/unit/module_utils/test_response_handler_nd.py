@@ -2329,3 +2329,165 @@ def test_response_handler_nd_01440():
         instance.commit()
     assert instance.result["success"] is False
     assert "retryable" not in instance.result
+
+
+def test_response_handler_nd_01450():
+    """
+    # Summary
+
+    Verify a mixed 207 POST reports changed=True (a member succeeded, so controller state changed).
+
+    ## Test
+
+    - POST 207 with one success and one failed item
+    - success is False, changed is True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_changed_on_failure()
+    - ResponseHandler._handle_post_put_delete_response()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "acl_new", "status": "success", "message": "created successfully"},
+                {"name": "acl_seed", "status": "failed", "message": "ACL already exists"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is True
+
+
+def test_response_handler_nd_01460():
+    """
+    # Summary
+
+    Verify an all-failed 207 POST reports changed=False.
+
+    ## Test
+
+    - POST 207 where every results[] item failed
+    - success is False, changed is False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_changed_on_failure()
+    - ResponseHandler._handle_post_put_delete_response()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "acl_new", "status": "failed", "message": "invalid entry"},
+                {"name": "acl_seed", "status": "failed", "message": "ACL already exists"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
+
+
+def test_response_handler_nd_01470():
+    """
+    # Summary
+
+    Verify the modified header overrides the per-item scan on failure (header says false).
+
+    ## Test
+
+    - Mixed 207 POST whose modified header is "false"
+    - changed is False even though one item succeeded (the header is authoritative)
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_changed_on_failure()
+    - ResponseHandler._handle_post_put_delete_response()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "modified": "false",
+        "DATA": {
+            "results": [
+                {"name": "acl_new", "status": "success"},
+                {"name": "acl_seed", "status": "failed", "message": "ACL already exists"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
+
+
+def test_response_handler_nd_01480():
+    """
+    # Summary
+
+    Verify the modified header overrides the per-item scan on failure (header says true).
+
+    ## Test
+
+    - All-failed 207 POST whose modified header is "true"
+    - changed is True even though no item succeeded (the header is authoritative)
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_changed_on_failure()
+    - ResponseHandler._handle_post_put_delete_response()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "modified": "true",
+        "DATA": {"results": [{"name": "acl_seed", "status": "failed", "message": "ACL already exists"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is True
+
+
+def test_response_handler_nd_01490():
+    """
+    # Summary
+
+    Verify a non-itemized embedded error (DATA.error on 200) keeps changed=False.
+
+    ## Test
+
+    - POST 200 with DATA.error, no modified header, no per-item envelope
+    - success is False, changed is False (conservative default preserved)
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_changed_on_failure()
+    - ResponseHandler._handle_post_put_delete_response()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {"error": "VRF does not exist"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
