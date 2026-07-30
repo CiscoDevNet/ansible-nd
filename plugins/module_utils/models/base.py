@@ -383,12 +383,21 @@ class NDBaseModel(BaseModel, ABC):
 
     def merge(self, other: "NDBaseModel") -> "NDBaseModel":
         """
-        Merge another model's explicitly set, non-None values into this instance.
-        Recursively merges nested NDBaseModel fields.
-        Only fields present in ``other.model_fields_set`` are applied so that
-        Pydantic default values do not overwrite existing configuration.
+        # Summary
 
-        Returns self for chaining.
+        Merge another model's explicitly set, non-None values into this instance. Recursively merges nested `NDBaseModel` fields. Only fields present in
+        `other.model_fields_set` are applied so that Pydantic default values do not overwrite existing configuration. Returns `self` for chaining.
+
+        ## Raises
+
+        ### TypeError
+
+        - If `other` is not an instance of `type(self)`
+
+        ### ValueError
+
+        - If merging would change the discriminator value of a nested discriminated-union field (e.g. `policy_type`). Two union branches have disjoint
+          field sets, so a field-by-field merge across them is undefined; the transition is rejected with a message pointing at `state: replaced`
         """
         if not isinstance(other, type(self)):
             raise TypeError(f"Cannot merge {type(other).__name__} into {type(self).__name__}. " f"Both must be the same type.")
@@ -403,6 +412,13 @@ class NDBaseModel(BaseModel, ABC):
 
             current = getattr(self, field_name)
             if isinstance(current, NDBaseModel) and isinstance(value, NDBaseModel):
+                if type(current) is not type(value):
+                    discriminator = type(self).model_fields[field_name].discriminator
+                    if isinstance(discriminator, str):
+                        raise ValueError(
+                            f"Cannot change {discriminator} from '{getattr(current, discriminator)}' to '{getattr(value, discriminator)}' "
+                            f"with state: merged. Use state: replaced (or delete and re-create the resource) to change {discriminator}."
+                        )
                 current.merge(value)
             else:
                 setattr(self, field_name, value)

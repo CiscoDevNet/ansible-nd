@@ -1567,6 +1567,55 @@ def test_loopback_interface_00680():
     assert result is instance
 
 
+def test_loopback_interface_00690():
+    """
+    # Summary
+
+    Verify a merged-state policy_type transition is rejected with an actionable ValueError.
+
+    ## Test
+
+    - Self has a `loopback` policy, other proposes a `mplsLoopback` policy for the same interface
+    - merge() raises ValueError naming both policy types and pointing at `state: replaced`
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceModel.merge()
+    - NDBaseModel.merge()
+    """
+    config_base = {
+        "switch_ip": "192.168.1.1",
+        "interface_name": "loopback0",
+        "config_data": {
+            "network_os": {
+                "network_os_type": "nx-os",
+                "policy": {
+                    "ip": "10.1.1.1/32",
+                    "policy_type": "loopback",
+                },
+            },
+        },
+    }
+    config_other = {
+        "switch_ip": "192.168.1.1",
+        "interface_name": "loopback0",
+        "config_data": {
+            "network_os": {
+                "network_os_type": "nx-os",
+                "policy": {
+                    "ip": "10.1.1.1/32",
+                    "policy_type": "mplsLoopback",
+                },
+            },
+        },
+    }
+    instance = LoopbackInterfaceModel.from_config(config_base)
+    other = LoopbackInterfaceModel.from_config(config_other)
+    match = r"Cannot change policy_type from 'loopback' to 'mplsLoopback' with state: merged. Use state: replaced"
+    with pytest.raises(ValueError, match=match):
+        instance.merge(other)
+
+
 # =============================================================================
 # Test: LoopbackInterfaceModel — get_argument_spec
 # =============================================================================
