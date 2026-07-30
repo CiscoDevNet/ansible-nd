@@ -199,7 +199,7 @@
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) > 0
@@ -442,7 +442,7 @@
       - >
         (
           tc6_delete_result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) > 0

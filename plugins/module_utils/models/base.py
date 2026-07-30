@@ -252,8 +252,7 @@ class NDBaseModel(BaseModel, ABC):
 
         This is also the merge-path comparison, so a subset match is
         additionally cross-checked with ``merge_would_change`` to catch merge
-        side effects the one-way subset test cannot see (e.g. mutually exclusive
-        counterpart fields that the merge would clear).
+        side effects the one-way subset test cannot see.
         """
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
