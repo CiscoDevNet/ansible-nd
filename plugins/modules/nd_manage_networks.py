@@ -216,19 +216,15 @@ options:
       mtu:
         description: Network interface MTU.
         type: int
-        default: 9216
       mtu_l3intf:
         description: Compatibility alias for C(mtu).
         type: int
-        default: 9216
       arp_suppression:
         description: Enable ARP suppression.
         type: bool
-        default: false
       arp_suppress:
         description: Compatibility alias for C(arp_suppression).
         type: bool
-        default: false
       routing_tag:
         description: Routing tag.
         type: int
@@ -281,7 +277,6 @@ options:
       route_target_both:
         description: Compatibility route-target auto flag.
         type: bool
-        default: false
       l2_fabric_data:
         description: L2 fabric data overrides.
         type: dict
@@ -291,7 +286,6 @@ options:
       enable_ir:
         description: Enable ingress replication.
         type: bool
-        default: false
       multicast_group_address:
         description: Multicast group address.
         type: str
@@ -301,7 +295,6 @@ options:
       netflow_enable:
         description: Enable netflow.
         type: bool
-        default: false
       intfvlan_nf_monitor:
         description: Interface VLAN netflow monitor name.
         type: str
