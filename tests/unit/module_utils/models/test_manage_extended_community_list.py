@@ -222,3 +222,102 @@ def test_manage_extended_community_list_00100() -> None:
     )
 
     assert current.get_diff(proposed, exclude_unset=True) is True
+
+
+def test_manage_extended_community_list_00110() -> None:
+    """Verify packed route-target config is normalized and serialized canonically."""
+    instance = ExtendedCommunityListModel.from_config(
+        {
+            "name": "ECL-PACKED",
+            "type": "standard",
+            "entries": [
+                {
+                    "sequence_number": 10,
+                    "action": "permit",
+                    "route_target_collection": ["65000:100,65000:200", "192.0.2.1:300"],
+                }
+            ],
+        }
+    )
+
+    expected = ["65000:100", "65000:200", "192.0.2.1:300"]
+    assert instance.entries[0].route_target_collection == expected
+    assert instance.to_payload()["entries"][0]["routeTargetCollection"] == expected
+
+
+def test_manage_extended_community_list_00120() -> None:
+    """Verify packed route targets returned by ND are normalized before reconciliation."""
+    instance = ExtendedCommunityListModel.from_response(
+        {
+            "name": "ECL-PACKED",
+            "type": "standard",
+            "entries": [
+                {
+                    "sequenceNumber": 10,
+                    "action": "permit",
+                    "routeTargetCollection": ["65000:100,65000:200"],
+                }
+            ],
+        }
+    )
+
+    assert instance.entries[0].route_target_collection == ["65000:100", "65000:200"]
+
+
+def test_manage_extended_community_list_00130() -> None:
+    """Verify packed response data is idempotent with equivalent unpacked config."""
+    current = ExtendedCommunityListModel.from_response(
+        {
+            "name": "ECL-PACKED",
+            "type": "standard",
+            "entries": [
+                {
+                    "sequenceNumber": 10,
+                    "action": "permit",
+                    "routeTargetCollection": ["65000:100,65000:200"],
+                }
+            ],
+        }
+    )
+    proposed = ExtendedCommunityListModel.from_config(
+        {
+            "name": "ECL-PACKED",
+            "type": "standard",
+            "entries": [
+                {
+                    "sequence_number": 10,
+                    "action": "permit",
+                    "route_target_collection": ["65000:100", "65000:200"],
+                }
+            ],
+        }
+    )
+
+    assert current.get_diff(proposed, exclude_unset=True) is True
+
+
+@pytest.mark.parametrize(
+    "route_targets",
+    (
+        ["65000:100,"],
+        [",65000:100"],
+        ["65000:100,invalid"],
+        ["65000:100, 65000:200"],
+    ),
+)
+def test_manage_extended_community_list_00140(route_targets: list[str]) -> None:
+    """Verify malformed packed route-target items remain invalid."""
+    with pytest.raises(ValueError, match="route_target_collection entry"):
+        ExtendedCommunityListModel.from_config(
+            {
+                "name": "ECL-INVALID",
+                "type": "standard",
+                "entries": [
+                    {
+                        "sequence_number": 10,
+                        "action": "permit",
+                        "route_target_collection": route_targets,
+                    }
+                ],
+            }
+        )

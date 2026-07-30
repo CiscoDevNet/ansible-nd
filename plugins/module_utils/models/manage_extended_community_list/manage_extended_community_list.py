@@ -54,7 +54,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_co
 # MAC: eeee.eeee.eeee  OR  ee:ee:ee:ee:ee:ee  OR  ee-ee-ee-ee-ee-ee
 _ROUTER_MAC_RE = re.compile(r"^(?:[a-fA-F0-9]{4}\.[a-fA-F0-9]{4}\.[a-fA-F0-9]{4}" + r"|([a-fA-F0-9]{2}[:\-]){5}[a-fA-F0-9]{2})$")
 
-# Route target: ASN2:NN  |  ASN4:NN  |  IPv4:NN  (single value, no commas)
+# Canonical route-target token: ASN2:NN  |  ASN4:NN  |  IPv4:NN
 _ROUTE_TARGET_RE = re.compile(
     r"^((\d{1,5}:\d{1,9})|(\d{1,10}:\d{1,9})"
     r"|((25[0-5]|2[0-4]\d|1\d{2}|\d{1,2})\.(25[0-5]|2[0-4]\d|1\d{2}|\d{1,2})"
@@ -167,13 +167,23 @@ class ExtendedCommunityListEntryModel(NDNestedModel):
 
     @field_validator("route_target_collection", mode="before")
     @classmethod
-    def validate_route_target_collection(cls, v):
+    def validate_route_target_collection(cls, v: Any) -> Any:
+        """Validate route targets and flatten OpenAPI-compatible comma-packed items."""
         if v is None:
             return v
-        for rt in v:
-            if not _ROUTE_TARGET_RE.match(str(rt)):
-                raise ValueError(f"route_target_collection entry '{rt}' must be in " "ASN2:NN, ASN4:NN, or IPv4:NN format.")
-        return v
+        if not isinstance(v, list):
+            return v
+
+        normalized: list[str] = []
+        for packed_route_targets in v:
+            for route_target in str(packed_route_targets).split(","):
+                if not _ROUTE_TARGET_RE.match(route_target):
+                    raise ValueError(
+                        f"route_target_collection entry '{packed_route_targets}' "
+                        "must contain only ASN2:NN, ASN4:NN, or IPv4:NN values."
+                    )
+                normalized.append(route_target)
+        return normalized
 
     @field_validator("site_of_origin_collection", mode="before")
     @classmethod

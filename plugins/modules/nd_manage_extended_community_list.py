@@ -100,6 +100,7 @@ options:
             - One or more route targets to match.
             - Each value must be in C(ASN2:NN), C(ASN4:NN), or C(IPv4:NN)
               format (e.g. C(65000:100) or C(192.168.1.1:200)).
+            - Comma-separated route targets in one list item are accepted and normalized to separate values.
             - Only valid when O(config.type=standard).
             type: list
             elements: str
@@ -182,8 +183,7 @@ EXAMPLES = r"""
           - sequence_number: 10
             action: permit
             route_target_collection:
-              - "65000:100"
-              - "65000:200"
+              - "65000:100,65000:200"
               - "192.168.1.1:300"
           - sequence_number: 20
             action: permit
