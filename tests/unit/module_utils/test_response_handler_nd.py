@@ -1587,6 +1587,7 @@ def test_response_handler_nd_01230():
 
     - POST with RETURN_CODE 207 and results[] items all status "success"
       sets success=True, changed=True (no failing item present)
+    - retryable is False (key present on every mutation result)
 
     ## Classes and Methods
 
@@ -1609,6 +1610,7 @@ def test_response_handler_nd_01230():
         instance.commit()
     assert instance.result["success"] is True
     assert instance.result["changed"] is True
+    assert instance.result["retryable"] is False
 
 
 def test_response_handler_nd_01240():
@@ -2225,6 +2227,7 @@ def test_response_handler_nd_01410():
 
     - POST returns 500
     - success is False and retryable is True (transient transport-level failures keep today's retry behavior)
+    - changed is False (a pure transport failure changed nothing)
 
     ## Classes and Methods
 
@@ -2242,6 +2245,7 @@ def test_response_handler_nd_01410():
         instance.commit()
     assert instance.result["success"] is False
     assert instance.result["retryable"] is True
+    assert instance.result["changed"] is False
 
 
 def test_response_handler_nd_01420():
