@@ -74,3 +74,24 @@ def _needs_deployment(result: dict[str, Any], module: Any) -> bool:
 
     changed_vrfs = module.params.get("_changed_vrfs") or []
     return bool(changed_vrfs)
+
+
+def _changed_entries_from_preview(before: Any, after: Any) -> list[Any]:
+    """Recover the change set from the before/after preview.
+
+    In check mode the state machine's ``sent`` collection is empty by design,
+    so the deploy scope is derived from the previewed states instead: created
+    or updated rows are taken from ``after``; removed rows are taken from
+    ``before``. This mirrors the create/update/delete set a real run records in
+    ``sent`` (VRF Lite tracks deletes there too), so a check-mode plan reports
+    the same VRFs a real run would deploy instead of an empty (false-green) scope.
+    """
+    changed: list[Any] = []
+    for entry in after:
+        if before.get_diff_config(entry) != "no_diff":
+            changed.append(entry)
+    after_keys = set(after.keys())
+    for entry in before:
+        if entry.get_identifier_value() not in after_keys:
+            changed.append(entry)
+    return changed

@@ -408,6 +408,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vr
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exceptions import (
     VrfLiteResourceError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy import (
+    _changed_entries_from_preview,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite import (
     ManageVrfLiteOrchestrator,
@@ -478,15 +481,20 @@ def main() -> None:
         nd_state_machine.manage_state()
         module.params["state"] = state
 
-        sent_entries = list(nd_state_machine.sent)
-        module.params["_changed_vrfs"] = sorted({item.vrf_name for item in sent_entries})
+        change_entries = list(nd_state_machine.sent)
+        if module.check_mode and not change_entries:
+            # sent is intentionally empty in check mode; recover the change set from
+            # the before/after preview so the plan reports the VRFs a real run would
+            # deploy while save and deploy stay suppressed.
+            change_entries = _changed_entries_from_preview(nd_state_machine.before, nd_state_machine.existing)
+        module.params["_changed_vrfs"] = sorted({item.vrf_name for item in change_entries})
         # Operation journal: every (vrf, switch) pair attached OR detached this run.
         # Deletes are included (track_deletes_in_sent=True), so the deploy scope can
         # cover switches whose attachment was removed by replaced/overridden/deleted
         # and are therefore absent from the retained desired config.
         module.params["_deploy_targets"] = [
             {"vrf_name": item.vrf_name, "switch_ip": getattr(item, "switch_ip", None)}
-            for item in sent_entries
+            for item in change_entries
             if getattr(item, "vrf_name", None) and getattr(item, "switch_ip", None)
         ]
         log.info("state=%s: reconciliation complete, changed_vrfs=%s", state, module.params["_changed_vrfs"])

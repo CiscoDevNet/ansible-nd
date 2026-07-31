@@ -28,6 +28,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common im
     request_with_verify_settings,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy import (
+    _changed_entries_from_preview,
     _needs_deployment,
     _target_vrfs_for_deploy,
 )
@@ -59,6 +60,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.config_tr
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_attachment_entry import (
     VrfLiteAttachmentEntry,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_model import (
     VrfLiteModel,
@@ -938,6 +942,55 @@ def test_manage_vrf_lite_00492e_remove_all_global_scope_still_deploys_vrf(monkey
     deploy_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1"))
     assert deploy_call["payload"] == {"vrfNames": ["TENANT"]}
     assert "switchIds" not in deploy_call["payload"]
+
+
+def test_manage_vrf_lite_00492f_check_mode_change_set_recovered_from_preview():
+    """In check mode `sent` is empty, so the deploy scope must be recovered from the
+    before/after preview: created and updated (vrf, switch) rows come from the
+    'after' state so the plan is not a false green. Unchanged rows are excluded."""
+    before = NDConfigCollection(
+        model_class=VrfLiteAttachmentEntry,
+        items=[
+            VrfLiteAttachmentEntry.from_response({"vrf_name": "RED", "switch_ip": "10.1.1.1", "vlan_id": 10}),
+            VrfLiteAttachmentEntry.from_response({"vrf_name": "BLUE", "switch_ip": "10.1.1.2", "vlan_id": 20}),
+        ],
+    )
+    after = NDConfigCollection(
+        model_class=VrfLiteAttachmentEntry,
+        items=[
+            VrfLiteAttachmentEntry.from_response({"vrf_name": "RED", "switch_ip": "10.1.1.1", "vlan_id": 10}),
+            VrfLiteAttachmentEntry.from_response({"vrf_name": "BLUE", "switch_ip": "10.1.1.2", "vlan_id": 99}),
+            VrfLiteAttachmentEntry.from_response({"vrf_name": "GREEN", "switch_ip": "10.1.1.3", "vlan_id": 30}),
+        ],
+    )
+
+    changed = _changed_entries_from_preview(before, after)
+
+    assert sorted((entry.vrf_name, entry.switch_ip) for entry in changed) == [
+        ("BLUE", "10.1.1.2"),
+        ("GREEN", "10.1.1.3"),
+    ]
+    assert sorted({entry.vrf_name for entry in changed}) == ["BLUE", "GREEN"]
+
+
+def test_manage_vrf_lite_00492g_check_mode_change_set_includes_removed_rows():
+    """Removed (vrf, switch) rows are absent from 'after', so they must be recovered
+    from 'before' -- otherwise a remove-all plan would report no deploy scope."""
+    before = NDConfigCollection(
+        model_class=VrfLiteAttachmentEntry,
+        items=[
+            VrfLiteAttachmentEntry.from_response({"vrf_name": "TENANT", "switch_ip": "10.0.0.1", "vlan_id": 10}),
+            VrfLiteAttachmentEntry.from_response({"vrf_name": "TENANT", "switch_ip": "10.0.0.2", "vlan_id": 10}),
+        ],
+    )
+    after = NDConfigCollection(model_class=VrfLiteAttachmentEntry, items=[])
+
+    changed = _changed_entries_from_preview(before, after)
+
+    assert sorted((entry.vrf_name, entry.switch_ip) for entry in changed) == [
+        ("TENANT", "10.0.0.1"),
+        ("TENANT", "10.0.0.2"),
+    ]
 
 
 def test_manage_vrf_lite_00493_attachment_deploy_false_does_not_suppress_attachment_payload():
