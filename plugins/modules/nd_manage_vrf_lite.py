@@ -261,34 +261,133 @@ EXAMPLES = r"""
 
 RETURN = r"""
 changed:
-  description: Whether any change was made
+  description: Whether the module changed, or in check mode would change, the VRF Lite configuration.
   type: bool
   returned: always
+output_level:
+  description: The output verbosity level in effect for the run, echoing O(output_level).
+  type: str
+  returned: always
 before:
-  description: State before operation
+  description: VRF Lite configuration present on ND before the operation.
   type: list
+  elements: dict
   returned: always
 after:
-  description: State after operation
+  description:
+  - VRF Lite configuration returned after the operation.
+  - For write states in check mode, this is the projected state and is not written to ND.
+  - For gathered state, this is the same read-only state exposed through C(gathered).
   type: list
+  elements: dict
   returned: always
 current:
-  description: Alias for after
+  description: Alias for C(after).
   type: list
+  elements: dict
   returned: always
-gathered:
-  description: Gathered data when C(state=gathered)
+diff:
+  description:
+  - Configuration-difference collection exposed for output compatibility.
+  - The current VRF Lite workflow returns an empty list.
   type: list
-  returned: when state is gathered
+  elements: dict
+  returned: always
+proposed:
+  description: VRF Lite configuration proposed before reconciliation with existing state.
+  type: list
+  elements: dict
+  returned: when O(output_level) is V(info) or V(debug) for a write-state operation
+logs:
+  description:
+  - Internal diagnostic-message collection exposed for debug-output compatibility.
+  - The current VRF Lite workflow returns an empty list.
+  type: list
+  elements: str
+  returned: when O(output_level) is V(debug) for a write-state operation
+gathered:
+  description: VRF Lite configuration returned by a read-only gathered operation.
+  type: list
+  elements: dict
+  returned: when O(state) is V(gathered)
 warnings:
-  description: Collected runtime warnings from validation/deploy helpers
+  description: Runtime warnings collected by validation and deployment helpers.
   type: list
   elements: str
   returned: when warnings are present
 deployment:
-  description: Save/deploy action output when config_actions are enabled
+  description: Detailed save and deploy action output.
   type: dict
-  returned: when config_actions is used
+  returned: when O(config_actions.save) is V(true) for a successful write-state operation
+  contains:
+    msg:
+      description: Human-readable summary of the deployment decision or completed actions.
+      type: str
+      returned: always
+    deployment_needed:
+      description: Whether save or deploy actions are needed.
+      type: bool
+      returned: always
+    changed:
+      description: Whether the deployment phase changed, or in check mode would change, controller state.
+      type: bool
+      returned: always
+    config_actions:
+      description: Effective save and deploy controls used by the operation.
+      type: dict
+      returned: always
+      contains:
+        save:
+          description: Whether the fabric configuration-save action is enabled.
+          type: bool
+          returned: always
+        deploy:
+          description: Whether deployment of affected VRFs is enabled after configuration save.
+          type: bool
+          returned: always
+        type:
+          description: Deployment scope, either C(switch) or C(global).
+          type: str
+          returned: always
+    target_vrfs:
+      description:
+      - Changed VRFs eligible for VRF deployment.
+      - This can be empty when only the fabric-wide configuration-save action is planned.
+      type: list
+      elements: str
+      returned: when configuration save or deployment actions are needed
+    planned_actions:
+      description: REST actions planned or executed by the deployment phase.
+      type: list
+      elements: str
+      returned: when configuration save or deployment actions are needed
+    response:
+      description: Per-action controller responses collected by the deployment phase.
+      type: list
+      elements: dict
+      returned: always
+deployment_needed:
+  description: Whether the reconciled VRF Lite changes require configuration save or deployment actions.
+  type: bool
+  returned: when O(config_actions.save) is V(true) for a successful write-state operation
+ip_to_sn_mapping:
+  description: Mapping of fabric switch management IP addresses to controller serial numbers.
+  type: dict
+  returned: when the fabric switch query returns a non-empty mapping
+response:
+  description:
+  - Controller-response collection reserved for gathered-output compatibility.
+  - The current gathered workflow returns an empty list.
+  type: list
+  elements: dict
+  returned: when O(state) is V(gathered)
+result:
+  description:
+  - Normalized-result collection reserved for gathered-output compatibility.
+  - The current gathered workflow returns an empty list.
+  type: list
+  elements: dict
+  returned: when O(state) is V(gathered)
 """
 
 import json
