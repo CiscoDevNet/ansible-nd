@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from itertools import groupby
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
@@ -24,12 +25,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions i
     build_detach_payload_for_entry,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
+    _raise_vrf_lite_error,
+    _resolve_serial,
     append_runtime_warning,
     get_config_actions,
     get_runtime_warnings,
     get_verify_settings,
     request_with_rest_send,
-    _raise_vrf_lite_error,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy import (
     _is_non_fatal_config_save_error,
@@ -46,12 +48,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.config_tr
     replacement_scope_vrfs,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
+    _query_vrf_switch_details,
     query_vrf_lite_state,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_endpoints import (
     VrfLiteEndpoints,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.validation import (
+    _load_switch_inventory,
     validate_vrf_lite_write_guardrails,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -133,8 +137,12 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         module.params["_vrf_lite_vrf_vlan_map"] = {}
         module.params["_have"] = []
         module.params["_have_loaded"] = False
+        module.params["_known_vrfs"] = []
+        module.params["_known_vrfs_loaded"] = False
         module.params["_raw_vrf_attachment_map"] = {}
         module.params["_fabric_switch_inventory"] = {}
+        module.params["_fabric_switch_inventory_loaded"] = False
+        module.params["_fabric_switch_inventory_normalized"] = False
         module.params["_vrf_lite_support_cache"] = {}
         module.params["_vrf_lite_prototype_cache"] = {}
         module.params["_vrf_lite_switch_detail_cache"] = {}
@@ -194,6 +202,8 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         return self.create_bulk([model_instance], **kwargs)
 
     def update(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
+        # TODO(#418): add a post-diff bulk-update hook so multiple changed
+        # entries can share one support prefetch and attachment POST per VRF.
         return self._post_attach_entries([model_instance])
 
     def delete(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
@@ -205,14 +215,72 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
     def delete_bulk(self, model_instances: list[Any], **kwargs: Any) -> dict[str, Any]:
         return self._post_detach_entries(model_instances)
 
+    def _prefetch_vrf_lite_support_details(self, entries: list[Any]) -> None:
+        """Prime per-switch detail cache with one request per VRF."""
+        if not entries:
+            return
+
+        module = self._module()
+        fabric_name = module.params.get("fabric_name")
+        serials_by_vrf: dict[str, set[str]] = defaultdict(set)
+
+        for entry in entries:
+            serial_number = _resolve_serial(module, getattr(entry, "switch_ip", None))
+            if serial_number and getattr(entry, "extensions", None):
+                serials_by_vrf[entry.vrf_name].add(serial_number)
+
+        for vrf_name in sorted(serials_by_vrf):
+            serial_numbers = sorted(serials_by_vrf[vrf_name])
+            logger.debug(
+                "_validate_attach_entries: prefetching VRF Lite details for VRF %s on %d switch(es)",
+                vrf_name,
+                len(serial_numbers),
+            )
+            _query_vrf_switch_details(
+                module=module,
+                rest_send=self.rest_send,
+                fabric_name=fabric_name,
+                vrf_name=vrf_name,
+                serial_numbers=serial_numbers,
+            )
+
+    def _locally_valid_switch_prefix(self, entries: list[Any]) -> tuple[list[Any], Any | None, VrfLiteResourceError | None]:
+        """Return entries up to the first locally invalid switch, preserving order."""
+        module = self._module()
+        fabric_name = module.params.get("fabric_name")
+        inventory = _load_switch_inventory(module, fabric_name, self.rest_send)
+        valid_prefix = []
+
+        for entry in entries:
+            try:
+                serial_number = _resolve_serial(module, getattr(entry, "switch_ip", None))
+            except VrfLiteResourceError as error:
+                return valid_prefix, entry, error
+            if serial_number and serial_number not in inventory:
+                return valid_prefix, entry, None
+            valid_prefix.append(entry)
+
+        return valid_prefix, None, None
+
     def _validate_attach_entries(self, entries: list[Any]) -> None:
         module = self._module()
-        seen_vrfs = set()
-        for entry in entries:
-            if entry.vrf_name not in seen_vrfs:
-                _ensure_vrf_exists(module, self.rest_send, entry.vrf_name)
-                seen_vrfs.add(entry.vrf_name)
-            validate_vrf_lite_write_guardrails(module=module, model_instance=entry, rest_send=self.rest_send)
+        # Production entries are sorted by VRF, so each valid bulk workload
+        # gets one group per VRF.  Group only consecutive entries here rather
+        # than collecting equal names globally, preserving exact input/error
+        # order for direct callers that supply interleaved VRFs.
+        for vrf_name, grouped_entries in groupby(entries, key=lambda entry: entry.vrf_name):
+            vrf_entries = list(grouped_entries)
+            _ensure_vrf_exists(module, self.rest_send, vrf_name)
+            valid_prefix, invalid_entry, resolution_error = self._locally_valid_switch_prefix(vrf_entries)
+            self._prefetch_vrf_lite_support_details(valid_prefix)
+            for entry in valid_prefix:
+                validate_vrf_lite_write_guardrails(module=module, model_instance=entry, rest_send=self.rest_send)
+            if resolution_error is not None:
+                raise resolution_error
+            if invalid_entry is not None:
+                # Reuse the normal guardrail for the canonical structured
+                # unknown-switch error after every earlier entry has passed.
+                validate_vrf_lite_write_guardrails(module=module, model_instance=invalid_entry, rest_send=self.rest_send)
 
     def preflight_validate_check_mode(self, proposed_entries: list[Any]) -> None:
         """Run the non-mutating attach preflight during a check-mode run.

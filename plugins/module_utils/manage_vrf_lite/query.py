@@ -79,6 +79,11 @@ def _query_fabric_switches(module: Any, rest_send: Any, fabric_name: str) -> dic
     fabric_context = FabricContext(rest_send=rest_send, fabric_name=fabric_name)
     inventory = fabric_context.switch_inventory_by_id
     module.params["_fabric_switch_inventory"] = inventory
+    # Keep an explicit loaded marker because an empty fabric inventory is a
+    # valid, authoritative result.  Truthiness alone cannot distinguish that
+    # result from an inventory that has not been queried yet.
+    module.params["_fabric_switch_inventory_loaded"] = True
+    module.params["_fabric_switch_inventory_normalized"] = False
     return {str(serial).strip(): str(switch.get("fabricManagementIp")).strip() for serial, switch in inventory.items() if switch.get("fabricManagementIp")}
 
 
@@ -425,6 +430,7 @@ def query_vrf_lite_state(
     module.params["_sn_to_ip_mapping"] = sn_to_ip
     module.params["_not_in_sync_vrfs"] = sorted(not_in_sync_vrfs)
     module.params["_known_vrfs"] = sorted(known_vrfs)
+    module.params["_known_vrfs_loaded"] = True
     module.params["_raw_vrf_attachment_map"] = raw_vrf_attachment_map
     module.params["_vrf_lite_vrf_vlan_map"] = {
         item.get("vrf_name"): item.get("vlan_id") for item in result if item.get("vrf_name") and item.get("vlan_id") is not None

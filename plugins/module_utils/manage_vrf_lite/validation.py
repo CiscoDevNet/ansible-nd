@@ -93,15 +93,23 @@ def _normalize_switch_inventory(response: Any) -> dict[str, dict[str, Any]]:
 
 def _load_switch_inventory(module: Any, fabric_name: str, rest_send: Any) -> dict[str, dict[str, Any]]:
     cached = module.params.get("_fabric_switch_inventory")
-    if isinstance(cached, dict) and cached:
+    cache_loaded = module.params.get("_fabric_switch_inventory_loaded") is True
+    if isinstance(cached, dict) and (cache_loaded or cached):
+        if module.params.get("_fabric_switch_inventory_normalized") is True:
+            return cached
+
         inventory = _normalize_switch_inventory(cached)
         module.params["_fabric_switch_inventory"] = inventory
+        module.params["_fabric_switch_inventory_loaded"] = True
+        module.params["_fabric_switch_inventory_normalized"] = True
         return inventory
 
     fabric_context = FabricContext(rest_send=rest_send, fabric_name=fabric_name)
     inventory = _normalize_switch_inventory(fabric_context.switch_inventory_by_id)
 
     module.params["_fabric_switch_inventory"] = inventory
+    module.params["_fabric_switch_inventory_loaded"] = True
+    module.params["_fabric_switch_inventory_normalized"] = True
     return inventory
 
 

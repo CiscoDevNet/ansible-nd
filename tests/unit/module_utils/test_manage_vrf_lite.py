@@ -34,6 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
     _coerce_vlan,
+    _query_fabric_switches,
     _query_vrf_attachments,
     _query_vrf_switch_details,
     _resolve_vrf_vlan,
@@ -48,6 +49,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_e
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.validation import (
     _extract_vrf_lite_prototypes,
+    _load_switch_inventory,
     _vrf_lite_cache_key,
     validate_vrf_lite_write_guardrails,
 )
@@ -97,9 +99,10 @@ class _DummyWarnModule(_DummyModule):
 class _StubEntry:
     """Minimal attachment-entry stand-in for preflight validation tests."""
 
-    def __init__(self, vrf_name, switch_ip):
+    def __init__(self, vrf_name, switch_ip, extensions=None):
         self.vrf_name = vrf_name
         self.switch_ip = switch_ip
+        self.extensions = extensions
 
 
 def _vrf_lite_orchestrator(module):
@@ -224,6 +227,29 @@ def test_manage_vrf_lite_00065_missing_vrf_fails_existence_check(monkeypatch):
         _ensure_vrf_exists(module, rest_send=object(), vrf_name="BLUE")
 
 
+@pytest.mark.parametrize("known_vrfs", [[], ["GREEN"]], ids=["empty-inventory", "different-vrf"])
+def test_manage_vrf_lite_00067_loaded_missing_vrf_fails_without_refresh(monkeypatch, known_vrfs):
+    """A cached absence is authoritative and fails without two more controller reads."""
+    module = _DummyModule(
+        {
+            "fabric_name": "FABRIC1",
+            "_known_vrfs": known_vrfs,
+            "_known_vrfs_loaded": True,
+        }
+    )
+
+    def _unexpected_query(**kwargs):
+        pytest.fail("loaded VRF inventory must not be refreshed: {0}".format(kwargs))
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions.query_vrf_lite_state",
+        _unexpected_query,
+    )
+
+    with pytest.raises(VrfLiteResourceError, match="VRF 'BLUE' does not exist"):
+        _ensure_vrf_exists(module, rest_send=object(), vrf_name="BLUE")
+
+
 def test_manage_vrf_lite_00075_orchestrator_prepares_runtime_params():
     module = _DummyModule(
         {
@@ -254,6 +280,11 @@ def test_manage_vrf_lite_00075_orchestrator_prepares_runtime_params():
     assert module.params["verify"] == {"enabled": True, "retries": 2, "timeout": 9}
     assert module.params["_changed_vrfs"] == []
     assert module.params["_gather_filter_config"] == []
+    assert module.params["_known_vrfs"] == []
+    assert module.params["_known_vrfs_loaded"] is False
+    assert module.params["_fabric_switch_inventory"] == {}
+    assert module.params["_fabric_switch_inventory_loaded"] is False
+    assert module.params["_fabric_switch_inventory_normalized"] is False
 
 
 def test_manage_vrf_lite_00080_query_reuses_cached_gathered_have(monkeypatch):
@@ -451,6 +482,26 @@ def test_manage_vrf_lite_00400_config_actions_ignore_legacy_top_level_deploy():
     assert configured_actions == {"save": True, "deploy": False, "type": "global"}
 
 
+def test_manage_vrf_lite_00470_empty_fabric_switch_inventory_is_marked_loaded(monkeypatch):
+    class _EmptyFabricContext:
+        def __init__(self, rest_send, fabric_name):
+            del rest_send, fabric_name
+            self.switch_inventory_by_id = {}
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query.FabricContext",
+        _EmptyFabricContext,
+    )
+    module = _DummyModule({})
+
+    result = _query_fabric_switches(module, rest_send=object(), fabric_name="FABRIC1")
+
+    assert result == {}
+    assert module.params["_fabric_switch_inventory"] == {}
+    assert module.params["_fabric_switch_inventory_loaded"] is True
+    assert module.params["_fabric_switch_inventory_normalized"] is False
+
+
 def test_manage_vrf_lite_00475_query_ignores_detached_attachment_rows(monkeypatch):
     module = _DummyModule({})
 
@@ -487,6 +538,8 @@ def test_manage_vrf_lite_00475_query_ignores_detached_attachment_rows(monkeypatc
 
     assert result == [{"vrf_name": "BLUE", "vlan_id": 500, "deploy": False, "attach": []}]
     assert module.params["_raw_vrf_attachment_map"] == {}
+    assert module.params["_known_vrfs"] == ["BLUE"]
+    assert module.params["_known_vrfs_loaded"] is True
 
 
 def test_manage_vrf_lite_00480_query_ignores_base_vrf_attachments_without_vrf_lite(
@@ -1402,6 +1455,59 @@ def test_manage_vrf_lite_00500_guardrails_reject_missing_prototype_metadata(monk
         validate_vrf_lite_write_guardrails(module=module, model_instance=model, rest_send=object())
 
 
+def test_manage_vrf_lite_00525_guardrails_trust_authoritative_empty_switch_inventory(monkeypatch):
+    def _unexpected_context(*args, **kwargs):
+        pytest.fail("loaded empty switch inventory must not be queried again: {0} {1}".format(args, kwargs))
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.validation.FabricContext",
+        _unexpected_context,
+    )
+    module = _DummyModule(
+        {
+            "fabric_name": "F1",
+            "_fabric_switch_inventory": {},
+            "_fabric_switch_inventory_loaded": True,
+            "_fabric_switch_inventory_normalized": False,
+        }
+    )
+
+    for serial_number in ("SN1", "SN2"):
+        entry = VrfLiteAttachmentEntry(vrf_name="BLUE", switch_ip=serial_number)
+        with pytest.raises(VrfLiteResourceError, match="is not present in fabric"):
+            validate_vrf_lite_write_guardrails(module=module, model_instance=entry, rest_send=object())
+
+    assert module.params["_fabric_switch_inventory"] == {}
+    assert module.params["_fabric_switch_inventory_loaded"] is True
+    assert module.params["_fabric_switch_inventory_normalized"] is True
+
+
+def test_manage_vrf_lite_00527_switch_inventory_is_normalized_only_once(monkeypatch):
+    def _unexpected_context(*args, **kwargs):
+        pytest.fail("loaded switch inventory must not be queried again: {0} {1}".format(args, kwargs))
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.validation.FabricContext",
+        _unexpected_context,
+    )
+    module = _DummyModule(
+        {
+            "_fabric_switch_inventory": {
+                "SN1": {"switchId": "SN1", "switchRole": "border", "fabricManagementIp": "10.0.0.1"},
+            },
+            "_fabric_switch_inventory_loaded": True,
+            "_fabric_switch_inventory_normalized": False,
+        }
+    )
+
+    first = _load_switch_inventory(module, "F1", rest_send=object())
+    second = _load_switch_inventory(module, "F1", rest_send=object())
+
+    assert second is first
+    assert first["SN1"]["role"] == "border"
+    assert module.params["_fabric_switch_inventory_normalized"] is True
+
+
 def test_manage_vrf_lite_00550_guardrails_accept_usable_prototype_case_insensitively(monkeypatch):
     module = _DummyWarnModule(
         {
@@ -1533,6 +1639,62 @@ def test_manage_vrf_lite_00577_switch_detail_cache_isolated_by_vrf():
     assert green["SN1"]["extra_vrf"] == "GREEN"
     assert blue_cached == blue
     assert len(rest_send.calls) == 2
+
+
+def test_manage_vrf_lite_00578_switch_details_batch_serials_per_vrf_and_cache():
+    class _FakeRestSend:
+        timeout = 30
+        check_mode = False
+        response_handler = None
+
+        def __init__(self):
+            self.path = None
+            self.verb = None
+            self.response_current = {}
+            self.result_current = {}
+            self.calls = []
+
+        def save_settings(self):
+            pass
+
+        def restore_settings(self):
+            pass
+
+        def commit(self):
+            self.calls.append(self.path)
+            if self.path == VrfLiteEndpoints.vrf_switch("F1", "BLUE", "SN1,SN2,SN3"):
+                vrf_name = "BLUE"
+            elif self.path == VrfLiteEndpoints.vrf_switch("F1", "GREEN", "SN1,SN2,SN3"):
+                vrf_name = "GREEN"
+            else:
+                pytest.fail("unexpected switch-detail path: {0}".format(self.path))
+
+            self.response_current = {
+                "DATA": [
+                    {
+                        "vrfName": vrf_name,
+                        "switchDetailsList": [
+                            _vrf_lite_switch_detail(serial_number=serial_number, extra_vrf=vrf_name) for serial_number in ("SN1", "SN2", "SN3")
+                        ],
+                    }
+                ]
+            }
+            self.result_current = {"success": True}
+
+    module = _DummyModule({"_vrf_lite_switch_detail_cache": {}})
+    rest_send = _FakeRestSend()
+
+    blue = _query_vrf_switch_details(module, rest_send, "F1", "BLUE", ["SN3", "SN1", "SN2"])
+    green = _query_vrf_switch_details(module, rest_send, "F1", "GREEN", ["SN2", "SN3", "SN1"])
+    blue_cached = _query_vrf_switch_details(module, rest_send, "F1", "BLUE", ["SN1", "SN2", "SN3"])
+
+    assert sorted(blue) == ["SN1", "SN2", "SN3"]
+    assert sorted(green) == ["SN1", "SN2", "SN3"]
+    assert blue_cached == blue
+    assert rest_send.calls == [
+        VrfLiteEndpoints.vrf_switch("F1", "BLUE", "SN1,SN2,SN3"),
+        VrfLiteEndpoints.vrf_switch("F1", "GREEN", "SN1,SN2,SN3"),
+    ]
 
 
 def test_manage_vrf_lite_00580_guardrails_report_requested_and_available_interfaces(monkeypatch):
@@ -1685,6 +1847,78 @@ def test_manage_vrf_lite_00800_attachment_post_uses_legacy_vrf_lite_payload(
             [{"vrfName": "BLUE", "lanAttachList": lan_attach_list}],
         )
     ]
+
+
+def test_manage_vrf_lite_00810_create_bulk_reads_and_posts_once_per_vrf(monkeypatch):
+    request_paths = []
+    post_calls = []
+
+    def _request(module, rest_send, path, verb, data=None):
+        del module, rest_send, data
+        assert verb == HttpVerbEnum.GET
+        request_paths.append(path)
+        vrf_name = "BLUE" if "vrf-names=BLUE" in path else "GREEN"
+        return [
+            {
+                "vrfName": vrf_name,
+                "switchDetailsList": [_vrf_lite_switch_detail(serial_number=serial_number) for serial_number in ("SN1", "SN2", "SN3")],
+            }
+        ]
+
+    def _post(module, rest_send, fabric_name, vrf_name, rows):
+        del module, rest_send
+        post_calls.append((fabric_name, vrf_name, rows))
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query.request_with_verify_settings",
+        _request,
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite._post_attachment_payload",
+        _post,
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.build_attach_payload_for_entry",
+        lambda module, rest_send, entry: {"serialNumber": entry.switch_ip},
+    )
+    entries = [
+        VrfLiteAttachmentEntry(
+            vrf_name=vrf_name,
+            switch_ip=serial_number,
+            extensions=[{"interface": "Ethernet1/10", "neighbor_ipv4": "192.0.2.9"}],
+        )
+        for vrf_name in ("GREEN", "BLUE")
+        for serial_number in ("SN3", "SN1", "SN2")
+    ]
+    module = _DummyModule(
+        {
+            "check_mode": False,
+            "fabric_name": "F1",
+            "state": "merged",
+            "_known_vrfs": ["BLUE", "GREEN"],
+            "_known_vrfs_loaded": True,
+            "_fabric_switch_inventory": {serial_number: {"switchId": serial_number, "switchRole": "border"} for serial_number in ("SN1", "SN2", "SN3")},
+            "_fabric_switch_inventory_loaded": True,
+            "_fabric_switch_inventory_normalized": False,
+            "_vrf_lite_switch_detail_cache": {},
+            "_vrf_lite_support_cache": {},
+            "_vrf_lite_prototype_cache": {},
+        }
+    )
+    result = _vrf_lite_orchestrator(module).create_bulk(entries)
+
+    assert request_paths == [
+        VrfLiteEndpoints.vrf_switch("F1", "GREEN", "SN1,SN2,SN3"),
+        VrfLiteEndpoints.vrf_switch("F1", "BLUE", "SN1,SN2,SN3"),
+    ]
+    assert [(vrf_name, len(rows)) for _fabric_name, vrf_name, rows in post_calls] == [("BLUE", 3), ("GREEN", 3)]
+    assert result == {
+        "response": [
+            {"vrf_name": "BLUE", "response": {"ok": True}},
+            {"vrf_name": "GREEN", "response": {"ok": True}},
+        ]
+    }
 
 
 def test_manage_vrf_lite_00850_attachment_post_reports_structured_controller_failure(
@@ -1888,3 +2122,282 @@ def test_manage_vrf_lite_00920_preflight_skips_non_write_states(monkeypatch):
     orchestrator = _vrf_lite_orchestrator(module)
 
     orchestrator.preflight_validate_check_mode([_StubEntry("BLUE", "10.0.0.1")])
+
+
+def test_manage_vrf_lite_00930_bulk_validation_prefetches_once_per_vrf(monkeypatch):
+    request_paths = []
+
+    def _request(module, rest_send, path, verb, data=None):
+        del module, rest_send, data
+        assert verb == HttpVerbEnum.GET
+        request_paths.append(path)
+        vrf_name = "BLUE" if "vrf-names=BLUE" in path else "GREEN"
+        return [
+            {
+                "vrfName": vrf_name,
+                "switchDetailsList": [_vrf_lite_switch_detail(serial_number=serial_number) for serial_number in ("SN1", "SN2", "SN3")],
+            }
+        ]
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query.request_with_verify_settings",
+        _request,
+    )
+
+    entries = [
+        VrfLiteAttachmentEntry(
+            vrf_name=vrf_name,
+            switch_ip=serial_number,
+            extensions=[{"interface": "Ethernet1/10", "neighbor_ipv4": "192.0.2.9"}],
+        )
+        for vrf_name in ("BLUE", "GREEN")
+        for serial_number in ("SN3", "SN1", "SN2")
+    ]
+    module = _DummyModule(
+        {
+            "check_mode": False,
+            "state": "merged",
+            "fabric_name": "F1",
+            "_known_vrfs": ["BLUE", "GREEN"],
+            "_known_vrfs_loaded": True,
+            "_fabric_switch_inventory": {serial_number: {"switchId": serial_number, "switchRole": "border"} for serial_number in ("SN1", "SN2", "SN3")},
+            "_fabric_switch_inventory_loaded": True,
+            "_fabric_switch_inventory_normalized": False,
+            "_vrf_lite_switch_detail_cache": {},
+            "_vrf_lite_support_cache": {},
+            "_vrf_lite_prototype_cache": {},
+        }
+    )
+    orchestrator = _vrf_lite_orchestrator(module)
+
+    orchestrator._validate_attach_entries(entries)
+    orchestrator._validate_attach_entries(entries)
+
+    assert request_paths == [
+        VrfLiteEndpoints.vrf_switch("F1", "BLUE", "SN1,SN2,SN3"),
+        VrfLiteEndpoints.vrf_switch("F1", "GREEN", "SN1,SN2,SN3"),
+    ]
+
+
+def test_manage_vrf_lite_00935_unknown_switch_fails_before_unrelated_vrf_prefetch(monkeypatch):
+    request_paths = []
+
+    def _request(module, rest_send, path, verb, data=None):
+        del module, rest_send, verb, data
+        request_paths.append(path)
+        return []
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query.request_with_verify_settings",
+        _request,
+    )
+    entries = [
+        VrfLiteAttachmentEntry(
+            vrf_name="BLUE",
+            switch_ip="UNKNOWN",
+            extensions=[{"interface": "Ethernet1/10", "neighbor_ipv4": "192.0.2.9"}],
+        ),
+        VrfLiteAttachmentEntry(
+            vrf_name="GREEN",
+            switch_ip="SN1",
+            extensions=[{"interface": "Ethernet1/10", "neighbor_ipv4": "192.0.2.9"}],
+        ),
+    ]
+    module = _DummyModule(
+        {
+            "check_mode": False,
+            "state": "merged",
+            "fabric_name": "F1",
+            "_known_vrfs": ["BLUE", "GREEN"],
+            "_known_vrfs_loaded": True,
+            "_fabric_switch_inventory": {"SN1": {"switchId": "SN1", "switchRole": "border"}},
+            "_fabric_switch_inventory_loaded": True,
+            "_fabric_switch_inventory_normalized": False,
+        }
+    )
+    orchestrator = _vrf_lite_orchestrator(module)
+
+    with pytest.raises(VrfLiteResourceError, match="Switch 'UNKNOWN' is not present"):
+        orchestrator._validate_attach_entries(entries)
+
+    assert request_paths == []
+
+
+def test_manage_vrf_lite_00936_earlier_support_error_precedes_later_unknown_switch(monkeypatch):
+    request_paths = []
+
+    def _request(module, rest_send, path, verb, data=None):
+        del module, rest_send, data
+        assert verb == HttpVerbEnum.GET
+        request_paths.append(path)
+        return [
+            {
+                "vrfName": "BLUE",
+                "switchDetailsList": [_vrf_lite_switch_detail(serial_number="SN1", isVrfLiteSupported=False)],
+            }
+        ]
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query.request_with_verify_settings",
+        _request,
+    )
+    entries = [
+        VrfLiteAttachmentEntry(
+            vrf_name="BLUE",
+            switch_ip="SN1",
+            extensions=[{"interface": "Ethernet1/10", "neighbor_ipv4": "192.0.2.9"}],
+        ),
+        VrfLiteAttachmentEntry(
+            vrf_name="BLUE",
+            switch_ip="UNKNOWN",
+            extensions=[{"interface": "Ethernet1/10", "neighbor_ipv4": "192.0.2.9"}],
+        ),
+        VrfLiteAttachmentEntry(
+            vrf_name="GREEN",
+            switch_ip="SN2",
+            extensions=[{"interface": "Ethernet1/10", "neighbor_ipv4": "192.0.2.9"}],
+        ),
+    ]
+    module = _DummyModule(
+        {
+            "check_mode": False,
+            "state": "merged",
+            "fabric_name": "F1",
+            "_known_vrfs": ["BLUE", "GREEN"],
+            "_known_vrfs_loaded": True,
+            "_fabric_switch_inventory": {
+                "SN1": {"switchId": "SN1", "switchRole": "border"},
+                "SN2": {"switchId": "SN2", "switchRole": "border"},
+            },
+            "_fabric_switch_inventory_loaded": True,
+            "_fabric_switch_inventory_normalized": False,
+            "_vrf_lite_switch_detail_cache": {},
+            "_vrf_lite_support_cache": {},
+            "_vrf_lite_prototype_cache": {},
+        }
+    )
+
+    with pytest.raises(VrfLiteResourceError, match="does not report VRF Lite support"):
+        _vrf_lite_orchestrator(module)._validate_attach_entries(entries)
+
+    assert request_paths == [VrfLiteEndpoints.vrf_switch("F1", "BLUE", "SN1")]
+
+
+def test_manage_vrf_lite_00937_interleaved_vrfs_preserve_input_error_order(monkeypatch):
+    request_paths = []
+
+    def _request(module, rest_send, path, verb, data=None):
+        del module, rest_send, data
+        assert verb == HttpVerbEnum.GET
+        request_paths.append(path)
+        return [
+            {
+                "vrfName": "BLUE",
+                "switchDetailsList": [_vrf_lite_switch_detail(serial_number="SN1")],
+            }
+        ]
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query.request_with_verify_settings",
+        _request,
+    )
+    entries = [
+        VrfLiteAttachmentEntry(
+            vrf_name="BLUE",
+            switch_ip="SN1",
+            extensions=[{"interface": "Ethernet1/10", "neighbor_ipv4": "192.0.2.9"}],
+        ),
+        VrfLiteAttachmentEntry(
+            vrf_name="GREEN",
+            switch_ip="UNKNOWN",
+            extensions=[{"interface": "Ethernet1/10", "neighbor_ipv4": "192.0.2.9"}],
+        ),
+        VrfLiteAttachmentEntry(
+            vrf_name="BLUE",
+            switch_ip="SN2",
+            extensions=[{"interface": "Ethernet1/10", "neighbor_ipv4": "192.0.2.9"}],
+        ),
+    ]
+    module = _DummyModule(
+        {
+            "check_mode": False,
+            "state": "merged",
+            "fabric_name": "F1",
+            "_known_vrfs": ["BLUE", "GREEN"],
+            "_known_vrfs_loaded": True,
+            "_fabric_switch_inventory": {
+                "SN1": {"switchId": "SN1", "switchRole": "border"},
+                "SN2": {"switchId": "SN2", "switchRole": "border"},
+            },
+            "_fabric_switch_inventory_loaded": True,
+            "_fabric_switch_inventory_normalized": False,
+            "_vrf_lite_switch_detail_cache": {},
+            "_vrf_lite_support_cache": {},
+            "_vrf_lite_prototype_cache": {},
+        }
+    )
+
+    with pytest.raises(VrfLiteResourceError, match="Switch 'UNKNOWN' is not present"):
+        _vrf_lite_orchestrator(module)._validate_attach_entries(entries)
+
+    assert request_paths == [VrfLiteEndpoints.vrf_switch("F1", "BLUE", "SN1")]
+
+
+def test_manage_vrf_lite_00940_check_mode_preflight_reads_once_per_vrf_without_posts(monkeypatch):
+    request_paths = []
+
+    def _request(module, rest_send, path, verb, data=None):
+        del module, rest_send, data
+        assert verb == HttpVerbEnum.GET
+        request_paths.append(path)
+        vrf_name = "BLUE" if "vrf-names=BLUE" in path else "GREEN"
+        return [
+            {
+                "vrfName": vrf_name,
+                "switchDetailsList": [_vrf_lite_switch_detail(serial_number=serial_number) for serial_number in ("SN1", "SN2", "SN3")],
+            }
+        ]
+
+    def _unexpected_post(*args, **kwargs):
+        pytest.fail("check mode must not submit attachment POSTs: {0} {1}".format(args, kwargs))
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query.request_with_verify_settings",
+        _request,
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite._post_attachment_payload",
+        _unexpected_post,
+    )
+    entries = [
+        VrfLiteAttachmentEntry(
+            vrf_name=vrf_name,
+            switch_ip=serial_number,
+            extensions=[{"interface": "Ethernet1/10", "neighbor_ipv4": "192.0.2.9"}],
+        )
+        for vrf_name in ("BLUE", "GREEN")
+        for serial_number in ("SN3", "SN1", "SN2")
+    ]
+    module = _DummyModule(
+        {
+            "check_mode": True,
+            "state": "merged",
+            "fabric_name": "F1",
+            "_known_vrfs": ["BLUE", "GREEN"],
+            "_known_vrfs_loaded": True,
+            "_fabric_switch_inventory": {serial_number: {"switchId": serial_number, "switchRole": "border"} for serial_number in ("SN1", "SN2", "SN3")},
+            "_fabric_switch_inventory_loaded": True,
+            "_fabric_switch_inventory_normalized": False,
+            "_vrf_lite_switch_detail_cache": {},
+            "_vrf_lite_support_cache": {},
+            "_vrf_lite_prototype_cache": {},
+        }
+    )
+    orchestrator = _vrf_lite_orchestrator(module)
+
+    orchestrator.preflight_validate_check_mode(entries)
+
+    assert request_paths == [
+        VrfLiteEndpoints.vrf_switch("F1", "BLUE", "SN1,SN2,SN3"),
+        VrfLiteEndpoints.vrf_switch("F1", "GREEN", "SN1,SN2,SN3"),
+    ]

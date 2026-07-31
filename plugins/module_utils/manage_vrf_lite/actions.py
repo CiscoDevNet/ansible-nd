@@ -72,17 +72,19 @@ def _ensure_vrf_exists(module: Any, rest_send: Any, vrf_name: str) -> None:
         return
 
     fabric_name = module.params.get("fabric_name")
-    # The normalized state can legitimately be empty for an existing VRF that
-    # has no managed VRF Lite attachment rows. ``query_vrf_lite_state`` records
-    # the authoritative VRF inventory in ``_known_vrfs`` independently of the
-    # attachment result, so use that inventory for the existence decision.
-    query_vrf_lite_state(
-        module=module,
-        rest_send=rest_send,
-        fabric_name=fabric_name,
-        filter_vrfs={vrf_name},
-    )
-    known_vrfs = module.params.get("_known_vrfs") or []
+    # The state machine's initial query records the complete VRF inventory,
+    # including VRFs without managed attachment rows.  Once that snapshot is
+    # loaded, an absent name is authoritative and must not trigger another
+    # switch/VRF/attachment query from inside a bulk validation loop.
+    if module.params.get("_known_vrfs_loaded") is not True:
+        query_vrf_lite_state(
+            module=module,
+            rest_send=rest_send,
+            fabric_name=fabric_name,
+            filter_vrfs={vrf_name},
+        )
+        known_vrfs = module.params.get("_known_vrfs") or []
+
     if vrf_name not in known_vrfs:
         _raise_vrf_lite_error(
             msg="VRF '{0}' does not exist in fabric '{1}'.".format(vrf_name, fabric_name),
