@@ -424,6 +424,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_
 )
 
 
+def _validate_config_presence(state: str, config: object) -> None:
+    """Reject omitted/null write config before runtime normalization."""
+    if state in {"merged", "replaced", "overridden"} and config is None:
+        raise VrfLiteResourceError(
+            msg="config must be provided and cannot be null for state '{0}'. "
+            "Use config: [] only when intentionally managing an explicit empty set.".format(state)
+        )
+
+
 def main() -> None:
     """Entry point for nd_manage_vrf_lite.
 
@@ -469,7 +478,7 @@ def main() -> None:
         # normalizes omitted/null config to an empty runtime list. This keeps an
         # accidental missing write configuration distinct from an intentional
         # ``config: []`` request.
-        NDStateMachine.validate_config_presence(state, module_config.config)
+        _validate_config_presence(state, module_config.config)
         ManageVrfLiteOrchestrator.prepare_module_params(module, module_config)
 
         if state == "gathered":
