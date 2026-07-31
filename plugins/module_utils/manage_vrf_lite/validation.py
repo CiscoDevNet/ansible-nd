@@ -6,19 +6,17 @@
 
 from __future__ import annotations
 
+import ast
+import json
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
-    append_runtime_warning,
-    request_with_verify_settings,
     _raise_vrf_lite_error,
     _resolve_serial,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_endpoints import (
-    VrfLiteEndpoints,
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
+    _query_vrf_switch_details,
 )
 
 
@@ -121,10 +119,16 @@ def _extract_support_flag(value: Any) -> bool | None:
         ):
             if key in value and isinstance(value.get(key), bool):
                 return value.get(key)
+        for child in value.values():
+            if not isinstance(child, (dict, list)):
+                continue
+            support = _extract_support_flag(child)
+            if support is not None:
+                return support
 
     if isinstance(value, list):
         for item in value:
-            if not isinstance(item, dict):
+            if not isinstance(item, (dict, list)):
                 continue
             support = _extract_support_flag(item)
             if support is not None:
@@ -133,42 +137,122 @@ def _extract_support_flag(value: Any) -> bool | None:
     return None
 
 
+def _vrf_lite_cache_key(fabric_name: str, vrf_name: str, serial_number: str) -> str:
+    return "{0}\0{1}\0{2}".format(fabric_name, vrf_name, serial_number)
+
+
+def _parse_prototype_extension_values(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return dict(value)
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        try:
+            parsed = ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            return None
+    return dict(parsed) if isinstance(parsed, dict) else None
+
+
+def _extract_vrf_lite_prototypes(response: Any, serial_number: str) -> dict[str, dict[str, Any]] | None:
+    """Return controller-owned prototypes, or ``None`` if the field is absent."""
+    prototypes: dict[str, dict[str, Any]] = {}
+    prototype_field_seen = False
+
+    def _visit(value: Any) -> None:
+        nonlocal prototype_field_seen
+        if isinstance(value, list):
+            for item in value:
+                _visit(item)
+            return
+        if not isinstance(value, dict):
+            return
+
+        has_prototype_field = "extensionPrototypeValues" in value
+        prototype_rows = value.get("extensionPrototypeValues")
+        detail_serial = value.get("serialNumber") or value.get("switchId")
+        serial_matches = not detail_serial or str(detail_serial).strip() == str(serial_number).strip()
+        if has_prototype_field and serial_matches:
+            prototype_field_seen = True
+        if isinstance(prototype_rows, list) and serial_matches:
+            for prototype in prototype_rows:
+                if not isinstance(prototype, dict):
+                    continue
+                extension_type = str(prototype.get("extensionType") or "").strip().upper()
+                if extension_type != "VRF_LITE":
+                    continue
+                parsed_extension_values = _parse_prototype_extension_values(prototype.get("extensionValues"))
+                extension_values = dict(parsed_extension_values or {})
+                interface = extension_values.get("IF_NAME") or prototype.get("interfaceName")
+                if not interface:
+                    continue
+                interface_text = str(interface).strip()
+                if not interface_text:
+                    continue
+                extension_values["IF_NAME"] = interface_text
+                prototypes[interface_text] = extension_values
+
+        for child in value.values():
+            if child is not prototype_rows:
+                _visit(child)
+
+    _visit(response)
+    return prototypes if prototype_field_seen else None
+
+
+def get_cached_vrf_lite_prototypes(
+    module: Any,
+    fabric_name: str,
+    vrf_name: str,
+    serial_number: str,
+) -> dict[str, dict[str, Any]] | None:
+    """Return cached prototypes, or ``None`` when no prototype query ran."""
+    cache = module.params.get("_vrf_lite_prototype_cache")
+    if not isinstance(cache, dict):
+        return None
+    return cache.get(_vrf_lite_cache_key(fabric_name, vrf_name, serial_number))
+
+
 def _query_vrf_lite_support(module: Any, rest_send: Any, fabric_name: str, vrf_name: str, serial_number: str) -> bool | None:
     cache = module.params.get("_vrf_lite_support_cache")
     if not isinstance(cache, dict):
         cache = {}
         module.params["_vrf_lite_support_cache"] = cache
 
-    cache_key = "{0}\0{1}\0{2}".format(fabric_name, vrf_name, serial_number)
-    if cache_key in cache:
+    prototype_cache = module.params.get("_vrf_lite_prototype_cache")
+    if not isinstance(prototype_cache, dict):
+        prototype_cache = {}
+        module.params["_vrf_lite_prototype_cache"] = prototype_cache
+
+    cache_key = _vrf_lite_cache_key(fabric_name, vrf_name, serial_number)
+    if cache_key in cache and cache_key in prototype_cache:
         return cache[cache_key]
 
-    response = request_with_verify_settings(
-        module,
-        rest_send,
-        VrfLiteEndpoints.vrf_switch(fabric_name, vrf_name, serial_number),
-        HttpVerbEnum.GET,
-    )
+    response = _query_vrf_switch_details(
+        module=module,
+        rest_send=rest_send,
+        fabric_name=fabric_name,
+        vrf_name=vrf_name,
+        serial_numbers=[serial_number],
+    ).get(serial_number, {})
 
+    prototypes = _extract_vrf_lite_prototypes(response, serial_number)
+    prototype_cache[cache_key] = prototypes
     support = _extract_support_flag(response)
+    if support is None and prototypes:
+        support = True
     cache[cache_key] = support
     return support
 
 
-def _warn_on_uncertain_role(module: Any, serial_number: str, role: str, switch_data: dict[str, Any]) -> None:
-    if role and not _is_border_role(role) and not _is_external_connectivity_switch(switch_data):
-        append_runtime_warning(
-            module.params,
-            (
-                "Switch '{0}' has role '{1}', but the controller did not return an explicit VRF Lite "
-                "support flag. Proceeding with controller-side validation."
-            ).format(serial_number, role),
-        )
-    if not role:
-        append_runtime_warning(
-            module.params,
-            "Unable to determine switch role for '{0}'. VRF Lite border-role validation was skipped.".format(serial_number),
-        )
+def _configured_interface(item: Any) -> str:
+    value = getattr(item, "interface", None)
+    if value is None and isinstance(item, dict):
+        value = item.get("interface")
+    return str(value or "").strip()
 
 
 def validate_vrf_lite_write_guardrails(module: Any, model_instance: Any, rest_send: Any) -> None:
@@ -204,31 +288,7 @@ def validate_vrf_lite_write_guardrails(module: Any, model_instance: Any, rest_se
         if not vrf_lite_entries:
             continue
 
-        switch_data = inventory[serial_number]
-        role = switch_data.get("role", "")
-        support = None
-        try:
-            support = _query_vrf_lite_support(module, rest_send, fabric_name, vrf_name, serial_number)
-        except NDModuleError as error:
-            append_runtime_warning(
-                module.params,
-                "Unable to query VRF Lite support for switch '{0}': {1}".format(
-                    serial_number,
-                    error.msg,
-                ),
-            )
-            _warn_on_uncertain_role(module, serial_number, role, switch_data)
-            continue
-        except Exception as error:
-            append_runtime_warning(
-                module.params,
-                "Unable to query VRF Lite support for switch '{0}': {1}".format(
-                    serial_number,
-                    str(error),
-                ),
-            )
-            _warn_on_uncertain_role(module, serial_number, role, switch_data)
-            continue
+        support = _query_vrf_lite_support(module, rest_send, fabric_name, vrf_name, serial_number)
 
         if support is False:
             _raise_vrf_lite_error(
@@ -238,7 +298,57 @@ def validate_vrf_lite_write_guardrails(module: Any, model_instance: Any, rest_se
                 vrf_name=vrf_name,
             )
 
-        if support is True:
-            continue
+        prototypes = get_cached_vrf_lite_prototypes(module, fabric_name, vrf_name, serial_number)
+        if prototypes is None:
+            _raise_vrf_lite_error(
+                msg=("The controller did not return VRF Lite interface prototype metadata " "for switch '{0}' in fabric '{1}'.").format(
+                    serial_number, fabric_name
+                ),
+                fabric=fabric_name,
+                serial_number=serial_number,
+                vrf_name=vrf_name,
+            )
+        if not prototypes:
+            _raise_vrf_lite_error(
+                msg=("No VRF Lite-capable interfaces were reported for switch '{0}' in fabric '{1}'.").format(serial_number, fabric_name),
+                fabric=fabric_name,
+                serial_number=serial_number,
+                vrf_name=vrf_name,
+            )
 
-        _warn_on_uncertain_role(module, serial_number, role, switch_data)
+        requested_interfaces = sorted({_configured_interface(item) for item in vrf_lite_entries if _configured_interface(item)})
+        available_by_normalized_name = {name.casefold(): name for name in prototypes}
+        missing_interfaces = [name for name in requested_interfaces if name.casefold() not in available_by_normalized_name]
+        if missing_interfaces:
+            _raise_vrf_lite_error(
+                msg=(
+                    "No matching VRF Lite interface prototype was found on switch '{0}'. " "Requested interface(s): {1}. Available interface(s): {2}."
+                ).format(
+                    serial_number,
+                    ", ".join(missing_interfaces),
+                    ", ".join(sorted(prototypes)),
+                ),
+                fabric=fabric_name,
+                serial_number=serial_number,
+                vrf_name=vrf_name,
+                requested_interfaces=missing_interfaces,
+                available_interfaces=sorted(prototypes),
+            )
+
+        unusable_interfaces = []
+        for interface in requested_interfaces:
+            prototype = prototypes[available_by_normalized_name[interface.casefold()]]
+            missing_fields = [field for field in ("NEIGHBOR_ASN", "AUTO_VRF_LITE_FLAG") if field not in prototype or prototype.get(field) in (None, "")]
+            if missing_fields:
+                unusable_interfaces.append("{0} (missing {1})".format(interface, ", ".join(missing_fields)))
+
+        if unusable_interfaces:
+            _raise_vrf_lite_error(
+                msg=("The controller returned unusable VRF Lite prototype metadata " "for switch '{0}': {1}.").format(
+                    serial_number, "; ".join(unusable_interfaces)
+                ),
+                fabric=fabric_name,
+                serial_number=serial_number,
+                vrf_name=vrf_name,
+                unusable_interfaces=unusable_interfaces,
+            )

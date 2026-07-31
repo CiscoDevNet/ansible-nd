@@ -136,6 +136,8 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         module.params["_raw_vrf_attachment_map"] = {}
         module.params["_fabric_switch_inventory"] = {}
         module.params["_vrf_lite_support_cache"] = {}
+        module.params["_vrf_lite_prototype_cache"] = {}
+        module.params["_vrf_lite_switch_detail_cache"] = {}
         module.params["_warnings"] = list(module.params.get("_warnings")) if isinstance(module.params.get("_warnings"), list) else []
 
     @staticmethod
@@ -325,6 +327,10 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             return result
 
         logger.debug("refresh_verified_state: re-querying fabric to verify post-deploy state")
+        # Per-switch details may have been cached during preflight.  They are
+        # authoritative only until a write occurs; retain immutable prototype
+        # metadata but force attachment details to be read again for verify.
+        module.params["_vrf_lite_switch_detail_cache"] = {}
         refreshed = self._query_current_state(flat=True)
         result["after"] = group_attachment_entries_to_vrfs(refreshed, module=module, include_vrfs=self._public_scope_vrfs())
         result["current"] = result["after"]

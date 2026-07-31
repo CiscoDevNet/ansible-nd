@@ -41,6 +41,7 @@ def _json_value(value: Any) -> Any:
 def build_vrf_lite_extension_values(
     vrf_lite_items: list[dict[str, Any]] | None,
     existing_extension_values: Any = None,
+    prototype_values_by_interface: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     """
     Build extensionValues string expected by top-down VRF attachment APIs.
@@ -63,20 +64,74 @@ def build_vrf_lite_extension_values(
             return ""
         return json.dumps(existing_outer, separators=(",", ":"))
 
+    existing_rows_by_interface: dict[str, list[dict[str, Any]]] = {}
+    existing_inner = _json_value(existing_outer.get("VRF_LITE_CONN"))
+    if isinstance(existing_inner, dict):
+        existing_rows = existing_inner.get("VRF_LITE_CONN")
+        if isinstance(existing_rows, list):
+            for existing_row in existing_rows:
+                if not isinstance(existing_row, dict) or not existing_row.get("IF_NAME"):
+                    continue
+                interface_key = str(existing_row["IF_NAME"]).strip().casefold()
+                existing_rows_by_interface.setdefault(interface_key, []).append(dict(existing_row))
+
+    prototypes_by_interface = {
+        str(interface).strip().casefold(): dict(values) for interface, values in (prototype_values_by_interface or {}).items() if isinstance(values, dict)
+    }
+
     connection_rows: list[dict[str, Any]] = []
     for item in configured_items:
-        row = {
-            "DOT1Q_ID": "",
-            "IF_NAME": item.get("interface", ""),
-            "IP_MASK": item.get("ipv4_addr", ""),
-            "IPV6_MASK": item.get("ipv6_addr", ""),
-            "IPV6_NEIGHBOR": item.get("neighbor_ipv6", ""),
-            "NEIGHBOR_IP": item.get("neighbor_ipv4", ""),
-            "PEER_VRF_NAME": item.get("peer_vrf", ""),
-            "VRF_LITE_JYTHON_TEMPLATE": "Ext_VRF_Lite_Jython",
+        interface = str(item.get("interface", "")).strip()
+        interface_key = interface.casefold()
+        prototype = prototypes_by_interface.get(interface_key, {})
+        prototype_fields = (
+            "IF_NAME",
+            "DOT1Q_ID",
+            "IP_MASK",
+            "NEIGHBOR_IP",
+            "NEIGHBOR_ASN",
+            "IPV6_MASK",
+            "IPV6_NEIGHBOR",
+            "AUTO_VRF_LITE_FLAG",
+            "PEER_VRF_NAME",
+            "VRF_LITE_JYTHON_TEMPLATE",
+        )
+        row = {key: prototype[key] for key in prototype_fields if key in prototype}
+
+        existing_candidates = existing_rows_by_interface.get(interface_key, [])
+        existing_row = {}
+        requested_dot1q = item.get("dot1q")
+        if requested_dot1q not in (None, ""):
+            existing_row = next(
+                (candidate for candidate in existing_candidates if str(candidate.get("DOT1Q_ID") or "") == str(requested_dot1q)),
+                {},
+            )
+        if not existing_row and existing_candidates:
+            existing_row = existing_candidates[0]
+        row.update(existing_row)
+
+        canonical_interface = prototype.get("IF_NAME") or existing_row.get("IF_NAME") or interface
+        row["IF_NAME"] = str(canonical_interface).strip()
+
+        field_map = {
+            "ipv4_addr": "IP_MASK",
+            "ipv6_addr": "IPV6_MASK",
+            "neighbor_ipv6": "IPV6_NEIGHBOR",
+            "neighbor_ipv4": "NEIGHBOR_IP",
+            "peer_vrf": "PEER_VRF_NAME",
         }
+        for config_key, payload_key in field_map.items():
+            configured_value = item.get(config_key)
+            if configured_value not in (None, ""):
+                row[payload_key] = configured_value
+            else:
+                row.setdefault(payload_key, "")
+
         if item.get("dot1q") is not None and item.get("dot1q") != "":
             row["DOT1Q_ID"] = str(item.get("dot1q"))
+        else:
+            row["DOT1Q_ID"] = str(row.get("DOT1Q_ID") or "")
+        row["VRF_LITE_JYTHON_TEMPLATE"] = "Ext_VRF_Lite_Jython"
         connection_rows.append(row)
 
     vrf_lite_conn = {"VRF_LITE_CONN": connection_rows}

@@ -93,8 +93,8 @@ def _query_vrf_attachments(module: Any, rest_send: Any, fabric_name: str, vrf_na
     if not vrf_names:
         return []
 
-    path = VrfLiteEndpoints.vrf_attachments_query(fabric_name)
-    response = request_with_verify_settings(module, rest_send, path, HttpVerbEnum.POST, {"vrfNames": vrf_names})
+    path = VrfLiteEndpoints.vrf_attachments_query(fabric_name, ",".join(vrf_names))
+    response = request_with_verify_settings(module, rest_send, path, HttpVerbEnum.GET)
     attachments = _result_list(response, ("attachments", "DATA", "data", "items"))
     if attachments and all(isinstance(item, dict) and "vrfName" in item and "lanAttachList" not in item for item in attachments):
         grouped: dict[str, list[dict[str, Any]]] = {}
@@ -105,6 +105,10 @@ def _query_vrf_attachments(module: Any, rest_send: Any, fabric_name: str, vrf_na
         return [{"vrfName": vrf_name, "lanAttachList": items} for vrf_name, items in sorted(grouped.items())]
 
     return [item for item in _result_list(response, ("DATA", "data", "vrfs", "items", "attachments")) if isinstance(item, dict)]
+
+
+def _vrf_lite_switch_detail_cache_key(fabric_name: str, vrf_name: str, serial_number: str) -> str:
+    return "{0}\0{1}\0{2}".format(fabric_name, vrf_name, serial_number)
 
 
 def _query_vrf_switch_details(
@@ -121,25 +125,45 @@ def _query_vrf_switch_details(
     On fabrics with many VRFs this may add latency; it is skipped entirely
     when all attachments already carry ``extensionValues``.
     """
-    if not serial_numbers:
+    normalized_serials = sorted({str(serial_number).strip() for serial_number in serial_numbers if str(serial_number).strip()})
+    if not normalized_serials:
         return {}
 
-    path = VrfLiteEndpoints.vrf_switch(fabric_name, vrf_name, ",".join(serial_numbers))
-    response = request_with_verify_settings(module, rest_send, path, HttpVerbEnum.GET)
+    cache = module.params.get("_vrf_lite_switch_detail_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        module.params["_vrf_lite_switch_detail_cache"] = cache
+
+    missing_serials = [
+        serial_number for serial_number in normalized_serials if _vrf_lite_switch_detail_cache_key(fabric_name, vrf_name, serial_number) not in cache
+    ]
 
     detail_map: dict[str, dict[str, Any]] = {}
-    for vrf_switch in _result_list(response, ("DATA", "data", "vrfs", "items")):
-        if not isinstance(vrf_switch, dict):
-            continue
-        for switch_detail in vrf_switch.get("switchDetailsList") or []:
-            if not isinstance(switch_detail, dict):
-                continue
+    if missing_serials:
+        path = VrfLiteEndpoints.vrf_switch(fabric_name, vrf_name, ",".join(missing_serials))
+        response = request_with_verify_settings(module, rest_send, path, HttpVerbEnum.GET)
 
-            serial_number = switch_detail.get("serialNumber")
-            if not serial_number:
+        for vrf_switch in _result_list(response, ("DATA", "data", "vrfs", "items")):
+            if not isinstance(vrf_switch, dict):
                 continue
+            for switch_detail in vrf_switch.get("switchDetailsList") or []:
+                if not isinstance(switch_detail, dict):
+                    continue
 
-            detail_map[str(serial_number).strip()] = switch_detail
+                serial_number = switch_detail.get("serialNumber")
+                if not serial_number:
+                    continue
+
+                serial_text = str(serial_number).strip()
+                if serial_text in missing_serials:
+                    detail_map[serial_text] = switch_detail
+
+        for serial_number in missing_serials:
+            cache[_vrf_lite_switch_detail_cache_key(fabric_name, vrf_name, serial_number)] = detail_map.get(serial_number, {})
+
+    for serial_number in normalized_serials:
+        cached_detail = cache.get(_vrf_lite_switch_detail_cache_key(fabric_name, vrf_name, serial_number))
+        detail_map[serial_number] = cached_detail if isinstance(cached_detail, dict) else {}
 
     return detail_map
 
@@ -347,6 +371,7 @@ def query_vrf_lite_state(
                 continue
 
             instance_values_raw = _value_from_attachment_or_detail(attach, switch_detail, "instanceValues")
+            freeform_config = _value_from_attachment_or_detail(attach, switch_detail, "freeformConfig")
             vrf_vlan_raw = _value_from_attachment_or_detail(attach, switch_detail, "vlanId", "vlan")
             attachment_vlan_raw = _value_from_attachment_or_detail(switch_detail, attach, "vlan", "vlanId")
 
@@ -354,6 +379,7 @@ def query_vrf_lite_state(
                 raw_vrf_attachment_map.setdefault(vrf_name, {})[serial_number] = {
                     "extension_values": extension_values,
                     "instance_values": instance_values_raw,
+                    "freeform_config": freeform_config,
                     "vlan": attachment_vlan_raw,
                 }
 

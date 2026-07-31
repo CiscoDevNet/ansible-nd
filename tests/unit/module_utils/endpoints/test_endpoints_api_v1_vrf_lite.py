@@ -9,13 +9,19 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_e
 )
 
 
-def test_endpoints_api_v1_vrf_lite_00100_runtime_endpoints_use_develop_manage_paths():
+def test_endpoints_api_v1_vrf_lite_00100_runtime_endpoints_use_required_api_contracts():
     assert VrfLiteEndpoints.vrfs("Fab A") == "/api/v1/manage/fabrics/Fab%20A/vrfs"
-    assert VrfLiteEndpoints.vrf_attachments_query("Fab A") == "/api/v1/manage/fabrics/Fab%20A/vrfAttachments/query"
-    assert VrfLiteEndpoints.vrf_attachments_post("Fab A") == "/api/v1/manage/fabrics/Fab%20A/vrfAttachments"
+    assert (
+        VrfLiteEndpoints.vrf_attachments_query("Fab A", "BLUE,GREEN")
+        == "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/top-down/fabrics/Fab%20A/vrfs/attachments?vrf-names=BLUE,GREEN"
+    )
+    assert VrfLiteEndpoints.vrf_attachments_post("Fab A") == "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/top-down/fabrics/Fab%20A/vrfs/attachments"
     assert VrfLiteEndpoints.vrf_deployments("Fab A") == "/api/v1/manage/fabrics/Fab%20A/vrfActions/deploy"
-    assert VrfLiteEndpoints.vrf_switch("Fab A", "BLUE", "SN1") == "/api/v1/manage/fabrics/Fab%20A/vrfs/switches?vrf-names=BLUE&serial-numbers=SN1"
-    assert VrfLiteEndpoints.reserve_id("Fab A") == "/api/v1/manage/fabrics/Fab%20A/resource-manager/reserve-id"
+    assert (
+        VrfLiteEndpoints.vrf_switch("Fab A", "BLUE", "SN1,SN2")
+        == "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/top-down/fabrics/Fab%20A/vrfs/switches?vrf-names=BLUE&serial-numbers=SN1,SN2"
+    )
+    assert VrfLiteEndpoints.reserve_id("Fab A") == "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/resource-manager/reserve-id"
     assert VrfLiteEndpoints.fabric_switches("Fab A") == "/api/v1/manage/fabrics/Fab%20A/switches"
     assert VrfLiteEndpoints.config_save("Fab A") == "/api/v1/manage/fabrics/Fab%20A/actions/configSave"
     assert VrfLiteEndpoints.config_deploy("Fab A") == "/api/v1/manage/fabrics/Fab%20A/actions/deploy?forceShowRun=true"
