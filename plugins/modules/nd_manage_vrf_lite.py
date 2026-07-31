@@ -92,6 +92,10 @@ options:
   config:
     description:
     - List of VRF Lite entries.
+    - Required and must not be null for C(merged), C(replaced), and C(overridden).
+    - Use C(config=[]) only to request an intentional empty desired set. With
+      C(replaced) or C(overridden), that can remove all managed VRF Lite
+      attachments in scope.
     type: list
     elements: dict
     suboptions:
@@ -351,9 +355,14 @@ def main() -> None:
     state = module_config.state
     log.info("nd_manage_vrf_lite invoked: state=%s, fabric=%s, check_mode=%s", state, module_config.fabric_name, module.check_mode)
 
-    ManageVrfLiteOrchestrator.prepare_module_params(module, module_config)
-
     try:
+        # Validate the original playbook value before prepare_module_params()
+        # normalizes omitted/null config to an empty runtime list. This keeps an
+        # accidental missing write configuration distinct from an intentional
+        # ``config: []`` request.
+        NDStateMachine.validate_config_presence(state, module_config.config)
+        ManageVrfLiteOrchestrator.prepare_module_params(module, module_config)
+
         if state == "gathered":
             log.debug("Dispatching read-only gathered workflow for fabric %s", module_config.fabric_name)
             nd_state_machine = NDStateMachine(module=module, model_orchestrator=ManageVrfLiteOrchestrator)
