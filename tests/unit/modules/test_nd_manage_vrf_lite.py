@@ -111,6 +111,7 @@ def _run_vrf_lite_module(module_args, current_state=None, runtime_metadata=None)
 
     with (
         patch.object(ansible_basic, "_ANSIBLE_ARGS", raw_args),
+        patch.object(ansible_basic, "_ANSIBLE_PROFILE", "legacy", create=True),
         patch.object(nd_manage_vrf_lite.AnsibleModule, "exit_json", exit_json),
         patch.object(nd_manage_vrf_lite.AnsibleModule, "fail_json", fail_json),
         patch.object(nd_manage_vrf_lite, "setup_logging"),
