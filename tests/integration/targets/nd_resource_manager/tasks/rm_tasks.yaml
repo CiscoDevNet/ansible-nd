@@ -133,6 +133,7 @@
       test_items
       | rejectattr('testcase', 'equalto', 'gathered')
       | map(attribute='fabric_type')
+      | reject('equalto', 'external')
       | unique
       | list
     }}
