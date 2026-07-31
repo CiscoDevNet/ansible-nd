@@ -10,40 +10,63 @@ from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
+    _resolve_serial,
     vrf_name_from_config_item,
 )
 
 
-def _target_vrfs_for_deploy(module: Any) -> list[str]:
-    target: set[str] = set()
-    for item in module.params.get("config") or []:
+def _deploy_intent_config(module: Any) -> list[dict[str, Any]]:
+    """Return the preserved nested playbook config used for deploy intent."""
+    nested_config = module.params.get("_vrf_lite_nested_config")
+    if isinstance(nested_config, list):
+        return nested_config
+
+    config = module.params.get("config")
+    return config if isinstance(config, list) else []
+
+
+def _deployment_intent(module: Any) -> tuple[set[tuple[str, str]], set[tuple[str, str]], set[str]]:
+    """Return enabled pairs, disabled pairs, and disabled VRFs for deploy."""
+    enabled_pairs: set[tuple[str, str]] = set()
+    disabled_pairs: set[tuple[str, str]] = set()
+    disabled_vrfs: set[str] = set()
+
+    for item in _deploy_intent_config(module):
         if not isinstance(item, dict):
             continue
         vrf_name = vrf_name_from_config_item(item)
         if not vrf_name:
             continue
 
-        deploy = item.get("deploy")
-        if deploy is False:
-            continue
-        if deploy is True:
-            target.add(vrf_name)
+        vrf_deploy = item.get("deploy")
+        attachments = item.get("attach")
+        if isinstance(attachments, list):
+            if vrf_deploy is False:
+                disabled_vrfs.add(vrf_name)
+                continue
+
+            for attachment in attachments:
+                if not isinstance(attachment, dict):
+                    continue
+                switch_id = attachment.get("ip_address") or attachment.get("switch_ip") or attachment.get("serial_number")
+                if not switch_id:
+                    continue
+                pair = (vrf_name, _resolve_serial(module, switch_id))
+                if vrf_deploy is True or attachment.get("deploy") is not False:
+                    enabled_pairs.add(pair)
+                else:
+                    disabled_pairs.add(pair)
             continue
 
-        attachments = item.get("attach") or []
-        if not isinstance(attachments, list) or not attachments:
-            target.add(vrf_name)
-            continue
+        # Direct callers may provide the already-flattened attachment shape.
+        switch_id = item.get("switch_ip") or item.get("ip_address") or item.get("serial_number")
+        if switch_id:
+            pair = (vrf_name, _resolve_serial(module, switch_id))
+            (disabled_pairs if vrf_deploy is False else enabled_pairs).add(pair)
+        elif vrf_deploy is False:
+            disabled_vrfs.add(vrf_name)
 
-        if any(isinstance(attachment, dict) and attachment.get("deploy") is not False for attachment in attachments):
-            target.add(vrf_name)
-            continue
-
-        if not any(isinstance(attachment, dict) for attachment in attachments):
-            target.add(vrf_name)
-            continue
-
-    return sorted(target)
+    return enabled_pairs, disabled_pairs, disabled_vrfs
 
 
 def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:

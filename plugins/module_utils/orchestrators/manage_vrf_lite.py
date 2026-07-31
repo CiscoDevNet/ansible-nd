@@ -34,9 +34,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common im
     request_with_rest_send,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy import (
+    _deployment_intent,
     _is_non_fatal_config_save_error,
     _needs_deployment,
-    _target_vrfs_for_deploy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exceptions import (
     VrfLiteResourceError,
@@ -497,54 +497,64 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                 "response": [],
             }
 
-        requested_deploy_vrfs = set(_target_vrfs_for_deploy(module))
+        deploy_enabled_config_pairs, explicitly_disabled_pairs, explicitly_disabled_vrfs = _deployment_intent(module)
         changed_vrfs = set(module.params.get("_changed_vrfs") or [])
 
-        # Removed attachments (replaced/overridden/deleted) are absent from the retained
-        # config, so _target_vrfs_for_deploy cannot see them.  Recover the removed
-        # (vrf, switch) pairs from the state-machine operation journal (_deploy_targets,
-        # which includes detaches) so a remove-all still deploys and every removed switch
-        # is in scope.  Building the scope from config alone would leave the detach
-        # undeployed on those switches while the module still reports success.  Removals
-        # never carry deploy: false, so they always stay in scope.
-        ip_to_sn = module.params.get("_ip_to_sn_mapping") or {}
+        # Build deployment scope from the state-machine operation journal rather than
+        # the retained desired config. The journal preserves before-state identities
+        # for detaches, including remove-all, and marks each pair as a write or delete.
+        # Explicit VRF/attachment deploy:false intent still suppresses matching work.
         deploy_targets = module.params.get("_deploy_targets") or []
-        config_pairs = {
-            (str(item.get("vrf_name")), str(item.get("switch_ip")))
-            for item in module.params.get("config") or []
-            if isinstance(item, dict) and item.get("vrf_name") and item.get("switch_ip")
-        }
-        removed_pairs = {
-            (str(target.get("vrf_name")), str(target.get("switch_ip")))
+        journal = {
+            (
+                str(target.get("vrf_name")),
+                _resolve_serial(module, target.get("switch_ip")),
+                target.get("operation"),
+            )
             for target in deploy_targets
             if isinstance(target, dict) and target.get("vrf_name") and target.get("switch_ip")
-        } - config_pairs
-        removed_vrfs = {vrf_name for vrf_name, _switch_id in removed_pairs}
+        }
+        removed_pairs = {(vrf_name, switch_id) for vrf_name, switch_id, operation in journal if operation == "delete"}
+        write_pairs = {(vrf_name, switch_id) for vrf_name, switch_id, operation in journal if operation == "write"}
+        eligible_operation_pairs = {
+            pair
+            for pair in removed_pairs | (write_pairs & deploy_enabled_config_pairs)
+            if pair[0] not in explicitly_disabled_vrfs and pair not in explicitly_disabled_pairs
+        }
+        eligible_operation_vrfs = {vrf_name for vrf_name, _switch_id in eligible_operation_pairs}
 
-        # Deploy VRFs that changed and are either deploy-enabled in the retained config
-        # or had an attachment removed this run.
-        target_vrfs = sorted(changed_vrfs & (requested_deploy_vrfs | removed_vrfs))
+        target_vrfs = sorted(changed_vrfs & eligible_operation_vrfs)
         logger.info("_execute_config_actions: save=%s deploy=%s target_vrfs=%s", save_enabled, deploy_enabled, target_vrfs)
 
         planned_actions = []
         if save_enabled:
             planned_actions.append("POST {0}".format(VrfLiteEndpoints.config_save(fabric_name)))
-        target_switch_ids = sorted(
-            {
-                ip_to_sn.get(str(item.get("switch_ip")), str(item.get("switch_ip")))
-                for item in module.params.get("config") or []
-                if isinstance(item, dict) and item.get("vrf_name") in target_vrfs and item.get("switch_ip")
-            }
-            | {ip_to_sn.get(switch_id, switch_id) for vrf_name, switch_id in removed_pairs if vrf_name in target_vrfs}
-        )
 
+        deploy_payloads: list[dict[str, list[str]]] = []
         if deploy_enabled and target_vrfs:
-            deploy_action = "POST {0} vrfNames={1}".format(VrfLiteEndpoints.vrf_deployments(fabric_name), ",".join(target_vrfs))
-            # type=switch scopes the deploy to only the affected switches; type=global omits
-            # switchIds so the controller performs a fabric-wide deploy of the changed VRFs.
-            if config_actions.get("type") == "switch" and target_switch_ids:
-                deploy_action += " switchIds={0}".format(",".join(target_switch_ids))
-            planned_actions.append(deploy_action)
+            if config_actions.get("type") == "global":
+                deploy_payloads.append({"vrfNames": target_vrfs})
+            else:
+                # Keep each VRF bound to exactly the switches recorded for it. VRFs
+                # with identical switch sets can safely share one controller request;
+                # flattening all VRFs and switches would create a Cartesian product.
+                vrfs_by_switch_ids: dict[tuple[str, ...], list[str]] = defaultdict(list)
+                for vrf_name in target_vrfs:
+                    switch_ids = tuple(sorted(switch_id for pair_vrf, switch_id in eligible_operation_pairs if pair_vrf == vrf_name))
+                    if switch_ids:
+                        vrfs_by_switch_ids[switch_ids].append(vrf_name)
+                deploy_payloads.extend(
+                    {"vrfNames": sorted(vrf_names), "switchIds": list(switch_ids)} for switch_ids, vrf_names in sorted(vrfs_by_switch_ids.items())
+                )
+
+            for deploy_payload in deploy_payloads:
+                deploy_action = "POST {0} vrfNames={1}".format(
+                    VrfLiteEndpoints.vrf_deployments(fabric_name),
+                    ",".join(deploy_payload["vrfNames"]),
+                )
+                if deploy_payload.get("switchIds"):
+                    deploy_action += " switchIds={0}".format(",".join(deploy_payload["switchIds"]))
+                planned_actions.append(deploy_action)
 
         if module.check_mode:
             return {
@@ -599,15 +609,10 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                         error_dict["api_error_msg"] = error_dict.pop("msg")
                     _raise_vrf_lite_error(msg="Config save failed: {0}".format(error.msg), **error_dict)
 
-        if deploy_enabled and target_vrfs:
-            deploy_payload = {"vrfNames": target_vrfs}
-            # type=switch scopes the deploy to only the affected switches; type=global omits
-            # switchIds so the controller performs a fabric-wide deploy of the changed VRFs.
-            if config_actions.get("type") == "switch" and target_switch_ids:
-                deploy_payload["switchIds"] = target_switch_ids
+        for deploy_payload in deploy_payloads:
             try:
                 deploy_resp = request_with_rest_send(module, self.rest_send, VrfLiteEndpoints.vrf_deployments(fabric_name), HttpVerbEnum.POST, deploy_payload)
-                logger.info("vrf_deploy POST succeeded for VRF(s) %s", target_vrfs)
+                logger.info("vrf_deploy POST succeeded for VRF(s) %s", deploy_payload["vrfNames"])
                 responses.append(
                     {
                         "operation": "vrf_deploy",

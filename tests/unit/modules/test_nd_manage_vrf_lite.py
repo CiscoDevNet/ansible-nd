@@ -15,10 +15,12 @@ import yaml
 from ansible.module_utils import basic as ansible_basic
 
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite import ManageVrfLiteOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_endpoints import VrfLiteEndpoints
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_vrf_lite
 
 _MISSING_CONFIG = object()
 _EXISTING_ENTRY = {"vrf_name": "VRF1", "switch_ip": "SERIAL1", "vlan_id": 500}
+_SECOND_EXISTING_ENTRY = {"vrf_name": "VRF1", "switch_ip": "SERIAL2", "vlan_id": 500}
 _DESIRED_CONFIG = [
     {
         "vrf_name": "VRF1",
@@ -264,12 +266,243 @@ def test_vrf_lite_wrapper_documents_projected_deployment_fields_in_check_mode():
     assert result["deployment_needed"] is True
     assert result["deployment"]["deployment_needed"] is True
     assert result["deployment"]["changed"] is True
-    # Check mode does not mark projected state-machine operations as sent, so
-    # production plans the fabric config-save without inventing deploy targets.
-    assert result["deployment"]["target_vrfs"] == []
-    assert len(result["deployment"]["planned_actions"]) == 1
-    assert result["deployment"]["planned_actions"][0].startswith("POST ")
+    # Check mode reconstructs the operation journal from the before/after preview,
+    # preserving the removed switch in the projected deploy scope.
+    assert run["module"].params["_deploy_targets"] == [{"vrf_name": "VRF1", "switch_ip": "SERIAL1", "operation": "delete"}]
+    assert result["deployment"]["target_vrfs"] == ["VRF1"]
+    assert result["deployment"]["planned_actions"] == [
+        "POST {0}".format(VrfLiteEndpoints.config_save("fab1")),
+        "POST {0} vrfNames=VRF1 switchIds=SERIAL1".format(VrfLiteEndpoints.vrf_deployments("fab1")),
+    ]
+    assert result["deployment"]["response"] == []
     _assert_result_matches_return_docs(result, _WRITE_BASE_FIELDS | {"deployment", "deployment_needed"})
+
+
+@pytest.mark.parametrize("state", ["replaced", "overridden"])
+@pytest.mark.parametrize(
+    ("config", "expected_switch_ids"),
+    [
+        pytest.param(_DESIRED_CONFIG, ["SERIAL2"], id="partial-removal"),
+        pytest.param([{"vrf_name": "VRF1", "vlan_id": 500, "attach": []}], ["SERIAL1", "SERIAL2"], id="remove-all"),
+    ],
+)
+@pytest.mark.parametrize("deploy_scope", ["switch", "global"])
+@pytest.mark.parametrize("check_mode", [False, True], ids=["normal", "check-mode"])
+def test_vrf_lite_wrapper_deploys_replacement_removals_from_operation_journal(
+    state,
+    config,
+    expected_switch_ids,
+    deploy_scope,
+    check_mode,
+):
+    """Production reconciliation plans/deploys partial and remove-all detaches."""
+    module_args = _module_args(
+        state,
+        config,
+        check_mode,
+        config_actions={"save": True, "deploy": True, "type": deploy_scope},
+    )
+    module_args["verify"] = {"enabled": False}
+
+    with (
+        patch.object(ManageVrfLiteOrchestrator, "_post_grouped_rows", return_value={"response": []}) as post_grouped_rows,
+        patch.object(ManageVrfLiteOrchestrator, "_validate_attach_entries"),
+        patch(
+            "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.request_with_rest_send",
+            return_value={},
+        ),
+    ):
+        run = _run_vrf_lite_module(
+            module_args,
+            current_state=[_EXISTING_ENTRY, _SECOND_EXISTING_ENTRY],
+        )
+
+    if check_mode:
+        post_grouped_rows.assert_not_called()
+    else:
+        post_grouped_rows.assert_called_once()
+    assert run["module"].params["_changed_vrfs"] == ["VRF1"]
+    assert {(target["vrf_name"], target["switch_ip"], target["operation"]) for target in run["module"].params["_deploy_targets"]} == {
+        ("VRF1", switch_id, "delete") for switch_id in expected_switch_ids
+    }
+
+    deployment = run["result"]["deployment"]
+    assert deployment["target_vrfs"] == ["VRF1"]
+    expected_payload = {"vrfNames": ["VRF1"]}
+    if deploy_scope == "switch":
+        expected_payload["switchIds"] = expected_switch_ids
+    if check_mode:
+        expected_deploy_action = "POST {0} vrfNames=VRF1".format(VrfLiteEndpoints.vrf_deployments("fab1"))
+        if deploy_scope == "switch":
+            expected_deploy_action += " switchIds={0}".format(",".join(expected_switch_ids))
+        assert deployment["planned_actions"] == [
+            "POST {0}".format(VrfLiteEndpoints.config_save("fab1")),
+            expected_deploy_action,
+        ]
+        assert deployment["response"] == []
+    else:
+        deploy_response = next(item for item in deployment["response"] if item["operation"] == "vrf_deploy")
+        assert deploy_response["payload"] == expected_payload
+
+
+@pytest.mark.parametrize(
+    ("state", "config", "current_state", "expected_operation"),
+    [
+        pytest.param("merged", _DESIRED_CONFIG, [], "write", id="merged-write"),
+        pytest.param("deleted", [{"vrf_name": "VRF1"}], [_EXISTING_ENTRY], "delete", id="deleted-removal"),
+    ],
+)
+def test_vrf_lite_wrapper_journals_other_write_states_for_deployment(
+    state,
+    config,
+    current_state,
+    expected_operation,
+):
+    """The shared journal continues to deploy merged writes and explicit deletes."""
+    module_args = _module_args(
+        state,
+        config,
+        False,
+        config_actions={"save": True, "deploy": True, "type": "switch"},
+    )
+    module_args["verify"] = {"enabled": False}
+
+    with (
+        patch.object(ManageVrfLiteOrchestrator, "_post_attach_entries", return_value={"response": []}),
+        patch.object(ManageVrfLiteOrchestrator, "_post_grouped_rows", return_value={"response": []}),
+        patch(
+            "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.request_with_rest_send",
+            return_value={},
+        ),
+    ):
+        run = _run_vrf_lite_module(module_args, current_state=current_state)
+
+    assert run["module"].params["_deploy_targets"] == [{"vrf_name": "VRF1", "switch_ip": "SERIAL1", "operation": expected_operation}]
+    deploy_response = next(item for item in run["result"]["deployment"]["response"] if item["operation"] == "vrf_deploy")
+    assert deploy_response["payload"] == {"vrfNames": ["VRF1"], "switchIds": ["SERIAL1"]}
+
+
+def test_vrf_lite_wrapper_deploys_mixed_write_and_removal_targets():
+    """A replacement deploy includes both an updated and a removed switch."""
+    config = [
+        {
+            "vrf_name": "VRF1",
+            "vlan_id": 501,
+            "attach": [{"ip_address": "SERIAL1"}],
+        }
+    ]
+    module_args = _module_args(
+        "replaced",
+        config,
+        False,
+        config_actions={"save": True, "deploy": True, "type": "switch"},
+    )
+    module_args["verify"] = {"enabled": False}
+
+    with (
+        patch.object(ManageVrfLiteOrchestrator, "_post_attach_entries", return_value={"response": []}),
+        patch.object(ManageVrfLiteOrchestrator, "_post_grouped_rows", return_value={"response": []}),
+        patch(
+            "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.request_with_rest_send",
+            return_value={},
+        ),
+    ):
+        run = _run_vrf_lite_module(
+            module_args,
+            current_state=[_EXISTING_ENTRY, _SECOND_EXISTING_ENTRY],
+        )
+
+    assert {(target["switch_ip"], target["operation"]) for target in run["module"].params["_deploy_targets"]} == {("SERIAL1", "write"), ("SERIAL2", "delete")}
+    deploy_response = next(item for item in run["result"]["deployment"]["response"] if item["operation"] == "vrf_deploy")
+    assert deploy_response["payload"] == {"vrfNames": ["VRF1"], "switchIds": ["SERIAL1", "SERIAL2"]}
+
+
+def test_vrf_lite_wrapper_vrf_deploy_false_suppresses_replacement_removal_deploy():
+    """Top-level deploy:false saves a detach without deploying that VRF."""
+    config = [
+        {
+            "vrf_name": "VRF1",
+            "vlan_id": 500,
+            "deploy": False,
+            "attach": [{"ip_address": "SERIAL1"}],
+        }
+    ]
+    module_args = _module_args(
+        "replaced",
+        config,
+        False,
+        config_actions={"save": True, "deploy": True, "type": "switch"},
+    )
+    module_args["verify"] = {"enabled": False}
+
+    with (
+        patch.object(ManageVrfLiteOrchestrator, "_post_grouped_rows", return_value={"response": []}),
+        patch(
+            "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.request_with_rest_send",
+            return_value={},
+        ),
+    ):
+        run = _run_vrf_lite_module(
+            module_args,
+            current_state=[_EXISTING_ENTRY, _SECOND_EXISTING_ENTRY],
+        )
+
+    assert run["module"].params["_deploy_targets"] == [{"vrf_name": "VRF1", "switch_ip": "SERIAL2", "operation": "delete"}]
+    assert run["result"]["deployment"]["target_vrfs"] == []
+    assert [item["operation"] for item in run["result"]["deployment"]["response"]] == ["config_save"]
+
+
+@pytest.mark.parametrize("check_mode", [False, True], ids=["normal", "check-mode"])
+def test_vrf_lite_wrapper_canonicalizes_removed_switch_ip_for_deployment(check_mode):
+    """Normal and check mode both resolve a removed management IP to its serial."""
+    module_args = _module_args(
+        "replaced",
+        [{"vrf_name": "VRF1", "attach": []}],
+        check_mode,
+        config_actions={"save": True, "deploy": True, "type": "switch"},
+    )
+    module_args["verify"] = {"enabled": False}
+
+    with (
+        patch.object(ManageVrfLiteOrchestrator, "_post_grouped_rows", return_value={"response": []}),
+        patch(
+            "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.request_with_rest_send",
+            return_value={},
+        ),
+    ):
+        run = _run_vrf_lite_module(
+            module_args,
+            current_state=[{"vrf_name": "VRF1", "switch_ip": "10.0.0.1", "vlan_id": 500}],
+            runtime_metadata={"ip_to_sn_mapping": {"10.0.0.1": "SERIAL1"}},
+        )
+
+    assert run["module"].params["_deploy_targets"] == [{"vrf_name": "VRF1", "switch_ip": "10.0.0.1", "operation": "delete"}]
+    deployment = run["result"]["deployment"]
+    if check_mode:
+        assert deployment["planned_actions"][-1].endswith("vrfNames=VRF1 switchIds=SERIAL1")
+    else:
+        deploy_response = next(item for item in deployment["response"] if item["operation"] == "vrf_deploy")
+        assert deploy_response["payload"] == {"vrfNames": ["VRF1"], "switchIds": ["SERIAL1"]}
+
+
+@pytest.mark.parametrize("check_mode", [False, True], ids=["normal", "check-mode"])
+def test_vrf_lite_wrapper_rejects_unresolved_removed_switch_ip_in_both_modes(check_mode):
+    """Check mode cannot produce a false-green plan for an unknown switch IP."""
+    module_args = _module_args(
+        "replaced",
+        [{"vrf_name": "VRF1", "attach": []}],
+        check_mode,
+        config_actions={"save": True, "deploy": True, "type": "switch"},
+    )
+    module_args["verify"] = {"enabled": False}
+
+    with pytest.raises(_ModuleFailure) as exc_info:
+        _run_vrf_lite_module(
+            module_args,
+            current_state=[{"vrf_name": "VRF1", "switch_ip": "10.0.0.99", "vlan_id": 500}],
+        )
+
+    assert "could not be resolved to a fabric switch serial number" in exc_info.value.result["msg"]
 
 
 def test_vrf_lite_wrapper_documents_conditional_runtime_metadata_fields():

@@ -29,8 +29,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy import (
     _changed_entries_from_preview,
+    _deployment_intent,
     _needs_deployment,
-    _target_vrfs_for_deploy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
     _coerce_vlan,
@@ -789,50 +789,66 @@ def test_manage_vrf_lite_00491_deploy_targets_honor_vrf_and_attachment_intent():
             "config": [
                 {
                     "vrf_name": "BLUE",
-                    "attach": [{"ip_address": "10.0.0.1", "deploy": False}],
+                    "attach": [{"ip_address": "SN1", "deploy": False}],
                 },
                 {
                     "vrf_name": "GREEN",
                     "attach": [
-                        {"ip_address": "10.0.0.2", "deploy": False},
-                        {"ip_address": "10.0.0.3"},
+                        {"ip_address": "SN2", "deploy": False},
+                        {"ip_address": "SN3"},
                     ],
                 },
                 {
                     "vrf_name": "RED",
                     "deploy": False,
-                    "attach": [{"ip_address": "10.0.0.4", "deploy": True}],
+                    "attach": [{"ip_address": "SN4", "deploy": True}],
                 },
                 {
                     "vrf_name": "YELLOW",
                     "deploy": True,
-                    "attach": [{"ip_address": "10.0.0.5", "deploy": False}],
+                    "attach": [{"ip_address": "SN5", "deploy": False}],
                 },
             ]
         }
     )
 
-    assert _target_vrfs_for_deploy(module) == ["GREEN", "YELLOW"]
+    assert _deployment_intent(module) == (
+        {("GREEN", "SN3"), ("YELLOW", "SN5")},
+        {("BLUE", "SN1"), ("GREEN", "SN2")},
+        {"RED"},
+    )
 
 
 def test_manage_vrf_lite_00492_deploy_filters_changed_vrfs_by_deploy_intent():
+    nested_config = [
+        {
+            "vrf_name": "BLUE",
+            "attach": [{"ip_address": "10.0.0.1", "deploy": False}],
+        },
+        {"vrf_name": "GREEN", "attach": [{"ip_address": "10.0.0.2"}]},
+        {
+            "vrf_name": "RED",
+            "deploy": False,
+            "attach": [{"ip_address": "10.0.0.3"}],
+        },
+    ]
     module = _DummyModule(
         {
             "check_mode": True,
             "fabric_name": "FABRIC1",
             "_changed_vrfs": ["BLUE", "GREEN", "RED"],
+            "_ip_to_sn_mapping": {"10.0.0.1": "SN1", "10.0.0.2": "SN2", "10.0.0.3": "SN3"},
             "config_actions": {"save": True, "deploy": True, "type": "switch"},
+            "_vrf_lite_nested_config": nested_config,
             "config": [
-                {
-                    "vrf_name": "BLUE",
-                    "attach": [{"ip_address": "10.0.0.1", "deploy": False}],
-                },
-                {"vrf_name": "GREEN", "attach": [{"ip_address": "10.0.0.2"}]},
-                {
-                    "vrf_name": "RED",
-                    "deploy": False,
-                    "attach": [{"ip_address": "10.0.0.3"}],
-                },
+                {"vrf_name": "BLUE", "switch_ip": "10.0.0.1", "deploy": False},
+                {"vrf_name": "GREEN", "switch_ip": "10.0.0.2"},
+                {"vrf_name": "RED", "switch_ip": "10.0.0.3", "deploy": False},
+            ],
+            "_deploy_targets": [
+                {"vrf_name": "BLUE", "switch_ip": "10.0.0.1", "operation": "write"},
+                {"vrf_name": "GREEN", "switch_ip": "10.0.0.2", "operation": "write"},
+                {"vrf_name": "RED", "switch_ip": "10.0.0.3", "operation": "write"},
             ],
         }
     )
@@ -842,7 +858,7 @@ def test_manage_vrf_lite_00492_deploy_filters_changed_vrfs_by_deploy_intent():
     assert result["target_vrfs"] == ["GREEN"]
     assert result["planned_actions"] == [
         "POST {0}".format(VrfLiteEndpoints.config_save("FABRIC1")),
-        "POST {0} vrfNames=GREEN".format(VrfLiteEndpoints.vrf_deployments("FABRIC1")),
+        "POST {0} vrfNames=GREEN switchIds=SN2".format(VrfLiteEndpoints.vrf_deployments("FABRIC1")),
     ]
 
 
@@ -872,7 +888,9 @@ def test_manage_vrf_lite_00492a_config_save_omits_type_and_switch_scope_targets_
             "_changed_vrfs": ["GREEN"],
             "_ip_to_sn_mapping": {"10.0.0.2": "SN2"},
             "config_actions": {"save": True, "deploy": True, "type": "switch"},
+            "_vrf_lite_nested_config": [{"vrf_name": "GREEN", "attach": [{"ip_address": "10.0.0.2"}]}],
             "config": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.2"}],
+            "_deploy_targets": [{"vrf_name": "GREEN", "switch_ip": "SN2", "operation": "write"}],
         }
     )
 
@@ -895,7 +913,9 @@ def test_manage_vrf_lite_00492b_global_scope_deploy_omits_switch_ids(monkeypatch
             "_changed_vrfs": ["GREEN"],
             "_ip_to_sn_mapping": {"10.0.0.2": "SN2"},
             "config_actions": {"save": True, "deploy": True, "type": "global"},
+            "_vrf_lite_nested_config": [{"vrf_name": "GREEN", "attach": [{"ip_address": "10.0.0.2"}]}],
             "config": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.2"}],
+            "_deploy_targets": [{"vrf_name": "GREEN", "switch_ip": "SN2", "operation": "write"}],
         }
     )
 
@@ -908,93 +928,210 @@ def test_manage_vrf_lite_00492b_global_scope_deploy_omits_switch_ids(monkeypatch
     assert "switchIds" not in deploy_call["payload"]
 
 
-def test_manage_vrf_lite_00492c_replaced_partial_removal_deploys_removed_switch(
+@pytest.mark.parametrize("state", ["replaced", "overridden"])
+@pytest.mark.parametrize("deploy_scope", ["switch", "global"])
+def test_manage_vrf_lite_00492c_partial_removal_deploys_removed_switch(
     monkeypatch,
+    state,
+    deploy_scope,
 ):
-    """A replaced/overridden run that drops one switch must still deploy the detach on it.
-
-    The removed attachment is gone from the retained config, so the deploy scope is
-    recovered from the operation journal (_deploy_targets, which includes detaches).
-    """
+    """Both replacement states preserve a removed switch in the deploy scope."""
     captured = _capture_config_action_requests(monkeypatch)
     module = _DummyModule(
         {
-            "state": "replaced",
+            "state": state,
+            "fabric_name": "FABRIC1",
+            "_changed_vrfs": ["GREEN"],
+            "_ip_to_sn_mapping": {"10.0.0.1": "SN1", "10.0.0.2": "SN2"},
+            "config_actions": {"save": True, "deploy": True, "type": deploy_scope},
+            # SN1 stays attached; SN2 was removed and survives only in the journal.
+            "_vrf_lite_nested_config": [{"vrf_name": "GREEN", "attach": [{"ip_address": "10.0.0.1"}]}],
+            "config": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.1"}],
+            "_deploy_targets": [{"vrf_name": "GREEN", "switch_ip": "SN2", "operation": "delete"}],
+        }
+    )
+
+    _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
+
+    deploy_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1"))
+    expected_payload = {"vrfNames": ["GREEN"]}
+    if deploy_scope == "switch":
+        expected_payload["switchIds"] = ["SN2"]
+    assert deploy_call["payload"] == expected_payload
+
+
+@pytest.mark.parametrize("state", ["replaced", "overridden"])
+@pytest.mark.parametrize("deploy_scope", ["switch", "global"])
+def test_manage_vrf_lite_00492d_remove_all_still_deploys_removed_vrf(
+    monkeypatch,
+    state,
+    deploy_scope,
+):
+    """An empty retained config still deploys every removed attachment."""
+    captured = _capture_config_action_requests(monkeypatch)
+    module = _DummyModule(
+        {
+            "state": state,
+            "fabric_name": "FABRIC1",
+            "_changed_vrfs": ["TENANT"],
+            "_ip_to_sn_mapping": {"10.0.0.1": "SN1", "10.0.0.2": "SN2"},
+            "config_actions": {"save": True, "deploy": True, "type": deploy_scope},
+            "_vrf_lite_nested_config": [{"vrf_name": "TENANT", "attach": []}],
+            "config": [],
+            "_deploy_targets": [
+                {"vrf_name": "TENANT", "switch_ip": "SN1", "operation": "delete"},
+                {"vrf_name": "TENANT", "switch_ip": "SN2", "operation": "delete"},
+            ],
+        }
+    )
+
+    _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
+
+    deploy_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1"))
+    expected_payload = {"vrfNames": ["TENANT"]}
+    if deploy_scope == "switch":
+        expected_payload["switchIds"] = ["SN1", "SN2"]
+    assert deploy_call["payload"] == expected_payload
+
+
+@pytest.mark.parametrize(
+    ("vrf_deploy", "attachment_deploy", "expected_target_vrfs"),
+    [
+        pytest.param(False, None, [], id="vrf-disabled"),
+        pytest.param(True, False, ["GREEN"], id="vrf-enabled-overrides-attachment"),
+        pytest.param(None, False, [], id="attachment-disabled"),
+    ],
+)
+def test_manage_vrf_lite_00492e_operation_journal_honors_nested_deploy_intent(
+    vrf_deploy,
+    attachment_deploy,
+    expected_target_vrfs,
+):
+    """Journal-scoped writes preserve VRF and attachment deploy precedence."""
+    vrf_config = {"vrf_name": "GREEN", "attach": [{"ip_address": "10.0.0.1"}]}
+    if vrf_deploy is not None:
+        vrf_config["deploy"] = vrf_deploy
+    if attachment_deploy is not None:
+        vrf_config["attach"][0]["deploy"] = attachment_deploy
+
+    module = _DummyModule(
+        {
+            "check_mode": True,
+            "fabric_name": "FABRIC1",
+            "_changed_vrfs": ["GREEN"],
+            "_ip_to_sn_mapping": {"10.0.0.1": "SN1"},
+            "config_actions": {"save": True, "deploy": True, "type": "switch"},
+            "_vrf_lite_nested_config": [vrf_config],
+            "config": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.1"}],
+            "_deploy_targets": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.1", "operation": "write"}],
+        }
+    )
+
+    result = _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
+
+    assert result["target_vrfs"] == expected_target_vrfs
+    assert len(result["planned_actions"]) == (2 if expected_target_vrfs else 1)
+
+
+def test_manage_vrf_lite_00492ea_vrf_deploy_false_suppresses_removed_switch_deploy():
+    """VRF-level deploy:false remains authoritative for a replacement detach."""
+    module = _DummyModule(
+        {
+            "check_mode": True,
             "fabric_name": "FABRIC1",
             "_changed_vrfs": ["GREEN"],
             "_ip_to_sn_mapping": {"10.0.0.1": "SN1", "10.0.0.2": "SN2"},
             "config_actions": {"save": True, "deploy": True, "type": "switch"},
-            # SN1 stays attached; SN2 was removed this run and is absent from config.
-            "config": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.1"}],
-            "_deploy_targets": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.2"}],
-        }
-    )
-
-    _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
-
-    deploy_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1"))
-    # The removed switch (SN2) is deployed alongside the retained one so the detach lands.
-    assert deploy_call["payload"] == {
-        "vrfNames": ["GREEN"],
-        "switchIds": ["SN1", "SN2"],
-    }
-
-
-def test_manage_vrf_lite_00492d_overridden_remove_all_deploys_every_removed_switch(
-    monkeypatch,
-):
-    """Removing every attachment (empty config for the VRF) must still deploy the
-    detach on all previously-attached switches under switch scope."""
-    captured = _capture_config_action_requests(monkeypatch)
-    module = _DummyModule(
-        {
-            "state": "overridden",
-            "fabric_name": "FABRIC1",
-            "_changed_vrfs": ["TENANT"],
-            "_ip_to_sn_mapping": {"10.0.0.1": "SN1", "10.0.0.2": "SN2"},
-            "config_actions": {"save": True, "deploy": True, "type": "switch"},
-            # Every TENANT attachment was removed: nothing remains in the retained config.
-            "config": [],
-            "_deploy_targets": [
-                {"vrf_name": "TENANT", "switch_ip": "10.0.0.1"},
-                {"vrf_name": "TENANT", "switch_ip": "10.0.0.2"},
+            "_vrf_lite_nested_config": [
+                {
+                    "vrf_name": "GREEN",
+                    "deploy": False,
+                    "attach": [{"ip_address": "10.0.0.1"}],
+                }
             ],
+            "config": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.1", "deploy": False}],
+            "_deploy_targets": [{"vrf_name": "GREEN", "switch_ip": "10.0.0.2", "operation": "delete"}],
         }
     )
 
-    _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
+    result = _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
 
-    deploy_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1"))
-    assert deploy_call["payload"] == {
-        "vrfNames": ["TENANT"],
-        "switchIds": ["SN1", "SN2"],
-    }
+    assert result["target_vrfs"] == []
+    assert result["planned_actions"] == ["POST {0}".format(VrfLiteEndpoints.config_save("FABRIC1"))]
 
 
-def test_manage_vrf_lite_00492e_remove_all_global_scope_still_deploys_vrf(monkeypatch):
-    """Remove-all under global deploy scope still deploys the VRF fabric-wide (no
-    switchIds) even though the retained config is empty."""
-    captured = _capture_config_action_requests(monkeypatch)
+def test_manage_vrf_lite_00492eb_global_scope_deploys_vrf_when_any_changed_pair_is_enabled():
+    """Global scope cannot exclude one switch after the VRF is selected."""
     module = _DummyModule(
         {
-            "state": "replaced",
+            "check_mode": True,
             "fabric_name": "FABRIC1",
-            "_changed_vrfs": ["TENANT"],
-            "_ip_to_sn_mapping": {"10.0.0.1": "SN1", "10.0.0.2": "SN2"},
+            "_changed_vrfs": ["GREEN"],
             "config_actions": {"save": True, "deploy": True, "type": "global"},
-            "config": [],
+            "_vrf_lite_nested_config": [
+                {
+                    "vrf_name": "GREEN",
+                    "attach": [
+                        {"ip_address": "SN1"},
+                        {"ip_address": "SN2", "deploy": False},
+                    ],
+                }
+            ],
+            "config": [
+                {"vrf_name": "GREEN", "switch_ip": "SN1"},
+                {"vrf_name": "GREEN", "switch_ip": "SN2", "deploy": False},
+            ],
             "_deploy_targets": [
-                {"vrf_name": "TENANT", "switch_ip": "10.0.0.1"},
-                {"vrf_name": "TENANT", "switch_ip": "10.0.0.2"},
+                {"vrf_name": "GREEN", "switch_ip": "SN1", "operation": "write"},
+                {"vrf_name": "GREEN", "switch_ip": "SN2", "operation": "write"},
+            ],
+        }
+    )
+
+    result = _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
+
+    assert result["target_vrfs"] == ["GREEN"]
+    assert result["planned_actions"][-1] == "POST {0} vrfNames=GREEN".format(VrfLiteEndpoints.vrf_deployments("FABRIC1"))
+
+
+def test_manage_vrf_lite_00492ec_switch_scope_preserves_disjoint_vrf_switch_pairs(monkeypatch):
+    """Switch-scoped batches cannot turn disjoint pairs into a Cartesian product."""
+    captured = _capture_config_action_requests(monkeypatch)
+    module = _DummyModule(
+        {
+            "fabric_name": "FABRIC1",
+            "_changed_vrfs": ["BLUE", "GREEN"],
+            "config_actions": {"save": True, "deploy": True, "type": "switch"},
+            "_vrf_lite_nested_config": [
+                {"vrf_name": "BLUE", "attach": [{"ip_address": "SN2"}]},
+                {
+                    "vrf_name": "GREEN",
+                    "attach": [
+                        {"ip_address": "SN1"},
+                        {"ip_address": "SN2", "deploy": False},
+                    ],
+                },
+            ],
+            "config": [
+                {"vrf_name": "BLUE", "switch_ip": "SN2"},
+                {"vrf_name": "GREEN", "switch_ip": "SN1"},
+                {"vrf_name": "GREEN", "switch_ip": "SN2", "deploy": False},
+            ],
+            "_deploy_targets": [
+                {"vrf_name": "BLUE", "switch_ip": "SN2", "operation": "write"},
+                {"vrf_name": "GREEN", "switch_ip": "SN1", "operation": "write"},
+                {"vrf_name": "GREEN", "switch_ip": "SN2", "operation": "write"},
             ],
         }
     )
 
     _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
 
-    deploy_call = next(call for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1"))
-    assert deploy_call["payload"] == {"vrfNames": ["TENANT"]}
-    assert "switchIds" not in deploy_call["payload"]
+    deploy_payloads = [call["payload"] for call in captured if call["path"] == VrfLiteEndpoints.vrf_deployments("FABRIC1")]
+    assert deploy_payloads == [
+        {"vrfNames": ["GREEN"], "switchIds": ["SN1"]},
+        {"vrfNames": ["BLUE"], "switchIds": ["SN2"]},
+    ]
 
 
 def test_manage_vrf_lite_00492f_check_mode_change_set_recovered_from_preview():

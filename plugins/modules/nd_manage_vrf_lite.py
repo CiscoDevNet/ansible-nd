@@ -58,6 +58,9 @@ options:
         - Scope of the VRF deploy operation.
         - C(switch) deploys only the switches affected by the changed VRFs.
         - C(global) performs a fabric-wide deploy of the changed VRFs.
+        - A global deploy cannot exclude an individual switch. If any changed
+          attachment for a VRF is deploy-enabled, the whole VRF is deployed;
+          use C(switch) to honor per-attachment C(deploy=false) exclusions.
         type: str
         default: switch
         choices: [ switch, global ]
@@ -94,8 +97,9 @@ options:
     - List of VRF Lite entries.
     - Required and must not be null for C(merged), C(replaced), and C(overridden).
     - Use C(config=[]) only to request an intentional empty desired set. With
-      C(replaced) or C(overridden), that can remove all managed VRF Lite
-      attachments in scope.
+      C(replaced) or C(overridden), it removes all managed VRF Lite attachments
+      in the fabric. To remove every attachment for only one VRF with
+      C(replaced), list that VRF with C(attach=[]).
     type: list
     elements: dict
     suboptions:
@@ -126,6 +130,9 @@ options:
           deploy:
             description:
             - Per-attachment deploy intent used by deploy planning.
+            - Per-switch exclusion applies when O(config_actions.type=switch).
+              A global deployment targets the whole changed VRF when at least
+              one of its changed attachments is deploy-enabled.
             type: bool
           import_evpn_rt:
             description:
@@ -492,8 +499,13 @@ def main() -> None:
         # Deletes are included (track_deletes_in_sent=True), so the deploy scope can
         # cover switches whose attachment was removed by replaced/overridden/deleted
         # and are therefore absent from the retained desired config.
+        after_identifiers = set(nd_state_machine.existing.keys())
         module.params["_deploy_targets"] = [
-            {"vrf_name": item.vrf_name, "switch_ip": getattr(item, "switch_ip", None)}
+            {
+                "vrf_name": item.vrf_name,
+                "switch_ip": getattr(item, "switch_ip", None),
+                "operation": "write" if item.get_identifier_value() in after_identifiers else "delete",
+            }
             for item in change_entries
             if getattr(item, "vrf_name", None) and getattr(item, "switch_ip", None)
         ]
