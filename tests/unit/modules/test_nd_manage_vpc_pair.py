@@ -136,9 +136,12 @@ def _run_composed_vpc_pair_module(module_args):
             }
         raise AssertionError((method, path, data))
 
-    with patch.object(ansible_basic, "_ANSIBLE_ARGS", raw_args), patch.object(nd_manage_vpc_pair.AnsibleModule, "exit_json", exit_json), patch.object(
-        nd_manage_vpc_pair.AnsibleModule, "fail_json", fail_json
-    ), patch.object(nd_manage_vpc_pair, "setup_logging"), patch.object(NDModule, "request", nd_request):
+    # ansible-core 2.19+ requires a serialization profile to decode _ANSIBLE_ARGS.
+    with patch.object(ansible_basic, "_ANSIBLE_ARGS", raw_args), patch.object(ansible_basic, "_ANSIBLE_PROFILE", "legacy", create=True), patch.object(
+        nd_manage_vpc_pair.AnsibleModule, "exit_json", exit_json
+    ), patch.object(nd_manage_vpc_pair.AnsibleModule, "fail_json", fail_json), patch.object(nd_manage_vpc_pair, "setup_logging"), patch.object(
+        NDModule, "request", nd_request
+    ):
         try:
             nd_manage_vpc_pair.main()
         except _ModuleFailure as exc:

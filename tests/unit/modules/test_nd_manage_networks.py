@@ -92,9 +92,10 @@ def _run_composed_network_module(module_args):
             "METHOD": verb,
         }
 
-    with patch.object(ansible_basic, "_ANSIBLE_ARGS", raw_args), patch.object(nd_manage_networks.AnsibleModule, "exit_json", exit_json), patch.object(
-        nd_manage_networks.AnsibleModule, "fail_json", fail_json
-    ), patch.object(Sender, "commit", sender_commit):
+    # ansible-core 2.19+ requires a serialization profile to decode _ANSIBLE_ARGS.
+    with patch.object(ansible_basic, "_ANSIBLE_ARGS", raw_args), patch.object(ansible_basic, "_ANSIBLE_PROFILE", "legacy", create=True), patch.object(
+        nd_manage_networks.AnsibleModule, "exit_json", exit_json
+    ), patch.object(nd_manage_networks.AnsibleModule, "fail_json", fail_json), patch.object(Sender, "commit", sender_commit):
         try:
             nd_manage_networks.main()
         except _ModuleFailure as exc:
