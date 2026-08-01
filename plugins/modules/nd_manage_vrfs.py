@@ -10,26 +10,26 @@ module: nd_manage_vrfs
 version_added: "2.0.0"
 short_description: Manages VRF definitions on Cisco Nexus Dashboard.
 description:
-  - Manages VRF definitions on Cisco Nexus Dashboard across standalone,
-    Multisite (MSD), and Multicluster (MCFG) fabric topologies.
-  - This module manages VRF definitions, parent or standalone VRF switch
-    attachments, and optional deployment of pending VRF changes.
+  - Manages VRF definitions on Cisco Nexus Dashboard across fabrics,
+    fabric groups, and multi-cluster fabric groups (MCFG) topologies.
+  - This module manages VRF definitions, VRF switch attachments for fabrics,
+    fabric group, multi-cluster fabric group, and optional deployment of pending VRF changes.
   - Supported VRF definition properties include identity, custom templates,
     VLAN/SVI, security group defaults, TRM, routing, netflow, and route targets.
-  - Automatically detects fabric type from the ND API and routes to the
-    appropriate workflow without requiring extra user input.
-  - For parent fabrics (MSD / MCFG), supports child-fabric coordination
-    via the C(child_fabric_config) parameter inside each VRF definition.
+  - Automatically detects fabric type and routes to the appropriate workflow without
+    requiring extra user input.
+  - For fabric groups and multi-cluster fabric groups (MCFG), supports child fabric
+    configuration properties via the C(child_fabric_config) parameter inside each VRF definition.
   - Child fabrics only permit C(state=gathered) when targeted directly;
-    all write operations must be driven through the parent fabric.
+    all write operations must be driven through the fabric group or multi-cluster fabric group (MCFG).
 author:
   - Akshayanat C S (@achengam)
 options:
   fabric_name:
     description:
-      - Name of the fabric to operate on.
-      - The module auto-detects whether this is a standalone, parent,
-        or child fabric and routes accordingly.
+      - Name of the fabric, fabric group or multi-cluster fabric group (MCFG) to operate on.
+      - The module auto-detects whether this is a fabric, fabric group,
+        multi-cluster fabric group (MCFG) or child fabric and routes accordingly.
     type: str
     required: true
   state:
@@ -51,8 +51,8 @@ options:
         routing, TRM, security, attachment, deployment, and other settings.
       - On standalone fabrics, all VRF definition, attachment, and deployment
         options are applied directly to the target fabric.
-      - For parent fabrics each item may include a C(child_fabric_config)
-        list to provide per-child-fabric overrides. The parent-level
+      - For fabric group and multi-cluster fabric group (MCFG) each item may
+        include a C(child_fabric_config) list to provide per-child-fabric overrides. The parent-level
         C(attach), C(deploy), and C(deploy_type) options are applied only on
         the parent fabric and are not sent to child fabrics.
       - For child fabrics targeted directly, only C(state=gathered) is supported.
@@ -543,10 +543,10 @@ EXAMPLES = r"""
           VRF_NAME: VRF_CUSTOM
           VRF_ID: "50030"
 
-# ── MSD parent fabric — create VRF with child fabric-instance overrides ──────
-- name: Create VRF on MSD parent with per-child fabric-instance overrides
+# ── fabric group — create VRF with child fabric-instance overrides ──────
+- name: Create VRF on fabric group with per-child fabric-instance overrides
   cisco.nd.nd_manage_vrfs:
-    fabric_name: msd_parent
+    fabric_name: fabric_group_1
     state: merged
     config:
       - vrf_name: VRF_BLUE
@@ -576,10 +576,10 @@ EXAMPLES = r"""
             bgp_password: abcdef12
             bgp_passwd_encrypt: 3
 
-# ── MCFG parent fabric — create VRF with child fabric-instance overrides ─────
-- name: Create VRF on MCFG parent with child fabric overrides
+# ── MCFG fabric — create VRF with child fabric-instance overrides ─────
+- name: Create VRF on MCFG with child fabric overrides
   cisco.nd.nd_manage_vrfs:
-    fabric_name: mcfg_parent
+    fabric_name: mcfg_1
     state: merged
     config:
       - vrf_name: VRF_GREEN
