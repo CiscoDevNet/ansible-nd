@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     CompositeQueryParams,
     EndpointQueryParams,
@@ -14,6 +16,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
     ComponentTypeSupportEnum,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
+    EpManageFabricsGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import (
     EpVpcPairGet,
@@ -58,6 +63,7 @@ class VpcPairEndpoints:
     Centralized endpoint builders for vPC pair runtime operations.
 
     Runtime helper -> API path:
+    - fabric_details -> /api/v1/manage/fabrics/{fabricName}
     - vpc_pairs_list/vpc_pair_base -> /api/v1/manage/fabrics/{fabricName}/vpcPairs
     - switch_vpc_pair/vpc_pair_put -> /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPair
     - switch_vpc_support -> /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPairSupport
@@ -85,6 +91,20 @@ class VpcPairEndpoints:
             composite_params.add(query_group)
         query_string = composite_params.to_query_string(url_encode=False)
         return f"{path}?{query_string}" if query_string else path
+
+    @staticmethod
+    def fabric_details(fabric_name: str) -> str:
+        """
+        Build the path for querying fabric details.
+
+        Args:
+            fabric_name: Fabric name
+
+        Returns:
+            Path: /api/v1/manage/fabrics/{fabricName}
+        """
+        endpoint = EpManageFabricsGet(fabric_name=quote(fabric_name, safe=""))
+        return endpoint.path
 
     @staticmethod
     def vpc_pair_base(fabric_name: str) -> str:

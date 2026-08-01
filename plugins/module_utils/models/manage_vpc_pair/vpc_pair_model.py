@@ -159,7 +159,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         return self.model_dump(by_alias=False, exclude_none=True, **kwargs)
 
     @classmethod
-    def from_config(cls, ansible_config: dict[str, Any]) -> "VpcPairModel":
+    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "VpcPairModel":
         """
         Construct VpcPairModel from playbook config dict.
 
@@ -167,12 +167,15 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
 
         Args:
             ansible_config: Dict from playbook config item
+            **kwargs: Additional keyword arguments forwarded to ``model_validate``
+                (for example the ``context`` threaded by the state machine for
+                state-aware validation). Unused context is ignored by pydantic.
 
         Returns:
             Validated VpcPairModel instance.
         """
         data = normalize_vpc_pair_aliases(ansible_config)
-        return cls.model_validate(data, by_alias=True, by_name=True)
+        return cls.model_validate(data, by_alias=True, by_name=True, **kwargs)
 
     def merge(self, other: "VpcPairModel") -> "VpcPairModel":
         """

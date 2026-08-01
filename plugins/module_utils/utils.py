@@ -14,6 +14,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import (
     EpFabricDeployPost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
+    EpManageFabricsSwitchActionsDeployPost,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
@@ -178,6 +181,34 @@ class FabricUtils:
         Call fabric deploy action.
         """
         path = self.config_deploy_path(force_show_run=force_show_run)
+        response_data = self.nd.request(path, HttpVerbEnum.POST, payload)
+        return {
+            "path": path,
+            "status": self.nd.status,
+            "response_data": response_data,
+        }
+
+    @staticmethod
+    def build_switch_deploy_path(fabric_name: str) -> str:
+        """
+        Build /switchActions/deploy endpoint path for the given fabric.
+        """
+        endpoint = EpManageFabricsSwitchActionsDeployPost(fabric_name=fabric_name)
+        return endpoint.path
+
+    @property
+    def switch_deploy_path(self) -> str:
+        return self.build_switch_deploy_path(self.fabric_name)
+
+    def deploy_switches(self, switch_ids: list[str]) -> dict[str, Any]:
+        """
+        Call switch-scoped deploy action for specific switches.
+
+        Unlike the fabric-level deploy, this targets only the supplied switch
+        serial numbers via /switchActions/deploy with a {"switchIds": [...]} body.
+        """
+        path = self.switch_deploy_path
+        payload = {"switchIds": switch_ids}
         response_data = self.nd.request(path, HttpVerbEnum.POST, payload)
         return {
             "path": path,
