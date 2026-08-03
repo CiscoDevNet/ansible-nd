@@ -70,10 +70,7 @@ def run_plugin(plugin):
 def check_mode_query(unordered=True, ignore_keys=None):
     query = {
         "name": "Snapshot managed interfaces",
-        "path": (
-            "/api/v1/manage/fabrics/unit_test_fabric/"
-            "switches/SWITCH123/interfaces"
-        ),
+        "path": ("/api/v1/manage/fabrics/unit_test_fabric/" "switches/SWITCH123/interfaces"),
         "expected_status": 200,
         "unordered": unordered,
     }
@@ -210,9 +207,7 @@ def test_check_mode_query_must_be_dictionary(action_plugin):
         AnsibleActionFail,
         match=r"check_mode_queries\[0\] must be a dictionary",
     ):
-        action_plugin._validate_check_mode_queries(
-            ["not-a-dictionary"]
-        )
+        action_plugin._validate_check_mode_queries(["not-a-dictionary"])
 
 
 def test_unknown_check_mode_query_argument_rejected(
@@ -241,9 +236,7 @@ def test_invalid_check_mode_query_path_rejected(
         AnsibleActionFail,
         match="path must be a non-empty string",
     ):
-        action_plugin._validate_check_mode_queries(
-            [{"path": path}]
-        )
+        action_plugin._validate_check_mode_queries([{"path": path}])
 
 
 def test_invalid_check_mode_query_status_rejected(
@@ -345,18 +338,12 @@ def test_prepare_check_mode_queries_applies_defaults(
 
 
 def test_prepare_check_mode_queries_renders_path(action_plugin):
-    action_plugin._templar.template = Mock(
-        return_value="/api/v1/rendered"
-    )
+    action_plugin._templar.template = Mock(return_value="/api/v1/rendered")
 
-    prepared = action_plugin._prepare_check_mode_queries(
-        [{"path": "/api/v1/{{ value }}"}]
-    )
+    prepared = action_plugin._prepare_check_mode_queries([{"path": "/api/v1/{{ value }}"}])
 
     assert prepared[0]["path"] == "/api/v1/rendered"
-    action_plugin._templar.template.assert_called_once_with(
-        "/api/v1/{{ value }}"
-    )
+    action_plugin._templar.template.assert_called_once_with("/api/v1/{{ value }}")
 
 
 @pytest.mark.parametrize(
@@ -556,9 +543,7 @@ def test_check_mode_query_wraps_predictive_execution(
         )
         return next(responses)
 
-    action_plugin._execute_module = Mock(
-        side_effect=execute_module
-    )
+    action_plugin._execute_module = Mock(side_effect=execute_module)
 
     result = run_plugin(action_plugin)
 
@@ -600,9 +585,7 @@ def test_check_mode_query_wraps_predictive_execution(
 
 
 def test_check_mode_mutation_fails_before_apply(action_plugin):
-    action_plugin._task.args["check_mode_queries"] = [
-        check_mode_query()
-    ]
+    action_plugin._task.args["check_mode_queries"] = [check_mode_query()]
 
     before_state = [
         {
@@ -637,10 +620,7 @@ def test_check_mode_mutation_fails_before_apply(action_plugin):
 
     with pytest.raises(
         AnsibleActionFail,
-        match=(
-            "Controller state changed during predictive.*"
-            "accessVlan.*before=100, after=999"
-        ),
+        match=("Controller state changed during predictive.*" "accessVlan.*before=100, after=999"),
     ):
         run_plugin(action_plugin)
 
@@ -749,9 +729,7 @@ def test_snapshot_still_compares_managed_config_when_ignoring_keys(
 def test_volatile_snapshot_change_does_not_block_apply(
     action_plugin,
 ):
-    action_plugin._task.args["check_mode_queries"] = [
-        check_mode_query(ignore_keys=["operData"])
-    ]
+    action_plugin._task.args["check_mode_queries"] = [check_mode_query(ignore_keys=["operData"])]
     before_state = {
         "interfaces": [
             {
@@ -781,9 +759,7 @@ def test_volatile_snapshot_change_does_not_block_apply(
     result = run_plugin(action_plugin)
 
     assert action_plugin._execute_module.call_count == 5
-    assert result["check_mode_query_results"][0][
-        "unchanged"
-    ] is True
+    assert result["check_mode_query_results"][0]["unchanged"] is True
     assert result["first_run_result"]["changed"] is True
 
 
@@ -791,9 +767,7 @@ def test_global_check_mode_runs_snapshot_queries_only(
     action_plugin,
 ):
     action_plugin._play_context.check_mode = True
-    action_plugin._task.args["check_mode_queries"] = [
-        check_mode_query()
-    ]
+    action_plugin._task.args["check_mode_queries"] = [check_mode_query()]
 
     state = [{"interfaceName": "Ethernet1/41"}]
     responses = iter(
@@ -807,14 +781,10 @@ def test_global_check_mode_runs_snapshot_queries_only(
 
     def execute_module(**kwargs):
         del kwargs
-        observed_check_modes.append(
-            action_plugin._task.check_mode
-        )
+        observed_check_modes.append(action_plugin._task.check_mode)
         return next(responses)
 
-    action_plugin._execute_module = Mock(
-        side_effect=execute_module
-    )
+    action_plugin._execute_module = Mock(side_effect=execute_module)
 
     result = run_plugin(action_plugin)
 
@@ -824,17 +794,13 @@ def test_global_check_mode_runs_snapshot_queries_only(
     assert result["second_run_result"] is None
     assert result["idempotency_attempts"] == 0
     assert result["nd_query_results"] == []
-    assert result["check_mode_query_results"][0][
-        "unchanged"
-    ] is True
+    assert result["check_mode_query_results"][0]["unchanged"] is True
     assert action_plugin._task.check_mode is False
 
 
 def test_snapshot_queries_require_check_mode(action_plugin):
     action_plugin._task.args["check_mode"] = False
-    action_plugin._task.args["check_mode_queries"] = [
-        check_mode_query()
-    ]
+    action_plugin._task.args["check_mode_queries"] = [check_mode_query()]
 
     with pytest.raises(
         AnsibleActionFail,
@@ -848,9 +814,7 @@ def test_snapshot_queries_require_check_mode(action_plugin):
 def test_after_snapshot_runs_before_check_expectation_failure(
     action_plugin,
 ):
-    action_plugin._task.args["check_mode_queries"] = [
-        check_mode_query()
-    ]
+    action_plugin._task.args["check_mode_queries"] = [check_mode_query()]
     state = [{"interfaceName": "Ethernet1/41"}]
 
     action_plugin._execute_module.side_effect = [
@@ -872,9 +836,7 @@ def test_after_snapshot_runs_before_check_expectation_failure(
 def test_snapshot_runs_after_check_mode_execution_error(
     action_plugin,
 ):
-    action_plugin._task.args["check_mode_queries"] = [
-        check_mode_query()
-    ]
+    action_plugin._task.args["check_mode_queries"] = [check_mode_query()]
     state = [{"interfaceName": "Ethernet1/41"}]
 
     action_plugin._execute_module.side_effect = [
@@ -896,9 +858,7 @@ def test_snapshot_runs_after_check_mode_execution_error(
 def test_snapshot_query_failure_stops_before_target(
     action_plugin,
 ):
-    action_plugin._task.args["check_mode_queries"] = [
-        check_mode_query()
-    ]
+    action_plugin._task.args["check_mode_queries"] = [check_mode_query()]
     action_plugin._execute_module.return_value = snapshot_response(
         {},
         status=500,

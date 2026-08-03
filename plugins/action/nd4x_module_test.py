@@ -178,10 +178,7 @@ class ActionModule(ActionBase):
     def _validate_check_mode_queries(self, check_mode_queries):
         for query_index, query in enumerate(check_mode_queries):
             if not isinstance(query, dict):
-                raise AnsibleActionFail(
-                    "check_mode_queries[%s] must be a dictionary"
-                    % query_index
-                )
+                raise AnsibleActionFail("check_mode_queries[%s] must be a dictionary" % query_index)
 
             self._reject_unknown_keys(
                 query,
@@ -192,40 +189,28 @@ class ActionModule(ActionBase):
             path = query.get("path")
 
             if not isinstance(path, str) or not path.strip():
-                raise AnsibleActionFail(
-                    "check_mode_queries[%s].path must be a non-empty string"
-                    % query_index
-                )
+                raise AnsibleActionFail("check_mode_queries[%s].path must be a non-empty string" % query_index)
 
             if "expected_status" in query:
                 self._parse_int(
                     query["expected_status"],
-                    "check_mode_queries[%s].expected_status"
-                    % query_index,
+                    "check_mode_queries[%s].expected_status" % query_index,
                 )
 
             if "unordered" in query:
                 self._parse_bool(
                     query["unordered"],
-                    "check_mode_queries[%s].unordered"
-                    % query_index,
+                    "check_mode_queries[%s].unordered" % query_index,
                 )
 
             ignore_keys = query.get("ignore_keys", [])
 
             if not isinstance(ignore_keys, list):
-                raise AnsibleActionFail(
-                    "check_mode_queries[%s].ignore_keys must be a list"
-                    % query_index
-                )
+                raise AnsibleActionFail("check_mode_queries[%s].ignore_keys must be a list" % query_index)
 
             for key_index, key in enumerate(ignore_keys):
                 if not isinstance(key, str) or not key.strip():
-                    raise AnsibleActionFail(
-                        "check_mode_queries[%s].ignore_keys[%s] must "
-                        "be a non-empty string"
-                        % (query_index, key_index)
-                    )
+                    raise AnsibleActionFail("check_mode_queries[%s].ignore_keys[%s] must " "be a non-empty string" % (query_index, key_index))
 
     def _prepare_check_mode_queries(self, check_mode_queries):
         prepared_queries = []
@@ -237,13 +222,11 @@ class ActionModule(ActionBase):
                     "path": self._templar.template(query["path"]),
                     "expected_status": self._parse_int(
                         query.get("expected_status", 200),
-                        "check_mode_queries[%s].expected_status"
-                        % query_index,
+                        "check_mode_queries[%s].expected_status" % query_index,
                     ),
                     "unordered": self._parse_bool(
                         query.get("unordered", False),
-                        "check_mode_queries[%s].unordered"
-                        % query_index,
+                        "check_mode_queries[%s].unordered" % query_index,
                     ),
                     "ignore_keys": sorted(
                         {
@@ -348,9 +331,7 @@ class ActionModule(ActionBase):
         check_mode_queries = args.get("check_mode_queries", [])
         self._validate_check_mode_queries(check_mode_queries)
 
-        prepared_check_mode_queries = self._prepare_check_mode_queries(
-            check_mode_queries
-        )
+        prepared_check_mode_queries = self._prepare_check_mode_queries(check_mode_queries)
 
         nd_queries = args.get("nd_queries", [])
         self._validate_nd_queries(nd_queries)
@@ -404,18 +385,10 @@ class ActionModule(ActionBase):
             "_play_context",
             None,
         )
-        global_check_mode = bool(
-            getattr(play_context, "check_mode", False)
-        )
+        global_check_mode = bool(getattr(play_context, "check_mode", False))
 
-        if (
-            check_mode_queries
-            and not global_check_mode
-            and not run_check_mode
-        ):
-            raise AnsibleActionFail(
-                "Argument check_mode_queries requires check_mode=true"
-            )
+        if check_mode_queries and not global_check_mode and not run_check_mode:
+            raise AnsibleActionFail("Argument check_mode_queries requires check_mode=true")
 
         original_check_mode = self._task.check_mode
 
@@ -625,9 +598,7 @@ class ActionModule(ActionBase):
             if len(before) != len(after):
                 return "%s.length" % path, len(before), len(after)
 
-            for item_index, (before_item, after_item) in enumerate(
-                zip(before, after)
-            ):
+            for item_index, (before_item, after_item) in enumerate(zip(before, after)):
                 difference = self._first_snapshot_difference(
                     before_item,
                     after_item,
@@ -685,9 +656,7 @@ class ActionModule(ActionBase):
             finally:
                 self._task.check_mode = original_check_mode
 
-            actual_failed = bool(
-                query_result.get("failed", False)
-            )
+            actual_failed = bool(query_result.get("failed", False))
 
             if actual_failed:
                 raise AnsibleActionFail(
@@ -705,17 +674,10 @@ class ActionModule(ActionBase):
             expected_status = query["expected_status"]
 
             if actual_status is None:
-                raise AnsibleActionFail(
-                    "Check-mode snapshot query %s did not "
-                    "return a status"
-                    % query_label
-                )
+                raise AnsibleActionFail("Check-mode snapshot query %s did not " "return a status" % query_label)
 
             try:
-                status_matches = (
-                    int(actual_status)
-                    == int(expected_status)
-                )
+                status_matches = int(actual_status) == int(expected_status)
             except (TypeError, ValueError):
                 raise AnsibleActionFail(
                     "Check-mode snapshot query %s returned "
@@ -738,11 +700,7 @@ class ActionModule(ActionBase):
                 )
 
             if "current" not in query_result:
-                raise AnsibleActionFail(
-                    "Check-mode snapshot query %s did not "
-                    "return current state"
-                    % query_label
-                )
+                raise AnsibleActionFail("Check-mode snapshot query %s did not " "return current state" % query_label)
 
             normalized_snapshot = self._normalize_snapshot(
                 query_result["current"],
@@ -783,10 +741,7 @@ class ActionModule(ActionBase):
         ):
             before_path = before.get("path")
             after_path = after.get("path")
-            query_label = (
-                before.get("name")
-                or before_path
-            )
+            query_label = before.get("name") or before_path
 
             if before_path != after_path:
                 raise AnsibleActionFail(
@@ -798,10 +753,7 @@ class ActionModule(ActionBase):
                     )
                 )
 
-            unchanged = (
-                before["snapshot"]
-                == after["snapshot"]
-            )
+            unchanged = before["snapshot"] == after["snapshot"]
 
             comparison_results.append(
                 {
@@ -821,23 +773,17 @@ class ActionModule(ActionBase):
                 difference_message = ""
 
                 if difference is not None:
-                    difference_path, before_value, after_value = (
-                        difference
-                    )
-                    difference_message = (
-                        " First difference at %s: before=%s, after=%s."
-                        % (
-                            difference_path,
-                            self._format_snapshot_value(before_value),
-                            self._format_snapshot_value(after_value),
-                        )
+                    difference_path, before_value, after_value = difference
+                    difference_message = " First difference at %s: before=%s, after=%s." % (
+                        difference_path,
+                        self._format_snapshot_value(before_value),
+                        self._format_snapshot_value(after_value),
                     )
 
                 raise AnsibleActionFail(
                     "Controller state changed during predictive "
                     "check mode for query %s. Real apply was "
-                    "not executed.%s"
-                    % (query_label, difference_message)
+                    "not executed.%s" % (query_label, difference_message)
                 )
 
         return comparison_results
@@ -855,39 +801,31 @@ class ActionModule(ActionBase):
 
         try:
             # Capture controller state before predictive execution.
-            before_snapshots = (
-                self._capture_check_mode_snapshots(
-                    check_mode_queries,
-                    task_vars,
-                )
+            before_snapshots = self._capture_check_mode_snapshots(
+                check_mode_queries,
+                task_vars,
             )
 
             # Enable predictive check mode for the target module.
             self._task.check_mode = True
 
             try:
-                check_mode_result = (
-                    self._run_target_module(
-                        module_name=module_name,
-                        module_args=module_args,
-                        task_vars=task_vars,
-                    )
+                check_mode_result = self._run_target_module(
+                    module_name=module_name,
+                    module_args=module_args,
+                    task_vars=task_vars,
                 )
             finally:
                 # Always capture controller state after predictive
                 # execution, even if the target module raises.
-                after_snapshots = (
-                    self._capture_check_mode_snapshots(
-                        check_mode_queries,
-                        task_vars,
-                    )
+                after_snapshots = self._capture_check_mode_snapshots(
+                    check_mode_queries,
+                    task_vars,
                 )
 
-                comparison_results = (
-                    self._assert_check_mode_snapshots_unchanged(
-                        before_snapshots,
-                        after_snapshots,
-                    )
+                comparison_results = self._assert_check_mode_snapshots_unchanged(
+                    before_snapshots,
+                    after_snapshots,
                 )
         finally:
             # Restore the state that existed before this helper ran.
