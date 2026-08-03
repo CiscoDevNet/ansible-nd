@@ -34,8 +34,12 @@ from __future__ import annotations
 from typing import ClassVar, Literal
 from urllib.parse import quote
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     ClusterNameMixin,
     FabricNameMixin,
@@ -51,12 +55,21 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params im
     EndpointQueryParams,
     LuceneQueryParams,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
+    BasePath,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
-class ManageInterfacesListEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin, NetworkNameMixin, OffsetMixin, EndpointQueryParams):
+class ManageInterfacesListEndpointParams(
+    ClusterNameMixin,
+    FilterMixin,
+    MaxMixin,
+    NetworkNameMixin,
+    OffsetMixin,
+    EndpointQueryParams,
+):
     """
     Endpoint-specific query parameters for listing switch interfaces.
 
@@ -116,7 +129,13 @@ class _EpManageInterfacesBase(FabricNameMixin, SwitchSerialNumberMixin, Interfac
         if self._require_interface_name and self.interface_name is None:
             raise ValueError(f"{type(self).__name__}.path: interface_name must be set before accessing path.")
 
-        segments = ["fabrics", quote(self.fabric_name, safe=""), "switches", quote(self.switch_sn, safe=""), "interfaces"]
+        segments = [
+            "fabrics",
+            quote(self.fabric_name, safe=""),
+            "switches",
+            quote(self.switch_sn, safe=""),
+            "interfaces",
+        ]
         if self.interface_name is not None:
             segments.append(quote(self.interface_name, safe=""))
         base_path = BasePath.path(*segments)
@@ -158,7 +177,11 @@ class EpManageInterfacesGet(_EpManageInterfacesBase):
     - Via inherited `path` property if `fabric_name`, `switch_sn`, or `interface_name` is not set.
     """
 
-    class_name: Literal["EpManageInterfacesGet"] = Field(default="EpManageInterfacesGet", frozen=True, description="Class name for backward compatibility")
+    class_name: Literal["EpManageInterfacesGet"] = Field(
+        default="EpManageInterfacesGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -195,7 +218,9 @@ class EpManageInterfacesListGet(_EpManageInterfacesBase):
     _require_interface_name: ClassVar[bool] = False
 
     class_name: Literal["EpManageInterfacesListGet"] = Field(
-        default="EpManageInterfacesListGet", frozen=True, description="Class name for backward compatibility"
+        default="EpManageInterfacesListGet",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
     endpoint_params: ManageInterfacesListEndpointParams = Field(
         default_factory=ManageInterfacesListEndpointParams,
@@ -215,17 +240,10 @@ class EpManageInterfacesListGet(_EpManageInterfacesBase):
             "sort": self.endpoint_params.sort,
         }
 
-        legacy_lucene_is_set = any(
-            value is not None
-            for value in legacy_lucene_values.values()
-        )
+        legacy_lucene_is_set = any(value is not None for value in legacy_lucene_values.values())
 
         if legacy_lucene_is_set and not self.lucene_params.is_empty():
-            raise ValueError(
-                "Set Lucene options using either "
-                "'endpoint_params.filter/max/offset/sort' or "
-                "'lucene_params', but not both."
-            )
+            raise ValueError("Set Lucene options using either " "'endpoint_params.filter/max/offset/sort' or " "'lucene_params', but not both.")
 
         query_params = CompositeQueryParams().add(self.endpoint_params)
 
@@ -268,7 +286,11 @@ class EpManageInterfacesPost(_EpManageInterfacesBase):
 
     _require_interface_name: ClassVar[bool] = False
 
-    class_name: Literal["EpManageInterfacesPost"] = Field(default="EpManageInterfacesPost", frozen=True, description="Class name for backward compatibility")
+    class_name: Literal["EpManageInterfacesPost"] = Field(
+        default="EpManageInterfacesPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -300,7 +322,11 @@ class EpManageInterfacesPut(_EpManageInterfacesBase):
     - Via inherited `path` property if `fabric_name`, `switch_sn`, or `interface_name` is not set.
     """
 
-    class_name: Literal["EpManageInterfacesPut"] = Field(default="EpManageInterfacesPut", frozen=True, description="Class name for backward compatibility")
+    class_name: Literal["EpManageInterfacesPut"] = Field(
+        default="EpManageInterfacesPut",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -343,7 +369,9 @@ class EpManageInterfacesDelete(_EpManageInterfacesBase):
     """
 
     class_name: Literal["EpManageInterfacesDelete"] = Field(
-        default="EpManageInterfacesDelete", frozen=True, description="Class name for backward compatibility"
+        default="EpManageInterfacesDelete",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
 
     @property
@@ -378,7 +406,9 @@ class EpManageInterfacesDeploy(FabricNameMixin, NDEndpointBaseModel):
     """
 
     class_name: Literal["EpManageInterfacesDeploy"] = Field(
-        default="EpManageInterfacesDeploy", frozen=True, description="Class name for backward compatibility"
+        default="EpManageInterfacesDeploy",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
 
     @property
@@ -482,7 +512,9 @@ class EpManageInterfacesNormalize(FabricNameMixin, NDEndpointBaseModel):
     """
 
     class_name: Literal["EpManageInterfacesNormalize"] = Field(
-        default="EpManageInterfacesNormalize", frozen=True, description="Class name for backward compatibility"
+        default="EpManageInterfacesNormalize",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
 
     @property
@@ -534,7 +566,9 @@ class EpManageInterfacesRemove(FabricNameMixin, NDEndpointBaseModel):
     """
 
     class_name: Literal["EpManageInterfacesRemove"] = Field(
-        default="EpManageInterfacesRemove", frozen=True, description="Class name for backward compatibility"
+        default="EpManageInterfacesRemove",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
 
     @property
