@@ -86,7 +86,7 @@ class LocalUserModel(NDBaseModel):
         "login_id",
         "email",
         "first_name",
-        "last_name", 
+        "last_name",
     )
 
     # --- Serialization Configuration ---

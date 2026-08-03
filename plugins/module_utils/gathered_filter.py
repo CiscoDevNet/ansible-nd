@@ -1,6 +1,4 @@
-# Copyright: (c) 2026, Cisco and/or its affiliates.
-
-# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+# Copyright: (c) 2026, Deeksha Pandey (deekpand-cisco)  deekpand@cisco.com
 
 """Generic local and server-side filtering helpers for gathered-state responses."""
 
@@ -77,10 +75,7 @@ def build_lucene_expressions(
     expressions: list[str] = []
 
     for filter_item in filter_items:
-        terms = [
-            f"{field_name}:{format_lucene_value(value)}"
-            for field_name, value in spec.base_terms
-        ]
+        terms = [f"{field_name}:{format_lucene_value(value)}" for field_name, value in spec.base_terms]
 
         for config_path, api_field in spec.field_map.items():
             value = get_nested_value(filter_item, config_path)
@@ -107,6 +102,7 @@ def _contains_active_value(value: Any) -> bool:
     # False and 0 can be meaningful filter values. Empty strings cannot match
     # valid loopback fields and are treated as absent criteria.
     return value not in (None, "")
+
 
 def _extract_active_leaf_paths(data: dict[str, Any], prefix: str = "") -> set[str]:
     """Return dot-paths for every non-None, non-empty leaf value in a nested dict.
@@ -186,8 +182,8 @@ def _reject_unsupported_filter_properties(
         ...     ("switch_ip", "interface_name", "config_data.network_os.policy.vrf"),
         ...     index=0,
         ... )
-        # ValueError: "Gathered filter at index 0 contains unsupported properties: 
-        #   'config_data.network_os.policy.extra_config'. 
+        # ValueError: "Gathered filter at index 0 contains unsupported properties:
+        #   'config_data.network_os.policy.extra_config'.
         #   Supported gathered filter properties: 'switch_ip', 'interface_name', ..."
     """
     supplied_paths = _extract_active_leaf_paths(filter_item)
@@ -202,7 +198,6 @@ def _reject_unsupported_filter_properties(
                 ", ".join("'{0}'".format(p) for p in supported_properties),
             )
         )
-
 
 
 def filter_gathered_response(
@@ -220,7 +215,7 @@ def filter_gathered_response(
     """
 
     active_filters: list[dict[str, Any]] = []
-    for filter_item in (filters or []):
+    for filter_item in filters or []:
         if not isinstance(filter_item, dict):
             raise ValueError("Each gathered filter item must be a dictionary.")
 
@@ -253,12 +248,13 @@ def filter_gathered_response(
 
     return filtered
 
+
 def validate_gathered_filters(
-        filters: list[Any],
-        normalize_filter: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-        supported_properties: tuple[str, ...] = (),
+    filters: list[Any],
+    normalize_filter: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    supported_properties: tuple[str, ...] = (),
 ) -> None:
-    """ 
+    """
     Pre-flight validation for gathered filter items.
 
     Validates each filter item through a strict pipeline:
@@ -289,11 +285,8 @@ def validate_gathered_filters(
     for idx, filter_item in enumerate(filters):
         # Step 1: Type check
         if not isinstance(filter_item, dict):
-            raise ValueError(
-                f"Each gathered filter item must be a dictionary, "
-                f"got {type(filter_item).__name__} at index {idx}."
-            )
-        
+            raise ValueError(f"Each gathered filter item must be a dictionary, " f"got {type(filter_item).__name__} at index {idx}.")
+
         # Step 2: Property validation (before normalize - checks keys, not values)
         if supported_properties:
             _reject_unsupported_filter_properties(filter_item, supported_properties, idx)
@@ -302,11 +295,7 @@ def validate_gathered_filters(
         normalized = deepcopy(filter_item)
         if normalize_filter is not None:
             normalized = normalize_filter(normalized)
-        
-        #Step 4: Active value check
-        if not _contains_active_value(normalized):
-            raise ValueError(
-                f"Gathered filter item at index {idx} must contain "
-                f"at least one filtering criterion."
-            )
 
+        # Step 4: Active value check
+        if not _contains_active_value(normalized):
+            raise ValueError(f"Gathered filter item at index {idx} must contain " f"at least one filtering criterion.")

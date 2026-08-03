@@ -6,7 +6,9 @@ from __future__ import absolute_import, division, print_function
 
 from typing import Any, Dict, List, Optional, Union
 
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.utils import prune_to_spec
 
@@ -58,9 +60,9 @@ class NDOutput:
         output = {
             "output_level": self._output_level,
             "changed": self._changed,
-            "after": self._after.to_ansible_config() if isinstance(self._after, NDConfigCollection) else self._after,
-            "before": self._before.to_ansible_config() if isinstance(self._before, NDConfigCollection) else self._before,
-            "diff": self._diff.to_ansible_config() if isinstance(self._diff, NDConfigCollection) else self._diff,
+            "after": (self._after.to_ansible_config() if isinstance(self._after, NDConfigCollection) else self._after),
+            "before": (self._before.to_ansible_config() if isinstance(self._before, NDConfigCollection) else self._before),
+            "diff": (self._diff.to_ansible_config() if isinstance(self._diff, NDConfigCollection) else self._diff),
         }
 
         if self._output_level in ("debug", "info"):

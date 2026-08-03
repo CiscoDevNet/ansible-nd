@@ -8,11 +8,22 @@ from collections.abc import Sequence
 from functools import wraps
 from typing import Any, ClassVar, Dict, Generic, Optional, TypeVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    BaseModel,
+    ConfigDict,
+    model_validator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import (
+    HttpVerbEnum,
+    OperationType,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
@@ -50,7 +61,6 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     model_class: ClassVar[type[NDBaseModel]] = NDBaseModel
     supports_bulk_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = False
-    
     # Opt-in. Existing orchestrators do not receive gathered filters.
     supports_gathered_lucene_filtering: ClassVar[bool] = False
 
@@ -73,7 +83,13 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     rest_send: RestSend
     results: Optional[Results] = None
 
-    def _register_api_call(self, path: str, verb: HttpVerbEnum, operation_type: OperationType, payload: Optional[Dict[str, Any]] = None) -> None:
+    def _register_api_call(
+        self,
+        path: str,
+        verb: HttpVerbEnum,
+        operation_type: OperationType,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Register the most recent REST call with Results for observability."""
         if self.results is None:
             return
@@ -165,7 +181,12 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.create_endpoint()
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.CREATE)
+            return self._request(
+                path=api_endpoint.path,
+                verb=api_endpoint.verb,
+                data=model_instance.to_payload(),
+                operation_type=OperationType.CREATE,
+            )
         except Exception as e:
             raise Exception(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -173,7 +194,12 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.update_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.UPDATE)
+            return self._request(
+                path=api_endpoint.path,
+                verb=api_endpoint.verb,
+                data=model_instance.to_payload(),
+                operation_type=OperationType.UPDATE,
+            )
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -181,7 +207,11 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.delete_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, operation_type=OperationType.DELETE)
+            return self._request(
+                path=api_endpoint.path,
+                verb=api_endpoint.verb,
+                operation_type=OperationType.DELETE,
+            )
         except Exception as e:
             raise Exception(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
 
