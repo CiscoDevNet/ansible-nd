@@ -31,7 +31,9 @@ from __future__ import annotations
 import re
 from typing import ClassVar, Sequence
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
@@ -473,7 +475,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         """
         candidates_by_switch: list[tuple[str, list[dict]]] = []
 
-        for switch_ip, switch_id in self.fabric_context.switch_map.items():
+        for switch_ip, switch_id in self._switches_to_query().items():
             api_endpoint = self._configure_endpoint(
                 self.query_all_endpoint(),
                 switch_sn=switch_id,

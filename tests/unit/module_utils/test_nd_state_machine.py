@@ -37,9 +37,11 @@ from typing import ClassVar, Literal
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
+import ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine as state_machine_module
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
     NDStateMachineError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
 )
@@ -63,8 +65,6 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator imp
     ResponseGenerator,
 )
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
-import ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine as state_machine_module
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
 
 class _SpyLoopbackOrchestrator(LoopbackInterfaceOrchestrator):
@@ -145,6 +145,7 @@ def _build_module(state: str, check_mode: bool, config: list[dict]) -> MockAnsib
     """Build a `MockAnsibleModule` with the params `NDStateMachine` reads."""
     module = MockAnsibleModule()
     module.check_mode = check_mode
+    module.no_log_values = set()
     module.params = {
         "state": state,
         "config": config,
@@ -1211,7 +1212,22 @@ def test_model_without_opt_in_preserves_legacy_gathered_flow(monkeypatch):
     assert orchestrator.query_calls == [{}]
 
 
-def test_gathered_filters_are_forwarded_when_model_and_orchestrator_opt_in(monkeypatch):
+def test_nd_state_machine_00230(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify gathered filters are forwarded to `query_all` when both model and orchestrator opt in.
+
+    ## Test
+
+    - `state: gathered`, opted-in `_FilterModel`, server filtering enabled
+    - `query_all` receives `gathered_filters` with the user config
+    - Local filtering still applies; `before` contains only the match; `proposed` is empty
+
+    ## Classes and Methods
+
+    - NDStateMachine.__init__()
+    """
     config = [{"name": "wanted"}]
     machine, orchestrator = _build_gathered_state_machine(
         monkeypatch,
