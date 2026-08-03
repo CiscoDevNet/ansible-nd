@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Cisco and/or its affiliates.
+# Copyright: (c) 2026, Deeksha Pandey (deekpand-cisco)  deekpand@cisco.com
 
-# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """Unit tests for generic gathered-state local and Lucene filtering."""
 
@@ -16,7 +15,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
     filter_gathered_response,
     format_lucene_value,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    LoopbackInterfaceModel,
+)
 
 
 def _response(
@@ -66,21 +67,14 @@ def _lucene_spec() -> GatheredLuceneSpec:
 
 
 def test_lucene_without_filters_returns_base_expression():
-    assert build_lucene_expressions([], _lucene_spec()) == [
-        "interfaceType:loopback AND policyType:loopback"
-    ]
+    assert build_lucene_expressions([], _lucene_spec()) == ["interfaceType:loopback AND policyType:loopback"]
 
 
 def test_lucene_supported_fields_are_combined_with_and():
     assert build_lucene_expressions(
         [{"interface_name": "loopback101"}],
         _lucene_spec(),
-    ) == [
-        (
-            "interfaceType:loopback AND policyType:loopback AND "
-            "interfaceName:loopback101"
-        )
-    ]
+    ) == ["interfaceType:loopback AND policyType:loopback AND " "interfaceName:loopback101"]
 
 
 def test_lucene_multiple_items_remain_separate_expressions():
@@ -154,7 +148,11 @@ def test_ansible_injected_null_values_do_not_become_criteria():
 
 
 def test_multiple_filter_items_use_or_semantics():
-    responses = [_response(), _response(interface_name="loopback102"), _response(interface_name="loopback103")]
+    responses = [
+        _response(),
+        _response(interface_name="loopback102"),
+        _response(interface_name="loopback103"),
+    ]
 
     result = _filter(
         responses,
@@ -165,7 +163,10 @@ def test_multiple_filter_items_use_or_semantics():
 
 
 def test_nested_false_value_is_an_active_filter():
-    responses = [_response(admin_state=False), _response(interface_name="loopback102", admin_state=True)]
+    responses = [
+        _response(admin_state=False),
+        _response(interface_name="loopback102", admin_state=True),
+    ]
     filters = [{"config_data": {"network_os": {"policy": {"admin_state": False}}}}]
 
     assert _filter(responses, filters) == [responses[0]]
