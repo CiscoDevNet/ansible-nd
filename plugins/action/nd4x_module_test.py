@@ -907,7 +907,6 @@ class ActionModule(ActionBase):
             task_vars=task_vars,
         )
 
-
     def _run_nd_queries(self, nd_queries, task_vars):
         results = []
 
