@@ -117,6 +117,43 @@ class NDBaseModel(BaseModel, ABC):
 
         return result
 
+    @classmethod
+    def secret_field_keys(cls, by_alias: bool = False) -> Set[str]:
+        """Names of fields tagged ``json_schema_extra={"secret": True}``.
+
+        Aliases when ``by_alias`` is True (payload shape), else Python field
+        names (config/input shape). The single source of truth for which fields
+        are secret, used both to keep them out of output and to register their
+        values for ``no_log`` masking.
+        """
+        keys: Set[str] = set()
+        for field_name, field_info in cls.model_fields.items():
+            extra = field_info.json_schema_extra
+            if isinstance(extra, dict) and extra.get("secret"):
+                keys.add((field_info.alias or field_name) if by_alias else field_name)
+        return keys
+
+    @classmethod
+    def collect_secret_values(cls, config_item: Dict[str, Any]) -> Set[str]:
+        """Secret string values in a raw Ansible config item, for no_log masking.
+
+        Ansible auto-masks ``no_log`` argument-spec params, but not values in
+        free-form/nested dicts it does not statically model. ``NDStateMachine``
+        registers whatever this returns with ``module.no_log_values`` so the
+        value-based scrubber strips them from the invocation echo and result.
+
+        Default: top-level fields tagged secret. Models with secrets nested in a
+        free-form dict (e.g. links ``template_inputs``) override to add those.
+        """
+        values: Set[str] = set()
+        if not isinstance(config_item, dict):
+            return values
+        for key in cls.secret_field_keys(by_alias=False):
+            value = config_item.get(key)
+            if value:
+                values.add(value)
+        return values
+
     def to_payload(self, **kwargs) -> Dict[str, Any]:
         """Convert model to API payload format (aliased keys, nested structures)."""
         data = self.model_dump(
@@ -130,12 +167,17 @@ class NDBaseModel(BaseModel, ABC):
         return self._build_payload_nested(data)
 
     def to_config(self, **kwargs) -> Dict[str, Any]:
-        """Convert model to Ansible config format (Python field names, flat structure)."""
+        """Convert model to Ansible config format (Python field names, flat structure).
+
+        Secret-tagged fields are excluded so they never surface in output
+        (after/before/proposed/gathered); they remain only in to_payload().
+        """
+        exclude = set(self.config_exclude_fields) | self.secret_field_keys(by_alias=False)
         return self.model_dump(
             by_alias=False,
             exclude_none=True,
             context={"mode": "config"},
-            exclude=self.config_exclude_fields or None,
+            exclude=exclude or None,
             **kwargs,
         )
 
@@ -212,11 +254,17 @@ class NDBaseModel(BaseModel, ABC):
     # --- Diff & Merge ---
 
     def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
-        """Export for diff comparison, excluding sensitive fields."""
+        """Export for diff comparison, excluding sensitive fields.
+
+        Secret-tagged fields are excluded from the comparison so a change to
+        only a secret is not (and cannot be) detected as a diff, keeping runs
+        idempotent when the controller does not echo secrets back on read.
+        """
+        exclude = set(self.exclude_from_diff) | self.secret_field_keys(by_alias=False)
         return self.model_dump(
             by_alias=True,
             exclude_none=True,
-            exclude=self.exclude_from_diff or None,
+            exclude=exclude or None,
             mode="json",
             **kwargs,
         )
