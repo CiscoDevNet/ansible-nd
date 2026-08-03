@@ -105,6 +105,9 @@ notes:
     validation are skipped.
   - Idempotency uses exactly one second real module execution and does not retry
     module application.
+  - See C(tests/integration/playbooks/nd4x_module_tests/README.md) for the
+    authoritative contributor guide, scenario templates, safety requirements,
+    execution commands, and migration acceptance checklist.
 """
 
 EXAMPLES = r"""
