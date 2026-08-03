@@ -8,14 +8,27 @@ from __future__ import absolute_import, annotations, division, print_function
 from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import filter_gathered_response, validate_gathered_filters
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
+    filter_gathered_response,
+    validate_gathered_filters,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
+    NDBaseOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
@@ -307,15 +320,27 @@ class NDStateMachine:
 
         # Execute updates (always individual)
         for item in items_to_update:
-            self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}")
+            self._execute_operation(
+                self.model_orchestrator.update,
+                item,
+                error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
+            )
 
         # Execute creates (bulk or individual)
         if items_to_create:
             if self.supports_bulk_create:
-                self._execute_operation(self.model_orchestrator.create_bulk, items_to_create, error_msg_prefix="Failed to create in bulk")
+                self._execute_operation(
+                    self.model_orchestrator.create_bulk,
+                    items_to_create,
+                    error_msg_prefix="Failed to create in bulk",
+                )
             else:
                 for item in items_to_create:
-                    self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}")
+                    self._execute_operation(
+                        self.model_orchestrator.create,
+                        item,
+                        error_msg_prefix=f"Failed to create {item.get_identifier_value()}",
+                    )
 
         # Mark as sent only after successful API operations
         successfully_sent = items_to_update + items_to_create
@@ -377,10 +402,18 @@ class NDStateMachine:
 
         # Execute deletes (bulk or individual)
         if self.supports_bulk_delete:
-            self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
+            self._execute_operation(
+                self.model_orchestrator.delete_bulk,
+                items,
+                error_msg_prefix="Failed to delete in bulk",
+            )
         else:
             for item in items:
-                self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}")
+                self._execute_operation(
+                    self.model_orchestrator.delete,
+                    item,
+                    error_msg_prefix=f"Failed to delete {item.get_identifier_value()}",
+                )
 
         # Mark as removed only after successful API operations, mirroring ``sent``.
         self.removed.add_many(items)
