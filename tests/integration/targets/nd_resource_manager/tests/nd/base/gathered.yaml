@@ -292,8 +292,8 @@
     - name: BASE common pools - Assert gathered resources
       ansible.builtin.assert:
         that:
-          - '(result["gathered"] | length) == rm_expected_resource_count'
-          - '(result["gathered"] | length) == (rm_expected_entity_names | length)'
+          - '(result["gathered"] | map(attribute="entity_name") | unique | list | length) == rm_expected_resource_count'
+          - '(result["gathered"] | map(attribute="entity_name") | unique | list | length) == (rm_expected_entity_names | length)'
 
     - name: BASE common pools - Gather resources by first pool
       cisco.nd.nd_manage_resource_manager:

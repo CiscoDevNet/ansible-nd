@@ -289,7 +289,8 @@
     - name: BASE common pools - Assert sanity gathered resources
       ansible.builtin.assert:
         that:
-          - '(result["gathered"] | length) == (rm_expected_entity_names | length)'
+          - '(result["gathered"] | map(attribute="entity_name") | unique | list | length) == (rm_expected_entity_names | length)'
+
 
     - name: BASE common pools - Sanity delete resources
       cisco.nd.nd_manage_resource_manager: *rm_delete
