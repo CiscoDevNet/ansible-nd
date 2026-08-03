@@ -4,7 +4,11 @@
 
 from __future__ import absolute_import, division, print_function
 
-ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
+ANSIBLE_METADATA = {
+    "metadata_version": "1.1",
+    "status": ["preview"],
+    "supported_by": "community",
+}
 
 DOCUMENTATION = r"""
 ---
@@ -188,7 +192,6 @@ EXAMPLES = r"""
     config:
       - login_id: local_user
   register: gathered_local_user
-
 """
 
 RETURN = r"""
@@ -196,10 +199,18 @@ RETURN = r"""
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import LocalUserModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.local_user import LocalUserOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+    NDStateMachine,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    require_pydantic,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import (
+    LocalUserModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.local_user import (
+    LocalUserOrchestrator,
+)
 
 
 def main():

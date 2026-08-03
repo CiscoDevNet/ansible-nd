@@ -34,13 +34,25 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopbac
     LoopbackNetworkOSModel,
     LoopbackPolicyModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import (
+    LoopbackInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
-from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
-from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
-from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
+    does_not_raise,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import (
+    load_fixture,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import (
+    MockAnsibleModule,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
+    ResponseGenerator,
+)
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 
@@ -82,7 +94,11 @@ def _build_rest_send(
     return rest_send
 
 
-def _build_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str = "loopback10", include_config: bool = True) -> LoopbackInterfaceModel:
+def _build_loopback_model(
+    switch_ip: str = "192.168.12.151",
+    interface_name: str = "loopback10",
+    include_config: bool = True,
+) -> LoopbackInterfaceModel:
     """Build a minimal `LoopbackInterfaceModel` instance for tests."""
     kwargs: dict = {"switch_ip": switch_ip, "interface_name": interface_name}
     if include_config:
@@ -600,8 +616,16 @@ def test_loopback_interface_00500() -> None:
     rest_send = _build_rest_send(gen_responses)
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
     models = [
-        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback10", include_config=False),
-        _build_loopback_model(switch_ip="192.168.12.152", interface_name="loopback20", include_config=False),
+        _build_loopback_model(
+            switch_ip="192.168.12.151",
+            interface_name="loopback10",
+            include_config=False,
+        ),
+        _build_loopback_model(
+            switch_ip="192.168.12.152",
+            interface_name="loopback20",
+            include_config=False,
+        ),
     ]
 
     with does_not_raise():
@@ -910,19 +934,31 @@ def test_loopback_interface_00750() -> None:
     assert result[0]["interfaceName"] == "loopback10"
     assert result[0]["switchIp"] == "192.168.12.151"
 
+
 @pytest.mark.parametrize(
     ("filters", "expected"),
     [
         (
             [],
             {
-                "192.0.2.10": ("SERIAL-A", {"interfaceType:loopback AND policyType:loopback"}),
-                "192.0.2.11": ("SERIAL-B", {"interfaceType:loopback AND policyType:loopback"}),
+                "192.0.2.10": (
+                    "SERIAL-A",
+                    {"interfaceType:loopback AND policyType:loopback"},
+                ),
+                "192.0.2.11": (
+                    "SERIAL-B",
+                    {"interfaceType:loopback AND policyType:loopback"},
+                ),
             },
         ),
         (
             [{"switch_ip": "192.0.2.10"}],
-            {"192.0.2.10": ("SERIAL-A", {"interfaceType:loopback AND policyType:loopback"})},
+            {
+                "192.0.2.10": (
+                    "SERIAL-A",
+                    {"interfaceType:loopback AND policyType:loopback"},
+                )
+            },
         ),
         (
             [{"interface_name": "Loopback101"}],
@@ -954,7 +990,10 @@ def test_loopback_interface_00750() -> None:
             [{"switch_ip": "192.0.2.10"}, {"interface_name": "loopback101"}],
             {
                 # The broad switch filter supersedes the narrower name query.
-                "192.0.2.10": ("SERIAL-A", {"interfaceType:loopback AND policyType:loopback"}),
+                "192.0.2.10": (
+                    "SERIAL-A",
+                    {"interfaceType:loopback AND policyType:loopback"},
+                ),
                 "192.0.2.11": (
                     "SERIAL-B",
                     {"interfaceType:loopback AND policyType:loopback AND interfaceName:loopback101"},
@@ -964,8 +1003,14 @@ def test_loopback_interface_00750() -> None:
         (
             [{"config_data": {"network_os": {"policy": {"description": "local-only"}}}}],
             {
-                "192.0.2.10": ("SERIAL-A", {"interfaceType:loopback AND policyType:loopback"}),
-                "192.0.2.11": ("SERIAL-B", {"interfaceType:loopback AND policyType:loopback"}),
+                "192.0.2.10": (
+                    "SERIAL-A",
+                    {"interfaceType:loopback AND policyType:loopback"},
+                ),
+                "192.0.2.11": (
+                    "SERIAL-B",
+                    {"interfaceType:loopback AND policyType:loopback"},
+                ),
             },
         ),
     ],
@@ -1014,7 +1059,7 @@ def test_loopback_interface_00770(monkeypatch) -> None:
                                 "policyType": "loopback",
                             }
                         }
-                    }
+                    },
                 }
             ],
             "meta": {"counts": {"remaining": 0}},
@@ -1022,9 +1067,7 @@ def test_loopback_interface_00770(monkeypatch) -> None:
 
     monkeypatch.setattr(LoopbackInterfaceOrchestrator, "_request", fake_request)
 
-    assert instance.query_all(
-        gathered_filters=[{"switch_ip": "192.0.2.10", "interface_name": "Loopback101"}]
-    ) == [
+    assert instance.query_all(gathered_filters=[{"switch_ip": "192.0.2.10", "interface_name": "Loopback101"}]) == [
         {
             "switchIp": "192.0.2.10",
             "interfaceName": "loopback101",
@@ -1077,7 +1120,7 @@ def test_loopback_interface_00780(monkeypatch) -> None:
     assert instance.query_all(gathered_filters=[{"interface_name": "loopback0"}]) == []
 
 
-def test_loopback_interface_00795(monkeypatch) -> None:
+def test_loopback_interface_00790(monkeypatch) -> None:
     """Verify responses from separate OR expressions are unioned and deduplicated."""
 
     def responses():
@@ -1113,7 +1156,7 @@ def test_loopback_interface_00795(monkeypatch) -> None:
     assert result == [{"switchIp": "192.0.2.10", **duplicate}]
 
 
-def test_loopback_interface_00810(monkeypatch) -> None:
+def test_loopback_interface_00795(monkeypatch) -> None:
     """Verify Lucene list pagination advances offsets and collects all pages."""
 
     def responses():
@@ -1158,6 +1201,7 @@ def test_loopback_interface_00810(monkeypatch) -> None:
     assert [item["interfaceName"] for item in result] == ["loopback101", "loopback102"]
     assert "offset=0" in requested_paths[0]
     assert "offset=1" in requested_paths[1]
+
 
 # =============================================================================
 # Test: deploy queue de-duplication

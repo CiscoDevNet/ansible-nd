@@ -6,10 +6,16 @@ from copy import deepcopy
 
 import pytest
 
-from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import filter_gathered_response, validate_gathered_filters
-from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import LocalUserModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.local_user import LocalUserOrchestrator
-
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
+    filter_gathered_response,
+    validate_gathered_filters,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import (
+    LocalUserModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.local_user import (
+    LocalUserOrchestrator,
+)
 
 API_USER = {
     "loginID": "user1",

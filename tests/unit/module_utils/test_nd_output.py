@@ -17,7 +17,10 @@ from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import (
+    HttpVerbEnum,
+    OperationType,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
@@ -198,13 +201,25 @@ class TestNDOutputFormat:
         from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
             EthernetTrunkHostInterfaceModel,
         )
-        from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+        from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+            NDConfigCollection,
+        )
 
         def response(policy):
-            return {"switchIp": "192.0.2.10", "interfaceName": "Ethernet1/1", "configData": {"networkOS": {"policy": policy}}}
+            return {
+                "switchIp": "192.0.2.10",
+                "interfaceName": "Ethernet1/1",
+                "configData": {"networkOS": {"policy": policy}},
+            }
 
         before_item = EthernetTrunkHostInterfaceModel.from_response(
-            response({"policyType": "trunkHost", "stormControlBroadcastLevel": 50.0, "stormControlBroadcastLevelPps": 12345})
+            response(
+                {
+                    "policyType": "trunkHost",
+                    "stormControlBroadcastLevel": 50.0,
+                    "stormControlBroadcastLevelPps": 12345,
+                }
+            )
         )
         after_item = EthernetTrunkHostInterfaceModel.from_response(response({"policyType": "trunkHost", "stormControlBroadcastLevelPps": 12345}))
         before = NDConfigCollection(model_class=EthernetTrunkHostInterfaceModel, items=[before_item])
@@ -289,7 +304,10 @@ class TestNDOutputGatheredState:
         assert result["gathered"] == [
             {
                 "src_switch_name": "leaf1",
-                "config_data": {"policy_type": "numbered", "template_inputs": {"anyKey": 1}},
+                "config_data": {
+                    "policy_type": "numbered",
+                    "template_inputs": {"anyKey": 1},
+                },
             }
         ]
 
@@ -462,7 +480,13 @@ class TestFormatWithVerbosityLevel3:
         output = NDOutput("normal")
         results = _make_results_write_and_query()
         result = output.format_with_verbosity(3, results)
-        for key in ("api_response", "api_result", "api_diff", "api_metadata", "api_payload"):
+        for key in (
+            "api_response",
+            "api_result",
+            "api_diff",
+            "api_metadata",
+            "api_payload",
+        ):
             assert len(result[key]) == 2, f"{key} should have 2 entries"
 
     def test_verbosity_3_payload_contains_correct_data(self):

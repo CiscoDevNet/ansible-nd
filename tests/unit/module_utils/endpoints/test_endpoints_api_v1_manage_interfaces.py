@@ -30,7 +30,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesRemove,
     ManageInterfacesListEndpointParams,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import LuceneQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    LuceneQueryParams,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
@@ -340,9 +342,7 @@ def test_ep_manage_interfaces_00150():
     instance.endpoint_params.cluster_name = "cluster-a"
     instance.endpoint_params.network_name = "net1"
     instance.endpoint_params.config_only = False
-    instance.lucene_params.filter = (
-        "interfaceType:loopback AND policyType:loopback AND interfaceName:loopback101"
-    )
+    instance.lucene_params.filter = "interfaceType:loopback AND policyType:loopback AND interfaceName:loopback101"
     instance.lucene_params.max = 500
     instance.lucene_params.offset = 0
     instance.lucene_params.sort = "interfaceName:asc"
@@ -812,7 +812,11 @@ def test_ep_manage_interfaces_00600():
     - EpManageInterfacesGet.path
     - EpManageInterfacesPut.path
     """
-    params = {"fabric_name": "fab1", "switch_sn": "SN123", "interface_name": "loopback0"}
+    params = {
+        "fabric_name": "fab1",
+        "switch_sn": "SN123",
+        "interface_name": "loopback0",
+    }
     expected_path = "/api/v1/manage/fabrics/fab1/switches/SN123/interfaces/loopback0"
 
     with does_not_raise():

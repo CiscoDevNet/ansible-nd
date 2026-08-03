@@ -7,7 +7,10 @@ from __future__ import absolute_import, division, print_function
 from abc import ABC
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple, Union
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    BaseModel,
+    ConfigDict,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 

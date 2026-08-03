@@ -23,7 +23,9 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import ClassVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
@@ -36,9 +38,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
     build_lucene_expressions,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    LoopbackInterfaceModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    NDBaseInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 
 
 class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfaceModel]):
@@ -90,7 +98,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             ("interface_name",): "interfaceName",
         },
     )
-
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -250,12 +257,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         if interface.get("interfaceType") != "loopback":
             return False
 
-        policy_type = (
-            interface.get("configData", {})
-            .get("networkOS", {})
-            .get("policy", {})
-            .get("policyType")
-        )
+        policy_type = interface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType")
 
         return policy_type == "loopback"
 
@@ -357,9 +359,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
                 except (TypeError, ValueError):
                     remaining = None
             else:
-                remaining = None         
+                remaining = None
             if remaining is not None and remaining <= 0:
-                break           
+                break
             if remaining is None and len(page) < page_size:
                 break
             offset += len(page)
@@ -412,7 +414,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         """
         candidates_by_switch: list[tuple[str, list[dict]]] = []
 
-        for switch_ip, switch_id in self.fabric_context.switch_map.items():
+        for switch_ip, switch_id in self._switches_to_query().items():
             api_endpoint = self._configure_endpoint(
                 self.query_all_endpoint(),
                 switch_sn=switch_id,

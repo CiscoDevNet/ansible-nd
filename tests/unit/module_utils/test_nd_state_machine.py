@@ -34,18 +34,34 @@ from typing import ClassVar, Literal
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
-from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
-from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
-from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
-from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 import ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine as state_machine_module
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+    NDStateMachine,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import (
+    LoopbackInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
+    does_not_raise,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import (
+    MockAnsibleModule,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
+    ResponseGenerator,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 
 class _SpyLoopbackOrchestrator(LoopbackInterfaceOrchestrator):
@@ -108,6 +124,7 @@ def _build_module(state: str, check_mode: bool, config: list[dict]) -> MockAnsib
     """Build a `MockAnsibleModule` with the params `NDStateMachine` reads."""
     module = MockAnsibleModule()
     module.check_mode = check_mode
+    module.no_log_values = set()
     module.params = {
         "state": state,
         "config": config,
@@ -255,7 +272,13 @@ class _ExistingLoopbackSpy(_SpyLoopbackOrchestrator):
     """Spy whose inventory already contains loopback10, so a re-submitted policy-less item is not a create."""
 
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
-        return [{"switchIp": "192.168.12.151", "interfaceName": "loopback10", "interfaceType": "loopback"}]
+        return [
+            {
+                "switchIp": "192.168.12.151",
+                "interfaceName": "loopback10",
+                "interfaceType": "loopback",
+            }
+        ]
 
 
 def test_nd_state_machine_00140() -> None:
@@ -548,7 +571,7 @@ class _FakeModule:
         self.no_log_values = set()
 
 
-def _build_state_machine(monkeypatch, model_class, state, config, server_filtering=False):
+def _build_gathered_state_machine(monkeypatch, model_class, state, config, server_filtering=False):
     monkeypatch.setattr(state_machine_module, "NDBaseOrchestrator", _FakeOrchestratorBase)
     monkeypatch.setattr(state_machine_module, "RestSend", _FakeRestSend)
     monkeypatch.setattr(state_machine_module, "Sender", _FakeSender)
@@ -566,8 +589,24 @@ def _build_state_machine(monkeypatch, model_class, state, config, server_filteri
     return machine, orchestrator
 
 
-def test_gathered_filtering_filters_existing_and_keeps_filters_out_of_proposed(monkeypatch):
-    machine, orchestrator = _build_state_machine(
+def test_nd_state_machine_00200(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify gathered filtering removes non-matching items from `before` and keeps filter criteria out of `proposed`.
+
+    ## Test
+
+    - `state: gathered`, opted-in `_FilterModel`, config filters for `name: wanted`
+    - `before` contains only the matching item; `proposed` is empty (filters are not desired state)
+    - `gathered` output matches the filtered `before`
+
+    ## Classes and Methods
+
+    - NDStateMachine.__init__()
+    - NDConfigCollection.from_api_response()
+    """
+    machine, orchestrator = _build_gathered_state_machine(
         monkeypatch,
         model_class=_FilterModel,
         state="gathered",
@@ -581,8 +620,23 @@ def test_gathered_filtering_filters_existing_and_keeps_filters_out_of_proposed(m
     assert machine.output.format()["gathered"] == [{"name": "wanted", "value": 10}]
 
 
-def test_opted_in_model_preserves_write_state_config_flow(monkeypatch):
-    machine, orchestrator = _build_state_machine(
+def test_nd_state_machine_00210(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify an opted-in model preserves the normal write-state config flow under `merged`.
+
+    ## Test
+
+    - `state: merged`, opted-in `_FilterModel`, config has `name: wanted, value: 10`
+    - `before` contains the full inventory (no filtering for write states)
+    - `proposed` contains the user config; `prepare_config_data` receives it unmodified
+
+    ## Classes and Methods
+
+    - NDStateMachine.__init__()
+    """
+    machine, orchestrator = _build_gathered_state_machine(
         monkeypatch,
         model_class=_FilterModel,
         state="merged",
@@ -598,8 +652,23 @@ def test_opted_in_model_preserves_write_state_config_flow(monkeypatch):
     assert orchestrator.query_calls == [{}]
 
 
-def test_model_without_opt_in_preserves_legacy_gathered_flow(monkeypatch):
-    machine, orchestrator = _build_state_machine(
+def test_nd_state_machine_00220(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify a model without gathered filtering opt-in preserves the legacy gathered flow.
+
+    ## Test
+
+    - `state: gathered`, `_LegacyModel` (opt-in disabled), config has `name: wanted`
+    - `before` contains the full inventory (no filtering applied)
+    - `proposed` contains the user config as-is (legacy behavior)
+
+    ## Classes and Methods
+
+    - NDStateMachine.__init__()
+    """
+    machine, orchestrator = _build_gathered_state_machine(
         monkeypatch,
         model_class=_LegacyModel,
         state="gathered",
@@ -615,9 +684,24 @@ def test_model_without_opt_in_preserves_legacy_gathered_flow(monkeypatch):
     assert orchestrator.query_calls == [{}]
 
 
-def test_gathered_filters_are_forwarded_when_model_and_orchestrator_opt_in(monkeypatch):
+def test_nd_state_machine_00230(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify gathered filters are forwarded to `query_all` when both model and orchestrator opt in.
+
+    ## Test
+
+    - `state: gathered`, opted-in `_FilterModel`, server filtering enabled
+    - `query_all` receives `gathered_filters` with the user config
+    - Local filtering still applies; `before` contains only the match; `proposed` is empty
+
+    ## Classes and Methods
+
+    - NDStateMachine.__init__()
+    """
     config = [{"name": "wanted"}]
-    machine, orchestrator = _build_state_machine(
+    machine, orchestrator = _build_gathered_state_machine(
         monkeypatch,
         model_class=_FilterModel,
         state="gathered",
@@ -632,8 +716,23 @@ def test_gathered_filters_are_forwarded_when_model_and_orchestrator_opt_in(monke
     assert machine.proposed.to_ansible_config() == []
 
 
-def test_empty_gathered_config_is_forwarded_explicitly(monkeypatch):
-    machine, orchestrator = _build_state_machine(
+def test_nd_state_machine_00240(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify an empty gathered config is forwarded explicitly as an empty list.
+
+    ## Test
+
+    - `state: gathered`, opted-in `_FilterModel`, empty config, server filtering enabled
+    - `query_all` receives `gathered_filters: []` (not omitted)
+    - `before` contains the full inventory (no filter criteria to apply)
+
+    ## Classes and Methods
+
+    - NDStateMachine.__init__()
+    """
+    machine, orchestrator = _build_gathered_state_machine(
         monkeypatch,
         model_class=_FilterModel,
         state="gathered",
@@ -649,8 +748,22 @@ def test_empty_gathered_config_is_forwarded_explicitly(monkeypatch):
 
 
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "deleted"])
-def test_write_states_never_receive_gathered_filters(monkeypatch, state):
-    machine, orchestrator = _build_state_machine(
+def test_nd_state_machine_00250(monkeypatch, state) -> None:
+    """
+    # Summary
+
+    Verify write states never receive `gathered_filters` even when server filtering is enabled.
+
+    ## Test
+
+    - Parametrized over `merged`, `replaced`, `overridden`, `deleted`
+    - Server filtering enabled, but `query_all` receives no `gathered_filters`
+
+    ## Classes and Methods
+
+    - NDStateMachine.__init__()
+    """
+    machine, orchestrator = _build_gathered_state_machine(
         monkeypatch,
         model_class=_FilterModel,
         state=state,
@@ -662,8 +775,22 @@ def test_write_states_never_receive_gathered_filters(monkeypatch, state):
     assert orchestrator.query_calls == [{}]
 
 
-def test_legacy_model_does_not_forward_filters_even_when_orchestrator_opts_in(monkeypatch):
-    machine, orchestrator = _build_state_machine(
+def test_nd_state_machine_00260(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify a legacy model does not forward gathered filters even when the orchestrator opts in.
+
+    ## Test
+
+    - `state: gathered`, `_LegacyModel` (opt-in disabled), server filtering enabled
+    - `query_all` receives no `gathered_filters` (model gate prevents forwarding)
+
+    ## Classes and Methods
+
+    - NDStateMachine.__init__()
+    """
+    machine, orchestrator = _build_gathered_state_machine(
         monkeypatch,
         model_class=_LegacyModel,
         state="gathered",
@@ -673,4 +800,3 @@ def test_legacy_model_does_not_forward_filters_even_when_orchestrator_opts_in(mo
 
     assert machine.state == "gathered"
     assert orchestrator.query_calls == [{}]
-

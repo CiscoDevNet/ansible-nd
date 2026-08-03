@@ -34,8 +34,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4CIDR, IPv6CIDR
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import (
+    AsciiDescription,
+    IPv4CIDR,
+    IPv6CIDR,
+)
 
 
 class LoopbackPolicyModel(NDNestedModel):
@@ -50,14 +56,41 @@ class LoopbackPolicyModel(NDNestedModel):
     """
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    ip: IPv4CIDR = Field(default=None, alias="ip", description="Loopback IPv4 address in CIDR notation (e.g. 10.1.1.1/32)")
+    ip: IPv4CIDR = Field(
+        default=None,
+        alias="ip",
+        description="Loopback IPv4 address in CIDR notation (e.g. 10.1.1.1/32)",
+    )
     ipv6: IPv6CIDR = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
-    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
-    route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
-    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    vrf: str | None = Field(
+        default=None,
+        alias="vrfInterface",
+        min_length=1,
+        max_length=32,
+        description="Interface VRF name",
+    )
+    route_map_tag: str | None = Field(
+        default=None,
+        alias="routeMapTag",
+        description="Route-Map tag associated with interface IP",
+    )
+    description: AsciiDescription = Field(
+        default=None,
+        alias="description",
+        min_length=1,
+        max_length=254,
+        description="Interface description",
+    )
+    extra_config: str | None = Field(
+        default=None,
+        alias="extraConfig",
+        description="Additional CLI for the interface",
+    )
     policy_type: Literal["loopback"] = Field(
-        default="loopback", alias="policyType", frozen=True, description="Loopback policy template (hardcoded for this module)"
+        default="loopback",
+        alias="policyType",
+        frozen=True,
+        description="Loopback policy template (hardcoded for this module)",
     )
 
     # --- Validators ---

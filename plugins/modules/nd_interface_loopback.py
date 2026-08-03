@@ -6,7 +6,11 @@
 
 """Ansible module for managing loopback interfaces on Cisco Nexus Dashboard."""
 
-ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
+ANSIBLE_METADATA = {
+    "metadata_version": "1.1",
+    "status": ["preview"],
+    "supported_by": "community",
+}
 
 DOCUMENTATION = r"""
 ---
@@ -286,14 +290,26 @@ import logging
 import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    require_pydantic,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    LoopbackInterfaceModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+    NDStateMachine,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    NDBaseInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import (
+    LoopbackInterfaceOrchestrator,
+)
 
 
 def main():

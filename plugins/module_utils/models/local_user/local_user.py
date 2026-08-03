@@ -4,7 +4,6 @@
 
 from __future__ import absolute_import, division, print_function
 
-from copy import deepcopy
 from typing import List, Dict, Any, Optional, ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -17,8 +16,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     SerializationInfo,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.constants import (
+    NDConstantMapping,
+)
 
 USER_ROLES_MAPPING = NDConstantMapping(
     {
@@ -85,7 +88,7 @@ class LocalUserModel(NDBaseModel):
         "login_id",
         "email",
         "first_name",
-        "last_name", 
+        "last_name",
     )
 
     # --- Serialization Configuration ---

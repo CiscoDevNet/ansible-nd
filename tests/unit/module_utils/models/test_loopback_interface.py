@@ -1594,7 +1594,13 @@ def test_loopback_interface_00720():
     """
     spec = LoopbackInterfaceModel.get_argument_spec()
     state_spec = spec["state"]
-    assert state_spec["choices"] == ["merged", "replaced", "overridden", "deleted", "gathered"]
+    assert state_spec["choices"] == [
+        "merged",
+        "replaced",
+        "overridden",
+        "deleted",
+        "gathered",
+    ]
     assert state_spec["default"] == "merged"
 
 

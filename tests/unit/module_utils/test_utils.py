@@ -27,7 +27,10 @@ class TestPruneToSpec:
     def test_keeps_scalar_and_scalar_list_verbatim(self):
         """Scalars and lists of scalars pass through unchanged."""
         data = {"name": "leaf1", "interface_names": ["Eth1/1", "Eth1/2"]}
-        spec = {"name": {"type": "str"}, "interface_names": {"type": "list", "elements": "str"}}
+        spec = {
+            "name": {"type": "str"},
+            "interface_names": {"type": "list", "elements": "str"},
+        }
         assert prune_to_spec(data, spec) == data
 
     def test_recurses_into_modeled_dict(self):
@@ -39,7 +42,13 @@ class TestPruneToSpec:
     def test_recurses_into_list_of_modeled_dicts(self):
         """A list of dicts with options is pruned element by element."""
         data = {"links": [{"name": "a", "extra": 1}, {"name": "b", "extra": 2}]}
-        spec = {"links": {"type": "list", "elements": "dict", "options": {"name": {"type": "str"}}}}
+        spec = {
+            "links": {
+                "type": "list",
+                "elements": "dict",
+                "options": {"name": {"type": "str"}},
+            }
+        }
         assert prune_to_spec(data, spec) == {"links": [{"name": "a"}, {"name": "b"}]}
 
     def test_free_form_dict_left_untouched(self):
@@ -57,7 +66,12 @@ class TestPruneToSpec:
                 "options": {
                     "network_os": {
                         "type": "dict",
-                        "options": {"policy": {"type": "dict", "options": {"mtu": {"type": "str"}}}},
+                        "options": {
+                            "policy": {
+                                "type": "dict",
+                                "options": {"mtu": {"type": "str"}},
+                            }
+                        },
                     }
                 },
             }
@@ -76,7 +90,10 @@ class TestPruneToSpec:
         spec = {
             "config_data": {
                 "type": "dict",
-                "options": {"policy_type": {"type": "str"}, "password": {"type": "str", "no_log": True}},
+                "options": {
+                    "policy_type": {"type": "str"},
+                    "password": {"type": "str", "no_log": True},
+                },
             }
         }
         assert prune_to_spec(data, spec) == {"config_data": {"policy_type": "numbered"}}
