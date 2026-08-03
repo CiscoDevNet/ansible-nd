@@ -80,6 +80,17 @@
           idempotency:
             changed: false
             failed: false
+
+        check_mode_queries:
+          - name: Snapshot all managed interfaces on test switch
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            expected_status: 200
+            unordered: true
+            ignore_keys:
+              - operData
+
         nd_queries:
           - name: Validate loopback100 updated after overridden
             path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/loopback100"
