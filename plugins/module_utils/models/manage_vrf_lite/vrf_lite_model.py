@@ -19,6 +19,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
+# Single-sourced so VrfLiteModel and VrfLitePlaybookItemModel cannot drift (PR #281 review).
+VRF_NAME_MAX_LENGTH = 32
+VLAN_ID_MIN = 2
+VLAN_ID_MAX = 4094
+
+
+def _validate_vrf_name_value(value: str) -> str:
+    if value is None or not str(value).strip():
+        raise ValueError("vrf_name must be a non-empty string")
+    return str(value).strip()
+
 
 class VrfLiteConnectionModel(NDNestedModel):
     """VRF Lite extension connection details for a single interface."""
@@ -156,17 +167,15 @@ class VrfLiteModel(NDBaseModel):
         extra="ignore",
     )
 
-    vrf_name: str = Field(min_length=1, max_length=32)
-    vlan_id: int | None = Field(default=None, ge=2, le=4094)
+    vrf_name: str = Field(min_length=1, max_length=VRF_NAME_MAX_LENGTH)
+    vlan_id: int | None = Field(default=None, ge=VLAN_ID_MIN, le=VLAN_ID_MAX)
     deploy: bool | None = Field(default=None)
     attach: list[VrfLiteAttachmentModel] | None = Field(default=None)
 
     @field_validator("vrf_name")
     @classmethod
     def validate_vrf_name(cls, value: str) -> str:
-        if value is None or not str(value).strip():
-            raise ValueError("vrf_name must be a non-empty string")
-        return str(value).strip()
+        return _validate_vrf_name_value(value)
 
     def to_diff_dict(self, **kwargs) -> dict[str, Any]:
         """Exclude nested attachment deploy field from diff comparison."""
@@ -242,17 +251,15 @@ class VrfLitePlaybookItemModel(BaseModel):
         extra="ignore",
     )
 
-    vrf_name: str = Field(min_length=1, max_length=32)
-    vlan_id: int | None = Field(default=None, ge=2, le=4094)
+    vrf_name: str = Field(min_length=1, max_length=VRF_NAME_MAX_LENGTH)
+    vlan_id: int | None = Field(default=None, ge=VLAN_ID_MIN, le=VLAN_ID_MAX)
     deploy: bool | None = Field(default=None)
     attach: list[VrfLiteAttachmentModel] | None = Field(default=None)
 
     @field_validator("vrf_name")
     @classmethod
     def validate_vrf_name(cls, value: str) -> str:
-        if value is None or not str(value).strip():
-            raise ValueError("vrf_name must be a non-empty string")
-        return str(value).strip()
+        return _validate_vrf_name_value(value)
 
     def to_runtime_config(self) -> dict[str, Any]:
         return self.model_dump(by_alias=False, exclude_none=True)
