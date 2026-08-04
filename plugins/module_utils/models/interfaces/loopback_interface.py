@@ -206,10 +206,16 @@ class LoopbackInterfaceModel(NDBaseModel):
     @classmethod
     def normalize_gathered_filter(cls, filter_item: dict) -> dict:
         """
+        # Summary
+
         Normalize a partial gathered-state filter.
 
         Gathered filters are not complete LoopbackInterfaceModel instances, so
         the normal Pydantic interface_name validator does not run against them.
+
+        ## Raises
+
+        None
         """
         normalized = deepcopy(filter_item)
 
