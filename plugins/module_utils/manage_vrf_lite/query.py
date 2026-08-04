@@ -60,6 +60,10 @@ def _resolve_vrf_vlan(vrf_object: dict[str, Any]) -> int | None:
     top_level = _coerce_vlan(vrf_object.get("vlanId"))
     if top_level is not None:
         return top_level
+    # TODO(4.2.1) vrf-lite-vlan-shape-drift: fall back to the legacy serialized
+    # ``vrfTemplateConfig.vrfVlanId`` for older controller response shapes.
+    # Remove once all supported controllers return the top-level ``vlanId``
+    # (see bug-tracker vault note).
     return _parse_vrf_template_vlan(vrf_object)
 
 
@@ -101,6 +105,10 @@ def _query_vrf_attachments(module: Any, rest_send: Any, fabric_name: str, vrf_na
     path = VrfLiteEndpoints.vrf_attachments_query(fabric_name, ",".join(vrf_names))
     response = request_with_verify_settings(module, rest_send, path, HttpVerbEnum.GET)
     attachments = _result_list(response, ("attachments", "DATA", "data", "items"))
+    # TODO(4.2.1) vrf-lite-attachments-flat-shape-drift: some controller versions
+    # return a flat per-switch attachment list without the ``lanAttachList``
+    # grouping, so rows are regrouped by ``vrfName`` here. Remove once the
+    # response shape is stable (see bug-tracker vault note).
     if attachments and all(isinstance(item, dict) and "vrfName" in item and "lanAttachList" not in item for item in attachments):
         grouped: dict[str, list[dict[str, Any]]] = {}
         for item in attachments:
@@ -116,22 +124,30 @@ def _vrf_lite_switch_detail_cache_key(fabric_name: str, vrf_name: str, serial_nu
     return "{0}\0{1}\0{2}".format(fabric_name, vrf_name, serial_number)
 
 
-def _query_vrf_switch_details(
+def _query_vrf_switch_details_bulk(
     module: Any,
     rest_send: Any,
     fabric_name: str,
-    vrf_name: str,
-    serial_numbers: list[str],
-) -> dict[str, dict[str, Any]]:
-    """Return per-switch VRF attachment details keyed by serial number.
+    serials_by_vrf: dict[str, list[str]],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Return per-(vrf, switch) attachment details from a single batched request.
 
-    This makes one additional API call per VRF that has attachments lacking
-    ``extensionValues`` in the bulk list response (e.g. PENDING state rows).
-    On fabrics with many VRFs this may add latency; it is skipped entirely
-    when all attachments already carry ``extensionValues``.
+    The ``vrf-names`` and ``serial-numbers`` query params are both plural, so
+    every VRF that has attachments lacking ``extensionValues`` in the bulk list
+    response (e.g. PENDING state rows) is enriched with ONE cross-VRF GET rather
+    than one request per VRF -- mirroring how the write-path validation prefetch
+    batches serial numbers. Each returned object is attributed to its VRF by the
+    ``vrfName`` it carries and keyed by ``(vrf_name, serial_number)``. Results
+    are memoized in the shared ``_vrf_lite_switch_detail_cache`` so repeated
+    queries never re-fetch the same pair. The request is skipped entirely when
+    every requested pair is already cached.
     """
-    normalized_serials = sorted({str(serial_number).strip() for serial_number in serial_numbers if str(serial_number).strip()})
-    if not normalized_serials:
+    normalized: dict[str, list[str]] = {}
+    for vrf_name, serial_numbers in serials_by_vrf.items():
+        serials = sorted({str(serial_number).strip() for serial_number in serial_numbers if str(serial_number).strip()})
+        if serials:
+            normalized[str(vrf_name).strip()] = serials
+    if not normalized:
         return {}
 
     cache = module.params.get("_vrf_lite_switch_detail_cache")
@@ -139,17 +155,30 @@ def _query_vrf_switch_details(
         cache = {}
         module.params["_vrf_lite_switch_detail_cache"] = cache
 
-    missing_serials = [
-        serial_number for serial_number in normalized_serials if _vrf_lite_switch_detail_cache_key(fabric_name, vrf_name, serial_number) not in cache
-    ]
+    missing_by_vrf: dict[str, list[str]] = {}
+    for vrf_name, serials in normalized.items():
+        missing = [
+            serial_number for serial_number in serials if _vrf_lite_switch_detail_cache_key(fabric_name, vrf_name, serial_number) not in cache
+        ]
+        if missing:
+            missing_by_vrf[vrf_name] = missing
 
-    detail_map: dict[str, dict[str, Any]] = {}
-    if missing_serials:
-        path = VrfLiteEndpoints.vrf_switch(fabric_name, vrf_name, ",".join(missing_serials))
+    if missing_by_vrf:
+        vrf_names = sorted(missing_by_vrf)
+        union_serials = sorted({serial_number for serials in missing_by_vrf.values() for serial_number in serials})
+        path = VrfLiteEndpoints.vrf_switch(fabric_name, ",".join(vrf_names), ",".join(union_serials))
         response = request_with_verify_settings(module, rest_send, path, HttpVerbEnum.GET)
 
+        returned: dict[tuple[str, str], dict[str, Any]] = {}
         for vrf_switch in _result_list(response, ("DATA", "data", "vrfs", "items")):
             if not isinstance(vrf_switch, dict):
+                continue
+            # Attribute each switch detail to its VRF via the returned ``vrfName``;
+            # fall back to the sole requested VRF only when the response omits it.
+            returned_vrf = str(vrf_switch.get("vrfName") or "").strip()
+            if not returned_vrf and len(vrf_names) == 1:
+                returned_vrf = vrf_names[0]
+            if not returned_vrf:
                 continue
             for switch_detail in vrf_switch.get("switchDetailsList") or []:
                 if not isinstance(switch_detail, dict):
@@ -159,17 +188,51 @@ def _query_vrf_switch_details(
                 if not serial_number:
                     continue
 
-                serial_text = str(serial_number).strip()
-                if serial_text in missing_serials:
-                    detail_map[serial_text] = switch_detail
+                returned[(returned_vrf, str(serial_number).strip())] = switch_detail
 
-        for serial_number in missing_serials:
-            cache[_vrf_lite_switch_detail_cache_key(fabric_name, vrf_name, serial_number)] = detail_map.get(serial_number, {})
+        for vrf_name, serials in missing_by_vrf.items():
+            for serial_number in serials:
+                cache[_vrf_lite_switch_detail_cache_key(fabric_name, vrf_name, serial_number)] = returned.get((vrf_name, serial_number), {})
 
+    detail_map: dict[tuple[str, str], dict[str, Any]] = {}
+    for vrf_name, serials in normalized.items():
+        for serial_number in serials:
+            cached_detail = cache.get(_vrf_lite_switch_detail_cache_key(fabric_name, vrf_name, serial_number))
+            if isinstance(cached_detail, dict) and cached_detail:
+                detail_map[(vrf_name, serial_number)] = cached_detail
+    return detail_map
+
+
+def _query_vrf_switch_details(
+    module: Any,
+    rest_send: Any,
+    fabric_name: str,
+    vrf_name: str,
+    serial_numbers: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Return per-switch VRF attachment details keyed by serial number.
+
+    Thin single-VRF wrapper over :func:`_query_vrf_switch_details_bulk` used by
+    the write-path validation prefetch, which resolves one VRF group at a time.
+    Returns an entry for every requested serial (``{}`` when the controller has
+    no detail for it), preserving the original per-VRF contract.
+    """
+    vrf_key = str(vrf_name).strip()
+    normalized_serials = sorted({str(serial_number).strip() for serial_number in serial_numbers if str(serial_number).strip()})
+    if not normalized_serials:
+        return {}
+
+    bulk = _query_vrf_switch_details_bulk(
+        module=module,
+        rest_send=rest_send,
+        fabric_name=fabric_name,
+        serials_by_vrf={vrf_key: normalized_serials},
+    )
+
+    detail_map: dict[str, dict[str, Any]] = {}
     for serial_number in normalized_serials:
-        cached_detail = cache.get(_vrf_lite_switch_detail_cache_key(fabric_name, vrf_name, serial_number))
-        detail_map[serial_number] = cached_detail if isinstance(cached_detail, dict) else {}
-
+        detail = bulk.get((vrf_key, serial_number))
+        detail_map[serial_number] = detail if isinstance(detail, dict) else {}
     return detail_map
 
 
@@ -282,8 +345,12 @@ def query_vrf_lite_state(
 
     not_in_sync_vrfs: set[str] = set()
     raw_vrf_attachment_map: dict[str, dict[str, dict[str, Any]]] = {}
-    switch_detail_map: dict[tuple[str, str], dict[str, Any]] = {}
 
+    # First pass: collect, across every VRF, the switches whose attachment rows
+    # arrived without ``extensionValues`` so they can be enriched together. The
+    # ``vrf-names`` query param is plural, so these are fetched with one batched
+    # cross-VRF request below instead of one GET per VRF (PR #281 review).
+    serials_by_vrf: dict[str, list[str]] = {}
     for vrf_attach in attachment_objects:
         vrf_name = vrf_attach.get("vrfName")
         if not vrf_name:
@@ -293,7 +360,11 @@ def query_vrf_lite_state(
         if filter_vrfs and vrf_name not in filter_vrfs:
             continue
 
-        serials_to_enrich: list[str] = []
+        # TODO(4.2.1) vrf-lite-pending-extensionvalues-dropped: the bulk
+        # attachment list omits ``extensionValues`` for PENDING rows, so each
+        # affected switch is enriched with the batched switch-detail GET below.
+        # Remove the enrichment once the bulk list returns extensionValues for
+        # all states (see bug-tracker vault note).
         for attach in vrf_attach.get("lanAttachList") or []:
             if not isinstance(attach, dict):
                 continue
@@ -301,6 +372,9 @@ def query_vrf_lite_state(
             if "extensionValues" in attach:
                 continue
 
+            # TODO(4.2.1) vrf-lite-attach-key-spelling-drift: controller versions
+            # disagree on attachment key spellings, so several are probed here and
+            # in the main loop below. Remove once the keys are stable (see vault note).
             attach_state = str(attach.get("lanAttachState") or attach.get("lanAttachedState") or "").upper()
             attached_value = attach.get("isLanAttached", attach.get("isAttached", attach.get("attach", False)))
             is_attached = attached_value is True or str(attached_value).strip().lower() in ("true", "1", "yes")
@@ -309,16 +383,14 @@ def query_vrf_lite_state(
 
             serial_number = attach.get("switchSerialNo") or attach.get("serialNumber") or attach.get("switchId")
             if serial_number:
-                serials_to_enrich.append(str(serial_number).strip())
+                serials_by_vrf.setdefault(vrf_name, []).append(str(serial_number).strip())
 
-        for serial_number, switch_detail in _query_vrf_switch_details(
-            module=module,
-            rest_send=rest_send,
-            fabric_name=fabric_name,
-            vrf_name=vrf_name,
-            serial_numbers=sorted(set(serials_to_enrich)),
-        ).items():
-            switch_detail_map[(vrf_name, serial_number)] = switch_detail
+    switch_detail_map = _query_vrf_switch_details_bulk(
+        module=module,
+        rest_send=rest_send,
+        fabric_name=fabric_name,
+        serials_by_vrf=serials_by_vrf,
+    )
 
     for vrf_attach in attachment_objects:
         vrf_name = vrf_attach.get("vrfName")
@@ -359,6 +431,9 @@ def query_vrf_lite_state(
             else:
                 continue
 
+            # TODO(4.2.1) vrf-lite-attach-key-spelling-drift: see note in the
+            # enrichment loop; also probes the lowercase-l ``islanAttached``
+            # variant from the switch-detail response.
             attach_state = str(_value_from_attachment_or_detail(attach, switch_detail, "lanAttachState", "lanAttachedState") or "").upper()
             attached_value = attach.get(
                 "isLanAttached",

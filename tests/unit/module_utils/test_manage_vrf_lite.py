@@ -651,9 +651,9 @@ def test_manage_vrf_lite_00481_query_enriches_pending_attachment_from_switch_det
         ],
     )
     monkeypatch.setattr(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_vrf_switch_details",
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_vrf_switch_details_bulk",
         lambda **_kwargs: {
-            "SN1": {
+            ("BLUE", "SN1"): {
                 "serialNumber": "SN1",
                 "extensionValues": extension_values,
                 "instanceValues": "",
@@ -742,6 +742,96 @@ def test_manage_vrf_lite_00481a_attachment_query_uses_lossless_top_down_get():
     )
 
     assert result[0]["lanAttachList"][0]["extensionValues"] == '{"UNMANAGED_EXTENSION":"preserve-me"}'
+
+
+def test_manage_vrf_lite_00481b_query_batches_switch_detail_enrichment_across_vrfs(monkeypatch):
+    """PENDING rows missing ``extensionValues`` across several VRFs are enriched
+    with a single cross-VRF ``vrf_switch`` GET (plural ``vrf-names``), not one
+    request per VRF."""
+    ext_blue = json.dumps(
+        {
+            "VRF_LITE_CONN": json.dumps({"VRF_LITE_CONN": []}, separators=(",", ":")),
+            "MULTISITE_CONN": json.dumps({"MULTISITE_CONN": [{"MARK": "blue"}]}, separators=(",", ":")),
+        },
+        separators=(",", ":"),
+    )
+    ext_green = json.dumps(
+        {
+            "VRF_LITE_CONN": json.dumps({"VRF_LITE_CONN": []}, separators=(",", ":")),
+            "MULTISITE_CONN": json.dumps({"MULTISITE_CONN": [{"MARK": "green"}]}, separators=(",", ":")),
+        },
+        separators=(",", ":"),
+    )
+
+    class _FakeRestSend:
+        timeout = 30
+        check_mode = False
+        response_handler = None
+
+        def __init__(self):
+            self.path = None
+            self.verb = None
+            self.response_current = {}
+            self.result_current = {}
+            self.calls = []
+
+        def save_settings(self):
+            pass
+
+        def restore_settings(self):
+            pass
+
+        def commit(self):
+            self.calls.append(self.path)
+            self.response_current = {
+                "DATA": [
+                    {
+                        "vrfName": "BLUE",
+                        "switchDetailsList": [{"serialNumber": "SN1", "extensionValues": ext_blue}],
+                    },
+                    {
+                        "vrfName": "GREEN",
+                        "switchDetailsList": [{"serialNumber": "SN2", "extensionValues": ext_green}],
+                    },
+                ]
+            }
+            self.result_current = {"success": True}
+
+    module = _DummyModule({"_vrf_lite_switch_detail_cache": {}})
+    rest_send = _FakeRestSend()
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_fabric_switches",
+        lambda _module, _rest_send, _fabric_name: {"SN1": "10.0.0.1", "SN2": "10.0.0.2"},
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_vrfs",
+        lambda _module, _rest_send, _fabric_name: [
+            {"vrfName": "BLUE", "vrfTemplateConfig": '{"vrfVlanId":500}'},
+            {"vrfName": "GREEN", "vrfTemplateConfig": '{"vrfVlanId":600}'},
+        ],
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_vrf_attachments",
+        lambda **_kwargs: [
+            {
+                "vrfName": "BLUE",
+                "lanAttachList": [{"serialNumber": "SN1", "isLanAttached": False, "lanAttachState": "PENDING", "vlanId": 500}],
+            },
+            {
+                "vrfName": "GREEN",
+                "lanAttachList": [{"serialNumber": "SN2", "isLanAttached": False, "lanAttachState": "PENDING", "vlanId": 600}],
+            },
+        ],
+    )
+
+    query_vrf_lite_state(module=module, rest_send=rest_send, fabric_name="FABRIC1", filter_vrfs={"BLUE", "GREEN"})
+
+    # Exactly one switch-detail request for both VRFs, carrying plural vrf-names.
+    assert rest_send.calls == [VrfLiteEndpoints.vrf_switch("FABRIC1", "BLUE,GREEN", "SN1,SN2")]
+    # Each VRF's PENDING row is enriched from the batched response by ``vrfName``.
+    assert module.params["_raw_vrf_attachment_map"]["BLUE"]["SN1"]["extension_values"] == ext_blue
+    assert module.params["_raw_vrf_attachment_map"]["GREEN"]["SN2"]["extension_values"] == ext_green
 
 
 def test_manage_vrf_lite_00482_vlan_prefers_top_level_vlanid():

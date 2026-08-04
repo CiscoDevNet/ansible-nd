@@ -127,8 +127,10 @@ def _reserve_dot1q_if_needed(
 
     dot1q_value = None
     if isinstance(response, dict):
-        # Different controller versions return either a scalar DATA-equivalent
-        # or a dict-like body for reserve-id.
+        # TODO(4.2.1) vrf-lite-reserve-id-shape-drift: different controller
+        # versions return either a scalar DATA-equivalent or a dict-like body
+        # for reserve-id, so several keys are probed with a scalar fallback.
+        # Remove once the reserve-id response shape is stable (see vault note).
         for key in ("dot1q", "id", "value", "allocatedId"):
             if response.get(key) not in (None, ""):
                 dot1q_value = response.get(key)
@@ -339,17 +341,21 @@ def build_detach_payload_for_entry(module: Any, entry: Any) -> dict[str, Any]:
     )
 
 
+_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
+
+
 def _collect_attachment_failures(response: Any) -> list[str]:
     failures: list[str] = []
 
     if isinstance(response, str):
-        if "failed" in response.lower():
+        lowered = response.lower()
+        if any(signature in lowered for signature in _FAILURE_STATUSES):
             failures.append(response)
         return failures
 
     if isinstance(response, dict):
         status = str(response.get("status") or "").strip().lower()
-        if status in {"failed", "failure", "error"}:
+        if status in _FAILURE_STATUSES:
             vrf_name = response.get("vrfName") or "unknown-vrf"
             switch_id = response.get("switchId") or response.get("switchName") or "unknown-switch"
             message = response.get("message") or "attachment operation failed"

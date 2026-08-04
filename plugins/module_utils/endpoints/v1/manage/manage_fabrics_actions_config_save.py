@@ -50,6 +50,3 @@ class EpFabricConfigSavePost(
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.POST
-
-
-EpManageFabricsActionsConfigSavePost = EpFabricConfigSavePost

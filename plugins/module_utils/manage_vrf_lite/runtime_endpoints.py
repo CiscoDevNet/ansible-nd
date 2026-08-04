@@ -8,28 +8,28 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
-    BasePath,
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import (
+    EpFabricConfigSavePost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import (
-    EpManageSwitchesListGet,
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_actions import (
+    EpManageFabricsVrfActionsDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrfs import (
+    EpManageFabricsVrfsGet,
 )
 
 
 class VrfLiteEndpoints:
-    """Resolve the mixed Manage and NDFC paths used by VRF Lite workflows.
+    """Resolve the mixed Manage and legacy top-down paths used by VRF Lite workflows.
 
-    VRF inventory, deployment, and config actions use the current Manage API.
-    VRF Lite attachment details and writes still require the NDFC top-down
-    contract because the equivalent Manage plural paths are not exposed.
+    VRF inventory, deployment, and config actions delegate to the canonical
+    Manage-API endpoint models. VRF Lite attachment details and writes still
+    require the controller's legacy top-down contract because equivalent Manage plural
+    paths are not exposed, so those paths are built here.
     """
 
     _LAN_FABRIC_API = "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest"
     _TOP_DOWN_API = "{0}/top-down".format(_LAN_FABRIC_API)
-
-    @staticmethod
-    def _fabric_path(fabric_name: str, *segments: str) -> str:
-        return BasePath.path("fabrics", quote(fabric_name, safe=""), *segments)
 
     @staticmethod
     def _top_down_fabric_path(fabric_name: str, *segments: str) -> str:
@@ -38,7 +38,7 @@ class VrfLiteEndpoints:
 
     @staticmethod
     def vrfs(fabric_name: str) -> str:
-        return VrfLiteEndpoints._fabric_path(fabric_name, "vrfs")
+        return EpManageFabricsVrfsGet(fabric_name=fabric_name).path
 
     @staticmethod
     def vrf_attachments_query(fabric_name: str, vrf_names_csv: str) -> str:
@@ -53,14 +53,18 @@ class VrfLiteEndpoints:
 
     @staticmethod
     def vrf_deployments(fabric_name: str) -> str:
-        return VrfLiteEndpoints._fabric_path(fabric_name, "vrfActions", "deploy")
+        return EpManageFabricsVrfActionsDeployPost(fabric_name=fabric_name).path
 
     @staticmethod
-    def vrf_switch(fabric_name: str, vrf_name: str, serial_number: str) -> str:
+    def vrf_switch(fabric_name: str, vrf_names_csv: str, serial_numbers_csv: str) -> str:
+        # Both query params are plural: ``vrf-names`` and ``serial-numbers`` each
+        # accept a comma-separated list, so a single request can enrich several
+        # switches across several VRFs at once. Commas are kept ``safe`` for both
+        # so the list separators survive URL-encoding.
         return "{0}?vrf-names={1}&serial-numbers={2}".format(
             VrfLiteEndpoints._top_down_fabric_path(fabric_name, "vrfs", "switches"),
-            quote(vrf_name, safe=""),
-            quote(serial_number, safe=","),
+            quote(vrf_names_csv, safe=","),
+            quote(serial_numbers_csv, safe=","),
         )
 
     @staticmethod
@@ -70,13 +74,5 @@ class VrfLiteEndpoints:
         return "{0}/resource-manager/reserve-id".format(VrfLiteEndpoints._LAN_FABRIC_API)
 
     @staticmethod
-    def fabric_switches(fabric_name: str) -> str:
-        return EpManageSwitchesListGet(fabric_name=fabric_name).path
-
-    @staticmethod
     def config_save(fabric_name: str) -> str:
-        return VrfLiteEndpoints._fabric_path(fabric_name, "actions", "configSave")
-
-    @staticmethod
-    def config_deploy(fabric_name: str) -> str:
-        return "{0}?forceShowRun=true".format(VrfLiteEndpoints._fabric_path(fabric_name, "actions", "deploy"))
+        return EpFabricConfigSavePost(fabric_name=fabric_name).path

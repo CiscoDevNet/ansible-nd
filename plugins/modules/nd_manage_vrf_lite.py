@@ -492,8 +492,10 @@ def main() -> None:
         # Preflight the proposed attachments before reconciliation. In check mode the
         # state machine skips all write methods (and their inline guardrails), so this
         # runs the same read-only VRF-existence/switch-support validation to avoid a
-        # false-green plan that a real run would reject.
-        nd_state_machine.model_orchestrator.preflight_validate_check_mode(list(nd_state_machine.proposed))
+        # false-green plan that a real run would reject. Scope it to the entries a real
+        # run would actually create or update (skipping idempotent no-op rows) so check
+        # mode validates exactly the same set as the execution path (PR #281 review).
+        nd_state_machine.model_orchestrator.preflight_validate_check_mode(nd_state_machine.pending_create_update_items())
         nd_state_machine.manage_state()
         module.params["state"] = state
 

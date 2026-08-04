@@ -76,6 +76,10 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     track_deletes_in_sent: ClassVar[bool] = True
+    # vrf_lite models (VrfLiteAttachmentEntry/VrfLiteModel/VrfLiteAttachmentModel)
+    # override ``merge`` to merge list fields element-wise, so one-directional
+    # list matching in merged-state diffing is consistent with merge here.
+    merge_allow_list_superset: ClassVar[bool] = True
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
     update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
@@ -202,8 +206,10 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         return self.create_bulk([model_instance], **kwargs)
 
     def update(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
-        # TODO(#418): add a post-diff bulk-update hook so multiple changed
-        # entries can share one support prefetch and attachment POST per VRF.
+        # TODO: add a post-diff bulk-update hook so multiple changed entries can
+        # share one support prefetch and attachment POST per VRF. Needs its own
+        # tracking issue -- previously mis-referenced #418, which covers
+        # performance/scale limits rather than this bulk-update hook.
         return self._post_attach_entries([model_instance])
 
     def delete(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
@@ -293,6 +299,12 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         unsupported switch and then fail on the real run. This reuses the same
         read-only ``_validate_attach_entries`` guardrails so check mode rejects
         the same inputs the execution path would.
+
+        ``proposed_entries`` must be the create/update subset the execution
+        path would actually attach (see
+        ``NDStateMachine.pending_create_update_items``), not every proposed
+        row, so check mode validates exactly the entries the real run touches
+        and does not reject idempotent no-op rows the real run skips.
         """
         module = self._module()
         if not module.check_mode:

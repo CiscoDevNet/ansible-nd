@@ -33,13 +33,13 @@ class VrfLiteConnectionModel(NDNestedModel):
         extra="ignore",
     )
 
-    interface: str = Field(alias="interface", min_length=1, max_length=128)
-    dot1q: int | None = Field(default=None, alias="dot1q", ge=1, le=4094)
-    ipv4_addr: str | None = Field(default=None, alias="ipv4_addr")
-    neighbor_ipv4: str | None = Field(default=None, alias="neighbor_ipv4")
-    ipv6_addr: str | None = Field(default=None, alias="ipv6_addr")
-    neighbor_ipv6: str | None = Field(default=None, alias="neighbor_ipv6")
-    peer_vrf: str | None = Field(default=None, alias="peer_vrf")
+    interface: str = Field(min_length=1, max_length=128)
+    dot1q: int | None = Field(default=None, ge=2, le=4094)
+    ipv4_addr: str | None = Field(default=None)
+    neighbor_ipv4: str | None = Field(default=None)
+    ipv6_addr: str | None = Field(default=None)
+    neighbor_ipv6: str | None = Field(default=None)
+    peer_vrf: str | None = Field(default=None)
 
 
 def _vrf_lite_connection_key(item: VrfLiteConnectionModel) -> tuple[str, str]:
@@ -91,11 +91,11 @@ class VrfLiteAttachmentModel(NDNestedModel):
         extra="ignore",
     )
 
-    ip_address: str = Field(alias="ip_address", min_length=1, max_length=128)
-    deploy: bool | None = Field(default=None, alias="deploy")
-    import_evpn_rt: str | None = Field(default=None, alias="import_evpn_rt")
-    export_evpn_rt: str | None = Field(default=None, alias="export_evpn_rt")
-    vrf_lite: list[VrfLiteConnectionModel] | None = Field(default=None, alias="vrf_lite")
+    ip_address: str = Field(min_length=1, max_length=128)
+    deploy: bool | None = Field(default=None)
+    import_evpn_rt: str | None = Field(default=None)
+    export_evpn_rt: str | None = Field(default=None)
+    vrf_lite: list[VrfLiteConnectionModel] | None = Field(default=None)
 
     @field_validator("ip_address")
     @classmethod
@@ -156,10 +156,10 @@ class VrfLiteModel(NDBaseModel):
         extra="ignore",
     )
 
-    vrf_name: str = Field(alias="vrf_name", min_length=1, max_length=64)
-    vlan_id: int | None = Field(default=None, alias="vlan_id", ge=1, le=4094)
-    deploy: bool | None = Field(default=None, alias="deploy")
-    attach: list[VrfLiteAttachmentModel] | None = Field(default=None, alias="attach")
+    vrf_name: str = Field(min_length=1, max_length=32)
+    vlan_id: int | None = Field(default=None, ge=2, le=4094)
+    deploy: bool | None = Field(default=None)
+    attach: list[VrfLiteAttachmentModel] | None = Field(default=None)
 
     @field_validator("vrf_name")
     @classmethod
@@ -180,14 +180,6 @@ class VrfLiteModel(NDBaseModel):
             mode="json",
             **kwargs,
         )
-
-    @classmethod
-    def from_response(cls, response: dict[str, Any], **kwargs) -> "VrfLiteModel":
-        return cls.model_validate(response, by_alias=True, by_name=True, **kwargs)
-
-    @classmethod
-    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "VrfLiteModel":
-        return cls.model_validate(ansible_config, by_alias=True, by_name=True, **kwargs)
 
     @classmethod
     def get_argument_spec(cls) -> dict[str, Any]:
@@ -250,10 +242,10 @@ class VrfLitePlaybookItemModel(BaseModel):
         extra="ignore",
     )
 
-    vrf_name: str = Field(alias="vrf_name", min_length=1, max_length=64)
-    vlan_id: int | None = Field(default=None, alias="vlan_id", ge=1, le=4094)
-    deploy: bool | None = Field(default=None, alias="deploy")
-    attach: list[VrfLiteAttachmentModel] | None = Field(default=None, alias="attach")
+    vrf_name: str = Field(min_length=1, max_length=32)
+    vlan_id: int | None = Field(default=None, ge=2, le=4094)
+    deploy: bool | None = Field(default=None)
+    attach: list[VrfLiteAttachmentModel] | None = Field(default=None)
 
     @field_validator("vrf_name")
     @classmethod

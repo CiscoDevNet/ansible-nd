@@ -43,13 +43,13 @@ class VrfLiteAttachmentEntry(NDBaseModel):
         extra="ignore",
     )
 
-    vrf_name: str = Field(alias="vrf_name", min_length=1, max_length=64)
-    switch_ip: str = Field(alias="switch_ip", min_length=1, max_length=128)
-    vlan_id: int | None = Field(default=None, alias="vlan_id", ge=1, le=4094)
-    deploy: bool | None = Field(default=None, alias="deploy")
-    import_evpn_rt: str | None = Field(default=None, alias="import_evpn_rt")
-    export_evpn_rt: str | None = Field(default=None, alias="export_evpn_rt")
-    extensions: list[VrfLiteConnectionModel] | None = Field(default=None, alias="extensions")
+    vrf_name: str = Field(min_length=1, max_length=32)
+    switch_ip: str = Field(min_length=1, max_length=128)
+    vlan_id: int | None = Field(default=None, ge=2, le=4094)
+    deploy: bool | None = Field(default=None)
+    import_evpn_rt: str | None = Field(default=None)
+    export_evpn_rt: str | None = Field(default=None)
+    extensions: list[VrfLiteConnectionModel] | None = Field(default=None)
 
     @field_validator("import_evpn_rt", "export_evpn_rt")
     @classmethod

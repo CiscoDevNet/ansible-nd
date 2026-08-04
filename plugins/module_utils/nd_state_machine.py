@@ -65,6 +65,7 @@ class NDStateMachine:
         self.supports_bulk_create = self.model_orchestrator.supports_bulk_create
         self.supports_bulk_delete = self.model_orchestrator.supports_bulk_delete
         self.track_deletes_in_sent = self.model_orchestrator.track_deletes_in_sent
+        self.merge_allow_list_superset = self.model_orchestrator.merge_allow_list_superset
 
         # Initialize collections
         try:
@@ -137,6 +138,27 @@ class NDStateMachine:
         else:
             raise NDStateMachineError(f"Invalid state: {self.state}")
 
+    def pending_create_update_items(self) -> list[NDBaseModel]:
+        """Return the proposed items a real run would create or update.
+
+        Mirrors the create/update classification in ``_manage_create_update_state``
+        -- same ``exclude_unset``/``allow_superset`` diff test -- but performs no
+        mutation. A check-mode preflight can use this to validate exactly the
+        items the execution path would touch, instead of every proposed item,
+        so a dry-run neither approves nor rejects a set that differs from the
+        real run (PR #281 review). Returns an empty list for non-write states.
+        """
+        if self.state not in ("merged", "replaced", "overridden"):
+            return []
+        exclude_unset = self.state == "merged"
+        allow_superset = exclude_unset and self.merge_allow_list_superset
+        pending: list[NDBaseModel] = []
+        for proposed_item in self.proposed:
+            diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset, allow_superset=allow_superset)
+            if diff_status != "no_diff":
+                pending.append(proposed_item)
+        return pending
+
     def _execute_operation(
         self,
         operation: Callable[..., ResponseType],
@@ -182,9 +204,15 @@ class NDStateMachine:
                 # the user so that Pydantic default values do not trigger false
                 # diffs or overwrite existing configuration. Merged also matches
                 # list elements one-directionally (allow_superset) so an
-                # existing item with extra list entries is not seen as changed.
+                # existing item with extra list entries is not seen as changed --
+                # but only for orchestrators that opt in via
+                # ``merge_allow_list_superset`` and whose models merge lists
+                # element-wise, so diff and merge agree (PR #281 review). Modules
+                # that do not opt in keep wholesale list-replace semantics in
+                # both diff and merge.
                 exclude_unset = self.state == "merged"
-                diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset, allow_superset=exclude_unset)
+                allow_superset = exclude_unset and self.merge_allow_list_superset
+                diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset, allow_superset=allow_superset)
 
                 # No changes needed
                 if diff_status == "no_diff":

@@ -54,6 +54,3 @@ class EpFabricDeployPost(
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.POST
-
-
-EpManageFabricsActionsDeployPost = EpFabricDeployPost

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from copy import deepcopy
-from typing import Any, Dict, List, Set
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import (
     EpFabricConfigSavePost,
@@ -41,7 +41,7 @@ def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remo
     return result
 
 
-def _has_perfect_matching(adjacency: List[List[int]]) -> bool:
+def _has_perfect_matching(adjacency: list[list[int]]) -> bool:
     """Return True if every subset item can be matched to a distinct candidate.
 
     ``adjacency[i]`` holds the indices of the candidates that subset item ``i``
@@ -50,9 +50,9 @@ def _has_perfect_matching(adjacency: List[List[int]]) -> bool:
     consumes a candidate that a more-specific item needs.
     """
     # candidate index -> subset item index it is currently assigned to
-    match_to_item: Dict[int, int] = {}
+    match_to_item: dict[int, int] = {}
 
-    def _try_assign(item_index: int, visited: Set[int]) -> bool:
+    def _try_assign(item_index: int, visited: set[int]) -> bool:
         for candidate_index in adjacency[item_index]:
             if candidate_index in visited:
                 continue
@@ -113,7 +113,7 @@ def issubset(subset: Any, superset: Any, allow_superset: bool = False) -> bool:
             # candidates it can match. A full matching is then required so a
             # less-specific item cannot greedily consume a candidate that a
             # more-specific item needs (relevant under allow_superset=True).
-            adjacency: List[List[int]] = []
+            adjacency: list[list[int]] = []
             for item in subset:
                 matches = []
                 for index, candidate in enumerate(superset):

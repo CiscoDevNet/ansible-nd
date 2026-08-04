@@ -70,6 +70,11 @@ def _deployment_intent(module: Any) -> tuple[set[tuple[str, str]], set[tuple[str
 
 
 def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
+    # TODO(4.2.1) vrf-lite-configsave-500-nonfatal: ND returns HTTP 500 for a
+    # non-fatal vPC sanity condition on configSave instead of a success/no-op
+    # status, so the message is sniffed to swallow it. Remove once the
+    # controller returns a correct status for this condition (see bug-tracker
+    # vault note).
     if not isinstance(error, NDModuleError):
         return False
     if error.status != 500:

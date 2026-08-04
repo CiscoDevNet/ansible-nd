@@ -479,8 +479,8 @@
     fabric_name: "{{ test_fabric }}"
     state: deleted
     config_actions:
-      save: false
-      deploy: false
+      save: true
+      deploy: true
       type: switch
     config:
       - vrf_name: "{{ test_vrf }}"
