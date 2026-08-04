@@ -123,16 +123,6 @@
         pool_name: "L2_VNI"
         scope_type: "fabric"
 
-      # ND accepts VPC_DOMAIN_ID in the create response, but the resources GET
-      # inventory exposes an additional networkVlan allocation on the
-      # second switch instead of a VPC_DOMAIN_ID resourceId.
-      - entity_name: "base_network_vlan_device"
-        pool_type: "ID"
-        pool_name: "networkVlan"
-        scope_type: "device"
-        switches:
-          - "{{ ansible_switch2 }}"
-
       - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
         pool_type: "SUBNET"
         pool_name: "DCI subnet pool"
