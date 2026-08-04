@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Deeksha Pandey (deekpand-cisco)  deekpand@cisco.com
+# Copyright: (c) 2026, Deeksha Pandey (@deekpand) <deekpand@cisco.com>
 
 
 """Unit tests for generic gathered-state local and Lucene filtering."""
@@ -14,6 +14,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
     build_lucene_expressions,
     filter_gathered_response,
     format_lucene_value,
+    validate_gathered_filters,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
     LoopbackInterfaceModel,
@@ -74,7 +75,7 @@ def test_lucene_supported_fields_are_combined_with_and():
     assert build_lucene_expressions(
         [{"interface_name": "loopback101"}],
         _lucene_spec(),
-    ) == ["interfaceType:loopback AND policyType:loopback AND " "interfaceName:loopback101"]
+    ) == ["interfaceType:loopback AND policyType:loopback AND interfaceName:loopback101"]
 
 
 def test_lucene_multiple_items_remain_separate_expressions():
@@ -186,3 +187,40 @@ def test_nonmatching_filter_returns_empty_list():
 def test_empty_filter_item_is_rejected(filter_item):
     with pytest.raises(ValueError, match="at least one filtering criterion"):
         _filter([_response()], [filter_item])
+
+
+def test_validate_rejects_non_dict_filters_item():
+    with pytest.raises(ValueError, match="must be a dictionary.*index 0"):
+        validate_gathered_filters(
+            filters=["not_a_dict"],
+            normalize_filter=None,
+            supported_properties=("switch_ip",),
+        )
+
+
+def test_validate_rejects_unsupported_properties():
+    with pytest.raises(ValueError, match="unsupported properties.*'extra_field'"):
+        validate_gathered_filters(
+            filters=[{"extra_field": "value"}],
+            normalize_filter=None,
+            supported_properties=("switch_ip", "interface_name"),
+        )
+
+
+def test_validate_rejects_nested_unsupported_property():
+    with pytest.raises(ValueError, match="unsupported properties.*'config_data.network_os.policy.extra_config'"):
+        validate_gathered_filters(
+            filters=[{"config_data": {"network_os": {"policy": {"extra_config": "value"}}}}],
+            normalize_filter=None,
+            supported_properties=LoopbackInterfaceModel.gathered_filter_properties,
+        )
+
+
+def test_validate_skips_property_check_when_supported_properties_empty():
+    # Backward compatibility: empty tuple means no property restriction
+    # Should only fail on active-value check if filter is empty, not on property check
+    validate_gathered_filters(
+        filters=[{"any_fields": "any_value"}],
+        normalize_filter=None,
+        supported_properties=(),
+    )

@@ -100,12 +100,28 @@
       - nm_gathered_no_match_local_user is not changed
       - nm_gathered_no_match_local_user.gathered == []
 
-- name: "GATHERED: Reject a non-login-ID filter"
+- name: "GATHERED: Filter by email returns matching user"
   cisco.nd.nd_local_user:
     output_level: "{{ nd_info.output_level }}"
     state: gathered
     config:
       - email: ansibleuser@example.com
+  register: nm_gathered_by_email
+
+- name: "GATHERED: Verify email filter returns correct user"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_by_email is not changed
+      - nm_gathered_by_email.gathered | length == 1
+      - nm_gathered_by_email.gathered.0.login_id == "ansible_local_user"
+      - nm_gathered_by_email.gathered.0.email == "ansibleuser@example.com"
+
+- name: "GATHERED: Reject an unsupported filter property"
+  cisco.nd.nd_local_user:
+    output_level: "{{ nd_info.output_level }}"
+    state: gathered
+    config:
+      - reuse_limitation: 20
   register: nm_gathered_unsupported_filter
   ignore_errors: true
 
@@ -113,8 +129,8 @@
   ansible.builtin.assert:
     that:
       - nm_gathered_unsupported_filter is failed
-      - "'Only login_id can be used as a gathered-state filter' in nm_gathered_unsupported_filter.msg"
-      - "'email' in nm_gathered_unsupported_filter.msg"
+      - "'unsupported properties' in nm_gathered_unsupported_filter.msg"
+      - "'reuse_limitation' in nm_gathered_unsupported_filter.msg"
 
 - name: "GATHERED: Reject an empty filter item"
   cisco.nd.nd_local_user:
