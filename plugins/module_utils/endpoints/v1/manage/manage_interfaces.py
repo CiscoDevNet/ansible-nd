@@ -241,7 +241,7 @@ class EpManageInterfacesListGet(_EpManageInterfacesBase):
         legacy_lucene_is_set = any(value is not None for value in legacy_lucene_values.values())
 
         if legacy_lucene_is_set and not self.lucene_params.is_empty():
-            raise ValueError("Set Lucene options using either " "'endpoint_params.filter/max/offset/sort' or " "'lucene_params', but not both.")
+            raise ValueError("Set Lucene options using either 'endpoint_params.filter/max/offset/sort' or 'lucene_params', but not both.")
 
         query_params = CompositeQueryParams().add(self.endpoint_params)
 
