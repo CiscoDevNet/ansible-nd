@@ -21,7 +21,4 @@ def test_send_request_preserves_persistent_command_timeout():
     httpapi.send_request("GET", "/api/v1/test")
 
     assert connection.get_option("persistent_command_timeout") == 1000
-    assert not any(
-        call.args and call.args[0] == "persistent_command_timeout"
-        for call in connection.set_option.call_args_list
-    )
+    assert not any(call.args and call.args[0] == "persistent_command_timeout" for call in connection.set_option.call_args_list)
