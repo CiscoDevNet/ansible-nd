@@ -849,11 +849,6 @@ class VrfAttachmentManager:
             time.sleep(self.delete_wait_delay)
 
     def _delete_wait_timeout(self, module_args: dict, item_count: int) -> int:
-        explicit_timeout = module_args.get("timeout")
-        if explicit_timeout is None:
-            explicit_timeout = self.coordinator.module.params.get("timeout")
-        if explicit_timeout is not None:
-            return int(explicit_timeout)
         extra_chunks = max(0, (max(item_count, 1) - 1) // self.delete_wait_chunk_size)
         return min(900, 30 + (extra_chunks * self.delete_wait_delay))
 

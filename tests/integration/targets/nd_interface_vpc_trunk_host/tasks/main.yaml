@@ -54,10 +54,7 @@
             peer2_switch_id: "{{ test_switch_ip_peer2 }}"
         state: deleted
       ignore_errors: true
-  module_defaults:
-    cisco.nd.nd_interface_vpc_trunk_host:
-      timeout: 300
-    cisco.nd.nd_manage_vpc_pair:
-      timeout: 300
+  vars:
+    ansible_command_timeout: 300
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"

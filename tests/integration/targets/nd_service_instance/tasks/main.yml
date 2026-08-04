@@ -6,9 +6,9 @@
 # Note: idempotent test not supported for enabled and restart states
 - name: Set vars
   ansible.builtin.set_fact:
+    ansible_command_timeout: 90
     nd_info: &nd_info
       output_level: "info"
-      timeout: 90
 
 # Cleanup part
 - name: Disable an active service instance - setup part

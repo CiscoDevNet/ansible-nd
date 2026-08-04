@@ -97,8 +97,8 @@ notes:
 - When O(config.deploy=true) and O(config.blocking=true), ND holds the HTTP response open for the duration of the deploy
   (often several minutes per switch). Ansible's C(persistent_command_timeout) defaults to 30 seconds and will reap the
   C(ansible-connection) socket mid-request, surfacing as a confusing C(ConnectionError ... socket path ... does not exist).
-  Raise C(ansible_command_timeout) in your inventory C([nd:vars]) section (e.g. V(3600)) AND set a generous module-level
-  C(timeout) via C(module_defaults). The Examples section below shows the recommended play-level pattern.
+  Raise C(ansible_command_timeout) in your inventory C([nd:vars]) section or as a play variable (e.g. V(3600)). The
+  Examples section below shows the recommended play-level pattern.
 """
 
 EXAMPLES = r"""
@@ -125,14 +125,12 @@ EXAMPLES = r"""
       switches:
         - switch_ip: 192.168.12.151
 
-# Recommended pattern for blocking deploys: bump the per-task timeout via module_defaults at the
-# play level, and set `ansible_command_timeout=3600` in your inventory's [nd:vars] section so the
+# Recommended pattern for blocking deploys: set ansible_command_timeout as a play variable so the
 # persistent connection survives the wait.
 - name: Maintenance mode with extended timeout for a blocking deploy
   hosts: nd
-  module_defaults:
-    cisco.nd.nd_maintenance_mode:
-      timeout: 1800
+  vars:
+    ansible_command_timeout: 1800
   tasks:
     - name: Place switches into maintenance mode and block until ND finishes deploying
       cisco.nd.nd_maintenance_mode:

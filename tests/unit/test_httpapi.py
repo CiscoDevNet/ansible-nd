@@ -1,0 +1,27 @@
+from unittest.mock import MagicMock
+
+from ansible_collections.cisco.nd.plugins.httpapi.nd import HttpApi
+
+
+def test_send_request_preserves_persistent_command_timeout():
+    connection = MagicMock()
+    connection._connected = False
+    options = {
+        "host": "https://nd.example",
+        "persistent_command_timeout": 1000,
+        "session_key": None,
+        "remote_user": "admin",
+    }
+    connection.get_option.side_effect = options.get
+    connection.send.return_value = (None, '{"ok": true}')
+    httpapi = HttpApi(connection)
+    httpapi.get_option = MagicMock(return_value="DefaultAuth")
+    httpapi.params = {"timeout": 30}
+
+    httpapi.send_request("GET", "/api/v1/test")
+
+    assert connection.get_option("persistent_command_timeout") == 1000
+    assert not any(
+        call.args and call.args[0] == "persistent_command_timeout"
+        for call in connection.set_option.call_args_list
+    )

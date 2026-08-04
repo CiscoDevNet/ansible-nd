@@ -10,6 +10,7 @@
 
 - name: Set vars
   ansible.builtin.set_fact:
+    ansible_command_timeout: 90
     nd_info: &nd_info
       host: '{{ ansible_host }}'
       username: '{{ ansible_user }}'
@@ -18,7 +19,6 @@
       use_ssl: '{{ ansible_httpapi_use_ssl | default(true) }}'
       use_proxy: '{{ ansible_httpapi_use_proxy | default(true) }}'
       output_level: '{{ mso_output_level | default("info") }}'
-      timeout: 90
 
 - name: Ensure Security Domain does not exist using DELETE method
   cisco.nd.nd_rest: &delete_security_domain
@@ -55,7 +55,7 @@
     - cm_create_security_domain.previous == {}
     - cm_create_security_domain.current == {}
     - cm_create_security_domain.jsondata.spec.name == "ansible_security_domain_test"
-    - cm_create_security_domain.jsondata.spec.description == "Security Domain Test for nd_rest module." 
+    - cm_create_security_domain.jsondata.spec.description == "Security Domain Test for nd_rest module."
     - nm_create_security_domain is changed
     - nm_create_security_domain.previous == {}
     - nm_create_security_domain.current.spec.name == "ansible_security_domain_test"

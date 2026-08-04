@@ -6,9 +6,9 @@
 # Note: idempotent test not supported for present state
 - name: Set vars
   ansible.builtin.set_fact:
+    ansible_command_timeout: 90
     nd_info: &nd_info
       output_level: "info"
-      timeout: 90
 
 # Cleanup part - remove all imported service packages
 - name: Query all imported service packages to clear the environment

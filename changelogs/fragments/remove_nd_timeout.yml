@@ -1,0 +1,7 @@
+---
+breaking_changes:
+  - >-
+    In cisco.nd 2.0.0, remove the shared module-level ``timeout`` option and its ``ND_TIMEOUT`` environment fallback. Configure persistent
+    command timeouts with ``ansible_command_timeout`` in playbooks or inventory instead. Environment-based users must migrate from
+    ``export ND_TIMEOUT=300`` to ``export ANSIBLE_PERSISTENT_COMMAND_TIMEOUT=300``. The ND HTTPAPI plugin now preserves Ansible's native
+    ``persistent_command_timeout`` value.

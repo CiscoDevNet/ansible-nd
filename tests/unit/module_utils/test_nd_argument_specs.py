@@ -33,7 +33,7 @@ def test_nd_argument_specs_00000() -> None:
 
     - The key set matches the historical spec from nd.py exactly
     - `password` has `no_log=True`
-    - `timeout` defaults to 30 and `output_level` defaults to "normal"
+    - The removed module-level `timeout` option is absent and `output_level` defaults to "normal"
     - `host` carries the `hostname` alias
 
     ## Classes and Methods
@@ -47,14 +47,13 @@ def test_nd_argument_specs_00000() -> None:
         "username",
         "password",
         "output_level",
-        "timeout",
         "use_proxy",
         "use_ssl",
         "validate_certs",
         "login_domain",
     }
     assert spec["password"]["no_log"] is True
-    assert spec["timeout"]["default"] == 30
+    assert "timeout" not in spec
     assert spec["output_level"]["default"] == "normal"
     assert spec["output_level"]["choices"] == ["debug", "info", "normal"]
     assert spec["host"]["aliases"] == ["hostname"]
