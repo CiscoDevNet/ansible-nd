@@ -252,11 +252,13 @@ class NDStateMachine:
                     if self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}"):
                         successfully_sent.append(item)
 
-        # Mark as sent only for items actually pushed to the controller. In
-        # check mode no API call is made, so nothing is marked as sent (avoids
-        # false deploy triggers); the previewed 'after' state is still reflected
-        # in self.existing (mutated above), which is what drives 'changed'.
-        if not self.check_mode and successfully_sent:
+        # Mark successfully-processed items as sent. This stays populated in
+        # check mode (PR #225) so downstream config-save/deploy consumers that
+        # gate on len(sent) > 0 can still preview what a real run would send;
+        # execute_config_actions() is itself check-mode-safe (it simulates
+        # rather than sends). Per-item gating keeps items whose operation raised
+        # under ignore_errors out of 'sent'.
+        if successfully_sent:
             self.sent.add_many(successfully_sent)
 
         # Log operation
@@ -299,10 +301,10 @@ class NDStateMachine:
         # Batch remove from collection (single index rebuild).
         self.existing.delete_many([item.get_identifier_value() for item in deleted])
 
-        # Mark as sent only for items actually pushed to the controller. In
-        # check mode no API call is made, so nothing is marked as sent (avoids
-        # false deploy triggers).
-        if not self.check_mode and deleted:
+        # Mark successfully-deleted items as sent. Stays populated in check mode
+        # (PR #225) so downstream config-save/deploy previews are not skipped;
+        # per-item gating keeps failed deletes (under ignore_errors) out of 'sent'.
+        if deleted:
             self.sent.add_many(deleted)
 
         # Log deletion

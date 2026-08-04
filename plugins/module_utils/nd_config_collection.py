@@ -252,7 +252,7 @@ class NDConfigCollection:
         return [item.to_payload(**kwargs) for item in self._items]
 
     @staticmethod
-    def from_ansible_config(data: Optional[List[Dict]], model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
+    def from_ansible_config(data: list[dict] | None, model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
         """
         Create collection from Ansible config.
 

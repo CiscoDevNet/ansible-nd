@@ -12,8 +12,9 @@ tests in ``test_utils.py`` cannot reach:
 
 - ``_execute_operation`` returns a boolean success signal and skips the API call
   in check mode.
-- creates/updates/deletes are added to ``sent`` only after a successful, non
-  check-mode operation (so check-mode runs do not produce false deploy triggers).
+- creates/updates/deletes are added to ``sent`` after a successful operation
+  (per-item gating); ``sent`` stays populated in check mode so downstream
+  config-save/deploy previews are not skipped (PR #225).
 - under ``ignore_errors`` a failed delete leaves the item in ``existing`` and out
   of ``sent``; without it the failure is raised as ``NDStateMachineError``.
 - bulk-delete failure keeps every item, while bulk-delete success removes only
@@ -219,43 +220,43 @@ def test_manage_state_invalid_state_raises():
 
 
 # =============================================================================
-# check mode: API is skipped and nothing is marked sent
+# check mode: API is skipped but items are still marked sent (deploy preview)
 # =============================================================================
 
 
-def test_check_mode_create_skips_api_and_sent():
-    """Check-mode create previews the new item but issues no API call/sent."""
+def test_check_mode_create_skips_api_but_marks_sent():
+    """Check-mode create previews the new item and marks it sent (no API call)."""
     orch = _FakeOrchestrator()
     sm = _make_state_machine(state="merged", check_mode=True, orchestrator=orch, proposed=[_model("a", "x")])
 
     sm.manage_state()
 
     assert orch.calls["create"] == []  # no API call in check mode
-    assert len(sm.sent) == 0  # nothing marked sent -> no false deploy trigger
+    assert _names(sm.sent) == ["a"]  # sent stays populated so deploy preview is not skipped
     assert sm.existing.get("a") is not None  # previewed 'after' still reflects it
 
 
-def test_check_mode_update_skips_api_and_sent():
-    """Check-mode update previews the change but issues no API call/sent."""
+def test_check_mode_update_skips_api_but_marks_sent():
+    """Check-mode update previews the change and marks it sent (no API call)."""
     orch = _FakeOrchestrator()
     sm = _make_state_machine(state="replaced", check_mode=True, orchestrator=orch, existing=[_model("a", "x")], proposed=[_model("a", "y")])
 
     sm.manage_state()
 
     assert orch.calls["update"] == []
-    assert len(sm.sent) == 0
+    assert _names(sm.sent) == ["a"]
     assert sm.existing.get("a").value == "y"  # previewed change
 
 
-def test_check_mode_delete_skips_api_and_sent():
-    """Check-mode delete previews the removal but issues no API call/sent."""
+def test_check_mode_delete_skips_api_but_marks_sent():
+    """Check-mode delete previews the removal and marks it sent (no API call)."""
     orch = _FakeOrchestrator()
     sm = _make_state_machine(state="deleted", check_mode=True, orchestrator=orch, existing=[_model("a", "x")], proposed=[_model("a")])
 
     sm.manage_state()
 
     assert orch.calls["delete"] == []
-    assert len(sm.sent) == 0
+    assert _names(sm.sent) == ["a"]
     assert len(sm.existing) == 0  # previewed removal
 
 
@@ -465,8 +466,8 @@ def test_overridden_explicit_empty_config_deletes_all_existing(check_mode):
 
     assert len(sm.existing) == 0
     if check_mode:
-        assert orch.calls["delete"] == []
-        assert len(sm.sent) == 0
+        assert orch.calls["delete"] == []  # no API call in check mode
+        assert _names(sm.sent) == ["a", "b"]  # but the deletes are previewed as sent
     else:
         assert _names(orch.calls["delete"]) == ["a", "b"]
         assert _names(sm.sent) == ["a", "b"]
