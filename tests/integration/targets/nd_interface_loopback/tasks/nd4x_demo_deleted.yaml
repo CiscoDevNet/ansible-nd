@@ -4,6 +4,7 @@
     - name: "DELETED SETUP: Create loopback100"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
+        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ loopback_100 }}"
@@ -15,6 +16,7 @@
         state: deleted
         common_args:
           output_level: "{{ nd_info.output_level }}"
+          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -60,6 +62,7 @@
     - name: "DELETED CLEANUP: Ensure loopback100 absent"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
+        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
