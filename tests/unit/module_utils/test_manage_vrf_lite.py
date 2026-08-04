@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -69,6 +70,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection impo
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_model import (
     VrfLiteModel,
     VrfLitePlaybookConfigModel,
+    VrfLitePlaybookItemModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite import (
     ManageVrfLiteOrchestrator,
@@ -190,6 +192,21 @@ def _mock_guardrail_inventory(monkeypatch, role="border", fabric_type=None):
 
 def test_manage_vrf_lite_00050_model_exposes_module_argspec():
     assert VrfLiteModel.get_argument_spec() == VrfLitePlaybookConfigModel.get_argument_spec()
+
+
+@pytest.mark.parametrize("model_class", [VrfLiteModel, VrfLitePlaybookItemModel])
+def test_manage_vrf_lite_00052_plain_vrf_name_accepts_nd_maximum(model_class):
+    """The module field carries a plain VRF name, whose ND limit is 32."""
+    model = model_class(vrf_name="v" * 32)
+
+    assert model.vrf_name == "v" * 32
+
+
+@pytest.mark.parametrize("model_class", [VrfLiteModel, VrfLitePlaybookItemModel])
+def test_manage_vrf_lite_00053_plain_vrf_name_rejects_above_nd_maximum(model_class):
+    """Reject names that ND's plain VRF schema cannot accept on create."""
+    with pytest.raises(ValidationError):
+        model_class(vrf_name="v" * 33)
 
 
 def test_manage_vrf_lite_00060_existing_empty_vrf_passes_existence_check(monkeypatch):

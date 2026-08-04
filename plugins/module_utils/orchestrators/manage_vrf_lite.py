@@ -206,10 +206,8 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         return self.create_bulk([model_instance], **kwargs)
 
     def update(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
-        # TODO: add a post-diff bulk-update hook so multiple changed entries can
-        # share one support prefetch and attachment POST per VRF. Needs its own
-        # tracking issue -- previously mis-referenced #418, which covers
-        # performance/scale limits rather than this bulk-update hook.
+        # TODO(#487): add a post-diff bulk-update hook so multiple changed entries
+        # can share one support prefetch and attachment POST per VRF.
         return self._post_attach_entries([model_instance])
 
     def delete(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:

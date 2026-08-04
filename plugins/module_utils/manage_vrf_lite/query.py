@@ -157,9 +157,7 @@ def _query_vrf_switch_details_bulk(
 
     missing_by_vrf: dict[str, list[str]] = {}
     for vrf_name, serials in normalized.items():
-        missing = [
-            serial_number for serial_number in serials if _vrf_lite_switch_detail_cache_key(fabric_name, vrf_name, serial_number) not in cache
-        ]
+        missing = [serial_number for serial_number in serials if _vrf_lite_switch_detail_cache_key(fabric_name, vrf_name, serial_number) not in cache]
         if missing:
             missing_by_vrf[vrf_name] = missing
 
