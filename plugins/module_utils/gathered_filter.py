@@ -1,4 +1,4 @@
-# Copyright: (c) 2026, Deeksha Pandey (deekpand-cisco)  deekpand@cisco.com
+# Copyright: (c) 2026, Deeksha Pandey (@deekpand) <deekpand@cisco.com>
 
 """Generic local and server-side filtering helpers for gathered-state responses."""
 
@@ -191,12 +191,10 @@ def _reject_unsupported_filter_properties(
     unsupported = sorted(supplied_paths - supported_set)
     if unsupported:
         raise ValueError(
-            "Gathered filter at index {0} contains unsupported properties: {1}. "
-            "Supported gathered filter properties: {2}".format(
-                index,
-                ", ".join("'{0}'".format(p) for p in unsupported),
-                ", ".join("'{0}'".format(p) for p in supported_properties),
-            )
+            f"Gathered filter at index {index} contains unsupported properties: "
+            f"{', '.join(repr(p) for p in unsupported)}. "
+            f"Supported gathered filter properties: "
+            f"{', '.join(repr(p) for p in supported_properties)}"
         )
 
 
@@ -213,7 +211,8 @@ def filter_gathered_response(
     Multiple filter items use OR semantics.
     Returned objects remain in API shape for NDConfigCollection.from_api_response().
     """
-
+    # Validation duplicates validate_gathered_filters() intentionally so this
+    # function remains safe to call standalone (e.g., from unit tests).
     active_filters: list[dict[str, Any]] = []
     for filter_item in filters or []:
         if not isinstance(filter_item, dict):
