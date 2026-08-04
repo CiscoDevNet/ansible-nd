@@ -139,7 +139,7 @@ Important behavior:
 
 ## Check-mode state restoration
 
-The harness records the task’s original check-mode value before execution and restores it after success or failure.
+The harness records the task's original check-mode value before execution and restores it after success or failure.
 
 Snapshot GET operations temporarily disable task check mode because `cisco.nd.nd_rest` does not perform a real HTTP request while operating in check mode.
 
@@ -148,7 +148,7 @@ The snapshot operation:
 - Temporarily disables task check mode.
 - Performs a read-only GET.
 - Restores the previous task check-mode value.
-- Never changes the target module’s intended predictive execution mode.
+- Never changes the target module's intended predictive execution mode.
 
 The original task check-mode state is restored before the action plugin returns or raises an error.
 
@@ -869,7 +869,7 @@ If the module requires a later minimum version, use that actual version instead 
 
 A switch management IP and switch ID represent the same controller object. They must not be maintained as independent inventory values.
 
-Use the switch’s `fabricManagementIp` as the source of truth and resolve the current `switchId` from the controller.
+Use the switch's `fabricManagementIp` as the source of truth and resolve the current `switchId` from the controller.
 
 ```yaml
 - name: Query switches in the test fabric
@@ -1374,11 +1374,11 @@ Do not rely only on `changed: true`. Verify that the intended resource and field
 
 ### REST assertions
 
-Use `nd_queries` to validate the controller’s persisted state independently from the module’s returned `after` value.
+Use `nd_queries` to validate the controller's persisted state independently from the module's returned `after` value.
 
 A complete positive scenario should normally validate both:
 
-- The target module’s returned state.
+- The target module's returned state.
 - The controller REST API state.
 
 ## Negative tests
@@ -1812,7 +1812,7 @@ git diff --check
 ansible-test sanity
 ```
 
-Run the target’s original suite:
+Run the target's original suite:
 
 ```bash
 ansible-test network-integration <target> \
