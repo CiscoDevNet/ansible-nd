@@ -47,6 +47,7 @@ def _response(
 
 
 def _filter(responses, filters):
+    """Apply gathered filters and return matched models."""
     return filter_gathered_response(
         response_data=responses,
         filters=filters,
@@ -118,8 +119,10 @@ def test_format_lucene_value(value, expected):
 
 def test_no_filters_returns_all_responses():
     responses = [_response(), _response(interface_name="loopback102")]
-
-    assert _filter(responses, []) == responses
+    result = _filter(responses, [])
+    assert len(result) == 2
+    assert result[0].interface_name == "loopback101"
+    assert result[1].interface_name == "loopback102"
 
 
 def test_one_filter_item_uses_and_semantics_and_normalizes_name():
@@ -134,7 +137,9 @@ def test_one_filter_item_uses_and_semantics_and_normalizes_name():
         [{"switch_ip": "192.0.2.10", "interface_name": "Loopback101"}],
     )
 
-    assert result == [responses[0]]
+    assert len(result) == 1
+    assert result[0].switch_ip == "192.0.2.10"
+    assert result[0].interface_name == "loopback101"
 
 
 def test_ansible_injected_null_values_do_not_become_criteria():
@@ -145,7 +150,8 @@ def test_ansible_injected_null_values_do_not_become_criteria():
         [{"switch_ip": None, "interface_name": "Loopback101"}],
     )
 
-    assert result == [responses[0]]
+    assert len(result) == 1
+    assert result[0].interface_name == "loopback101"
 
 
 def test_multiple_filter_items_use_or_semantics():
@@ -160,7 +166,9 @@ def test_multiple_filter_items_use_or_semantics():
         [{"interface_name": "loopback101"}, {"interface_name": "loopback102"}],
     )
 
-    assert result == responses[:2]
+    assert len(result) == 2
+    assert result[0].interface_name == "loopback101"
+    assert result[1].interface_name == "loopback102"
 
 
 def test_nested_false_value_is_an_active_filter():
@@ -170,17 +178,23 @@ def test_nested_false_value_is_an_active_filter():
     ]
     filters = [{"config_data": {"network_os": {"policy": {"admin_state": False}}}}]
 
-    assert _filter(responses, filters) == [responses[0]]
+    result = _filter(responses, filters)
+    assert len(result) == 1
+    assert result[0].interface_name == "loopback101"
+    assert result[0].config_data.network_os.policy.admin_state is False
 
 
 def test_duplicate_identifiers_are_returned_once():
     response = _response()
 
-    assert _filter([response, dict(response)], [{"interface_name": "loopback101"}]) == [response]
+    result = _filter([response, dict(response)], [{"interface_name": "loopback101"}])
+    assert len(result) == 1
+    assert result[0].interface_name == "loopback101"
 
 
 def test_nonmatching_filter_returns_empty_list():
-    assert _filter([_response()], [{"interface_name": "loopback999"}]) == []
+    result = _filter([_response()], [{"interface_name": "loopback999"}])
+    assert result == []
 
 
 @pytest.mark.parametrize("filter_item", [{}, {"switch_ip": None}, {"interface_name": ""}])
