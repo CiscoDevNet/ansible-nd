@@ -5,6 +5,7 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
+from copy import deepcopy
 from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
@@ -104,44 +105,42 @@ class NDStateMachine:
             for config_item in self.module.params.get("config") or []:
                 self.module.no_log_values |= self.model_class.collect_secret_values(config_item)
 
-        # Initialize collections
+        # Validate user input and build proposed — fail fast on bad config
+        # before spending time on network queries. Filter validation errors
+        # are user-input errors, not initialization failures.
+        raw_config = config if config is not None else (self.module.params.get("config") or [])
+        self.gathered_filtering_enabled = self.state == "gathered" and self.model_class.supports_gathered_filtering
+
+        if self.gathered_filtering_enabled and raw_config:
+            validate_gathered_filters(
+                filters=raw_config,
+                normalize_filter=self.model_class.normalize_gathered_filter,
+                supported_properties=self.model_class.gathered_filter_properties,
+            )
+            # Normalize once — downstream consumers receive canonical filters.
+            raw_config = [self.model_class.normalize_gathered_filter(deepcopy(item)) for item in raw_config]
+
+        # ``prepare_config_data`` remains the caller's responsibility. Workflow
+        # coordinators already prepare configuration before invoking the state
+        # machine, and running it here could double-transform non-idempotent
+        # configuration.
+        proposed_config = [] if self.gathered_filtering_enabled else raw_config
+        self.proposed = NDConfigCollection.from_ansible_config(
+            data=proposed_config,
+            model_class=self.model_class,
+            context={"state": self.state},
+        )
+
+        # Query ND and build state collections.
+
         try:
-            raw_config = config if config is not None else (self.module.params.get("config") or [])
-            gathered_filtering_enabled = self.state == "gathered" and getattr(
-                self.model_class,
-                "supports_gathered_filtering",
-                False,
-            )
-            lucene_candidate_filtering_enabled = gathered_filtering_enabled and getattr(
-                self.model_orchestrator,
-                "supports_gathered_lucene_filtering",
-                False,
-            )
-            query_kwargs = {}
-            if lucene_candidate_filtering_enabled:
-                query_kwargs["gathered_filters"] = raw_config
-
-            if gathered_filtering_enabled and raw_config:
-                validate_gathered_filters(
-                    filters=raw_config,
-                    normalize_filter=self.model_class.normalize_gathered_filter,
-                    supported_properties=self.model_class.gathered_filter_properties,
-                )
-
-            response_data = self.model_orchestrator.query_all(**query_kwargs)
-
-            # Always retain the generic final filter. The server query only
-            # reduces candidate resources.
-            if gathered_filtering_enabled:
-                response_data = filter_gathered_response(
-                    response_data=response_data,
-                    filters=raw_config,
-                    model_class=self.model_class,
-                    normalize_filter=self.model_class.normalize_gathered_filter,
-                )
-
+            response_data = self._query_existing(raw_config)
             # State of configuration objects in ND before change execution
-            self.before = NDConfigCollection.from_api_response(response_data=response_data, model_class=self.model_class)
+            if self.gathered_filtering_enabled:
+                # Models already built and filtered — use directly.
+                self.before = NDConfigCollection(model_class=self.model_class, items=response_data)
+            else:
+                self.before = NDConfigCollection.from_api_response(response_data=response_data, model_class=self.model_class)
             # Surface controller objects whose type this module does not model. They
             # are preserved as opaque read-only records (see the links tolerant read
             # path) and are protected from implicit/explicit modification below.
@@ -155,39 +154,47 @@ class NDStateMachine:
             # some modules must still save/deploy, while others must not treat a
             # deleted object as a save/deploy target.
             self.removed = NDConfigCollection(model_class=self.model_class)
-            # Collection of configuration objects given by user. Coalesce None to
-            # an empty list so read-only states (e.g. gathered) with no config work.
-            # ``context={"state": ...}`` is threaded into pydantic validation so models can apply
-            # state-aware validation (e.g. require certain fields for write states while accepting
-            # identifier-only items for ``deleted``). Models that do not read the context ignore it.
-            #
-            # ``prepare_config_data`` remains the caller's responsibility.
-            # Workflow coordinators already prepare configuration before invoking
-            # the state machine, and running it here could double-transform
-            # non-idempotent configuration.
-            #
-            # For opted-in gathered filtering, config contains query criteria,
-            # not complete desired resources. Keep those criteria out of the
-            # proposed collection and therefore out of write-state processing.
-            proposed_config = [] if gathered_filtering_enabled else raw_config
-            self.proposed = NDConfigCollection.from_ansible_config(
-                data=proposed_config,
-                model_class=self.model_class,
-                context={"state": self.state},
-            )
 
             # Argument-spec ``config.options`` drives pruning of gathered output
             # so it round-trips cleanly as ``config``. Derived from the model,
             # so it is generic across modules and needs no per-module wiring.
-            gathered_spec = {}
-            get_argument_spec = getattr(self.model_class, "get_argument_spec", None)
-            if callable(get_argument_spec):
-                gathered_spec = get_argument_spec().get("config", {}).get("options", {}) or {}
+            gathered_spec = self.model_class.get_argument_spec().get("config", {}).get("options", {}) or {}
 
-            self.output.assign(after=self.existing, before=self.before, proposed=self.proposed, gathered_spec=gathered_spec)
+            self.output.assign(
+                after=self.existing,
+                before=self.before,
+                proposed=self.proposed,
+                gathered_spec=gathered_spec,
+            )
 
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}") from e
+
+    def _query_existing(self, raw_config: list) -> list[dict[str, Any]] | list[NDBaseModel]:
+        """
+        Query existing resources from ND.
+
+        When gathered filtering is active, returns pre-built model instances
+        (already validated and deduplicated). When inactive, returns raw API
+        response dicts for NDConfigCollection.from_api_response().
+        """
+        server_filtering_enabled = self.gathered_filtering_enabled and self.model_orchestrator.supports_gathered_server_filtering
+
+        query_kwargs = {}
+        if server_filtering_enabled:
+            query_kwargs["gathered_filters"] = raw_config
+
+        response_data = self.model_orchestrator.query_all(**query_kwargs)
+
+        if self.gathered_filtering_enabled:
+            response_data = filter_gathered_response(
+                response_data=response_data,
+                filters=raw_config,
+                model_class=self.model_class,
+                normalize_filter=None,
+            )
+
+        return response_data
 
     # State Management (core function)
     def manage_state(self) -> None:
