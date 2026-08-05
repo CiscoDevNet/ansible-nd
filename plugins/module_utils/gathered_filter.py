@@ -203,13 +203,15 @@ def filter_gathered_response(
     filters: list[dict[str, Any]],
     model_class: type[NDBaseModel],
     normalize_filter: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
+) -> list[NDBaseModel]:
     """
-    Apply gathered filters to raw API objects.
+    Apply gathered filters to raw API objects and return validated models.
 
     Criteria inside one filter item use AND semantics.
     Multiple filter items use OR semantics.
-    Returned objects remain in API shape for NDConfigCollection.from_api_response().
+
+    Returns validated model instances directly so callers can construct an
+    NDConfigCollection without redundant from_response() calls.
     """
     # Validation duplicates validate_gathered_filters() intentionally so this
     # function remains safe to call standalone (e.g., from unit tests).
@@ -227,7 +229,7 @@ def filter_gathered_response(
 
         active_filters.append(normalized)
 
-    filtered: list[dict[str, Any]] = []
+    filtered_models: list[NDBaseModel] = []
     seen_identifiers = set()
 
     for response_item in response_data:
@@ -243,9 +245,9 @@ def filter_gathered_response(
             continue
 
         seen_identifiers.add(identifier)
-        filtered.append(response_item)
+        filtered_models.append(model)
 
-    return filtered
+    return filtered_models
 
 
 def validate_gathered_filters(
