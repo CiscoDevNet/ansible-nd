@@ -1,0 +1,182 @@
+---
+# Create the vPC pair, Network, and logical interface fixtures consumed by
+# Interface Groups. The two supplied leaves and all fixture interfaces are
+# reserved for this target.
+
+- name: Create the reserved vPC pair fixture
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_vpc_pair_config }}"
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    verify:
+      enabled: true
+      retries: 12
+      timeout: 30
+    state: merged
+  register: interface_group_vpc_pair_create
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_pair_fixture | bool
+
+- name: Gather the reserved vPC pair fixture
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_vpc_pair_config }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    state: gathered
+  register: interface_group_vpc_pair_gathered
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_pair_fixture | bool
+
+- name: Validate the reserved vPC pair fixture
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ interface_group_vpc_pair_gathered }}"
+    expected_data: "{{ interface_group_vpc_pair_config }}"
+    mode: exists
+  register: interface_group_vpc_pair_validation
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_pair_fixture | bool
+
+- name: Verify the reserved vPC pair fixture is ready
+  ansible.builtin.assert:
+    that:
+      - interface_group_vpc_pair_create is not failed
+      - interface_group_vpc_pair_validation.failed == false
+    fail_msg: >-
+      The vPC pair fixture could not be created. Confirm that both supplied
+      leaves are reserved for this suite, are not paired with other switches,
+      and support the requested virtual peer-link setting.
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_pair_fixture | bool
+
+- name: Create and deploy the reserved positive Network fixtures
+  cisco.nd.nd_manage_networks:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_deployed_network_fixtures }}"
+    state: merged
+  register: interface_group_deployed_network_fixture_create
+  when: test_create_network_fixtures | bool
+
+- name: Create the reserved pending Network fixture without deployment
+  cisco.nd.nd_manage_networks:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_pending_network_fixture }}"
+    state: merged
+  register: interface_group_pending_network_fixture_create
+  when: test_create_network_fixtures | bool
+
+- name: Gather the reserved Network fixtures
+  cisco.nd.nd_manage_networks:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_network_delete_config }}"
+    state: gathered
+  register: interface_group_network_fixtures_gathered
+  when: test_create_network_fixtures | bool
+
+- name: Validate the reserved Network fixtures
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ interface_group_network_fixtures_gathered }}"
+    test_data: "{{ interface_group_network_fixture_config }}"
+  register: interface_group_network_fixture_validation
+  when: test_create_network_fixtures | bool
+
+- name: Verify the reserved Network fixtures are ready
+  ansible.builtin.assert:
+    that:
+      - interface_group_deployed_network_fixture_create is not failed
+      - interface_group_pending_network_fixture_create is not failed
+      - interface_group_network_fixture_validation.failed == false
+    fail_msg: >-
+      The reserved Network fixtures could not be created. Confirm that their
+      Network IDs and VLAN IDs are unused in the test fabric.
+  when: test_create_network_fixtures | bool
+
+- name: Create the reserved port-channel trunk-host interface fixtures
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_port_channel_fixtures }}"
+    config_actions:
+      deploy: true
+    state: merged
+  register: interface_group_port_channel_fixture_create
+  when: test_create_port_channel_fixtures | bool
+
+- name: Verify the port-channel interface fixtures are ready
+  ansible.builtin.assert:
+    that:
+      - interface_group_port_channel_fixture_create is not failed
+    fail_msg: >-
+      The port-channel fixtures could not be created. Confirm that the reserved
+      member ports and port-channel IDs are unused.
+  when: test_create_port_channel_fixtures | bool
+
+- name: Create the reserved vPC trunk-host interface fixture
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ interface_group_vpc_fixture }}"
+    config_actions:
+      deploy: true
+    state: merged
+  register: interface_group_vpc_fixture_create
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_fixture | bool
+
+- name: Wait for the reserved vPC interface to appear in inventory
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{
+      test_switch_id }}/interfaces/{{ test_vpc_interface }}
+    method: get
+  register: interface_group_vpc_fixture_query
+  changed_when: false
+  until: >-
+    interface_group_vpc_fixture_query.status | default(0) | int == 200
+  retries: 12
+  delay: 5
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_fixture | bool
+
+- name: Verify the vPC interface fixture is ready
+  ansible.builtin.assert:
+    that:
+      - interface_group_vpc_fixture_create is not failed
+      - >-
+        interface_group_vpc_fixture_query.status | default(0) | int == 200
+    fail_msg: >-
+      The vPC interface fixture could not be created or did not appear in
+      inventory. Confirm that the reserved member ports and port-channel ID are
+      unused on the newly created pair.
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_fixture | bool
+
+- name: Allow the interface inventory to converge after fixture creation
+  ansible.builtin.pause:
+    seconds: 10
+  when:
+    - >-
+      (test_create_port_channel_fixtures | bool
+       and interface_group_port_channel_fixture_create is changed)
+      or
+      (test_vpc_flow_enabled | bool
+       and test_create_vpc_fixture | bool
+       and interface_group_vpc_fixture_create is changed)

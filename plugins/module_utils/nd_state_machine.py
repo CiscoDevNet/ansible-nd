@@ -116,6 +116,16 @@ class NDStateMachine:
                 # Capability preflight runs here -- before _manage_create_update_state, whose mutations are
                 # skipped in check mode -- so dry-runs surface incapable switches (PR #275 / issue #273).
                 self.model_orchestrator.preflight(proposed_items)
+
+                # Some resources require an ordered prerequisite mutation after
+                # every validation has passed but before their final updates.
+                # The default hook is a no-op. Interface Groups use it to remove
+                # a member from its current group before adding it to another.
+                self.model_orchestrator.prepare_mutations(
+                    existing=self.existing,
+                    proposed=self.proposed,
+                    check_mode=self.check_mode,
+                )
             except NDStateMachineError:
                 raise
             except Exception as e:

@@ -1,0 +1,164 @@
+---
+- name: Associate valid members with every non-port-channel group type
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: resource
+    config: "{{ interface_group_initial_member_config }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch all Interface Groups after type-specific membership
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
+  register: interface_group_type_members
+
+- name: Validate all initial type-specific member associations
+  cisco.nd.tests.integration._nd_interface_group_validate:
+    nd_data: "{{ interface_group_type_members.nd_query_results[0].result }}"
+    test_data: "{{ interface_group_initial_member_expected }}"
+    mode: exact
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    vpc_peer_switch_ids: "{{ interface_group_vpc_peer_switch_ids }}"
+    invariants:
+      total_count: "{{ interface_group_all_types | length }}"
+      required_types: >-
+        {{ interface_group_all_types | map(attribute='type') | list }}
+      unique_group_names: true
+      unique_members: true
+      consistent_counts: true
+  when: not ansible_check_mode
+
+- name: Prove the any group accepts the existing vPC member
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.any }}"
+        type: any
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_any_ethernet_primary }}"
+              - "{{ test_vpc_interface }}"
+          - switch_id: "{{ test_switch_id_secondary }}"
+            interface_names:
+              - "{{ test_any_ethernet_secondary }}"
+      - interface_group_name: "{{ interface_group_names.vpc }}"
+        type: vpc
+        switch_interfaces: []
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch any and vPC groups after temporary vPC movement
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
+  register: interface_group_any_vpc_member
+  when: test_vpc_flow_enabled | bool
+
+- name: Validate heterogeneous any membership and empty vPC source
+  cisco.nd.tests.integration._nd_interface_group_validate:
+    nd_data: "{{ interface_group_any_vpc_member.nd_query_results[0].result }}"
+    test_data:
+      - interface_group_name: "{{ interface_group_names.any }}"
+        type: any
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_any_ethernet_primary }}"
+              - "{{ test_vpc_interface }}"
+          - switch_id: "{{ test_switch_id_secondary }}"
+            interface_names:
+              - "{{ test_any_ethernet_secondary }}"
+      - interface_group_name: "{{ interface_group_names.vpc }}"
+        type: vpc
+        switch_interfaces: []
+    mode: exact
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    vpc_peer_switch_ids: "{{ interface_group_vpc_peer_switch_ids }}"
+    invariants:
+      unique_members: true
+  when:
+    - test_vpc_flow_enabled | bool
+    - not ansible_check_mode
+
+- name: Return the vPC member to the vPC group
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: resource
+    config:
+      - "{{ interface_group_any_members }}"
+      - "{{ interface_group_vpc_member }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+    nd_queries:
+      - name: Fetch any and vPC groups after restoring ownership
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
+  register: interface_group_vpc_member_restored
+  when: test_vpc_flow_enabled | bool
+
+- name: Validate the vPC member returned to its type-specific group
+  cisco.nd.tests.integration._nd_interface_group_validate:
+    nd_data: >-
+      {{ interface_group_vpc_member_restored.nd_query_results[0].result }}
+    test_data:
+      - "{{ interface_group_any_members }}"
+      - "{{ interface_group_vpc_member }}"
+    mode: exact
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    vpc_peer_switch_ids: "{{ interface_group_vpc_peer_switch_ids }}"
+    invariants:
+      unique_members: true
+  when:
+    - test_vpc_flow_enabled | bool
+    - not ansible_check_mode

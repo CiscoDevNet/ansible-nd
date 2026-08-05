@@ -1,0 +1,4 @@
+---
+minor_changes:
+  - Add the ``nd_manage_interface_group`` module to create, update, replace,
+    override, delete, and gather Nexus Dashboard Interface Groups.

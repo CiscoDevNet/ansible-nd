@@ -8,6 +8,7 @@ This module contains endpoint definitions for configuration template
 operations in the ND Manage API.
 
 Endpoints covered:
+- GET /configTemplates/{templateName} - Get template metadata, parameters, and content
 - GET /configTemplates/{templateName}/parameters - Get template parameters
 """
 
@@ -16,6 +17,7 @@ from __future__ import annotations
 __author__ = "L Nikhil Sri Krishna"
 
 from typing import Literal
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
@@ -45,8 +47,8 @@ class ConfigTemplateEndpointParams(EndpointQueryParams):
 
     ## Description
 
-    Per the ND API specification, the GET /configTemplates/{templateName}/parameters
-    endpoint accepts ``clusterName`` as a query parameter.
+    The GET-one and GET-parameters config-template endpoints accept
+    ``clusterName`` as a query parameter.
 
     ## Parameters
 
@@ -61,6 +63,44 @@ class ConfigTemplateEndpointParams(EndpointQueryParams):
         min_length=1,
         description="Target cluster name for multi-cluster deployments",
     )
+
+
+# ============================================================================
+# GET /configTemplates/{templateName}
+# ============================================================================
+
+
+class EpManageConfigTemplateGet(NDEndpointBaseModel):
+    """GET one configuration template, including metadata and parameters."""
+
+    class_name: Literal["EpManageConfigTemplateGet"] = Field(
+        default="EpManageConfigTemplateGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    template_name: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Configuration template name",
+    )
+    endpoint_params: ConfigTemplateEndpointParams = Field(
+        default_factory=ConfigTemplateEndpointParams,
+        description="Query parameters: clusterName",
+    )
+
+    @property
+    def path(self) -> str:
+        """Build the endpoint path with optional query string."""
+        if self.template_name is None:
+            raise ValueError("template_name must be set before accessing path")
+        base = BasePath.path("configTemplates", quote(self.template_name, safe=""))
+        qs = self.endpoint_params.to_query_string()
+        return f"{base}?{qs}" if qs else base
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.GET
 
 
 # ============================================================================
@@ -117,7 +157,9 @@ class EpManageConfigTemplateParametersGet(NDEndpointBaseModel):
         """Build the endpoint path with optional query string."""
         if self.template_name is None:
             raise ValueError("template_name must be set before accessing path")
-        base = BasePath.path("configTemplates", self.template_name, "parameters")
+        base = BasePath.path(
+            "configTemplates", quote(self.template_name, safe=""), "parameters"
+        )
         qs = self.endpoint_params.to_query_string()
         return f"{base}?{qs}" if qs else base
 
