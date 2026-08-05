@@ -40,7 +40,7 @@ def test_local_user_opts_in_to_gathered_filtering():
 
 
 def test_local_user_does_not_opt_in_to_lucene_filtering():
-    assert LocalUserOrchestrator.supports_gathered_lucene_filtering is False
+    assert LocalUserOrchestrator.supports_gathered_server_filtering is False
 
 
 def test_argument_spec_allows_gathered_login_id_filter():

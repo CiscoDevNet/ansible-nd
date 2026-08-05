@@ -961,7 +961,7 @@ def test_loopback_interface_00750() -> None:
             },
         ),
         (
-            [{"interface_name": "Loopback101"}],
+            [{"interface_name": "loopback101"}],
             {
                 "192.0.2.10": (
                     "SERIAL-A",
@@ -981,10 +981,6 @@ def test_loopback_interface_00750() -> None:
                     {"interfaceType:loopback AND policyType:loopback AND interfaceName:loopback101"},
                 )
             },
-        ),
-        (
-            [{"switch_ip": "192.0.2.99", "interface_name": "loopback101"}],
-            {},
         ),
         (
             [{"switch_ip": "192.0.2.10"}, {"interface_name": "loopback101"}],
@@ -1024,13 +1020,34 @@ def test_loopback_interface_00760(filters, expected) -> None:
     rest_send = _build_rest_send(ResponseGenerator(responses()))
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
     instance._fabric_context = SimpleNamespace(  # pylint: disable=protected-access
+        fabric_name="test_fabric",
         switch_map={
             "192.0.2.10": "SERIAL-A",
             "192.0.2.11": "SERIAL-B",
-        }
+        },
     )
 
     assert instance._build_gathered_query_plan(filters) == expected
+
+
+def test_loopback_interface_00765() -> None:
+    """Verify unknown switch_ip in a gathered filter raises ValueError."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance._fabric_context = SimpleNamespace(  # pylint: disable=protected-access
+        fabric_name="test_fabric",
+        switch_map={
+            "192.0.2.10": "SERIAL-A",
+            "192.0.2.11": "SERIAL-B",
+        },
+    )
+
+    with pytest.raises(ValueError, match="does not exist in fabric"):
+        instance._build_gathered_query_plan([{"switch_ip": "192.0.2.99", "interface_name": "loopback101"}])
 
 
 def test_loopback_interface_00770(monkeypatch) -> None:
@@ -1041,7 +1058,7 @@ def test_loopback_interface_00770(monkeypatch) -> None:
 
     rest_send = _build_rest_send(ResponseGenerator(responses()))
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
-    instance._fabric_context = SimpleNamespace(switch_map={"192.0.2.10": "SERIAL-A"})
+    instance._fabric_context = SimpleNamespace(fabric_name="test_fabric", switch_map={"192.0.2.10": "SERIAL-A"})
     requested_paths = []
 
     monkeypatch.setattr(LoopbackInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
@@ -1067,7 +1084,7 @@ def test_loopback_interface_00770(monkeypatch) -> None:
 
     monkeypatch.setattr(LoopbackInterfaceOrchestrator, "_request", fake_request)
 
-    assert instance.query_all(gathered_filters=[{"switch_ip": "192.0.2.10", "interface_name": "Loopback101"}]) == [
+    assert instance.query_all(gathered_filters=[{"switch_ip": "192.0.2.10", "interface_name": "loopback101"}]) == [
         {
             "switchIp": "192.0.2.10",
             "interfaceName": "loopback101",
@@ -1099,7 +1116,7 @@ def test_loopback_interface_00780(monkeypatch) -> None:
 
     rest_send = _build_rest_send(ResponseGenerator(responses()))
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
-    instance._fabric_context = SimpleNamespace(switch_map={"192.0.2.10": "SERIAL-A"})
+    instance._fabric_context = SimpleNamespace(fabric_name="test_fabric", switch_map={"192.0.2.10": "SERIAL-A"})
 
     monkeypatch.setattr(LoopbackInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
     monkeypatch.setattr(

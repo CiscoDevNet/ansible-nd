@@ -84,6 +84,16 @@ class NDBaseModel(BaseModel, ABC):
         """Return whether a gathered candidate matches one filter item."""
         return issubset(criteria, candidate)
 
+    @classmethod
+    def get_argument_spec(cls) -> dict[str, Any]:
+        """Return the Ansible argument spec for this model's module.
+
+        Used by the state machine to derive gathered output pruning. Models
+        that support gathered state should override this to return the full
+        module argument spec including ``config.options``.
+        """
+        return {}
+
     # --- Serialization Configuration ---
 
     exclude_from_diff: ClassVar[Set[str]] = set()

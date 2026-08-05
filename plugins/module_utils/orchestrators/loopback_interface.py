@@ -88,7 +88,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     supports_bulk_delete: ClassVar[bool] = True
     interface_type: ClassVar[str] = "loopback"
     interface_mode: ClassVar[str] = "managed"
-    supports_gathered_lucene_filtering: ClassVar[bool] = True
+    supports_gathered_server_filtering: ClassVar[bool] = True
     gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
         base_terms=(
             ("interfaceType", "loopback"),
@@ -98,6 +98,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             ("interface_name",): "interfaceName",
         },
     )
+    # Maximum Lucene expressions per switch before collapsing to the base query
+    # Beyond this threshold, a single broad query is cheaper than N targeted ones.
+    _MAX_EXPRESSIONS_PER_SWITCH: ClassVar[int] = 3
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -277,21 +280,21 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
         filter_items = gathered_filters or [{}]
 
-        for raw_filter in filter_items:
-            normalized_filter = self.model_class.normalize_gathered_filter(raw_filter)
-            requested_switch_ip = normalized_filter.get("switch_ip")
+        for filter_item in filter_items:
+            requested_switch_ip = filter_item.get("switch_ip")
             if requested_switch_ip:
                 switch_id = switch_map.get(requested_switch_ip)
                 if switch_id is None:
-                    # This filter item cannot match an unknown switch.
-                    continue
+                    raise ValueError(
+                        f"Gathered filter references switch_ip '{requested_switch_ip}' " f"which does not exist in fabric '{self.fabric_context.fabric_name}'."
+                    )
                 target_switches = {
                     requested_switch_ip: switch_id,
                 }
             else:
                 target_switches = switch_map
             expressions = build_lucene_expressions(
-                filters=[normalized_filter],
+                filters=[filter_item],
                 spec=self.gathered_lucene_spec,
             )
             for switch_ip, switch_id in target_switches.items():
@@ -308,6 +311,14 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
                         planned_expressions.add(base_expression)
                     elif base_expression not in planned_expressions:
                         planned_expressions.add(expression)
+
+        # Cap fan-out: if a switch accumulated more expressions than the threshold,
+        # collapse to the base expression. The local filter guarantees correctness;
+        # the server filter only reduces candidate volume.
+        for switch_ip, (switch_id, expressions) in query_plan.items():
+            if len(expressions) > self._MAX_EXPRESSIONS_PER_SWITCH:
+                expressions.clear()
+                expressions.add(base_expression)
         return query_plan
 
     def _query_interfaces_with_lucene(
@@ -365,6 +376,11 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             if remaining is None and len(page) < page_size:
                 break
             offset += len(page)
+        else:
+            raise RuntimeError(
+                f"Pagination limit reached ({max_pages} pages, {len(candidates)} candidates collected) "
+                f"for switch '{switch_id}'. Results may be incomplete."
+            )
         return candidates
 
     def query_all(

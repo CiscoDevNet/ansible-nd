@@ -62,7 +62,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     supports_bulk_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = False
     # Opt-in. Existing orchestrators do not receive gathered filters.
-    supports_gathered_lucene_filtering: ClassVar[bool] = False
+    supports_gathered_server_filtering: ClassVar[bool] = False
+    # Optional callable to reshape gathered items before output pruning.
+    # Orchestrators that need it (e.g., ethernet_base) override as a @staticmethod.
+    gathered_transform: ClassVar[Any] = None
 
     # bulk_payload_key is the JSON wrapper key the bulk endpoint expects,
     # e.g. "links" for /api/v1/manage/links POST.

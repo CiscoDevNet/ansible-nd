@@ -529,7 +529,8 @@ class _FakeOrchestratorBase:
 
     supports_bulk_create = False
     supports_bulk_delete = False
-    supports_gathered_lucene_filtering = False
+    supports_gathered_server_filtering = False
+    gathered_transform = None
 
     def __init__(self, model_class, response_data):
         self.model_class = model_class
@@ -581,7 +582,7 @@ def _build_gathered_state_machine(monkeypatch, model_class, state, config, serve
         {"name": "other", "value": 20},
     ]
     orchestrator = _FakeOrchestratorBase(model_class, response_data)
-    orchestrator.supports_gathered_lucene_filtering = server_filtering
+    orchestrator.supports_gathered_server_filtering = server_filtering
     machine = NDStateMachine(
         module=_FakeModule(state=state, config=config),
         model_orchestrator=orchestrator,
