@@ -28,6 +28,9 @@ from typing import ClassVar, Literal, Optional
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import SWITCH_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionsContext
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -127,6 +130,29 @@ class ConfigActionsOrchestrator(ConfigActionsMixin, NDBaseOrchestrator):
     """Concrete orchestrator with ConfigActionsMixin for testing."""
 
     model_class: ClassVar[type[NDBaseModel]] = StubModel
+
+
+class FacadeBackend:
+    """Backend test double for the controller facade path."""
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    def save(self, context, fabric_name):
+        self.calls.append(("save", fabric_name, context.state))
+        return {"saved": fabric_name}
+
+    def deploy_global(self, context, fabric_name):
+        self.calls.append(("deploy_global", fabric_name, context.state))
+        return {"deployed": fabric_name}
+
+    def deploy_switches(self, context, fabric_name, switch_ids):
+        self.calls.append(("deploy_switches", fabric_name, switch_ids))
+        return {"switch_ids": list(switch_ids)}
+
+    def deploy_resources(self, context, fabric_name, resources):
+        self.calls.append(("deploy_resources", fabric_name, resources))
+        return {"resources": list(resources)}
 
 
 # =============================================================================
@@ -904,3 +930,48 @@ class TestValidateConfigActions:
         """
         with pytest.raises(ValueError, match="deploy=True requires save=True"):
             ConfigActionsOrchestrator.validate_config_actions(save=False, deploy=True, deploy_type="switch")
+
+
+class TestConfigActionsControllerFacade:
+    """Tests for ConfigActionsMixin.execute_config_actions_plan()."""
+
+    def test_facade_uses_supplied_backend_and_shared_controller(self):
+        """
+        # Summary
+
+        Verify the mixin facade delegates normalized actions to ConfigActionsController.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        orch = _make_orchestrator(_make_rest_send([]))
+        actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+        context = ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=("SER1",))
+        backend = FacadeBackend()
+
+        result = orch.execute_config_actions_plan(actions=actions, context=context, backend=backend)
+
+        assert backend.calls == [
+            ("save", "FAB1", "merged"),
+            ("deploy_switches", "FAB1", ("SER1",)),
+        ]
+        assert result.status == "completed"
+        assert result.reason == "actions_executed"
+
+    def test_facade_requires_backend_configuration(self):
+        """
+        # Summary
+
+        Verify the mixin facade fails clearly when no backend is provided or configured.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        orch = _make_orchestrator(_make_rest_send([]))
+        actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+        context = ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=("SER1",))
+
+        with pytest.raises(ValueError, match="No config actions backend"):
+            orch.execute_config_actions_plan(actions=actions, context=context)
