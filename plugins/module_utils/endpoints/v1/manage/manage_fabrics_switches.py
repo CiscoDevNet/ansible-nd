@@ -19,6 +19,7 @@ from __future__ import annotations
 __author__ = "Akshayanat C S"
 
 from typing import Literal
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
@@ -120,7 +121,7 @@ class _EpManageFabricsSwitchesBase(FabricNameMixin, NDEndpointBaseModel):
         """Build the base endpoint path."""
         if self.fabric_name is None:
             raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.path("fabrics", self.fabric_name, "switches")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "switches")
 
 
 class EpManageFabricsSwitchesGet(_EpManageFabricsSwitchesBase):
