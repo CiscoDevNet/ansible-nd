@@ -25,6 +25,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import (
+    config_actions_spec,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import (
+    SWITCH_CONFIG_ACTIONS,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
     NDNestedModel,
@@ -565,24 +571,12 @@ class SwitchConfigModel(NDBaseModel):
     @classmethod
     def get_argument_spec(cls) -> dict[str, Any]:
         """Return the Ansible argument spec for nd_manage_switches."""
-        return dict(
+        spec = dict(
             fabric=dict(type="str", required=True),
             state=dict(
                 type="str",
                 default="merged",
                 choices=["merged", "replaced", "overridden", "deleted", "gathered"],
-            ),
-            config_actions=dict(
-                type="dict",
-                options=dict(
-                    save=dict(type="bool", default=True),
-                    deploy=dict(type="bool", default=True),
-                    type=dict(
-                        type="str",
-                        default="switch",
-                        choices=["switch", "global"],
-                    ),
-                ),
             ),
             config=dict(
                 type="list",
@@ -671,3 +665,5 @@ class SwitchConfigModel(NDBaseModel):
                 ),
             ),
         )
+        spec.update(config_actions_spec(SWITCH_CONFIG_ACTIONS))
+        return spec

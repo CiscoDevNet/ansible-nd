@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
@@ -23,6 +23,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
     NDModuleError,
 )
 
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.controller import (
+    ConfigActionsController,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import (
+    SWITCH_CONFIG_ACTIONS,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import (
+    ConfigActions,
+    ConfigActionsContext,
+    ConfigActionsResult,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
@@ -69,6 +80,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.co
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
     FabricSwitchInventory,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.config_actions_backend import (
+    SwitchConfigActionsBackend,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     ApiDataChecker,
@@ -232,6 +246,23 @@ class SwitchServiceContext:
     save_config: bool = True
     deploy_config: bool = True
     deploy_type: str = "switch"
+    config_actions: ConfigActions | None = None
+
+    def __post_init__(self) -> None:
+        """
+        # Summary
+
+        Keep legacy context flags aligned with normalized config action intent.
+
+        ## Raises
+
+        None
+        """
+        if self.config_actions is None:
+            return
+        self.save_config = self.config_actions.save
+        self.deploy_config = self.config_actions.deploy
+        self.deploy_type = self.config_actions.type or "switch"
 
     def api_call(
         self,
@@ -369,7 +400,7 @@ class SwitchDiffEngine:
 
     @staticmethod
     def validate_configs(
-        config: Union[dict[str, Any], list[dict[str, Any]]],
+        config: dict[str, Any] | list[dict[str, Any]],
         state: str,
         nd: NDModule,
         log: logging.Logger,
@@ -1358,33 +1389,78 @@ class SwitchFabricOps:
     def finalize(self, serial_numbers: list[str] | None = None) -> None:
         """Run optional save and deploy actions for the fabric.
 
-        Uses service context flags to decide whether save and deploy should be
-        executed. No-op in check mode.
+        Uses the common config action controller to execute the normalized
+        switch save/deploy intent.
 
         Args:
             serial_numbers: Switch serial numbers to deploy when
-                            ``deploy_type`` is ``switch``. Falls back to
-                            global deploy if empty or ``None``.
+                            ``deploy_type`` is ``switch``.
 
         Returns:
             None.
         """
-        if self.ctx.nd.module.check_mode:
+        actions = self._config_actions()
+        if not actions.save and not actions.deploy:
             return
 
-        if self.ctx.save_config:
-            self.ctx.log.info("Saving fabric configuration")
-            self.fabric_utils.save_config()
+        context = ConfigActionsContext(
+            fabric_names=(self.ctx.fabric,),
+            state=None,
+            check_mode=self.ctx.nd.module.check_mode,
+            switch_ids=tuple(serial_numbers or ()),
+        )
+        controller = ConfigActionsController(SWITCH_CONFIG_ACTIONS, SwitchConfigActionsBackend(self.fabric_utils))
+        result = controller.execute(actions, context)
+        self._register_config_actions_result(result)
 
-        if self.ctx.deploy_config:
-            if self.ctx.deploy_type == "switch" and serial_numbers:
-                self.ctx.log.info("Switch-level deploy for: %s", serial_numbers)
-                self.fabric_utils.deploy_switches(serial_numbers)
-            else:
-                if self.ctx.deploy_type == "switch" and not serial_numbers:
-                    self.ctx.log.warning("Switch-level deploy requested but no serial numbers provided — falling back to global deploy")
-                self.ctx.log.info("Deploying fabric configuration (global)")
-                self.fabric_utils.deploy_config()
+        if result.status == "failed":
+            failed = next((step for step in result.actions if step.status == "failed"), None)
+            error = failed.error if failed and failed.error else "unknown error"
+            raise SwitchOperationError(f"Config actions failed for fabric {self.ctx.fabric}: {error}")
+
+    def _config_actions(self) -> ConfigActions:
+        """
+        # Summary
+
+        Return normalized config actions, preserving legacy context flags for direct service use.
+
+        ## Raises
+
+        None
+        """
+        if self.ctx.config_actions is not None:
+            return self.ctx.config_actions
+        return ConfigActions(
+            save=self.ctx.save_config,
+            deploy=self.ctx.deploy_config,
+            type=self.ctx.deploy_type,
+            provided=False,
+        )
+
+    def _register_config_actions_result(self, result: ConfigActionsResult) -> None:
+        """
+        # Summary
+
+        Register the common config action controller result in module output.
+
+        ## Raises
+
+        None
+        """
+        result_data = result.to_result()
+        self.ctx.results.action = "config_actions"
+        self.ctx.results.operation_type = OperationType.UPDATE
+        self.ctx.results.response_current = {
+            "MESSAGE": result.reason,
+            "RETURN_CODE": 200 if result.status != "failed" else -1,
+            "DATA": result_data,
+        }
+        self.ctx.results.result_current = {
+            "success": result.status != "failed",
+            "changed": any(step.status in {"completed", "planned"} for step in result.actions),
+        }
+        self.ctx.results.diff_current = result_data
+        self.ctx.results.register_api_call()
 
     def post_add_processing(
         self,
@@ -2496,6 +2572,7 @@ class NDSwitchResourceModule:
         nd: NDModule,
         results: Results,
         logger: logging.Logger | None = None,
+        config_actions: ConfigActions | None = None,
     ):
         """Initialize module state, services, and inventory snapshots.
 
@@ -2518,9 +2595,6 @@ class NDSwitchResourceModule:
         self.fabric = self.module.params.get("fabric")
         self.state = self.module.params.get("state")
 
-        # Shared context for service classes
-        config_actions = self.module.params.get("config_actions") or {}
-
         # Keep switch lifecycle API failures fast. RestSend models retries as
         # timeout / send_interval, so these values are applied per request by
         # _request_with_retry_policy() and restored immediately afterward.
@@ -2530,9 +2604,7 @@ class NDSwitchResourceModule:
             results=results,
             fabric=self.fabric,
             log=log,
-            save_config=config_actions.get("save", True),
-            deploy_config=config_actions.get("deploy", True),
-            deploy_type=config_actions.get("type", "switch"),
+            config_actions=config_actions,
         )
 
         # Switch collections
