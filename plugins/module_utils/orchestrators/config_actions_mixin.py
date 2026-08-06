@@ -32,6 +32,8 @@ Or use the convenience method to process a batch::
 
 from __future__ import annotations
 
+import logging
+
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import (
     EpFabricConfigSavePost,
 )
@@ -46,6 +48,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+
+logger = logging.getLogger("nd.ConfigActionsMixin")
 
 
 class ConfigActionsMixin:
@@ -85,6 +89,21 @@ class ConfigActionsMixin:
             verb=ep.verb,
             operation_type=OperationType.UPDATE,
         )
+
+    def _fabric_has_switches(self, fabric_name: str) -> bool:
+        """Return True if the fabric currently has any switches on the controller.
+
+        ND rejects configSave/deploy on a switchless fabric ("Fabric ... cannot be
+        deployed without any switches"), so callers must skip save when this is False.
+        """
+        ep = EpManageFabricsSwitchesGet(fabric_name=fabric_name)
+        result = self._request(
+            path=ep.path,
+            verb=ep.verb,
+            not_found_ok=True,
+            operation_type=OperationType.QUERY,
+        )
+        return bool(result.get("switches")) if result else False
 
     def config_deploy(self, fabric_name: str, deploy_type: str = "global") -> ResponseType:
         """Deploy fabric configuration.
@@ -216,6 +235,13 @@ class ConfigActionsMixin:
             return
 
         for fabric_name in fabric_names:
+            # ND rejects save/deploy on a switchless fabric. Skip (not an error) so
+            # a day-0 fabric create — or the fabric step on a first run, before the
+            # switches step adds switches — does not fail. Once switches exist,
+            # saves (including idempotent fabric-setting updates) and deploys proceed.
+            if not self._fabric_has_switches(fabric_name):
+                logger.info("Skipping config save/deploy for '%s': fabric has no switches.", fabric_name)
+                continue
             if save:
                 self.config_save(fabric_name)
             if deploy:
