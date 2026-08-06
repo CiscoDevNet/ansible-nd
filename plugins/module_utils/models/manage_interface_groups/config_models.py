@@ -150,8 +150,10 @@ class InterfaceGroupConfigModel(NDBaseModel):
     type: InterfaceGroupType | None = Field(
         default=None, description="Interface group type"
     )
-    network_names: list[str] | None = Field(
-        default=None, alias="networkNames", description="Associated network names"
+    networks: list[str] | None = Field(
+        default=None,
+        alias="networkNames",
+        description="Names of existing networks associated with the Interface Group",
     )
     switch_interfaces: list[InterfaceGroupSwitchInterfacesModel] | None = Field(
         default=None,
@@ -249,9 +251,9 @@ class InterfaceGroupConfigModel(NDBaseModel):
             "interface_group_association"
         )
         if isinstance(association, dict):
-            if "network_names" not in normalized and "networkNames" not in normalized:
+            if "networks" not in normalized and "networkNames" not in normalized:
                 normalized["networkNames"] = association.get(
-                    "networkNames", association.get("network_names")
+                    "networkNames", association.get("networks")
                 )
             if (
                 "switch_interfaces" not in normalized
@@ -268,9 +270,9 @@ class InterfaceGroupConfigModel(NDBaseModel):
         """Strip surrounding whitespace from user-facing string fields."""
         return value.strip() if isinstance(value, str) else value
 
-    @field_validator("network_names", mode="before")
+    @field_validator("networks", mode="before")
     @classmethod
-    def normalize_network_names(cls, value):
+    def normalize_networks(cls, value):
         """De-duplicate and sort network associations for stable diffs."""
         return InterfaceGroupValidators.normalize_unique_strings(value)
 
@@ -472,7 +474,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
                 continue
 
             current = getattr(self, field_name)
-            if field_name == "network_names":
+            if field_name == "networks":
                 setattr(self, field_name, self._merge_string_lists(current, value))
             elif field_name == "switch_interfaces":
                 setattr(self, field_name, self._merge_switch_interfaces(current, value))
@@ -562,7 +564,7 @@ class InterfaceGroupGatheredFilterModel(BaseModel):
     type: InterfaceGroupType | None = Field(
         default=None, description="Exact normalized Interface Group type"
     )
-    network_names: list[str] | None = Field(
+    networks: list[str] | None = Field(
         default=None,
         alias="networkNames",
         description="Networks that must all be associated",
@@ -595,9 +597,9 @@ class InterfaceGroupGatheredFilterModel(BaseModel):
         """Strip surrounding whitespace from scalar filter values."""
         return value.strip() if isinstance(value, str) else value
 
-    @field_validator("network_names", mode="before")
+    @field_validator("networks", mode="before")
     @classmethod
-    def normalize_network_names(cls, value):
+    def normalize_networks(cls, value):
         """De-duplicate and sort network filter values."""
         return InterfaceGroupValidators.normalize_unique_strings(value)
 
@@ -655,7 +657,7 @@ class InterfaceGroupModuleConfigModel(BaseModel):
     _config_input_keys: ClassVar[set[str]] = {
         "interface_group_name",
         "type",
-        "network_names",
+        "networks",
         "switch_interfaces",
         "template_name",
         "template_config",
@@ -833,7 +835,7 @@ class InterfaceGroupModuleConfigModel(BaseModel):
                 "options": {
                     "interface_group_name": {"type": "str", "required": False},
                     "type": {"type": "str", "choices": InterfaceGroupType.choices()},
-                    "network_names": {"type": "list", "elements": "str"},
+                    "networks": {"type": "list", "elements": "str"},
                     "switch_interfaces": {
                         "type": "list",
                         "elements": "dict",

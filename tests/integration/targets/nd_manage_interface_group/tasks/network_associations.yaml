@@ -15,7 +15,7 @@
         [
           {
             'interface_group_name': interface_group_names.any,
-            'network_names': [test_network_1]
+            'networks': [test_network_1]
           }
         ]
         + (
@@ -23,7 +23,7 @@
             {
               'interface_group_name':
                 interface_group_names.ethernet_custom,
-              'network_names': [test_network_1]
+              'networks': [test_network_1]
             }
           ]
           if test_ethernet_custom_flow_enabled
@@ -33,34 +33,30 @@
           {
             'interface_group_name':
               interface_group_names.ethernet_with_policy,
-            'network_names': [test_network_1]
+            'networks': [test_network_1]
           },
           {
             'interface_group_name':
               interface_group_names.ethernet_without_policy,
-            'network_names': [test_network_1]
+            'networks': [test_network_1]
           }
         ]
         + (
           [
             {
               'interface_group_name': interface_group_names.vpc,
-              'network_names': [test_network_1]
+              'networks': [test_network_1]
             }
           ]
           if test_vpc_flow_enabled
           else []
         )
       }}
+    check_mode: false
+    idempotency: false
     expected:
-      check_mode:
-        changed: true
-        failed: false
       apply:
         changed: true
-        failed: false
-      idempotency:
-        changed: false
         failed: false
     nd_queries:
       - name: Fetch all Interface Groups after network associations
@@ -79,14 +75,14 @@
       {{
         [
           interface_group_any_members
-          | combine({'network_names': [test_network_1]})
+          | combine({'networks': [test_network_1]})
         ]
         + (
           [
             interface_group_ethernet_custom_member
             | combine(
                 {
-                  'network_names': [test_network_1],
+                  'networks': [test_network_1],
                   'template_config': interface_group_custom_effective_config
                 },
                 recursive=true
@@ -97,14 +93,14 @@
         )
         + [
           interface_group_ethernet_with_policy_member
-          | combine({'network_names': [test_network_1]}),
+          | combine({'networks': [test_network_1]}),
           interface_group_ethernet_without_policy_member
-          | combine({'network_names': [test_network_1]})
+          | combine({'networks': [test_network_1]})
         ]
         + (
           [
             interface_group_vpc_member
-            | combine({'network_names': [test_network_1]})
+            | combine({'networks': [test_network_1]})
           ]
           if test_vpc_flow_enabled
           else []

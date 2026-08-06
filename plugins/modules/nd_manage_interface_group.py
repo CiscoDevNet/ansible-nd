@@ -79,9 +79,9 @@ options:
         - ethernetWithoutPolicy
         - portChannel
         - vpc
-      network_names:
+      networks:
         description:
-        - Existing networks associated with this Interface Group.
+        - Names of existing NDFC networks associated with this Interface Group.
         - With O(state=gathered), all supplied names must be associated with a
           returned group. An explicit empty list returns groups with no networks.
         - For write states, the module fails with C(changed=false) if a supplied
@@ -321,7 +321,7 @@ EXAMPLES = r"""
     config:
       - interface_group_name: server-port-channels
         type: portChannel
-        network_names:
+        networks:
           - Network-A
         switch_interfaces:
           - switch_id: FDO12345678
@@ -338,7 +338,7 @@ EXAMPLES = r"""
     config:
       - interface_group_name: server-port-channels
         type: portChannel
-        network_names:
+        networks:
           - Network-A
         switch_interfaces:
           - switch_id: FDO12345678
@@ -360,7 +360,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_interface_group:
     fabric_name: fabric-1
     config:
-      - network_names:
+      - networks:
           - Network-A
         switch_interfaces:
           - switch_id: FDO12345678
@@ -476,7 +476,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_g
     InterfaceGroupGatheredFilterModel,
     InterfaceGroupModuleConfigModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import (
+    nd_argument_spec,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,

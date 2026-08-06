@@ -17,6 +17,78 @@
   tags:
     - always
 
+- name: Verify required fabric and switch management IP variables
+  ansible.builtin.assert:
+    that:
+      - test_fabric_name | length > 0
+      - test_switch_ip_primary | length > 0
+      - test_switch_ip_secondary | length > 0
+      - test_switch_ip_primary != test_switch_ip_secondary
+    fail_msg: >-
+      Define nd_test_fabric_name, nd_test_switch_ip, and
+      nd_test_interface_group_secondary_switch_ip in the local integration
+      inventory. The two management IPs must identify different switches.
+  tags:
+    - always
+
+- name: Query the fabric switch inventory for canonical serial numbers
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: interface_group_switch_inventory
+  changed_when: false
+  tags:
+    - always
+
+- name: Select the two reserved switches by management IP
+  ansible.builtin.set_fact:
+    interface_group_primary_switch_matches: >-
+      {{
+        interface_group_switch_inventory.current.switches
+        | default([])
+        | selectattr(
+            'fabricManagementIp',
+            'equalto',
+            test_switch_ip_primary
+          )
+        | list
+      }}
+    interface_group_secondary_switch_matches: >-
+      {{
+        interface_group_switch_inventory.current.switches
+        | default([])
+        | selectattr(
+            'fabricManagementIp',
+            'equalto',
+            test_switch_ip_secondary
+          )
+        | list
+      }}
+  tags:
+    - always
+
+- name: Verify both management IPs resolve uniquely in the fabric
+  ansible.builtin.assert:
+    that:
+      - interface_group_primary_switch_matches | length == 1
+      - interface_group_secondary_switch_matches | length == 1
+    fail_msg: >-
+      Each supplied management IP must resolve to exactly one switch in fabric
+      '{{ test_fabric_name }}'. Primary matches={{
+      interface_group_primary_switch_matches | length }}, secondary matches={{
+      interface_group_secondary_switch_matches | length }}.
+  tags:
+    - always
+
+- name: Store the canonical switch serial numbers for Interface Group requests
+  ansible.builtin.set_fact:
+    test_switch_id: >-
+      {{ interface_group_primary_switch_matches[0].switchId }}
+    test_switch_id_secondary: >-
+      {{ interface_group_secondary_switch_matches[0].switchId }}
+  tags:
+    - always
+
 - name: Verify Interface Group testbed variables
   ansible.builtin.assert:
     that:

@@ -243,7 +243,7 @@ def test_nd_manage_interface_group_00010() -> None:
                 {
                     "interface_group_name": " port-channel-group ",
                     "type": "portChannel",
-                    "network_names": ["network-b", "network-a", "network-a"],
+                    "networks": ["network-b", "network-a", "network-a"],
                     "switch_interfaces": [
                         {
                             "switch_id": " FDO1 ",
@@ -271,7 +271,7 @@ def test_nd_manage_interface_group_00010() -> None:
         {
             "interface_group_name": "port-channel-group",
             "type": "portChannel",
-            "network_names": ["network-a", "network-b"],
+            "networks": ["network-a", "network-b"],
             "switch_interfaces": [
                 {
                     "switch_id": "FDO1",
@@ -347,7 +347,7 @@ def test_nd_manage_interface_group_00025() -> None:
             "config_actions": {"type": "switch", "deploy": True},
             "config": [
                 {
-                    "network_names": ["network-b", "network-a"],
+                    "networks": ["network-b", "network-a"],
                     "switch_interfaces": [{"switch_id": " SN1 "}],
                 }
             ],
@@ -361,7 +361,7 @@ def test_nd_manage_interface_group_00025() -> None:
     assert module.params["config"] == []
     assert len(filters) == 1
     assert filters[0].to_filter_config() == {
-        "network_names": ["network-a", "network-b"],
+        "networks": ["network-a", "network-b"],
         "switch_interfaces": [{"switch_id": "SN1"}],
     }
 

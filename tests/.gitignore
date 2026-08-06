@@ -3,6 +3,7 @@ output/
 # Local integration test config (use *.template files as reference)
 integration/inventory.networking
 integration/integration_config.yml
+integration/targets/nd_manage_interface_group/integration_config.yml
 
 # Log files
 *.log

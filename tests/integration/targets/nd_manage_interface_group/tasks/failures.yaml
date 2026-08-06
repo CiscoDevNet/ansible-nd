@@ -27,6 +27,23 @@
       config:
         - interface_group_name: "ANSIBLE-IG-MISSING-TYPE"
       message: "requires type"
+    - label: replaced requires type
+      state: replaced
+      config:
+        - interface_group_name: "ANSIBLE-IG-REPLACED-MISSING-TYPE"
+      message: "type is required"
+    - label: custom create requires template name
+      config:
+        - interface_group_name: "ANSIBLE-IG-CUSTOM-MISSING-TEMPLATE"
+          type: ethernetCustom
+      message: "requires template_name"
+    - label: Ethernet without policy requires empty attributes
+      config:
+        - interface_group_name: "ANSIBLE-IG-NO-POLICY-ATTRIBUTES"
+          type: ethernetWithoutPolicy
+          ethernet_attributes:
+            admin_status: true
+      message: "must be empty"
     - label: referenced custom template does not exist
       config:
         - interface_group_name: "ANSIBLE-IG-MISSING-CUSTOM-TEMPLATE"
@@ -49,14 +66,60 @@
           template_config:
             ANSIBLE_UNKNOWN_TEMPLATE_INPUT: invalid
       message: "Unknown template_config key"
+    - label: any rejects unsupported interface kinds
+      config:
+        - interface_group_name: "ANSIBLE-IG-ANY-WRONG-KIND"
+          type: any
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - Loopback0
+      message: "not valid for interface group type"
+    - label: Ethernet custom rejects port-channel interfaces
+      config:
+        - interface_group_name: "ANSIBLE-IG-CUSTOM-WRONG-KIND"
+          type: ethernetCustom
+          template_name: "ANSIBLE-TEMPLATE-NOT-USED"
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - Port-channel9999
+      message: "not valid for interface group type"
+    - label: Ethernet with policy rejects port-channel interfaces
+      config:
+        - interface_group_name: "ANSIBLE-IG-POLICY-WRONG-KIND"
+          type: ethernetWithPolicy
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - Port-channel9999
+      message: "not valid for interface group type"
+    - label: Ethernet without policy rejects port-channel interfaces
+      config:
+        - interface_group_name: "ANSIBLE-IG-NO-POLICY-WRONG-KIND"
+          type: ethernetWithoutPolicy
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - Port-channel9999
+      message: "not valid for interface group type"
     - label: port-channel rejects Ethernet interfaces
       config:
-        - interface_group_name: "{{ interface_group_names.port_channel }}"
+        - interface_group_name: "ANSIBLE-IG-PORT-CHANNEL-WRONG-KIND"
           type: portChannel
           switch_interfaces:
             - switch_id: "{{ test_switch_id }}"
               interface_names:
-                - "{{ test_ethernet_policy }}"
+                - Ethernet1/999
+      message: "not valid for interface group type"
+    - label: vPC rejects port-channel interfaces
+      config:
+        - interface_group_name: "ANSIBLE-IG-VPC-WRONG-KIND"
+          type: vpc
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - Port-channel9999
       message: "not valid for interface group type"
     - label: template fields are custom-only
       config:
@@ -72,6 +135,13 @@
           ethernet_attributes:
             native_vlan: 4095
       message: "native_vlan"
+    - label: duplicate group names are rejected
+      config:
+        - interface_group_name: "ANSIBLE-IG-DUPLICATE"
+          type: any
+        - interface_group_name: "ANSIBLE-IG-DUPLICATE"
+          type: any
+      message: "duplicate interface_group_name"
     - label: duplicate ownership within one task is rejected
       config:
         - interface_group_name: "ANSIBLE-IG-DUPLICATE-OWNER-1"
@@ -95,6 +165,11 @@
         - interface_group_name: "{{ interface_group_names.any }}"
           deploy: false
       message: "valid only when config_actions.type=resource"
+    - label: unsupported nested options are rejected
+      config:
+        - interface_group_name: "ANSIBLE-IG-UNSUPPORTED-OPTION"
+          unsupported_option: true
+      message: "unsupported"
   loop_control:
     label: "{{ item.label }}"
   register: interface_group_input_failures
@@ -133,7 +208,7 @@
         type: any
       - interface_group_name: "{{ interface_group_names.atomic_invalid }}"
         type: portChannel
-        network_names:
+        networks:
           - "ANSIBLE-NETWORK-DOES-NOT-EXIST"
     idempotency: false
     expected:
@@ -188,7 +263,7 @@
         type: resource
     config:
       - interface_group_name: "{{ interface_group_names.port_channel }}"
-        network_names:
+        networks:
           - "ANSIBLE-NETWORK-DOES-NOT-EXIST"
     check_mode: false
     idempotency: false
@@ -271,7 +346,7 @@
     config:
       - interface_group_name: "{{ interface_group_names.port_channel_target }}"
         type: portChannel
-        network_names:
+        networks:
           - "{{ test_network_2 }}"
         switch_interfaces:
           - switch_id: "{{ test_switch_id }}"
@@ -357,7 +432,7 @@
       - interface_group_name: >-
           {{ interface_group_names.port_channel_undeployed }}
         type: portChannel
-        network_names:
+        networks:
           - "{{ test_undeployed_network }}"
         switch_interfaces:
           - switch_id: "{{ test_switch_id }}"
@@ -415,7 +490,7 @@
       - interface_group_name: >-
           {{ interface_group_names.port_channel_undeployed }}
         type: portChannel
-        network_names:
+        networks:
           - "{{ test_undeployed_network }}"
         switch_interfaces:
           - switch_id: "{{ test_switch_id }}"
@@ -480,7 +555,7 @@
     config:
       - interface_group_name: >-
           {{ interface_group_names.port_channel_undeployed }}
-        network_names:
+        networks:
           - "{{ test_network_1 }}"
     check_mode: false
     idempotency: false

@@ -530,9 +530,9 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         ):
             return False
 
-        if "network_names" in supplied:
-            expected_networks = set(filter_item.network_names or [])
-            actual_networks = set(group.network_names or [])
+        if "networks" in supplied:
+            expected_networks = set(filter_item.networks or [])
+            actual_networks = set(group.networks or [])
             if not expected_networks:
                 if actual_networks:
                     return False
@@ -834,9 +834,9 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         """Clear associations, then delete Interface Groups in one bulk request."""
         for item in model_instances:
             before = self._existing_groups.get(item.interface_group_name, item)
-            if before.network_names or before.switch_interfaces:
+            if before.networks or before.switch_interfaces:
                 detached = deepcopy(before)
-                detached.network_names = []
+                detached.networks = []
                 detached.switch_interfaces = []
                 self._put_group(detached)
                 self._queue_deploy_change(before, detached, item.interface_group_name)
@@ -912,7 +912,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     def _has_interface_configuration(model: InterfaceGroupConfigModel | None) -> bool:
         if model is None:
             return False
-        return bool(model.network_names) or model.type in _INTERFACE_POLICY_TYPES
+        return bool(model.networks) or model.type in _INTERFACE_POLICY_TYPES
 
     @classmethod
     def _affected_interfaces(
@@ -929,8 +929,8 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         if cls._has_interface_configuration(before):
             affected.update(before_pairs - after_pairs)
 
-        before_networks = set(before.network_names or []) if before else set()
-        after_networks = set(after.network_names or []) if after else set()
+        before_networks = set(before.networks or []) if before else set()
+        after_networks = set(after.networks or []) if after else set()
         if before_networks != after_networks:
             affected.update(before_pairs | after_pairs)
 
@@ -968,6 +968,15 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     def _effective_model(
         self, proposed: InterfaceGroupConfigModel
     ) -> InterfaceGroupConfigModel:
+        """Build and validate the complete configuration for one proposed item.
+
+        The initial Interface Group query has already populated
+        ``_existing_groups``.  For merged updates, applying the partial model to
+        a deep copy preserves the queried type and associations while
+        Pydantic assignment validation re-runs the type-specific model checks.
+        This catches invalid partial updates before any mutation request and
+        does not require another controller query.
+        """
         existing = self._existing_groups.get(proposed.interface_group_name)
         if existing is not None and self.rest_send.params.get("state") == "merged":
             return deepcopy(existing).merge(proposed)
@@ -992,8 +1001,8 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             existing = self._existing_groups.get(proposed.interface_group_name)
             if existing is None:
                 continue
-            if "network_names" not in proposed.model_fields_set:
-                proposed.network_names = deepcopy(existing.network_names)
+            if "networks" not in proposed.model_fields_set:
+                proposed.networks = deepcopy(existing.networks)
             if "switch_interfaces" not in proposed.model_fields_set:
                 proposed.switch_interfaces = deepcopy(existing.switch_interfaces)
 
@@ -1238,10 +1247,8 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         if failures:
             raise RuntimeError("; ".join(failures))
 
-    def _validate_networks_exist(self, network_names: set[str]) -> None:
-        missing = sorted(
-            name for name in network_names if not self._network_exists(name)
-        )
+    def _validate_networks_exist(self, networks: set[str]) -> None:
+        missing = sorted(name for name in networks if not self._network_exists(name))
         if missing:
             quoted = ", ".join(f"'{name}'" for name in missing)
             raise RuntimeError(
@@ -1249,11 +1256,11 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 "The Interface Groups module does not create networks."
             )
 
-    def _warn_resource_network_deploy_scope(self, network_names: set[str]) -> None:
+    def _warn_resource_network_deploy_scope(self, networks: set[str]) -> None:
         """Warn that resource deployment applies interfaces, not networks."""
-        if not network_names:
+        if not networks:
             return
-        quoted = ", ".join(f"'{name}'" for name in sorted(network_names))
+        quoted = ", ".join(f"'{name}'" for name in sorted(networks))
         message = (
             f"Resource-level Interface Group deployment will deploy affected "
             f"interfaces but will not deploy referenced network(s) {quoted}. "
@@ -1294,8 +1301,8 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         referenced_networks: set[str] = set()
         for group_name, after in effective.items():
             before = self._existing_groups.get(group_name)
-            before_networks = set(before.network_names or []) if before else set()
-            referenced_networks.update(set(after.network_names or []) - before_networks)
+            before_networks = set(before.networks or []) if before else set()
+            referenced_networks.update(set(after.networks or []) - before_networks)
         self._validate_networks_exist(referenced_networks)
 
         if (
@@ -1310,7 +1317,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 before = self._existing_groups.get(group_name)
                 if before is not None and before.get_diff(after, exclude_unset=False):
                     continue
-                resource_networks.update(after.network_names or [])
+                resource_networks.update(after.networks or [])
             self._warn_resource_network_deploy_scope(resource_networks)
 
     def prepare_mutations(

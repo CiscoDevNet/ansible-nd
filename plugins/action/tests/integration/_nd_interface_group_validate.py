@@ -82,7 +82,7 @@ EXAMPLES = r"""
     test_data:
       - interface_group_name: ANSIBLE-IG-PC
         type: portChannel
-        network_names:
+        networks:
           - Network-A
         switch_interfaces:
           - switch_id: FDO12345678
@@ -275,7 +275,7 @@ def _normalise_group(raw: Dict[str, Any]) -> Dict[str, Any]:
     aliases = {
         "interface_group_name": ("interface_group_name", "interfaceGroupName"),
         "type": ("type",),
-        "network_names": ("network_names", "networkNames"),
+        "networks": ("networks", "networkNames"),
         "switch_interfaces": ("switch_interfaces", "switchInterfaces"),
         "template_name": ("template_name", "templateName"),
         "template_config": ("template_config", "templateConfig"),
@@ -288,14 +288,14 @@ def _normalise_group(raw: Dict[str, Any]) -> Dict[str, Any]:
         value, present = _first(raw, *field_aliases)
         if (
             not present
-            and field_name in {"network_names", "switch_interfaces"}
+            and field_name in {"networks", "switch_interfaces"}
             and association
         ):
             value, present = _first(association, *field_aliases)
         if not present:
             continue
         canonical["_fields"].add(field_name)
-        if field_name == "network_names":
+        if field_name == "networks":
             canonical[field_name] = _normalise_string_list(value)
         elif field_name == "switch_interfaces":
             canonical[field_name] = _normalise_members(value)
@@ -375,7 +375,7 @@ def _compare_group(
                 actual or {}, vpc_peer_switch_ids
             )
         matches = compared_expected == compared_actual
-        if field_name == "network_names" and mode == "subset":
+        if field_name == "networks" and mode == "subset":
             matches = set(expected or []) <= set(actual or [])
         elif field_name == "switch_interfaces" and mode == "subset":
             matches = all(
@@ -483,7 +483,7 @@ def _check_invariants(
                 len(interface_names)
                 for interface_names in group.get("switch_interfaces", {}).values()
             )
-            network_count = len(group.get("network_names", []))
+            network_count = len(group.get("networks", []))
             for count_name, expected in (
                 ("interface_count", member_count),
                 ("network_count", network_count),

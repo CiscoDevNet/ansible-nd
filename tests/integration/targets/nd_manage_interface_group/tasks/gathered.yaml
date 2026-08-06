@@ -44,7 +44,7 @@
     config:
       - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
         type: ethernetCustom
-        network_names:
+        networks:
           - "{{ test_network_1 }}"
         switch_interfaces:
           - switch_id: "{{ test_switch_id }}"
@@ -67,7 +67,7 @@
     test_data:
       - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
         type: ethernetCustom
-        network_names:
+        networks:
           - "{{ test_network_1 }}"
         switch_interfaces:
           - switch_id: "{{ test_switch_id }}"
@@ -129,7 +129,7 @@
       output_level: "{{ nd_info.output_level }}"
       fabric_name: "{{ test_fabric_name }}"
     config:
-      - network_names: []
+      - networks: []
         switch_interfaces: []
     check_mode: false
     idempotency: false
@@ -145,7 +145,7 @@
     test_data:
       - interface_group_name: "{{ interface_group_names.port_channel }}"
         type: portChannel
-        network_names: []
+        networks: []
         switch_interfaces: []
     mode: exact
     scope_prefix: "{{ interface_group_test_prefix }}"
@@ -164,7 +164,7 @@
       {{
         [
           {'interface_group_name': interface_group_names.any},
-          {'type': 'any', 'network_names': [test_network_1]}
+          {'type': 'any', 'networks': [test_network_1]}
         ]
         + (
           [

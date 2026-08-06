@@ -148,7 +148,7 @@
     config:
       - interface_group_name: "{{ interface_group_names.port_channel }}"
         type: portChannel
-        network_names: []
+        networks: []
         switch_interfaces: []
     expected:
       check_mode:
@@ -176,7 +176,7 @@
     test_data:
       - interface_group_name: "{{ interface_group_names.port_channel }}"
         type: portChannel
-        network_names: []
+        networks: []
         switch_interfaces: []
     mode: exact
   when: not ansible_check_mode
@@ -216,7 +216,7 @@
       - "{{ interface_group_pc_one_member }}"
       - interface_group_name: "{{ interface_group_names.port_channel_target }}"
         type: portChannel
-        network_names:
+        networks:
           - "{{ test_network_2 }}"
         switch_interfaces:
           - switch_id: "{{ test_switch_id }}"
@@ -248,7 +248,7 @@
       - "{{ interface_group_pc_one_member }}"
       - interface_group_name: "{{ interface_group_names.port_channel_target }}"
         type: portChannel
-        network_names:
+        networks:
           - "{{ test_network_2 }}"
         switch_interfaces:
           - switch_id: "{{ test_switch_id }}"
@@ -289,7 +289,7 @@
         type: ethernetCustom
         template_name: "{{ test_custom_template }}"
         template_config: "{{ interface_group_custom_template_config }}"
-        network_names: []
+        networks: []
         switch_interfaces:
           - switch_id: "{{ test_switch_id }}"
             interface_names:
@@ -320,7 +320,7 @@
         type: ethernetCustom
         template_name: "{{ test_custom_template }}"
         template_config: "{{ interface_group_custom_template_config }}"
-        network_names: []
+        networks: []
         switch_interfaces:
           - switch_id: "{{ test_switch_id }}"
             interface_names:

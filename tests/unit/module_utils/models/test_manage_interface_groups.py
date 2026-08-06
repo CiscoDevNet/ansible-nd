@@ -68,7 +68,7 @@ def test_manage_interface_groups_model_00015() -> None:
             "state": "gathered",
             "config": [
                 {
-                    "network_names": ["network-b", "network-a", "network-a"],
+                    "networks": ["network-b", "network-a", "network-a"],
                     "switch_interfaces": [
                         {
                             "switch_id": " SN1 ",
@@ -83,7 +83,7 @@ def test_manage_interface_groups_model_00015() -> None:
     assert gathered.fabric_name == "fabric-1"
     assert isinstance(gathered.config[0], InterfaceGroupGatheredFilterModel)
     assert gathered.config[0].to_filter_config() == {
-        "network_names": ["network-a", "network-b"],
+        "networks": ["network-a", "network-b"],
         "switch_interfaces": [
             {
                 "switch_id": "SN1",
@@ -110,10 +110,10 @@ def test_manage_interface_groups_model_00015() -> None:
 def test_manage_interface_groups_model_00017() -> None:
     """Preserve explicit empty association filters and reject write-only keys."""
     filter_item = InterfaceGroupGatheredFilterModel.model_validate(
-        {"network_names": [], "switch_interfaces": []}
+        {"networks": [], "switch_interfaces": []}
     )
     assert filter_item.to_filter_config() == {
-        "network_names": [],
+        "networks": [],
         "switch_interfaces": [],
     }
 
@@ -163,7 +163,7 @@ def test_manage_interface_groups_model_00020() -> None:
         {
             "interface_group_name": " group-one ",
             "type": "portChannel",
-            "network_names": ["net-b", "net-a", "net-b"],
+            "networks": ["net-b", "net-a", "net-b"],
             "switch_interfaces": [
                 {"switch_id": " SN2 ", "interface_names": ["po20", "PORT-CHANNEL10"]},
                 {"switch_id": "SN2", "interface_names": ["port_channel10"]},
@@ -173,7 +173,7 @@ def test_manage_interface_groups_model_00020() -> None:
     )
 
     assert model.interface_group_name == "group-one"
-    assert model.network_names == ["net-a", "net-b"]
+    assert model.networks == ["net-a", "net-b"]
     assert [item.switch_id for item in model.switch_interfaces or []] == ["SN1", "SN2"]
     assert (model.switch_interfaces or [])[1].interface_names == [
         "Port-channel10",
@@ -224,14 +224,17 @@ def test_manage_interface_groups_model_00030() -> None:
         }
     )
 
-    assert model.network_names == ["net1", "net2"]
+    assert model.networks == ["net1", "net2"]
     assert (model.switch_interfaces or [])[0].interface_names == [
         "Ethernet1/1",
         "Ethernet1/2",
     ]
-    assert "interface_count" not in model.to_config()
-    assert "network_count" not in model.to_config()
-    assert "policy_id" not in model.to_config()
+    gathered_config = model.to_config()
+    assert gathered_config["networks"] == ["net1", "net2"]
+    assert "network_names" not in gathered_config
+    assert "interface_count" not in gathered_config
+    assert "network_count" not in gathered_config
+    assert "policy_id" not in gathered_config
     assert "interfaceCount" not in model.to_payload()
     assert "networkCount" not in model.to_payload()
     assert "policyId" not in model.to_payload()
@@ -486,6 +489,7 @@ def test_manage_interface_groups_model_00100() -> None:
     """
     spec = InterfaceGroupModuleConfigModel.get_argument_spec()
     action_options = spec["config_actions"]["options"]
+    config_options = spec["config"]["options"]
 
     assert set(action_options) == {"deploy", "type"}
     assert action_options["deploy"] == {"type": "bool", "default": True}
@@ -494,7 +498,10 @@ def test_manage_interface_groups_model_00100() -> None:
         "default": "switch",
         "choices": ["resource", "switch"],
     }
-    assert spec["config"]["options"]["deploy"] == {"type": "bool"}
+    assert config_options["deploy"] == {"type": "bool"}
+    assert config_options["networks"] == {"type": "list", "elements": "str"}
+    assert "network_names" not in config_options
+    assert "description" not in config_options
     assert "ticket_id" not in spec
     assert "cluster_name" not in spec
 
@@ -719,7 +726,7 @@ def test_manage_interface_groups_model_00150() -> None:
     proposed = InterfaceGroupConfigModel.from_config(
         {
             "interface_group_name": "group1",
-            "network_names": ["net-b"],
+            "networks": ["net-b"],
             "switch_interfaces": [
                 {"switch_id": "SN1", "interface_names": ["Ethernet1/3"]},
                 {"switch_id": "SN3", "interface_names": ["Ethernet1/4"]},
@@ -732,7 +739,7 @@ def test_manage_interface_groups_model_00150() -> None:
 
     assert existing.get_diff(proposed, exclude_unset=True) is False
     merged = existing.merge(proposed)
-    assert merged.network_names == ["net-a", "net-b"]
+    assert merged.networks == ["net-a", "net-b"]
     assert [
         (item.switch_id, item.interface_names)
         for item in merged.switch_interfaces or []
@@ -750,7 +757,7 @@ def test_manage_interface_groups_model_00150() -> None:
     already_present = InterfaceGroupConfigModel.from_config(
         {
             "interface_group_name": "group1",
-            "network_names": ["net-a"],
+            "networks": ["net-a"],
             "switch_interfaces": [
                 {"switch_id": "SN1", "interface_names": ["Ethernet1/1"]}
             ],
@@ -759,7 +766,7 @@ def test_manage_interface_groups_model_00150() -> None:
     empty_collections = InterfaceGroupConfigModel.from_config(
         {
             "interface_group_name": "group1",
-            "network_names": [],
+            "networks": [],
             "switch_interfaces": [],
             "ethernet_attributes": {},
         }
@@ -800,7 +807,7 @@ def test_manage_interface_groups_model_00155() -> None:
         {
             "interface_group_name": "group1",
             "type": "portChannel",
-            "network_names": ["net-a"],
+            "networks": ["net-a"],
             "switch_interfaces": [
                 {"switch_id": "SN1", "interface_names": ["Port-channel10"]}
             ],
@@ -808,7 +815,7 @@ def test_manage_interface_groups_model_00155() -> None:
     )
 
     assert existing.get_diff(proposed, exclude_unset=False) is False
-    assert proposed.network_names == ["net-a"]
+    assert proposed.networks == ["net-a"]
     assert (proposed.switch_interfaces or [])[0].interface_names == ["Port-channel10"]
 
 

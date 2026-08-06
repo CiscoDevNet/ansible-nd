@@ -67,7 +67,7 @@
         type: resource
     config:
       - interface_group_name: "{{ interface_group_names.port_channel }}"
-        network_names:
+        networks:
           - "{{ test_network_2 }}"
         switch_interfaces:
           - switch_id: "{{ test_switch_id }}"
@@ -99,7 +99,7 @@
     test_data:
       - interface_group_name: "{{ interface_group_names.port_channel }}"
         type: portChannel
-        network_names:
+        networks:
           - "{{ test_network_1 }}"
           - "{{ test_network_2 }}"
         switch_interfaces:
@@ -138,7 +138,7 @@
         type: switch
     config:
       - interface_group_name: "{{ interface_group_names.port_channel }}"
-        network_names: []
+        networks: []
         switch_interfaces: []
     check_mode: false
     idempotency: false

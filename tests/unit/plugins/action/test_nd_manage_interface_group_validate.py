@@ -68,7 +68,7 @@ def test_normalises_nested_association_and_order():
         }
     )
 
-    assert model["network_names"] == ["Network-A", "Network-B"]
+    assert model["networks"] == ["Network-A", "Network-B"]
     assert model["switch_interfaces"] == {"SN1": ["Port-channel501", "Port-channel502"]}
 
 
@@ -184,7 +184,7 @@ def test_subset_mode_accepts_additive_state(action_plugin):
         test_data=[
             {
                 "interface_group_name": "ANSIBLE-IG-PC",
-                "network_names": ["Network-A"],
+                "networks": ["Network-A"],
                 "switch_interfaces": [
                     {
                         "switch_id": "SN1",
@@ -207,7 +207,7 @@ def test_exact_mode_detects_removed_collection_members(action_plugin):
         test_data=[
             {
                 "interface_group_name": "ANSIBLE-IG-PC",
-                "network_names": ["Network-A"],
+                "networks": ["Network-A"],
                 "switch_interfaces": [
                     {
                         "switch_id": "SN1",
@@ -221,7 +221,7 @@ def test_exact_mode_detects_removed_collection_members(action_plugin):
 
     assert result["failed"] is True
     assert {item["field"] for item in result["report"]["mismatches"]} == {
-        "network_names",
+        "networks",
         "switch_interfaces",
     }
 
@@ -491,7 +491,7 @@ def test_absent_dictionary_alias_and_serialized_output(action_plugin):
         {
             "interface_group_name": "ANSIBLE-IG-PC",
             "type": "portChannel",
-            "network_names": ["Network-A", "Network-B"],
+            "networks": ["Network-A", "Network-B"],
             "switch_interfaces": {"SN1": ["Port-channel501", "Port-channel502"]},
         }
     ]

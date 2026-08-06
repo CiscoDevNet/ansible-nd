@@ -1,0 +1,122 @@
+---
+# Interface Groups integration-test configuration.
+#
+# PREPARATION
+# 1. From the collection root, create the local ND connection inventory:
+#
+#    cp tests/integration/inventory.networking.template \
+#      tests/integration/inventory.networking
+#
+#    Keep only the ND host and connection credentials in inventory.networking.
+#
+# 2. Create the target-specific configuration from this template:
+#
+#    cp tests/integration/targets/nd_manage_interface_group/integration_config.yml.template \
+#      tests/integration/targets/nd_manage_interface_group/integration_config.yml
+#
+#    The copied file is ignored by Git. Replace the environment-specific
+#    placeholders and adjust concrete fixture names that are unavailable.
+#
+# TESTBED REQUIREMENTS
+# - A writable ND fabric containing two reserved leaf switches.
+# - Unused Ethernet interfaces for Ethernet groups, port-channel members,
+#   Network attachments, and the optional vPC fixture.
+# - Four unused port-channel names or IDs.
+# - Three available Network IDs and VLAN IDs. The suite uses base + 1 through
+#   base + 3 for the values configured below.
+# - When vPC coverage is enabled, the leaves must be able to form a vPC pair.
+# - When Ethernet-custom coverage is enabled, ND must contain a compatible
+#   user-defined Ethernet shared-policy template.
+#
+# Interface Groups accept a management IP or serial number as the switch
+# identifier. This test target takes management IPs because the interface and
+# Network fixture modules require them. It queries the fabric inventory once
+# and derives the serial numbers used by Interface Group requests.
+#
+# The same physical port number may be used on different switches. Fixtures on
+# the same switch must use distinct interfaces where exclusive use is required.
+#
+# NORMAL RUN
+#
+# ansible-playbook -i tests/integration/inventory.networking \
+#   tests/integration/targets/nd_manage_interface_group/run_tests.yaml \
+#   -e @tests/integration/targets/nd_manage_interface_group/integration_config.yml
+#
+# DESTRUCTIVE OVERRIDDEN RUN
+# Set nd_interface_group_destructive_tests_enabled to true in the copied file,
+# use only a fabric reserved for Interface Groups testing, and run:
+#
+# ansible-playbook -i tests/integration/inventory.networking \
+#   tests/integration/targets/nd_manage_interface_group/run_tests.yaml \
+#   -e @tests/integration/targets/nd_manage_interface_group/integration_config.yml \
+#   --tags interface_groups_overridden
+
+# Required environment-specific values.
+nd_test_fabric_name: <FABRIC_NAME>
+nd_test_switch_ip: <PRIMARY_LEAF_MANAGEMENT_IP>
+nd_test_interface_group_secondary_switch_ip: <SECONDARY_LEAF_MANAGEMENT_IP>
+
+# Optional flows and fixture creation.
+nd_test_interface_group_vpc_flow_enabled: true
+nd_test_interface_group_ethernet_custom_flow_enabled: true
+nd_test_interface_group_create_vpc_pair_fixture: true
+nd_test_interface_group_vpc_pair_use_virtual_peer_link: true
+nd_test_interface_group_create_vpc_fixture: true
+nd_test_interface_group_create_port_channel_fixtures: true
+nd_test_interface_group_create_network_fixtures: true
+nd_interface_group_destructive_tests_enabled: false
+
+# vPC fixture. The numeric ID is used for the vPC and peer port-channels.
+nd_test_interface_group_vpc_id: 200
+nd_test_interface_group_vpc_peer1_member: Ethernet1/30
+nd_test_interface_group_vpc_peer2_member: Ethernet1/30
+
+# Ethernet fixtures.
+nd_test_interface_group_ethernet_custom: Ethernet1/20
+nd_test_interface_group_ethernet_policy: Ethernet1/21
+nd_test_interface_group_ethernet_without_policy: Ethernet1/22
+nd_test_interface_group_any_ethernet_primary: Ethernet1/23
+nd_test_interface_group_any_ethernet_secondary: Ethernet1/23
+
+# Port-channel fixtures and their physical members.
+nd_test_interface_group_port_channel_1: Port-channel501
+nd_test_interface_group_port_channel_2: Port-channel502
+nd_test_interface_group_port_channel_3: Port-channel503
+nd_test_interface_group_any_port_channel: Port-channel504
+nd_test_interface_group_port_channel_member_1: Ethernet1/24
+nd_test_interface_group_port_channel_member_2: Ethernet1/25
+nd_test_interface_group_port_channel_member_3: Ethernet1/26
+nd_test_interface_group_any_port_channel_member: Ethernet1/24
+
+# Network fixtures.
+nd_test_interface_group_network_attachment_interface_primary: Ethernet1/27
+nd_test_interface_group_network_attachment_interface_secondary: Ethernet1/27
+nd_test_interface_group_network_base_id: 902100
+nd_test_interface_group_network_base_vlan: 3200
+nd_test_interface_group_network_1: ANSIBLE-IG-NETWORK-A
+nd_test_interface_group_network_2: ANSIBLE-IG-NETWORK-B
+nd_test_interface_group_undeployed_network: ANSIBLE-IG-NETWORK-PENDING
+
+# Required when Ethernet-custom coverage is enabled. The template must be an
+# existing user-defined Ethernet shared-policy template in ND. The example
+# input dictionary matches a duplicate of int_shared_trunk_host.
+nd_test_interface_group_custom_template: <CUSTOM_TEMPLATE_NAME>
+nd_test_interface_group_custom_extra_config_key: CONF
+nd_test_interface_group_custom_template_config:
+  DESC: ""
+  BPDUGUARD_ENABLED: "no"
+  IG_FOR_FEX: false
+  PORTTYPE_FAST_ENABLED: true
+  MTU: jumbo
+  SPEED: Auto
+  AUTO_NEG: "on"
+  ALLOWED_VLANS: none
+  NATIVE_VLAN:
+  CDP_ENABLE: true
+  ENABLE_ORPHAN_PORT: false
+  PORT_DUPLEX_MODE: auto
+  CONF: ""
+  ADMIN_STATE: true
+  ENABLE_NETFLOW: false
+  NETFLOW_MONITOR: ""
+  NETFLOW_SAMPLER: ""

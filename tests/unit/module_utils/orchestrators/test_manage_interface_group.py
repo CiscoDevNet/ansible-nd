@@ -219,7 +219,7 @@ def test_manage_interface_group_00020() -> None:
             InterfaceGroupGatheredFilterModel.model_validate(
                 {
                     "type": "ethernetCustom",
-                    "network_names": ["network-a"],
+                    "networks": ["network-a"],
                     "switch_interfaces": [
                         {
                             "switch_id": "SN1",
@@ -235,7 +235,7 @@ def test_manage_interface_group_00020() -> None:
     assert names(
         [
             InterfaceGroupGatheredFilterModel.model_validate(
-                {"network_names": [], "switch_interfaces": []}
+                {"networks": [], "switch_interfaces": []}
             )
         ]
     ) == ["empty"]
@@ -245,7 +245,7 @@ def test_manage_interface_group_00020() -> None:
                 {"switch_interfaces": [{"switch_id": "SN1"}]}
             ),
             InterfaceGroupGatheredFilterModel.model_validate(
-                {"network_names": ["network-a"]}
+                {"networks": ["network-a"]}
             ),
         ]
     ) == ["custom", "policy"]
@@ -635,7 +635,7 @@ def test_manage_interface_group_00050(monkeypatch) -> None:
         {
             "interface_group_name": "pc",
             "type": "portChannel",
-            "network_names": ["net-a"],
+            "networks": ["net-a"],
             "switch_interfaces": [
                 {"switch_id": "SN1", "interface_names": ["Port-channel10"]}
             ],
@@ -1213,7 +1213,7 @@ def test_manage_interface_group_00135(monkeypatch) -> None:
         config=[
             {
                 "interface_group_name": "group-a",
-                "network_names": ["network-b"],
+                "networks": ["network-b"],
                 "switch_interfaces": [
                     {
                         "switch_id": "SN1",
@@ -1318,7 +1318,7 @@ def test_manage_interface_group_00137(monkeypatch, state: str) -> None:
 
     orchestrator.update(replacement)
 
-    assert replacement.network_names == ["network-a", "network-b"]
+    assert replacement.networks == ["network-a", "network-b"]
     assert replacement.switch_interfaces == existing.switch_interfaces
     assert calls[0]["data"]["networkNames"] == ["network-a", "network-b"]
     assert calls[0]["data"]["switchInterfaces"] == [
@@ -1356,16 +1356,16 @@ def test_manage_interface_group_00138() -> None:
         {
             "interface_group_name": "group-a",
             "type": "portChannel",
-            "network_names": [],
+            "networks": [],
             "switch_interfaces": [],
         }
     )
 
     orchestrator._preserve_omitted_associations([partial_membership, explicit_empty])
 
-    assert partial_membership.network_names == ["network-a", "network-b"]
+    assert partial_membership.networks == ["network-a", "network-b"]
     assert partial_membership.switch_interfaces[0].interface_names == ["Port-channel20"]
-    assert explicit_empty.network_names == []
+    assert explicit_empty.networks == []
     assert explicit_empty.switch_interfaces == []
 
 
@@ -1492,7 +1492,7 @@ def test_manage_interface_group_00170(monkeypatch) -> None:
         {
             "interface_group_name": "pc",
             "type": "portChannel",
-            "network_names": ["network-a"],
+            "networks": ["network-a"],
             "switch_interfaces": [
                 {"switch_id": "SN1", "interface_names": ["Port-channel10"]}
             ],
@@ -1527,7 +1527,7 @@ def test_manage_interface_group_00180(monkeypatch) -> None:
     monkeypatch.setattr(
         ManageInterfaceGroupOrchestrator,
         "_validate_networks_exist",
-        lambda self, network_names: None,
+        lambda self, networks: None,
     )
 
     with pytest.raises(RuntimeError, match="type cannot be changed"):
@@ -2059,3 +2059,98 @@ def test_manage_interface_group_00300(monkeypatch) -> None:
     )
 
     orchestrator.preflight([unique_vpc, first_port_channel, second_port_channel])
+
+
+@pytest.mark.parametrize(
+    ("existing", "partial", "message"),
+    [
+        (
+            _group("group-a", group_type="ethernetWithoutPolicy"),
+            {
+                "interface_group_name": "group-a",
+                "ethernet_attributes": {"admin_status": True},
+            },
+            "ethernet_attributes must be empty for type=ethernetWithoutPolicy",
+        ),
+        (
+            _group("group-a", group_type="portChannel"),
+            {
+                "interface_group_name": "group-a",
+                "switch_interfaces": [
+                    {
+                        "switch_id": "SN1",
+                        "interface_names": ["Ethernet1/1"],
+                    }
+                ],
+            },
+            "is not valid for interface group type 'portChannel'",
+        ),
+    ],
+)
+def test_manage_interface_group_00310(
+    monkeypatch,
+    existing: InterfaceGroupConfigModel,
+    partial: dict,
+    message: str,
+) -> None:
+    """Validate partial merged input against the queried Interface Group type."""
+
+    def unexpected_request(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("Effective configuration validation needs no request")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request",
+        unexpected_request,
+    )
+    orchestrator = _orchestrator(config_actions={"deploy": False, "type": "switch"})
+    orchestrator._existing_groups = {"group-a": existing}
+    proposed = InterfaceGroupConfigModel.from_config(partial)
+
+    with pytest.raises(ValueError, match=message):
+        orchestrator.preflight([proposed])
+
+    assert orchestrator._existing_groups["group-a"] == existing
+
+
+def test_manage_interface_group_00320(monkeypatch) -> None:
+    """Accept a valid type-omitted merged update without another query."""
+
+    def unexpected_request(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("Effective configuration validation needs no request")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request",
+        unexpected_request,
+    )
+    existing = _group(
+        "group-a",
+        group_type="portChannel",
+        members=[("SN1", ["Port-channel10"])],
+    )
+    orchestrator = _orchestrator(config_actions={"deploy": False, "type": "switch"})
+    orchestrator._existing_groups = {"group-a": existing}
+    proposed = InterfaceGroupConfigModel.from_config(
+        {
+            "interface_group_name": "group-a",
+            "switch_interfaces": [
+                {
+                    "switch_id": "SN1",
+                    "interface_names": ["Port-channel20"],
+                }
+            ],
+        }
+    )
+
+    orchestrator.preflight([proposed])
+    effective = orchestrator._effective_model(proposed)
+
+    assert effective.type == "portChannel"
+    assert effective.switch_interfaces[0].interface_names == [
+        "Port-channel10",
+        "Port-channel20",
+    ]
+    assert orchestrator._existing_groups["group-a"] == existing
