@@ -352,7 +352,7 @@ def _resource(state="merged", *, config=None, check_mode=False, existing=None, o
     resource.output.assign(before=resource.before, after=resource.existing)
 
     resource.discovery = SimpleNamespace(discover=lambda configs: {}, build_proposed=lambda configs, discovered, existing_items: [])
-    resource.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "vxlan")
+    resource.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "vxlanIbgp")
     resource.fabric_ops = RecordingFabricOps()
     resource.poap_handler = SimpleNamespace(handle=lambda configs, existing_items=None: None)
     resource.rma_handler = SimpleNamespace(handle=lambda configs, existing_items: None)
@@ -575,10 +575,12 @@ def test_fabric_capability_validation_rejects_external_without_preserve_config()
     [
         ("routed", False),
         ("vxlanCampus", False),
-        ("aimlVxlan", False),
+        ("vxlanIbgp", True),
+        ("vxlanEbgp", False),
+        ("aimlVxlanIbgp", True),
+        ("aimlVxlanEbgp", False),
         ("aimlRouted", False),
         ("externalConnectivity", True),
-        ("vxlan", True),
         ("enhancedClassicLan", True),
     ],
 )
@@ -589,6 +591,34 @@ def test_fabric_capability_validation_derives_omitted_preserve_config(fabric_typ
     validate_switch_configs_for_fabric_type("FAB1", fabric_type, [cfg])
 
     assert cfg.preserve_config is expected
+
+
+@pytest.mark.parametrize(
+    ("fabric_type", "family"),
+    [
+        ("vxlanEbgp", "DataCenter VXLAN eBGP"),
+        ("aimlVxlanEbgp", "AI VXLAN eBGP"),
+    ],
+)
+def test_fabric_capability_validation_rejects_ebgp_preserve_config_true(fabric_type, family):
+    """DataCenter and AI VXLAN eBGP fabrics reject brownfield preserve_config=true."""
+    with pytest.raises(SwitchFabricCapabilityError, match=f"preserve_config 'true' is not supported for {family}"):
+        validate_switch_configs_for_fabric_type(
+            "FAB1",
+            fabric_type,
+            [_cfg_without_role(preserve_config=True)],
+        )
+
+
+@pytest.mark.parametrize("fabric_type", ["vxlan", "aimlVxlan"])
+def test_fabric_capability_validation_rejects_non_concrete_vxlan_fabric_types(fabric_type):
+    """Generic VXLAN aliases are not concrete standalone fabric types for switch onboarding."""
+    with pytest.raises(SwitchFabricCapabilityError, match=f"does not support fabric type '{fabric_type}'"):
+        validate_switch_configs_for_fabric_type(
+            "FAB1",
+            fabric_type,
+            [_cfg_without_role()],
+        )
 
 
 def test_fabric_capability_validation_rejects_routed_non_nxos():
