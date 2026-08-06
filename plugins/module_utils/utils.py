@@ -2,7 +2,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 import logging
 from copy import deepcopy
@@ -41,25 +41,93 @@ def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remo
     return result
 
 
-def issubset(subset: Any, superset: Any) -> bool:
-    """Check if subset is contained in superset."""
+def _has_perfect_matching(adjacency: list[list[int]]) -> bool:
+    """Return True if every subset item can be matched to a distinct candidate.
+
+    ``adjacency[i]`` holds the indices of the candidates that subset item ``i``
+    can match. This solves the maximum bipartite matching problem with Kuhn's
+    augmenting-path algorithm so that a less-specific item never greedily
+    consumes a candidate that a more-specific item needs.
+    """
+    # candidate index -> subset item index it is currently assigned to
+    match_to_item: dict[int, int] = {}
+
+    def _try_assign(item_index: int, visited: set[int]) -> bool:
+        for candidate_index in adjacency[item_index]:
+            if candidate_index in visited:
+                continue
+            visited.add(candidate_index)
+            assigned_item = match_to_item.get(candidate_index)
+            # Candidate is free, or its current owner can be reassigned elsewhere.
+            if assigned_item is None or _try_assign(assigned_item, visited):
+                match_to_item[candidate_index] = item_index
+                return True
+        return False
+
+    for item_index in range(len(adjacency)):
+        if not _try_assign(item_index, set()):
+            return False
+    return True
+
+
+def issubset(subset: Any, superset: Any, allow_superset: bool = False) -> bool:
+    """Check if subset is contained in superset.
+
+    For dicts, only the non-``None`` keys of ``subset`` are compared; keys whose
+    value is ``None`` are ignored, and keys present only in ``superset`` are
+    allowed. For lists, every ``subset`` element must pair with a distinct
+    ``superset`` element (matching is order-independent). By default the two
+    lists must be the same length; when ``allow_superset`` is True the
+    ``subset`` list may be shorter so that extra existing elements are
+    tolerated (``len(subset) <= len(superset)``).
+
+    Args:
+        subset: The value to check.
+        superset: The value to check against.
+        allow_superset: When True, list matching is one-directional: an element
+            in ``subset`` is considered matched when it is a subset of a
+            candidate in ``superset``, even if the candidate has additional
+            keys, and ``superset`` may contain extra elements that ``subset``
+            does not (``len(subset) <= len(superset)``). When False (default)
+            matching is bidirectional and the lengths must be equal. For lists
+            of dicts the default is equivalent to equality *after* ``None``
+            -valued keys are dropped from both sides (it is not strict ``==``
+            equality, because such keys are ignored).
+    """
     if type(subset) is not type(superset):
         return False
 
     if not isinstance(subset, dict):
         if isinstance(subset, list):
-            if len(subset) != len(superset):
+            # Under allow_superset the proposed list only needs to map into the
+            # existing one, so extra existing elements are tolerated
+            # (len(subset) <= len(superset)). Otherwise matching is
+            # bidirectional and the lengths must be identical.
+            if allow_superset:
+                if len(subset) > len(superset):
+                    return False
+            elif len(subset) != len(superset):
                 return False
 
-            remaining = list(superset)
+            # Build the bipartite adjacency: for each subset item, which
+            # candidates it can match. A full matching is then required so a
+            # less-specific item cannot greedily consume a candidate that a
+            # more-specific item needs (relevant under allow_superset=True).
+            adjacency: list[list[int]] = []
             for item in subset:
-                for index, candidate in enumerate(remaining):
-                    if issubset(item, candidate) and issubset(candidate, item):
-                        del remaining[index]
-                        break
-                else:
+                matches = []
+                for index, candidate in enumerate(superset):
+                    if allow_superset:
+                        match = issubset(item, candidate, allow_superset=True)
+                    else:
+                        match = issubset(item, candidate) and issubset(candidate, item)
+                    if match:
+                        matches.append(index)
+                if not matches:
                     return False
-            return True
+                adjacency.append(matches)
+
+            return _has_perfect_matching(adjacency)
         return subset == superset
 
     for key, value in subset.items():
@@ -69,7 +137,7 @@ def issubset(subset: Any, superset: Any) -> bool:
         if key not in superset:
             return False
 
-        if not issubset(value, superset[key]):
+        if not issubset(value, superset[key], allow_superset=allow_superset):
             return False
 
     return True

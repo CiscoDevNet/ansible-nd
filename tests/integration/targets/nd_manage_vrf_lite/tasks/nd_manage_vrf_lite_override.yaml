@@ -1,0 +1,491 @@
+##############################################
+##                 SETUP                    ##
+##############################################
+
+- name: Import nd_manage_vrf_lite Base Tasks
+  ansible.builtin.import_tasks: base_tasks.yaml
+  tags: override
+
+- name: OVERRIDE - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vrf_lite_module_timeout | default(600) }}"
+  tags: override
+
+##############################################
+##      Setup Override TestCase Variables  ##
+##############################################
+
+- name: OVERRIDE - Setup initial config
+  ansible.builtin.set_fact:
+    vrf_lite_conf:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "{{ test_ipv4_addr }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+                peer_vrf: "{{ test_peer_vrf }}"
+  delegate_to: localhost
+  tags: override
+
+- name: Import Configuration Prepare Tasks - override_initial
+  vars:
+    file: override_initial
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: override
+
+- name: OVERRIDE - Setup overridden config (changed IP address)
+  ansible.builtin.set_fact:
+    vrf_lite_conf:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "10.33.0.30/24"
+                neighbor_ipv4: "10.33.0.29"
+                peer_vrf: "{{ test_peer_vrf }}"
+  delegate_to: localhost
+  tags: override
+
+- name: Import Configuration Prepare Tasks - override_overridden
+  vars:
+    file: override_overridden
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: override
+
+##############################################
+##               OVERRIDE                 ##
+##############################################
+
+# TC1 - Override with a new VRF Lite attachment
+- name: OVERRIDE - TC1 - OVERRIDE - Create VRF Lite using override state
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_override_initial_conf }}"
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC1 - ASSERT - Check if changed flag is true
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: override
+
+- name: OVERRIDE - TC1 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: override
+
+- name: OVERRIDE - TC1 - ASSERT - Verify VRF Lite state in ND
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: override
+
+# TC2 - Override with same VRF Lite with changes
+- name: OVERRIDE - TC2 - OVERRIDE - Override VRF Lite with changes
+  cisco.nd.nd_manage_vrf_lite: &conf_overridden
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_override_overridden_conf }}"
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC2 - ASSERT - Check if changed flag is true
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: override
+
+- name: OVERRIDE - TC2 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: override
+
+- name: OVERRIDE - TC2 - ASSERT - Verify overridden VRF Lite state
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "10.33.0.30/24"
+    vrf_lite_assert_neighbor_ipv4: "10.33.0.29"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: override
+
+# TC3 - Idempotence test
+- name: OVERRIDE - TC3 - conf - Idempotence
+  cisco.nd.nd_manage_vrf_lite: *conf_overridden
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC3 - ASSERT - Check if changed flag is false
+  ansible.builtin.assert:
+    that:
+      - result.changed == false
+      - result.failed == false
+  tags: override
+
+# TC4 - Override with empty config should delete all VRF Lite for the fabric (purge-all)
+- name: OVERRIDE - TC4 - SETUP - Ensure at least one VRF Lite exists
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  tags: override
+
+- name: OVERRIDE - TC4 - OVERRIDE - Purge all VRF Lite with empty config
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: []
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC4 - ASSERT - Verify all attachments deleted
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: override
+
+- name: OVERRIDE - TC4 - GATHER - Verify no VRF Lite remain
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+  register: verify_result
+  tags: override
+
+- name: OVERRIDE - TC4 - ASSERT - Confirm gathered is empty or minimal
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+      - >
+        (
+          verify_result.gathered
+          | selectattr('attach', 'defined')
+          | selectattr('attach')
+          | list
+          | length
+        ) == 0
+  tags: override
+
+# TC5 - Override with deploy enabled
+- name: OVERRIDE - TC5 - DELETE - Ensure VRF Lite absent before deploy test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  tags: override
+
+- name: OVERRIDE - TC5 - OVERRIDE - Create VRF Lite with deploy true
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config: "{{ nd_manage_vrf_lite_override_initial_conf }}"
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC5 - ASSERT - Verify deploy path execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
+  tags: override
+
+- name: OVERRIDE - TC5 - ASSERT - Verify config-save and deploy API traces
+  ansible.builtin.assert:
+    that:
+      - result.deployment.response is defined
+      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'config_save')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'vrf_deploy')
+          | list
+          | length
+        ) > 0
+  tags: override
+
+- name: OVERRIDE - TC5 - GATHER - Verify VRF Lite exists after deploy flow
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: override
+
+- name: OVERRIDE - TC5 - ASSERT - Verify deployed override config
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: override
+
+# TC6 - Override with config_actions save+deploy (global scope)
+- name: OVERRIDE - TC6 - DELETE - Ensure VRF Lite absent before config_actions test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  tags: override
+
+- name: OVERRIDE - TC6 - OVERRIDE - Create VRF Lite with config_actions save+deploy global
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: true
+      deploy: true
+      type: global
+    config: "{{ nd_manage_vrf_lite_override_initial_conf }}"
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC6 - ASSERT - Verify config_actions save+deploy execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+      - result.deployment.config_actions is defined
+      - result.deployment.config_actions.save == true
+      - result.deployment.config_actions.deploy == true
+      - result.deployment.config_actions.type == "global"
+      - result.deployment.response is defined
+      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'config_save')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'vrf_deploy')
+          | list
+          | length
+        ) > 0
+      # type=global performs a fabric-wide deploy and must not pin switchIds.
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'vrf_deploy')
+          | map(attribute='payload')
+          | selectattr('switchIds', 'defined')
+          | list
+          | length
+        ) == 0
+      # config save is a body-less fabric trigger; it must not carry a deploy-scope 'type'.
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'config_save')
+          | map(attribute='payload')
+          | selectattr('type', 'defined')
+          | list
+          | length
+        ) == 0
+  tags: override
+
+# TC7 - check_mode should not apply override configuration changes
+- name: OVERRIDE - TC7 - DELETE - Ensure VRF Lite is absent before check_mode test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  tags: override
+
+- name: OVERRIDE - TC7 - OVERRIDE - Run check_mode create for VRF Lite
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_override_initial_conf }}"
+  check_mode: true
+  register: result
+  tags: override
+
+- name: OVERRIDE - TC7 - ASSERT - Verify check_mode invocation succeeded
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is not defined
+  tags: override
+
+- name: OVERRIDE - TC7 - GATHER - Verify check_mode flow did not create VRF Lite
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: override
+
+- name: OVERRIDE - TC7 - ASSERT - Verify gathered after check_mode
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+      - verify_result.gathered | length == 1
+      - verify_result.gathered[0].vrf_name == test_vrf
+      - verify_result.gathered[0].attach | default([]) | length == 0
+  tags: override
+
+##############################################
+##                 CLEAN-UP                 ##
+##############################################
+
+- name: OVERRIDE - END - ensure clean state
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  when: cleanup_at_end | default(true)
+  tags: override

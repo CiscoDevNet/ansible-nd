@@ -1,0 +1,118 @@
+---
+# Shared base tasks for nd_manage_vrf_lite integration tests.
+# Import this at the top of each test file:
+#   - import_tasks: base_tasks.yaml
+#     tags: <test_tag>
+
+- name: BASE - Test Entry Point - [nd_manage_vrf_lite]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+    nd_manage_vrf_lite Integration Test Base Setup            +"
+      - "----------------------------------------------------------------"
+
+- name: BASE - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+# --------------------------------
+# Create Dictionary of Test Data
+# --------------------------------
+- name: BASE - Setup Internal TestCase Variables
+  ansible.builtin.set_fact:
+    test_fabric: "{{ fabric_name }}"
+    test_switch1: "{{ switch1_ip | default(switch_id | default(switch1_serial)) }}"
+    test_switch1_serial: "{{ switch1_serial | default(switch1_ip | default(switch_id)) }}"
+    test_switch2: "{{ switch2_ip | default(switch2_serial | default('')) }}"
+    test_switch2_serial: "{{ switch2_serial | default(switch2_ip | default('')) }}"
+    test_vrf: "{{ vrf_name | default('TENANT_A') }}"
+    test_vlan_id: "{{ vrf_vlan_id | default(500) }}"
+    test_interface: "{{ vrf_lite_interface | default('Ethernet1/20') }}"
+    test_dot1q: "{{ vrf_lite_dot1q | default(500) }}"
+    test_ipv4_addr: "{{ vrf_lite_ipv4_addr | default('10.33.0.2/24') }}"
+    test_neighbor_ipv4: "{{ vrf_lite_neighbor_ipv4 | default('10.33.0.1') }}"
+    test_interface2: "{{ vrf_lite_interface2 | default('Ethernet1/21') }}"
+    test_dot1q2: "{{ vrf_lite_dot1q2 | default((vrf_lite_dot1q | default(500) | int) + 1) }}"
+    test_ipv4_addr2: "{{ vrf_lite_ipv4_addr2 | default('10.33.1.2/24') }}"
+    test_neighbor_ipv4_2: "{{ vrf_lite_neighbor_ipv4_2 | default('10.33.1.1') }}"
+    test_peer_vrf: "{{ vrf_lite_peer_vrf | default(vrf_name | default('TENANT_A')) }}"
+    deploy_local: true
+  delegate_to: localhost
+
+- name: BASE - Setup extended VRF Lite attachment payload for coverage
+  ansible.builtin.set_fact:
+    vrf_lite_attach_extended:
+      - ip_address: "{{ test_switch1 }}"
+        import_evpn_rt: ""
+        export_evpn_rt: ""
+        vrf_lite:
+          - interface: "{{ vrf_lite_interface | default('Ethernet1/20') }}"
+            dot1q: "{{ vrf_lite_dot1q | default(500) }}"
+            ipv4_addr: "{{ vrf_lite_ipv4_addr | default('10.33.0.2/24') }}"
+            neighbor_ipv4: "{{ vrf_lite_neighbor_ipv4 | default('10.33.0.1') }}"
+            ipv6_addr: ""
+            neighbor_ipv6: ""
+            peer_vrf: "{{ vrf_lite_peer_vrf | default('TENANT_A') }}"
+  delegate_to: localhost
+
+# ------------------------------------------
+# Query Fabric Reachability
+# ------------------------------------------
+- name: BASE - Verify fabric is reachable via VRF Lite gather API
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    verify:
+      timeout: 60
+      retries: 3
+  register: fabric_query
+  failed_when: false
+
+- name: BASE - Assert fabric exists
+  ansible.builtin.assert:
+    that:
+      - fabric_query.failed == false
+    fail_msg: "Fabric '{{ test_fabric }}' not found or VRF Lite API unreachable."
+
+- name: BASE - Reset HTTPAPI socket before cleanup
+  ansible.builtin.meta: reset_connection
+
+# ------------------------------------------
+# Clean up existing VRF Lite attachments
+# ------------------------------------------
+- name: BASE - Clean up existing VRF Lite attachments for test VRF
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+
+- name: BASE - Clean up existing secondary VRF Lite attachment for test VRF
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch2 }}"
+  failed_when: false
+  when: test_switch2 | length > 0
