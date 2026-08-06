@@ -731,7 +731,7 @@ def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
 
 
 def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
-    """Finalize chooses save, switch deploy, global deploy, and check-mode no-op correctly."""
+    """Finalize chooses save, switch deploy, global deploy, skipped deploy, and check-mode correctly."""
     calls = []
     fabric_utils = SimpleNamespace(
         save_config=lambda: calls.append(("save", None)),
@@ -746,6 +746,14 @@ def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
     ctx.deploy_type = "global"
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
     assert calls == [("save", None), ("deploy_config", None)]
+
+    calls.clear()
+    ctx.deploy_type = "switch"
+    SwitchFabricOps(ctx, fabric_utils).finalize([])
+    assert calls == [("save", None)]
+    assert ctx.results.metadata[-1]["action"] == "config_actions"
+    assert ctx.results.responses[-1]["DATA"]["actions"][-1]["status"] == "skipped"
+    assert ctx.results.responses[-1]["DATA"]["actions"][-1]["scope"] == "switch"
 
     calls.clear()
     ctx.nd.module.check_mode = True
