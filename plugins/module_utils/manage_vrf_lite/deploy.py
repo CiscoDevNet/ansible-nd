@@ -11,6 +11,7 @@ from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     _resolve_serial,
+    get_config_actions,
     vrf_name_from_config_item,
 )
 
@@ -69,6 +70,78 @@ def _deployment_intent(module: Any) -> tuple[set[tuple[str, str]], set[tuple[str
     return enabled_pairs, disabled_pairs, disabled_vrfs
 
 
+def _scoped_pending_deploy_targets(module: Any) -> list[dict[str, str]]:
+    """Return deploy-enabled pending targets covered by this invocation.
+
+    Controller-derived pending rows are intentionally scoped by the requested
+    resource state and config. This lets a later identical run deploy its own
+    staged intent without sweeping unrelated pending work from the fabric.
+    """
+    pending_targets = module.params.get("_pending_deploy_targets") or []
+    if not isinstance(pending_targets, list):
+        return []
+
+    state = module.params.get("_vrf_lite_requested_state") or module.params.get("state", "merged")
+    config = _deploy_intent_config(module)
+    configured_vrfs: set[str] = set()
+    configured_pairs: set[tuple[str, str]] = set()
+    delete_all_vrfs: set[str] = set()
+
+    for item in config:
+        if not isinstance(item, dict):
+            continue
+        vrf_name = vrf_name_from_config_item(item)
+        if not vrf_name:
+            continue
+        configured_vrfs.add(vrf_name)
+        attachments = item.get("attach")
+        if state == "deleted" and not attachments:
+            delete_all_vrfs.add(vrf_name)
+        if not isinstance(attachments, list):
+            continue
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            switch_id = attachment.get("ip_address") or attachment.get("switch_ip") or attachment.get("serial_number")
+            if switch_id:
+                configured_pairs.add((vrf_name, _resolve_serial(module, switch_id)))
+
+    enabled_pairs, disabled_pairs, disabled_vrfs = _deployment_intent(module)
+    scoped: dict[tuple[str, str], dict[str, str]] = {}
+    for target in pending_targets:
+        if not isinstance(target, dict):
+            continue
+        vrf_name = str(target.get("vrf_name") or "").strip()
+        switch_id = _resolve_serial(module, target.get("switch_ip"))
+        operation = str(target.get("operation") or "").strip().lower()
+        if not vrf_name or not switch_id or operation not in ("write", "delete"):
+            continue
+
+        pair = (vrf_name, switch_id)
+        in_scope = False
+        if state == "merged":
+            in_scope = pair in configured_pairs
+        elif state == "replaced":
+            in_scope = vrf_name in configured_vrfs
+        elif state == "overridden":
+            in_scope = True
+        elif state == "deleted":
+            in_scope = operation == "delete" and (vrf_name in delete_all_vrfs or pair in configured_pairs)
+
+        if not in_scope or vrf_name in disabled_vrfs or pair in disabled_pairs:
+            continue
+        if operation == "write" and pair not in enabled_pairs:
+            continue
+
+        scoped[pair] = {
+            "vrf_name": vrf_name,
+            "switch_ip": switch_id,
+            "operation": operation,
+        }
+
+    return [scoped[key] for key in sorted(scoped)]
+
+
 def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
     # TODO(4.2.1) vrf-lite-configsave-500-nonfatal: ND returns HTTP 500 for a
     # non-fatal vPC sanity condition on configSave instead of a success/no-op
@@ -90,18 +163,16 @@ def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
 
 
 def _needs_deployment(result: dict[str, Any], module: Any) -> bool:
-    """Return True only when actual config changes were applied.
-
-    Deploying against the controller when no configuration changed would
-    violate Ansible's idempotency contract.  A VRF that is still PENDING
-    from a previous run is a controller-side timing concern; the module
-    re-deploys only when the user's intent has actually been modified.
-    """
+    """Return whether this run must save changes or deploy staged intent."""
     if result.get("changed"):
         return True
 
     changed_vrfs = module.params.get("_changed_vrfs") or []
-    return bool(changed_vrfs)
+    if changed_vrfs:
+        return True
+
+    config_actions = get_config_actions(module.params)
+    return bool(config_actions.get("deploy") and _scoped_pending_deploy_targets(module))
 
 
 def _changed_entries_from_preview(before: Any, after: Any) -> list[Any]:

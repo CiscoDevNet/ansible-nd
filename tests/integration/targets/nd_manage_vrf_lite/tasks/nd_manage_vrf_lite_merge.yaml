@@ -120,7 +120,7 @@
     fabric_name: "{{ test_fabric }}"
     state: merged
     config_actions:
-      save: false
+      save: true
       deploy: false
       type: switch
     config: "{{ nd_manage_vrf_lite_merge_full_conf }}"
@@ -395,7 +395,7 @@
     fabric_name: "{{ test_fabric }}"
     state: merged
     config_actions:
-      save: false
+      save: true
       deploy: false
       type: switch
     config: "{{ nd_manage_vrf_lite_merge_no_deploy_conf }}"
@@ -407,7 +407,10 @@
     that:
       - result.failed == false
       - result.changed == true
-      - result.deployment is not defined
+      - result.deployment is defined
+      - result.deployment.deployment_needed == true
+      - (result.deployment.response | selectattr('operation', 'equalto', 'config_save') | list | length) == 1
+      - (result.deployment.response | selectattr('operation', 'equalto', 'vrf_deploy') | list | length) == 0
   tags: merge
 
 - name: MERGE - TC6 - GATHER - Get VRF Lite state in ND
@@ -453,24 +456,47 @@
   tags: merge
 
 - name: MERGE - TC6b - ASSERT - Verify deployment decision after non-deploy config
-  vars:
-    tc6b_deployment_needed: >-
-      {{
-        (result.deployment_needed | default(result.deployment.deployment_needed | default(false)))
-        | bool
-      }}
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
       - result.deployment is defined
-      - >
-        (
-          (tc6b_deployment_needed and (result.deployment.response is defined)
-           and ((result.deployment.response | selectattr('operation', 'equalto', 'config_save') | list | length) > 0)
-           and ((result.deployment.response | selectattr('operation', 'equalto', 'vrf_deploy') | list | length) > 0))
-          or
-          ((not tc6b_deployment_needed) and (result.deployment.msg | default('') is search('skipping')))
-        )
+      - result.deployment_needed == true
+      - result.deployment.deployment_needed == true
+      - (result.deployment.response | selectattr('operation', 'equalto', 'config_save') | list | length) == 1
+      - (result.deployment.response | selectattr('operation', 'equalto', 'vrf_deploy') | list | length) == 1
+      - result.deployment.target_vrfs == [test_vrf]
+  tags: merge
+
+# A single vrf_deploy can race the preceding config_save ("No switches pending
+# for deployment"), leaving the switch OUT-OF-SYNC. Per #468 each deploy run
+# re-pushes the owned pending intent, so re-run deploy until it converges and
+# reports no change; this both drives convergence and proves idempotency (a
+# passive gather-wait cannot recover from the raced deploy).
+- name: MERGE - TC6c - MERGE - Re-deploy until the fully deployed intent is idempotent
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_no_deploy_conf }}"
+  register: result
+  until: result.changed == false
+  retries: 20
+  delay: 10
+  tags: merge
+
+- name: MERGE - TC6c - ASSERT - Verify no save or deployment is repeated
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.deployment_needed == false
+      - result.deployment is defined
+      - result.deployment.response == []
   tags: merge
 
 # TC7 - Test invalid configurations (non-existent switch)
@@ -575,7 +601,11 @@
   tags: merge
 
 # TC9 - Idempotent deploy skip
-- name: MERGE - TC9 - MERGE - Re-run same deploy-enabled config
+# A single vrf_deploy can race the config_save ("No switches pending for
+# deployment") and leave the switch OUT-OF-SYNC. Per #468 each deploy run
+# re-pushes owned pending intent, so re-run deploy until it converges and
+# reports no change; the assert then validates the final idempotent result.
+- name: MERGE - TC9 - MERGE - Re-deploy same config until idempotent
   cisco.nd.nd_manage_vrf_lite:
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
@@ -586,6 +616,9 @@
       type: switch
     config: "{{ nd_manage_vrf_lite_merge_full_conf }}"
   register: result
+  until: result.changed == false
+  retries: 20
+  delay: 10
   tags: merge
 
 - name: MERGE - TC9 - ASSERT - Verify idempotent deploy skip

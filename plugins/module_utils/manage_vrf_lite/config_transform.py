@@ -72,6 +72,11 @@ def explode_playbook_to_entries(
     current_entries = current_entries or []
     current_by_key = {(item.get("vrf_name"), item.get("switch_ip")): item for item in current_entries}
     current_keys = set(current_by_key)
+    pending_delete_keys = {
+        (str(target.get("vrf_name") or "").strip(), str(target.get("switch_ip") or "").strip())
+        for target in module.params.get("_pending_deploy_targets") or []
+        if isinstance(target, dict) and target.get("operation") == "delete"
+    }
     for vrf_item in config or []:
         if not isinstance(vrf_item, dict):
             continue
@@ -99,7 +104,8 @@ def explode_playbook_to_entries(
                 entry = _merge_current_entry(current_by_key[(entry.get("vrf_name"), entry.get("switch_ip"))], entry)
             entries.append(entry)
 
-            if state == "deleted" and (entry.get("vrf_name"), entry.get("switch_ip")) not in current_keys:
+            entry_key = (entry.get("vrf_name"), entry.get("switch_ip"))
+            if state == "deleted" and entry_key not in current_keys and entry_key not in pending_delete_keys:
                 append_runtime_warning(
                     module.params,
                     "No matching VRF Lite attachment found to delete for VRF '{0}' switch '{1}'. "

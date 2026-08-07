@@ -37,6 +37,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy im
     _deployment_intent,
     _is_non_fatal_config_save_error,
     _needs_deployment,
+    _scoped_pending_deploy_targets,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exceptions import (
     VrfLiteResourceError,
@@ -136,6 +137,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         module.params["_changed_vrfs"] = []
         module.params["_vrf_lite_requested_state"] = state
         module.params["_not_in_sync_vrfs"] = []
+        module.params["_pending_deploy_targets"] = []
         module.params["_ip_to_sn_mapping"] = {}
         module.params["_sn_to_ip_mapping"] = {}
         module.params["_vrf_lite_vrf_vlan_map"] = {}
@@ -508,22 +510,26 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             }
 
         deploy_enabled_config_pairs, explicitly_disabled_pairs, explicitly_disabled_vrfs = _deployment_intent(module)
-        changed_vrfs = set(module.params.get("_changed_vrfs") or [])
+        pending_targets = _scoped_pending_deploy_targets(module) if deploy_enabled else []
+        changed_vrfs = set(module.params.get("_changed_vrfs") or []) | {target["vrf_name"] for target in pending_targets}
 
         # Build deployment scope from the state-machine operation journal rather than
         # the retained desired config. The journal preserves before-state identities
         # for detaches, including remove-all, and marks each pair as a write or delete.
         # Explicit VRF/attachment deploy:false intent still suppresses matching work.
         deploy_targets = module.params.get("_deploy_targets") or []
-        journal = {
-            (
-                str(target.get("vrf_name")),
-                _resolve_serial(module, target.get("switch_ip")),
-                target.get("operation"),
-            )
-            for target in deploy_targets
-            if isinstance(target, dict) and target.get("vrf_name") and target.get("switch_ip")
+        # Start with targets rediscovered from the controller, then let this
+        # run's journal replace them. For example, an overridden run can turn a
+        # previously pending write into a delete before the final deployment.
+        journal_by_pair: dict[tuple[str, str], str] = {
+            (target["vrf_name"], target["switch_ip"]): target["operation"] for target in pending_targets
         }
+        for target in deploy_targets:
+            if not isinstance(target, dict) or not target.get("vrf_name") or not target.get("switch_ip"):
+                continue
+            pair = (str(target.get("vrf_name")), _resolve_serial(module, target.get("switch_ip")))
+            journal_by_pair[pair] = str(target.get("operation"))
+        journal = {(vrf_name, switch_id, operation) for (vrf_name, switch_id), operation in journal_by_pair.items()}
         removed_pairs = {(vrf_name, switch_id) for vrf_name, switch_id, operation in journal if operation == "delete"}
         write_pairs = {(vrf_name, switch_id) for vrf_name, switch_id, operation in journal if operation == "write"}
         eligible_operation_pairs = {
@@ -578,7 +584,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             }
 
         responses = []
-        changed = bool(module.params.get("_changed_vrfs"))
+        changed = bool(module.params.get("_changed_vrfs")) or bool(deploy_payloads)
 
         if save_enabled:
             # config save is a fabric-wide trigger with no request body; the deploy scope

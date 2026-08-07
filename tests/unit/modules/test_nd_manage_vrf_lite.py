@@ -99,6 +99,10 @@ def _run_vrf_lite_module(module_args, current_state=None, runtime_metadata=None)
             ip_to_sn_mapping = dict(runtime_metadata["ip_to_sn_mapping"])
             module.params["_ip_to_sn_mapping"] = ip_to_sn_mapping
             module.params["_sn_to_ip_mapping"] = {serial: ip_address for ip_address, serial in ip_to_sn_mapping.items()}
+        if "pending_deploy_targets" in runtime_metadata:
+            module.params["_pending_deploy_targets"] = [
+                dict(target) for target in runtime_metadata["pending_deploy_targets"]
+            ]
         return [dict(item) for item in current_state]
 
     def exit_json(module, **kwargs):
@@ -277,6 +281,81 @@ def test_vrf_lite_wrapper_documents_projected_deployment_fields_in_check_mode():
     ]
     assert result["deployment"]["response"] == []
     _assert_result_matches_return_docs(result, _WRITE_BASE_FIELDS | {"deployment", "deployment_needed"})
+
+
+@pytest.mark.parametrize(
+    ("state", "config", "current_state", "operation"),
+    [
+        pytest.param(
+            "merged", _DESIRED_CONFIG, [_EXISTING_ENTRY], "write", id="merged-write"
+        ),
+        pytest.param(
+            "replaced",
+            [{"vrf_name": "VRF1", "attach": []}],
+            [],
+            "delete",
+            id="replaced-removal",
+        ),
+        pytest.param(
+            "overridden",
+            [{"vrf_name": "VRF1", "attach": []}],
+            [],
+            "delete",
+            id="overridden-removal",
+        ),
+        pytest.param(
+            "deleted",
+            [{"vrf_name": "VRF1", "attach": [{"ip_address": "SERIAL1"}]}],
+            [],
+            "delete",
+            id="deleted-removal",
+        ),
+    ],
+)
+def test_vrf_lite_wrapper_later_identical_run_deploys_controller_pending_target(
+    state,
+    config,
+    current_state,
+    operation,
+):
+    module_args = _module_args(
+        state,
+        config,
+        False,
+        config_actions={"save": True, "deploy": True, "type": "switch"},
+    )
+    module_args["verify"] = {"enabled": False}
+
+    with patch(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.request_with_rest_send",
+        return_value={},
+    ):
+        run = _run_vrf_lite_module(
+            module_args,
+            current_state=current_state,
+            runtime_metadata={
+                "pending_deploy_targets": [
+                    {"vrf_name": "VRF1", "switch_ip": "SERIAL1", "operation": operation}
+                ]
+            },
+        )
+
+    assert run["module"].params["_changed_vrfs"] == []
+    assert run["module"].params["_deploy_targets"] == []
+    assert run["result"]["changed"] is True
+    deployment = run["result"]["deployment"]
+    assert deployment["deployment_needed"] is True
+    assert deployment["changed"] is True
+    assert [item["operation"] for item in deployment["response"]] == [
+        "config_save",
+        "vrf_deploy",
+    ]
+    assert deployment["response"][-1]["payload"] == {
+        "vrfNames": ["VRF1"],
+        "switchIds": ["SERIAL1"],
+    }
+    if state == "deleted":
+        assert "warnings" not in run["result"]
 
 
 @pytest.mark.parametrize("state", ["replaced", "overridden"])

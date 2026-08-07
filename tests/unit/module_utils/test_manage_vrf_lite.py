@@ -32,9 +32,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy im
     _changed_entries_from_preview,
     _deployment_intent,
     _needs_deployment,
+    _scoped_pending_deploy_targets,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
     _coerce_vlan,
+    _has_vrf_lite_extension_marker,
     _query_fabric_switches,
     _query_vrf_attachments,
     _query_vrf_switch_details,
@@ -711,6 +713,104 @@ def test_manage_vrf_lite_00481_query_enriches_pending_attachment_from_switch_det
     assert module.params["_raw_vrf_attachment_map"]["BLUE"]["SN1"]["extension_values"] == extension_values
     assert module.params["_raw_vrf_attachment_map"]["BLUE"]["SN1"]["freeform_config"] == "router ospf 100"
     assert module.params["_raw_vrf_attachment_map"]["BLUE"]["SN1"]["vlan"] == 2
+    assert module.params["_pending_deploy_targets"] == [
+        {"vrf_name": "BLUE", "switch_ip": "SN1", "operation": "write"}
+    ]
+
+
+def test_manage_vrf_lite_00481aa_query_preserves_pending_empty_removal_marker(monkeypatch):
+    module = _DummyModule({})
+    empty_vrf_lite = json.dumps(
+        {
+            "VRF_LITE_CONN": json.dumps({"VRF_LITE_CONN": []}, separators=(",", ":")),
+            "MULTISITE_CONN": json.dumps({"MULTISITE_CONN": []}, separators=(",", ":")),
+        },
+        separators=(",", ":"),
+    )
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_fabric_switches",
+        lambda _module, _rest_send, _fabric_name: {"SN1": "10.0.0.1"},
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_vrfs",
+        lambda _module, _rest_send, _fabric_name: [{"vrfName": "BLUE", "vlanId": 500}],
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_vrf_attachments",
+        lambda **_kwargs: [
+            {
+                "vrfName": "BLUE",
+                "lanAttachList": [
+                    {
+                        "serialNumber": "SN1",
+                        "isLanAttached": True,
+                        "lanAttachState": "PENDING",
+                        "vlanId": 500,
+                        "extensionValues": empty_vrf_lite,
+                        "instanceValues": "{}",
+                    }
+                ],
+            }
+        ],
+    )
+
+    result = query_vrf_lite_state(module=module, rest_send=object(), fabric_name="FABRIC1", filter_vrfs={"BLUE"})
+
+    assert result == [{"vrf_name": "BLUE", "vlan_id": 500, "deploy": False, "attach": []}]
+    assert module.params["_not_in_sync_vrfs"] == ["BLUE"]
+    assert module.params["_pending_deploy_targets"] == [
+        {"vrf_name": "BLUE", "switch_ip": "SN1", "operation": "delete"}
+    ]
+
+
+def test_manage_vrf_lite_00481ab_query_does_not_claim_unrelated_pending_extension(monkeypatch):
+    module = _DummyModule({})
+    unrelated_extension = json.dumps({"MULTISITE_CONN": json.dumps({"MULTISITE_CONN": []})})
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_fabric_switches",
+        lambda _module, _rest_send, _fabric_name: {"SN1": "10.0.0.1"},
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_vrfs",
+        lambda _module, _rest_send, _fabric_name: [{"vrfName": "BLUE", "vlanId": 500}],
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_vrf_attachments",
+        lambda **_kwargs: [
+            {
+                "vrfName": "BLUE",
+                "lanAttachList": [
+                    {
+                        "serialNumber": "SN1",
+                        "isLanAttached": True,
+                        "lanAttachState": "PENDING",
+                        "vlanId": 500,
+                        "extensionValues": unrelated_extension,
+                    }
+                ],
+            }
+        ],
+    )
+
+    query_vrf_lite_state(module=module, rest_send=object(), fabric_name="FABRIC1", filter_vrfs={"BLUE"})
+
+    assert module.params["_pending_deploy_targets"] == []
+    assert module.params["_not_in_sync_vrfs"] == []
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        pytest.param('{"VRF_LITE_CONN":"{\\"VRF_LITE_CONN\\":[]}"}', True, id="empty-marker"),
+        pytest.param({"VRF_LITE_CONN": {"VRF_LITE_CONN": []}}, True, id="dict-marker"),
+        pytest.param('{"MULTISITE_CONN":"{}"}', False, id="unrelated"),
+        pytest.param("", False, id="empty"),
+    ],
+)
+def test_manage_vrf_lite_00481ac_extension_marker_detection(value, expected):
+    assert _has_vrf_lite_extension_marker(value) is expected
 
 
 def test_manage_vrf_lite_00481a_attachment_query_uses_lossless_top_down_get():
@@ -888,6 +988,128 @@ def test_manage_vrf_lite_00490_deploy_needed_when_state_machine_changed_without_
     module = _DummyModule({})
 
     assert _needs_deployment({"changed": True}, module) is True
+
+
+@pytest.mark.parametrize(
+    ("state", "config", "expected"),
+    [
+        pytest.param(
+            "merged",
+            [{"vrf_name": "BLUE", "attach": [{"ip_address": "SN1"}]}],
+            {("BLUE", "SN1", "write")},
+            id="merged-exact-pair",
+        ),
+        pytest.param(
+            "replaced",
+            [{"vrf_name": "BLUE", "attach": [{"ip_address": "SN1"}]}],
+            {("BLUE", "SN1", "write"), ("BLUE", "SN2", "delete")},
+            id="replaced-listed-vrf",
+        ),
+        pytest.param(
+            "overridden",
+            [{"vrf_name": "BLUE", "attach": [{"ip_address": "SN1"}]}],
+            {
+                ("BLUE", "SN1", "write"),
+                ("BLUE", "SN2", "delete"),
+                ("GREEN", "SN3", "delete"),
+            },
+            id="overridden-fabric-intent",
+        ),
+        pytest.param(
+            "deleted",
+            [{"vrf_name": "BLUE", "attach": [{"ip_address": "SN2"}]}],
+            {("BLUE", "SN2", "delete")},
+            id="deleted-specific-pair",
+        ),
+        pytest.param(
+            "deleted",
+            [{"vrf_name": "BLUE"}],
+            {("BLUE", "SN2", "delete")},
+            id="deleted-whole-vrf",
+        ),
+    ],
+)
+def test_manage_vrf_lite_00490a_pending_targets_are_scoped_by_requested_state(state, config, expected):
+    module = _DummyModule(
+        {
+            "state": state,
+            "_vrf_lite_requested_state": state,
+            "_vrf_lite_nested_config": config,
+            "config_actions": {"save": True, "deploy": True, "type": "switch"},
+            "_pending_deploy_targets": [
+                {"vrf_name": "BLUE", "switch_ip": "SN1", "operation": "write"},
+                {"vrf_name": "BLUE", "switch_ip": "SN2", "operation": "delete"},
+                {"vrf_name": "GREEN", "switch_ip": "SN3", "operation": "delete"},
+            ],
+        }
+    )
+
+    targets = _scoped_pending_deploy_targets(module)
+
+    assert {(target["vrf_name"], target["switch_ip"], target["operation"]) for target in targets} == expected
+
+
+def test_manage_vrf_lite_00490b_pending_target_requires_final_deploy_request():
+    params = {
+        "_vrf_lite_requested_state": "merged",
+        "_vrf_lite_nested_config": [{"vrf_name": "BLUE", "attach": [{"ip_address": "SN1"}]}],
+        "_pending_deploy_targets": [{"vrf_name": "BLUE", "switch_ip": "SN1", "operation": "write"}],
+        "_changed_vrfs": [],
+    }
+    module = _DummyModule({**params, "config_actions": {"save": True, "deploy": False, "type": "switch"}})
+    assert _needs_deployment({"changed": False}, module) is False
+
+    module = _DummyModule({**params, "config_actions": {"save": True, "deploy": True, "type": "switch"}})
+    assert _needs_deployment({"changed": False}, module) is True
+
+
+def test_manage_vrf_lite_00490c_later_identical_run_deploys_pending_target_once(monkeypatch):
+    captured = _capture_config_action_requests(monkeypatch)
+    module = _DummyModule(
+        {
+            "fabric_name": "FABRIC1",
+            "_vrf_lite_requested_state": "merged",
+            "_vrf_lite_nested_config": [{"vrf_name": "BLUE", "attach": [{"ip_address": "SN1"}]}],
+            "config_actions": {"save": True, "deploy": True, "type": "switch"},
+            "_changed_vrfs": [],
+            "_deploy_targets": [],
+            "_pending_deploy_targets": [{"vrf_name": "BLUE", "switch_ip": "SN1", "operation": "write"}],
+        }
+    )
+
+    result = _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": False})
+
+    assert result["changed"] is True
+    assert result["deployment_needed"] is True
+    assert result["target_vrfs"] == ["BLUE"]
+    assert captured == [
+        {"path": VrfLiteEndpoints.config_save("FABRIC1"), "payload": {}},
+        {
+            "path": VrfLiteEndpoints.vrf_deployments("FABRIC1"),
+            "payload": {"vrfNames": ["BLUE"], "switchIds": ["SN1"]},
+        },
+    ]
+
+
+def test_manage_vrf_lite_00490d_in_sync_identical_run_remains_idempotent(monkeypatch):
+    captured = _capture_config_action_requests(monkeypatch)
+    module = _DummyModule(
+        {
+            "fabric_name": "FABRIC1",
+            "_vrf_lite_requested_state": "merged",
+            "_vrf_lite_nested_config": [{"vrf_name": "BLUE", "attach": [{"ip_address": "SN1"}]}],
+            "config_actions": {"save": True, "deploy": True, "type": "switch"},
+            "_changed_vrfs": [],
+            "_deploy_targets": [],
+            "_pending_deploy_targets": [],
+        }
+    )
+
+    result = _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": False})
+
+    assert result["changed"] is False
+    assert result["deployment_needed"] is False
+    assert captured == []
 
 
 def test_manage_vrf_lite_00491_deploy_targets_honor_vrf_and_attachment_intent():

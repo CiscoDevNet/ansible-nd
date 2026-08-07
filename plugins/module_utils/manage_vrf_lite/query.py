@@ -249,6 +249,27 @@ def _value_from_attachment_or_detail(attach: dict[str, Any], detail: dict[str, A
     return None
 
 
+def _has_vrf_lite_extension_marker(extension_values: Any) -> bool:
+    """Return whether extensionValues explicitly carries ``VRF_LITE_CONN``.
+
+    A staged VRF-Lite removal is represented by an empty ``VRF_LITE_CONN``
+    value.  Parsing only the connection rows loses the difference between that
+    explicit empty marker and an ordinary VRF attachment that has never used
+    VRF-Lite, so retain the outer-key signal for later deployment discovery.
+    """
+    if isinstance(extension_values, dict):
+        outer = extension_values
+    elif extension_values in (None, ""):
+        return False
+    else:
+        try:
+            outer = json.loads(str(extension_values))
+        except Exception:
+            return False
+
+    return isinstance(outer, dict) and "VRF_LITE_CONN" in outer
+
+
 def _flatten_to_entries(nested: list[dict[str, Any]], module: Any = None) -> list[dict[str, Any]]:
     """Convert nested VRF list into a flat list of per-(vrf, switch) entries.
 
@@ -343,6 +364,7 @@ def query_vrf_lite_state(
 
     not_in_sync_vrfs: set[str] = set()
     raw_vrf_attachment_map: dict[str, dict[str, dict[str, Any]]] = {}
+    pending_deploy_targets: dict[tuple[str, str], dict[str, str]] = {}
 
     # First pass: collect, across every VRF, the switches whose attachment rows
     # arrived without ``extensionValues`` so they can be enriched together. The
@@ -442,10 +464,12 @@ def query_vrf_lite_state(
             )
             is_attached = attached_value is True or str(attached_value).strip().lower() in ("true", "1", "yes")
             extension_values = _value_from_attachment_or_detail(attach, switch_detail, "extensionValues")
+            has_vrf_lite_marker = _has_vrf_lite_extension_marker(extension_values)
             # For VRF Lite, include entries that have extension values even if
             # not yet lan-attached (pending save/deploy state).
             has_extension_values = bool(extension_values and str(extension_values).strip() and str(extension_values).strip() != "[]")
-            if not is_attached and not has_extension_values:
+            pending_state = attach_state in ("OUT-OF-SYNC", "PENDING", "FAILED")
+            if not is_attached and not has_extension_values and not (pending_state and has_vrf_lite_marker):
                 continue
 
             instance_values_raw = _value_from_attachment_or_detail(attach, switch_detail, "instanceValues")
@@ -467,10 +491,18 @@ def query_vrf_lite_state(
 
             vrf_lite_list = parse_vrf_lite_extension_values(extension_values)
             managed_fields_present = bool(vrf_lite_list) or import_evpn_rt not in (None, "") or export_evpn_rt not in (None, "")
+            if pending_state and serial_number and (managed_fields_present or has_vrf_lite_marker):
+                operation = "write" if managed_fields_present else "delete"
+                pending_deploy_targets[(vrf_name, serial_number)] = {
+                    "vrf_name": vrf_name,
+                    "switch_ip": serial_number,
+                    "operation": operation,
+                }
+                not_in_sync_vrfs.add(vrf_name)
             if not managed_fields_present:
                 continue
 
-            deployed = attach_state not in ("OUT-OF-SYNC", "PENDING", "FAILED")
+            deployed = not pending_state
             if not deployed:
                 not_in_sync_vrfs.add(vrf_name)
             else:
@@ -502,6 +534,7 @@ def query_vrf_lite_state(
     module.params["_ip_to_sn_mapping"] = ip_to_sn
     module.params["_sn_to_ip_mapping"] = sn_to_ip
     module.params["_not_in_sync_vrfs"] = sorted(not_in_sync_vrfs)
+    module.params["_pending_deploy_targets"] = [pending_deploy_targets[key] for key in sorted(pending_deploy_targets)]
     module.params["_known_vrfs"] = sorted(known_vrfs)
     module.params["_known_vrfs_loaded"] = True
     module.params["_raw_vrf_attachment_map"] = raw_vrf_attachment_map
