@@ -99,16 +99,17 @@ ansible-galaxy collection install cisco-nd-1.0.0.tar.gz —-force
 
 Once the collection is installed, you can use it in a playbook by specifying the full namespace path to the module, plugin and/or role.
 
-### Get the ND version
+### Query Nexus Dashboard via REST
 
 ```yaml
 - hosts: nd
   gather_facts: no
 
   tasks:
-  - name: Get ND version
-    cisco.nd.nd_version:
-      state: query
+  - name: Query all Security Domains using GET method
+    cisco.nd.nd_rest:
+      path: /nexus/infra/api/aaa/v4/securitydomains
+      method: get
 ```
 
 With the following inventory file:
