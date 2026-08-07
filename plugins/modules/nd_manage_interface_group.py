@@ -495,11 +495,7 @@ def _normalize_module_params(
     validated = InterfaceGroupModuleConfigModel.model_validate(module.params)
     module.params["fabric_name"] = validated.fabric_name
     module.params["state"] = validated.state
-    module.params["config_actions"] = (
-        validated.config_actions.model_dump(mode="json")
-        if validated.config_actions is not None
-        else None
-    )
+    module.params["config_actions"] = validated.config_actions.model_dump(mode="json") if validated.config_actions is not None else None
     if validated.state == "gathered":
         filters = list(validated.config)
         module.params["config"] = []
@@ -520,17 +516,9 @@ def _format_output(
     **kwargs,
 ) -> dict:
     """Format the generic state machine's NDOutput and attach IG warnings."""
-    output = (
-        nd_state_machine.output
-        if nd_state_machine is not None
-        else NDOutput(module.params.get("output_level", "normal") or "normal")
-    )
+    output = nd_state_machine.output if nd_state_machine is not None else NDOutput(module.params.get("output_level", "normal") or "normal")
     results = nd_state_machine.results if nd_state_machine is not None else None
-    warnings = (
-        nd_state_machine.model_orchestrator.warnings
-        if nd_state_machine is not None
-        else []
-    )
+    warnings = nd_state_machine.model_orchestrator.warnings if nd_state_machine is not None else []
     if warnings:
         kwargs["warnings_nd"] = warnings
     return output.format_with_verbosity(

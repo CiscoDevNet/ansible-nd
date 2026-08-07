@@ -63,17 +63,13 @@ class InclAllMsdSwitchesMixin(BaseModel):
 class InterfaceNameMixin(BaseModel):
     """Mixin for endpoints that require interface_name parameter."""
 
-    interface_name: str | None = Field(
-        default=None, min_length=1, description="Interface name"
-    )
+    interface_name: str | None = Field(default=None, min_length=1, description="Interface name")
 
 
 class InterfaceGroupNameMixin(BaseModel):
     """Mixin for endpoints that require interface_group_name parameter."""
 
-    interface_group_name: str | None = Field(
-        default=None, min_length=1, description="Interface group name"
-    )
+    interface_group_name: str | None = Field(default=None, min_length=1, description="Interface group name")
 
 
 class LinkUuidMixin(BaseModel):

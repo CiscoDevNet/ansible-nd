@@ -32,23 +32,14 @@ class InterfaceGroupsCreateRequestModel(NDBaseModel):
     """Request body for POST ``/fabrics/{fabricName}/interfaceGroups``."""
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
-    interface_groups: list[InterfaceGroupConfigModel] = Field(
-        alias="interfaceGroups", min_length=1
-    )
+    interface_groups: list[InterfaceGroupConfigModel] = Field(alias="interfaceGroups", min_length=1)
 
     def to_payload(self, **kwargs) -> dict[str, Any]:
         """Serialize create entries with required empty associations and live wire aliases."""
         payload = super().to_payload(**kwargs)
-        payload["interfaceGroups"] = [
-            InterfaceGroupValidators.to_wire_group(
-                item, include_empty_associations=True
-            )
-            for item in payload["interfaceGroups"]
-        ]
+        payload["interfaceGroups"] = [InterfaceGroupValidators.to_wire_group(item, include_empty_associations=True) for item in payload["interfaceGroups"]]
         return payload
 
 
@@ -56,9 +47,7 @@ class InterfaceGroupsRemoveRequestModel(NDBaseModel):
     """Request body for POST ``/fabrics/{fabricName}/interfaceGroups/actions/remove``."""
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     interface_group_names: list[str] = Field(alias="interfaceGroupNames", min_length=1)
 
@@ -99,68 +88,44 @@ class InterfaceGroupsCreateResponseModel(NDBaseModel):
     """HTTP 207 response body for bulk Interface Group creation."""
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
-    interface_groups: list[InterfaceGroupCreateResultModel] = Field(
-        default_factory=list, alias="interfaceGroups"
-    )
+    interface_groups: list[InterfaceGroupCreateResultModel] = Field(default_factory=list, alias="interfaceGroups")
 
     @property
     def failures(self) -> list[InterfaceGroupCreateResultModel]:
         """Return failed per-item results; HTTP 207 alone is not success."""
-        return [
-            item
-            for item in self.interface_groups
-            if item.status != InterfaceGroupOperationStatus.SUCCESS.value
-        ]
+        return [item for item in self.interface_groups if item.status != InterfaceGroupOperationStatus.SUCCESS.value]
 
 
 class InterfaceGroupsDeleteResponseModel(NDBaseModel):
     """HTTP 207 response body for bulk Interface Group deletion."""
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
-    interface_groups: list[InterfaceGroupDeleteResultModel] = Field(
-        default_factory=list, alias="interfaceGroups"
-    )
+    interface_groups: list[InterfaceGroupDeleteResultModel] = Field(default_factory=list, alias="interfaceGroups")
 
     @property
     def failures(self) -> list[InterfaceGroupDeleteResultModel]:
         """Return failed per-item results; HTTP 207 alone is not success."""
-        return [
-            item
-            for item in self.interface_groups
-            if item.status != InterfaceGroupOperationStatus.SUCCESS.value
-        ]
+        return [item for item in self.interface_groups if item.status != InterfaceGroupOperationStatus.SUCCESS.value]
 
 
 class InterfaceGroupsListResponseModel(NDBaseModel):
     """Response body for GET ``/fabrics/{fabricName}/interfaceGroups``."""
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
-    interface_group_details: list[InterfaceGroupConfigModel] = Field(
-        default_factory=list, alias="interfaceGroupDetails"
-    )
+    interface_group_details: list[InterfaceGroupConfigModel] = Field(default_factory=list, alias="interfaceGroupDetails")
     meta: dict[str, Any] | None = Field(default=None)
 
     @model_validator(mode="before")
     @classmethod
     def normalize_list_response_shape(cls, data):
         """Accept the standard list wrapper and supported type-specific wrappers."""
-        if (
-            not isinstance(data, dict)
-            or "interfaceGroupDetails" in data
-            or "interface_group_details" in data
-        ):
+        if not isinstance(data, dict) or "interfaceGroupDetails" in data or "interface_group_details" in data:
             return data
         example_keys = (
             "anyInterfaceGroup",

@@ -92,9 +92,7 @@ def test_manage_interface_groups_model_00015() -> None:
         ],
     }
 
-    gather_all = InterfaceGroupModuleConfigModel.model_validate(
-        {"fabric_name": "fabric-1", "state": "gathered"}
-    )
+    gather_all = InterfaceGroupModuleConfigModel.model_validate({"fabric_name": "fabric-1", "state": "gathered"})
     assert gather_all.config == []
 
     with pytest.raises(ValidationError, match="interfaceGroupName"):
@@ -109,20 +107,14 @@ def test_manage_interface_groups_model_00015() -> None:
 
 def test_manage_interface_groups_model_00017() -> None:
     """Preserve explicit empty association filters and reject write-only keys."""
-    filter_item = InterfaceGroupGatheredFilterModel.model_validate(
-        {"networks": [], "switch_interfaces": []}
-    )
+    filter_item = InterfaceGroupGatheredFilterModel.model_validate({"networks": [], "switch_interfaces": []})
     assert filter_item.to_filter_config() == {
         "networks": [],
         "switch_interfaces": [],
     }
 
-    switch_only = InterfaceGroupGatheredFilterModel.model_validate(
-        {"switch_interfaces": [{"switch_id": "SN1"}]}
-    )
-    assert switch_only.to_filter_config() == {
-        "switch_interfaces": [{"switch_id": "SN1"}]
-    }
+    switch_only = InterfaceGroupGatheredFilterModel.model_validate({"switch_interfaces": [{"switch_id": "SN1"}]})
+    assert switch_only.to_filter_config() == {"switch_interfaces": [{"switch_id": "SN1"}]}
 
     with pytest.raises(ValidationError, match="deploy"):
         InterfaceGroupModuleConfigModel.model_validate(
@@ -213,9 +205,7 @@ def test_manage_interface_groups_model_00030() -> None:
             "type": "ethernetWithPolicy",
             "interfaceGroupAssociation": {
                 "networkNames": ["net2", "net1"],
-                "switchInterfaces": [
-                    {"switchId": "SN1", "interfaceNames": ["eth1/2", "Ethernet1/1"]}
-                ],
+                "switchInterfaces": [{"switchId": "SN1", "interfaceNames": ["eth1/2", "Ethernet1/1"]}],
             },
             "ethernetAttributes": {"adminStatus": True},
             "interfaceCount": 2,
@@ -298,15 +288,11 @@ def test_manage_interface_groups_model_00035() -> None:
     )
     assert policyless.type == "ethernetWithoutPolicy"
 
-    legacy_policyless = InterfaceGroupConfigModel.from_response(
-        {"interfaceGroupName": "legacy-no-policy", "type": "ethernet"}
-    )
+    legacy_policyless = InterfaceGroupConfigModel.from_response({"interfaceGroupName": "legacy-no-policy", "type": "ethernet"})
     assert legacy_policyless.type == "ethernetWithoutPolicy"
 
     with pytest.raises(ValidationError):
-        InterfaceGroupConfigModel.from_config(
-            {"interface_group_name": "invalid-input", "type": "ethernet"}
-        )
+        InterfaceGroupConfigModel.from_config({"interface_group_name": "invalid-input", "type": "ethernet"})
 
 
 @pytest.mark.parametrize(
@@ -320,9 +306,7 @@ def test_manage_interface_groups_model_00035() -> None:
         ("vpc", "Vpc20", "vPC20"),
     ],
 )
-def test_manage_interface_groups_model_00040(
-    group_type: str, input_name: str, expected_name: str
-) -> None:
+def test_manage_interface_groups_model_00040(group_type: str, input_name: str, expected_name: str) -> None:
     """
     # Summary
 
@@ -358,9 +342,7 @@ def test_manage_interface_groups_model_00040(
         ("any", "Loopback0"),
     ],
 )
-def test_manage_interface_groups_model_00050(
-    group_type: str, invalid_member: str
-) -> None:
+def test_manage_interface_groups_model_00050(group_type: str, invalid_member: str) -> None:
     """
     # Summary
 
@@ -379,9 +361,7 @@ def test_manage_interface_groups_model_00050(
             {
                 "interface_group_name": "group1",
                 "type": group_type,
-                "switch_interfaces": [
-                    {"switch_id": "SN1", "interface_names": [invalid_member]}
-                ],
+                "switch_interfaces": [{"switch_id": "SN1", "interface_names": [invalid_member]}],
             }
         )
 
@@ -534,9 +514,7 @@ def test_manage_interface_groups_model_00110() -> None:
     """
     with pytest.raises(ValidationError, match="config is required when state=merged"):
         InterfaceGroupModuleConfigModel.model_validate({"fabric_name": "fab1"})
-    merged_update = InterfaceGroupModuleConfigModel.model_validate(
-        {"fabric_name": "fab1", "config": [{"interface_group_name": "group1"}]}
-    )
+    merged_update = InterfaceGroupModuleConfigModel.model_validate({"fabric_name": "fab1", "config": [{"interface_group_name": "group1"}]})
     assert merged_update.config[0].type is None
 
     with pytest.raises(ValidationError, match="type is required"):
@@ -549,9 +527,7 @@ def test_manage_interface_groups_model_00110() -> None:
         )
 
     with pytest.raises(ValidationError, match="config is required when state=deleted"):
-        InterfaceGroupModuleConfigModel.model_validate(
-            {"fabric_name": "fab1", "state": "deleted"}
-        )
+        InterfaceGroupModuleConfigModel.model_validate({"fabric_name": "fab1", "state": "deleted"})
 
 
 def test_manage_interface_groups_model_00120() -> None:
@@ -675,16 +651,12 @@ def test_manage_interface_groups_model_00140() -> None:
                     {
                         "interface_group_name": "group1",
                         "type": "ethernetWithPolicy",
-                        "switch_interfaces": [
-                            {"switch_id": "SN1", "interface_names": ["eth1/1"]}
-                        ],
+                        "switch_interfaces": [{"switch_id": "SN1", "interface_names": ["eth1/1"]}],
                     },
                     {
                         "interface_group_name": "group2",
                         "type": "ethernetWithoutPolicy",
-                        "switch_interfaces": [
-                            {"switch_id": "SN1", "interface_names": ["Ethernet1/1"]}
-                        ],
+                        "switch_interfaces": [{"switch_id": "SN1", "interface_names": ["Ethernet1/1"]}],
                     },
                 ],
             }
@@ -740,10 +712,7 @@ def test_manage_interface_groups_model_00150() -> None:
     assert existing.get_diff(proposed, exclude_unset=True) is False
     merged = existing.merge(proposed)
     assert merged.networks == ["net-a", "net-b"]
-    assert [
-        (item.switch_id, item.interface_names)
-        for item in merged.switch_interfaces or []
-    ] == [
+    assert [(item.switch_id, item.interface_names) for item in merged.switch_interfaces or []] == [
         ("SN1", ["Ethernet1/1", "Ethernet1/3"]),
         ("SN2", ["Ethernet1/2"]),
         ("SN3", ["Ethernet1/4"]),
@@ -758,9 +727,7 @@ def test_manage_interface_groups_model_00150() -> None:
         {
             "interface_group_name": "group1",
             "networks": ["net-a"],
-            "switch_interfaces": [
-                {"switch_id": "SN1", "interface_names": ["Ethernet1/1"]}
-            ],
+            "switch_interfaces": [{"switch_id": "SN1", "interface_names": ["Ethernet1/1"]}],
         }
     )
     empty_collections = InterfaceGroupConfigModel.from_config(
@@ -808,9 +775,7 @@ def test_manage_interface_groups_model_00155() -> None:
             "interface_group_name": "group1",
             "type": "portChannel",
             "networks": ["net-a"],
-            "switch_interfaces": [
-                {"switch_id": "SN1", "interface_names": ["Port-channel10"]}
-            ],
+            "switch_interfaces": [{"switch_id": "SN1", "interface_names": ["Port-channel10"]}],
         }
     )
 
@@ -856,9 +821,7 @@ def test_manage_interface_groups_model_00160() -> None:
             {
                 "fabric_name": "fab1",
                 "state": "replaced",
-                "config": [
-                    {"interface_group_name": "custom1", "type": "ethernetCustom"}
-                ],
+                "config": [{"interface_group_name": "custom1", "type": "ethernetCustom"}],
             }
         )
 
@@ -888,9 +851,7 @@ def test_manage_interface_groups_model_00200() -> None:
             )
         ]
     )
-    remove = InterfaceGroupsRemoveRequestModel(
-        interface_group_names=["group2", "group1", "group2"]
-    )
+    remove = InterfaceGroupsRemoveRequestModel(interface_group_names=["group2", "group1", "group2"])
 
     assert create.to_payload() == {
         "interfaceGroups": [
@@ -1028,23 +989,17 @@ def test_manage_interface_groups_model_00208() -> None:
         ("vpc", "vpc200", "vPC200"),
     ],
 )
-def test_manage_interface_groups_model_002085(
-    group_type: str, input_name: str, wire_name: str
-) -> None:
+def test_manage_interface_groups_model_002085(group_type: str, input_name: str, wire_name: str) -> None:
     """Keep non-Ethernet discriminators unchanged through write/read translation."""
     model = InterfaceGroupConfigModel.from_config(
         {
             "interface_group_name": f"{group_type}-group",
             "type": group_type,
-            "switch_interfaces": [
-                {"switch_id": "PRIMARY-SERIAL", "interface_names": [input_name]}
-            ],
+            "switch_interfaces": [{"switch_id": "PRIMARY-SERIAL", "interface_names": [input_name]}],
         }
     )
 
-    wire = InterfaceGroupsCreateRequestModel(interface_groups=[model]).to_payload()[
-        "interfaceGroups"
-    ][0]
+    wire = InterfaceGroupsCreateRequestModel(interface_groups=[model]).to_payload()["interfaceGroups"][0]
     assert wire == {
         "interfaceGroupName": f"{group_type}-group",
         "type": group_type,
@@ -1081,9 +1036,7 @@ def test_manage_interface_groups_model_00209() -> None:
         "ALLOWED_VLANS": "none",
         "NATIVE_VLAN": None,
     }
-    group = InterfaceGroupsCreateRequestModel(interface_groups=[model]).to_payload()[
-        "interfaceGroups"
-    ][0]
+    group = InterfaceGroupsCreateRequestModel(interface_groups=[model]).to_payload()["interfaceGroups"][0]
     assert group["policyDetails"]["templateConfig"] == {
         "ALLOWED_VLANS": "none",
         "NATIVE_VLAN": None,
@@ -1198,20 +1151,8 @@ def test_manage_interface_groups_model_00220() -> None:
 
     - InterfaceGroupsListResponseModel.from_response()
     """
-    documented = InterfaceGroupsListResponseModel.from_response(
-        {
-            "interfaceGroupDetails": [
-                {"interfaceGroupName": "group1", "type": "portChannel"}
-            ]
-        }
-    )
-    example = InterfaceGroupsListResponseModel.from_response(
-        {"vpcInterfaceGroup": [{"interfaceGroupName": "group2", "type": "vpc"}]}
-    )
+    documented = InterfaceGroupsListResponseModel.from_response({"interfaceGroupDetails": [{"interfaceGroupName": "group1", "type": "portChannel"}]})
+    example = InterfaceGroupsListResponseModel.from_response({"vpcInterfaceGroup": [{"interfaceGroupName": "group2", "type": "vpc"}]})
 
-    assert [
-        item.interface_group_name for item in documented.interface_group_details
-    ] == ["group1"]
-    assert [item.interface_group_name for item in example.interface_group_details] == [
-        "group2"
-    ]
+    assert [item.interface_group_name for item in documented.interface_group_details] == ["group1"]
+    assert [item.interface_group_name for item in example.interface_group_details] == ["group2"]

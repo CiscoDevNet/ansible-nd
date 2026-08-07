@@ -108,17 +108,12 @@ class InterfaceGroupValidators:
             return cls.template_config_is_subset(expected, actual)
         if isinstance(expected, list) and isinstance(actual, list):
             return len(expected) == len(actual) and all(
-                cls.template_value_matches(expected_item, actual_item)
-                for expected_item, actual_item in zip(expected, actual)
+                cls.template_value_matches(expected_item, actual_item) for expected_item, actual_item in zip(expected, actual)
             )
-        return cls._normalize_template_scalar(
-            expected
-        ) == cls._normalize_template_scalar(actual)
+        return cls._normalize_template_scalar(expected) == cls._normalize_template_scalar(actual)
 
     @classmethod
-    def template_config_is_subset(
-        cls, expected: dict[str, Any], actual: dict[str, Any]
-    ) -> bool:
+    def template_config_is_subset(cls, expected: dict[str, Any], actual: dict[str, Any]) -> bool:
         """Compare customer-supplied custom-template keys semantically."""
         for key, value in expected.items():
             if key not in actual or not cls.template_value_matches(value, actual[key]):
@@ -174,29 +169,17 @@ class InterfaceGroupValidators:
                 normalized["type"] = "ethernetWithoutPolicy"
 
         if ethernet_attributes is not None:
-            normalized["ethernetAttributes"] = (
-                cls.normalize_response_ethernet_attributes(ethernet_attributes)
-            )
+            normalized["ethernetAttributes"] = cls.normalize_response_ethernet_attributes(ethernet_attributes)
         if "policyId" not in normalized and policy_details.get("policyId") is not None:
             normalized["policyId"] = policy_details["policyId"]
         if normalized.get("type") == "ethernetCustom":
-            if (
-                "templateName" not in normalized
-                and policy_details.get("templateName") is not None
-            ):
+            if "templateName" not in normalized and policy_details.get("templateName") is not None:
                 normalized["templateName"] = policy_details["templateName"]
-            if (
-                "templateConfig" not in normalized
-                and policy_details.get("templateConfig") is not None
-            ):
+            if "templateConfig" not in normalized and policy_details.get("templateConfig") is not None:
                 normalized["templateConfig"] = policy_details["templateConfig"]
             template_config = normalized.get("templateConfig")
             if isinstance(template_config, dict):
-                normalized["templateConfig"] = {
-                    key: item
-                    for key, item in template_config.items()
-                    if key not in SYSTEM_INJECTED_TEMPLATE_KEYS
-                }
+                normalized["templateConfig"] = {key: item for key, item in template_config.items() if key not in SYSTEM_INJECTED_TEMPLATE_KEYS}
         return normalized
 
     @staticmethod
@@ -210,10 +193,7 @@ class InterfaceGroupValidators:
         attributes = dict(_ETHERNET_WITH_POLICY_DEFAULTS)
         attributes.update(value or {})
         wire = {}
-        reverse_aliases = {
-            api_alias: wire_alias
-            for wire_alias, api_alias in _ETHERNET_RESPONSE_ALIASES.items()
-        }
+        reverse_aliases = {api_alias: wire_alias for wire_alias, api_alias in _ETHERNET_RESPONSE_ALIASES.items()}
         for key, item in attributes.items():
             alias = reverse_aliases.get(key, key)
             if key == "autoNegotiation" and isinstance(item, str):
@@ -223,9 +203,7 @@ class InterfaceGroupValidators:
         return wire
 
     @classmethod
-    def to_wire_group(
-        cls, value: dict, *, include_empty_associations: bool = False
-    ) -> dict:
+    def to_wire_group(cls, value: dict, *, include_empty_associations: bool = False) -> dict:
         """Translate the module shape to the controller's write shape."""
         normalized = dict(value)
         if include_empty_associations:
@@ -237,9 +215,7 @@ class InterfaceGroupValidators:
             normalized["type"] = "ethernet"
             normalized["policyDetails"] = {
                 "policyType": "sharedTrunkHost",
-                "ethernetAttributes": cls.to_wire_ethernet_attributes(
-                    ethernet_attributes
-                ),
+                "ethernetAttributes": cls.to_wire_ethernet_attributes(ethernet_attributes),
             }
         elif normalized.get("type") == "ethernetWithoutPolicy":
             normalized.pop("ethernetAttributes", None)

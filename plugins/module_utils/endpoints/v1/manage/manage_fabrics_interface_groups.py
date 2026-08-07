@@ -41,16 +41,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
-class InterfaceGroupsGetEndpointParams(
-    ClusterNameMixin, FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams
-):
+class InterfaceGroupsGetEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
     """Query parameters for listing interface groups."""
 
     model_config = ConfigDict(extra="forbid")
 
-    sort: str | None = Field(
-        default=None, min_length=1, description="Sort field and direction"
-    )
+    sort: str | None = Field(default=None, min_length=1, description="Sort field and direction")
 
 
 class InterfaceGroupGetEndpointParams(ClusterNameMixin, EndpointQueryParams):
@@ -59,9 +55,7 @@ class InterfaceGroupGetEndpointParams(ClusterNameMixin, EndpointQueryParams):
     model_config = ConfigDict(extra="forbid")
 
 
-class InterfaceGroupMutationEndpointParams(
-    ClusterNameMixin, TicketIdMixin, EndpointQueryParams
-):
+class InterfaceGroupMutationEndpointParams(ClusterNameMixin, TicketIdMixin, EndpointQueryParams):
     """Query parameters for interface group mutation endpoints."""
 
     model_config = ConfigDict(extra="forbid")
@@ -82,9 +76,7 @@ class _EpManageFabricsInterfaceGroupsBase(FabricNameMixin, NDEndpointBaseModel):
     def _base_path(self) -> str:
         if self.fabric_name is None:
             raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.path(
-            "fabrics", quote(self.fabric_name, safe=""), "interfaceGroups"
-        )
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceGroups")
 
 
 class EpManageFabricsInterfaceGroupsGet(_EpManageFabricsInterfaceGroupsBase):
@@ -95,9 +87,7 @@ class EpManageFabricsInterfaceGroupsGet(_EpManageFabricsInterfaceGroupsBase):
         frozen=True,
         description="Class name for backward compatibility",
     )
-    endpoint_params: InterfaceGroupsGetEndpointParams = Field(
-        default_factory=InterfaceGroupsGetEndpointParams
-    )
+    endpoint_params: InterfaceGroupsGetEndpointParams = Field(default_factory=InterfaceGroupsGetEndpointParams)
 
     @property
     def path(self) -> str:
@@ -119,9 +109,7 @@ class EpManageFabricsInterfaceGroupsPost(_EpManageFabricsInterfaceGroupsBase):
         frozen=True,
         description="Class name for backward compatibility",
     )
-    endpoint_params: InterfaceGroupMutationEndpointParams = Field(
-        default_factory=InterfaceGroupMutationEndpointParams
-    )
+    endpoint_params: InterfaceGroupMutationEndpointParams = Field(default_factory=InterfaceGroupMutationEndpointParams)
 
     @property
     def path(self) -> str:
@@ -135,9 +123,7 @@ class EpManageFabricsInterfaceGroupsPost(_EpManageFabricsInterfaceGroupsBase):
         return HttpVerbEnum.POST
 
 
-class EpManageFabricsInterfaceGroupsActionsRemovePost(
-    _EpManageFabricsInterfaceGroupsBase
-):
+class EpManageFabricsInterfaceGroupsActionsRemovePost(_EpManageFabricsInterfaceGroupsBase):
     """POST ``/fabrics/{fabricName}/interfaceGroups/actions/remove``."""
 
     class_name: Literal["EpManageFabricsInterfaceGroupsActionsRemovePost"] = Field(
@@ -145,9 +131,7 @@ class EpManageFabricsInterfaceGroupsActionsRemovePost(
         frozen=True,
         description="Class name for backward compatibility",
     )
-    endpoint_params: InterfaceGroupMutationEndpointParams = Field(
-        default_factory=InterfaceGroupMutationEndpointParams
-    )
+    endpoint_params: InterfaceGroupMutationEndpointParams = Field(default_factory=InterfaceGroupMutationEndpointParams)
 
     @property
     def path(self) -> str:
@@ -187,9 +171,7 @@ class _EpManageFabricsInterfaceGroupsInterfaceGroupNameBase(
         self.interface_group_name = identifier
 
 
-class EpManageFabricsInterfaceGroupsInterfaceGroupNameGet(
-    _EpManageFabricsInterfaceGroupsInterfaceGroupNameBase
-):
+class EpManageFabricsInterfaceGroupsInterfaceGroupNameGet(_EpManageFabricsInterfaceGroupsInterfaceGroupNameBase):
     """GET ``/fabrics/{fabricName}/interfaceGroups/{interfaceGroupName}``."""
 
     class_name: Literal["EpManageFabricsInterfaceGroupsInterfaceGroupNameGet"] = Field(
@@ -197,9 +179,7 @@ class EpManageFabricsInterfaceGroupsInterfaceGroupNameGet(
         frozen=True,
         description="Class name for backward compatibility",
     )
-    endpoint_params: InterfaceGroupGetEndpointParams = Field(
-        default_factory=InterfaceGroupGetEndpointParams
-    )
+    endpoint_params: InterfaceGroupGetEndpointParams = Field(default_factory=InterfaceGroupGetEndpointParams)
 
     @property
     def path(self) -> str:
@@ -213,9 +193,7 @@ class EpManageFabricsInterfaceGroupsInterfaceGroupNameGet(
         return HttpVerbEnum.GET
 
 
-class EpManageFabricsInterfaceGroupsInterfaceGroupNamePut(
-    _EpManageFabricsInterfaceGroupsInterfaceGroupNameBase
-):
+class EpManageFabricsInterfaceGroupsInterfaceGroupNamePut(_EpManageFabricsInterfaceGroupsInterfaceGroupNameBase):
     """PUT ``/fabrics/{fabricName}/interfaceGroups/{interfaceGroupName}``."""
 
     class_name: Literal["EpManageFabricsInterfaceGroupsInterfaceGroupNamePut"] = Field(
@@ -223,9 +201,7 @@ class EpManageFabricsInterfaceGroupsInterfaceGroupNamePut(
         frozen=True,
         description="Class name for backward compatibility",
     )
-    endpoint_params: InterfaceGroupMutationEndpointParams = Field(
-        default_factory=InterfaceGroupMutationEndpointParams
-    )
+    endpoint_params: InterfaceGroupMutationEndpointParams = Field(default_factory=InterfaceGroupMutationEndpointParams)
 
     @property
     def path(self) -> str:
@@ -239,21 +215,15 @@ class EpManageFabricsInterfaceGroupsInterfaceGroupNamePut(
         return HttpVerbEnum.PUT
 
 
-class EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete(
-    _EpManageFabricsInterfaceGroupsInterfaceGroupNameBase
-):
+class EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete(_EpManageFabricsInterfaceGroupsInterfaceGroupNameBase):
     """DELETE ``/fabrics/{fabricName}/interfaceGroups/{interfaceGroupName}``."""
 
-    class_name: Literal["EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete"] = (
-        Field(
-            default="EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete",
-            frozen=True,
-            description="Class name for backward compatibility",
-        )
+    class_name: Literal["EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete"] = Field(
+        default="EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
-    endpoint_params: InterfaceGroupMutationEndpointParams = Field(
-        default_factory=InterfaceGroupMutationEndpointParams
-    )
+    endpoint_params: InterfaceGroupMutationEndpointParams = Field(default_factory=InterfaceGroupMutationEndpointParams)
 
     @property
     def path(self) -> str:

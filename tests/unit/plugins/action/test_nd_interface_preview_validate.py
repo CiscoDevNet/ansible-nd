@@ -139,9 +139,7 @@ def test_duplicate_preview_entries_and_missing_fragments_fail(action_plugin):
 
     assert result["failed"] is True
     assert result["report"]["duplicates"] == ["SN1/Ethernet1/1"]
-    assert result["report"]["config_fragments_missing"][0]["fragment"] == (
-        "feature-not-present"
-    )
+    assert result["report"]["config_fragments_missing"][0]["fragment"] == ("feature-not-present")
 
 
 @pytest.mark.parametrize(

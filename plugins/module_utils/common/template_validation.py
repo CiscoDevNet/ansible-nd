@@ -65,9 +65,7 @@ from typing import Any, Callable
 
 _IPV4_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
 _IPV4_SUBNET_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$")
-_MAC_RE = re.compile(
-    r"^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$|^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"
-)
+_MAC_RE = re.compile(r"^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$|^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
 
 
 def _literal_bool(value: Any) -> bool | None:
@@ -218,10 +216,7 @@ def fetch_template_params(
 
     if template_name in cache:
         if logger is not None:
-            logger.debug(
-                f"Template params cache hit for '{template_name}': "
-                f"{len(cache[template_name])} params"
-            )
+            logger.debug(f"Template params cache hit for '{template_name}': " f"{len(cache[template_name])} params")
         return cache[template_name]
 
     ep = endpoint_factory()
@@ -235,10 +230,7 @@ def fetch_template_params(
         data = request_fn(ep.path, ep.verb)
     except Exception as exc:  # noqa: BLE001
         if logger is not None:
-            logger.warning(
-                f"Failed to fetch template '{template_name}' parameters: {exc}. "
-                "Skipping template input validation."
-            )
+            logger.warning(f"Failed to fetch template '{template_name}' parameters: {exc}. " "Skipping template input validation.")
         cache[template_name] = []
         return []
 
@@ -250,13 +242,8 @@ def fetch_template_params(
 
     cache[template_name] = params
     if logger is not None:
-        logger.info(
-            f"Fetched {len(params)} parameter definitions for template '{template_name}'"
-        )
-        logger.debug(
-            f"Template '{template_name}' param names: "
-            f"{[p.get('name') for p in params]}"
-        )
+        logger.info(f"Fetched {len(params)} parameter definitions for template '{template_name}'")
+        logger.debug(f"Template '{template_name}' param names: " f"{[p.get('name') for p in params]}")
         logger.debug("EXIT: fetch_template_params()")
     return params
 
@@ -341,10 +328,7 @@ def validate_template_inputs(
         List of error message strings.  Empty list means valid.
     """
     if logger is not None:
-        logger.debug(
-            f"ENTER: validate_template_inputs(template={template_name}, "
-            f"input_keys={list(template_inputs.keys())})"
-        )
+        logger.debug(f"ENTER: validate_template_inputs(template={template_name}, " f"input_keys={list(template_inputs.keys())})")
 
     if not params:
         if logger is not None:
@@ -370,10 +354,7 @@ def validate_template_inputs(
             param_map[name] = p
 
     if logger is not None:
-        logger.debug(
-            f"Template '{template_name}': {len(param_map)} user params, "
-            f"{len(internal_names)} internal params ({sorted(internal_names)})"
-        )
+        logger.debug(f"Template '{template_name}': {len(param_map)} user params, " f"{len(internal_names)} internal params ({sorted(internal_names)})")
 
     # ------------------------------------------------------------------
     # Check 1: Unknown keys (skip internal params -- they are allowed
@@ -383,10 +364,7 @@ def validate_template_inputs(
     user_facing_names = set(param_map.keys())
     for user_key in template_inputs:
         if user_key not in valid_names:
-            errors.append(
-                f"Unknown {input_label} key '{user_key}' for template "
-                f"'{template_name}'. Valid keys: {sorted(user_facing_names)}"
-            )
+            errors.append(f"Unknown {input_label} key '{user_key}' for template " f"'{template_name}'. Valid keys: {sorted(user_facing_names)}")
 
     # ------------------------------------------------------------------
     # Check 2: Missing required parameters
@@ -396,15 +374,10 @@ def validate_template_inputs(
         default_val = _parameter_default(pdef)
         has_default = not _value_is_unset(default_val)
         supplied_value = template_inputs.get(pname)
-        has_supplied_value = pname in template_inputs and not _value_is_unset(
-            supplied_value
-        )
+        has_supplied_value = pname in template_inputs and not _value_is_unset(supplied_value)
 
         if is_required and not has_default and not has_supplied_value:
-            errors.append(
-                f"Required {input_label} '{pname}' (type={pdef.get('parameterType', '?')}) "
-                f"is missing for template '{template_name}'"
-            )
+            errors.append(f"Required {input_label} '{pname}' (type={pdef.get('parameterType', '?')}) " f"is missing for template '{template_name}'")
 
     # ------------------------------------------------------------------
     # Check 3: Basic type validation (soft checks)
@@ -428,60 +401,41 @@ def validate_template_inputs(
 
         if ptype == "boolean":
             if val_str.lower() not in ("true", "false"):
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects boolean (true/false), got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects boolean (true/false), got '{val_str}'")
 
         elif ptype == "integer":
             try:
                 int(val_str)
             except ValueError:
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects integer, got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects integer, got '{val_str}'")
 
         elif ptype == "long":
             try:
                 int(val_str)
             except ValueError:
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects long integer, got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects long integer, got '{val_str}'")
 
         elif ptype == "float":
             try:
                 float(val_str)
             except ValueError:
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects float, got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects float, got '{val_str}'")
 
         elif ptype in ("ipv4address", "ipaddress"):
             # Basic IPv4 shape check (per-octet 0-255 enforcement is the
             # controller's job)
             if not _IPV4_RE.match(val_str):
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects IPv4 address (e.g., 192.168.1.1), got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects IPv4 address (e.g., 192.168.1.1), got '{val_str}'")
 
         elif ptype == "ipv4addresswithsubnet":
             if not _IPV4_SUBNET_RE.match(val_str):
                 errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects IPv4 address with subnet (e.g., 192.168.1.1/24), got '{val_str}'"
+                    f"{input_label} '{user_key}' for template '{template_name}' " f"expects IPv4 address with subnet (e.g., 192.168.1.1/24), got '{val_str}'"
                 )
 
         elif ptype == "macaddress":
             if not _MAC_RE.match(val_str):
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects MAC address, got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects MAC address, got '{val_str}'")
 
         elif ptype == "enum":
             # If metaProperties contains 'validValues', check against them
@@ -491,21 +445,13 @@ def validate_template_inputs(
                 # validValues format is typically "val1,val2,val3"
                 valid_values = [v.strip() for v in valid_values_str.split(",")]
                 if val_str not in valid_values:
-                    errors.append(
-                        f"{input_label} '{user_key}' for template '{template_name}' "
-                        f"expects one of {valid_values}, got '{val_str}'"
-                    )
+                    errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects one of {valid_values}, got '{val_str}'")
 
     if logger is not None:
         if errors:
-            logger.warning(
-                f"Template input validation found {len(errors)} errors "
-                f"for template '{template_name}': {errors}"
-            )
+            logger.warning(f"Template input validation found {len(errors)} errors " f"for template '{template_name}': {errors}")
         else:
-            logger.debug(
-                f"Template input validation passed for template '{template_name}'"
-            )
+            logger.debug(f"Template input validation passed for template '{template_name}'")
         logger.debug("EXIT: validate_template_inputs()")
     return errors
 
@@ -547,10 +493,7 @@ def strip_system_injected_keys(
         not mutated.
     """
     if logger is not None:
-        logger.debug(
-            f"ENTER: strip_system_injected_keys(template={template_name}, "
-            f"keys={list(raw_inputs.keys())})"
-        )
+        logger.debug(f"ENTER: strip_system_injected_keys(template={template_name}, " f"keys={list(raw_inputs.keys())})")
 
     cleaned: dict[str, Any] = {}
     stripped_keys: list[str] = []
@@ -562,14 +505,8 @@ def strip_system_injected_keys(
 
     if logger is not None:
         if stripped_keys:
-            logger.debug(
-                f"Stripped {len(stripped_keys)} system-injected keys: "
-                f"{sorted(stripped_keys)}"
-            )
-        logger.debug(
-            f"EXIT: strip_system_injected_keys() -> {len(cleaned)} keys "
-            f"(removed {len(raw_inputs) - len(cleaned)})"
-        )
+            logger.debug(f"Stripped {len(stripped_keys)} system-injected keys: " f"{sorted(stripped_keys)}")
+        logger.debug(f"EXIT: strip_system_injected_keys() -> {len(cleaned)} keys " f"(removed {len(raw_inputs) - len(cleaned)})")
     return cleaned
 
 

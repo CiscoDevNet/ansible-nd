@@ -59,10 +59,7 @@ def _group(
         "interfaceGroupName": name,
         "type": group_type,
         "networkNames": networks,
-        "switchInterfaces": [
-            {"switchId": switch_id, "interfaceNames": interface_names}
-            for switch_id, interface_names in members or []
-        ],
+        "switchInterfaces": [{"switchId": switch_id, "interfaceNames": interface_names} for switch_id, interface_names in members or []],
         "ethernetAttributes": ethernet_attributes,
     }
     return InterfaceGroupConfigModel.from_response(data)
@@ -76,24 +73,12 @@ def test_manage_interface_group_00005() -> None:
     assert orchestrator.supports_bulk_create is True
     assert orchestrator.supports_bulk_delete is True
     assert orchestrator.create_endpoint is EpManageFabricsInterfaceGroupsPost
-    assert (
-        orchestrator.update_endpoint
-        is EpManageFabricsInterfaceGroupsInterfaceGroupNamePut
-    )
-    assert (
-        orchestrator.delete_endpoint
-        is EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete
-    )
-    assert (
-        orchestrator.query_one_endpoint
-        is EpManageFabricsInterfaceGroupsInterfaceGroupNameGet
-    )
+    assert orchestrator.update_endpoint is EpManageFabricsInterfaceGroupsInterfaceGroupNamePut
+    assert orchestrator.delete_endpoint is EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete
+    assert orchestrator.query_one_endpoint is EpManageFabricsInterfaceGroupsInterfaceGroupNameGet
     assert orchestrator.query_all_endpoint is EpManageFabricsInterfaceGroupsGet
     assert orchestrator.create_bulk_endpoint is EpManageFabricsInterfaceGroupsPost
-    assert (
-        orchestrator.delete_bulk_endpoint
-        is EpManageFabricsInterfaceGroupsActionsRemovePost
-    )
+    assert orchestrator.delete_bulk_endpoint is EpManageFabricsInterfaceGroupsActionsRemovePost
     assert orchestrator.fabric_name == "fab1"
     assert orchestrator.config_actions == {"deploy": True, "type": "switch"}
 
@@ -106,15 +91,8 @@ def test_manage_interface_group_00005() -> None:
 def test_manage_interface_group_00010() -> None:
     """Queue only changes that can affect switch interface configuration."""
     no_config_before = _group("pc", members=[("SN1", ["Port-channel10"])])
-    no_config_after = _group(
-        "pc", members=[("SN1", ["Port-channel10", "Port-channel20"])]
-    )
-    assert (
-        ManageInterfaceGroupOrchestrator._affected_interfaces(
-            no_config_before, no_config_after
-        )
-        == set()
-    )
+    no_config_after = _group("pc", members=[("SN1", ["Port-channel10", "Port-channel20"])])
+    assert ManageInterfaceGroupOrchestrator._affected_interfaces(no_config_before, no_config_after) == set()
 
     policyless_before = _group(
         "eth-no-policy",
@@ -126,12 +104,7 @@ def test_manage_interface_group_00010() -> None:
         group_type="ethernetWithoutPolicy",
         members=[("SN1", ["Ethernet1/1", "Ethernet1/2"])],
     )
-    assert (
-        ManageInterfaceGroupOrchestrator._affected_interfaces(
-            policyless_before, policyless_after
-        )
-        == set()
-    )
+    assert ManageInterfaceGroupOrchestrator._affected_interfaces(policyless_before, policyless_after) == set()
 
     policyless_with_network = _group(
         "eth-no-policy",
@@ -139,9 +112,7 @@ def test_manage_interface_group_00010() -> None:
         networks=["net-a"],
         members=[("SN1", ["Ethernet1/1", "Ethernet1/2"])],
     )
-    assert ManageInterfaceGroupOrchestrator._affected_interfaces(
-        policyless_after, policyless_with_network
-    ) == {("SN1", "Ethernet1/1"), ("SN1", "Ethernet1/2")}
+    assert ManageInterfaceGroupOrchestrator._affected_interfaces(policyless_after, policyless_with_network) == {("SN1", "Ethernet1/1"), ("SN1", "Ethernet1/2")}
 
     network_before = _group(
         "pc",
@@ -153,18 +124,14 @@ def test_manage_interface_group_00010() -> None:
         networks=["net-a"],
         members=[("SN1", ["Port-channel10", "Port-channel20"])],
     )
-    assert ManageInterfaceGroupOrchestrator._affected_interfaces(
-        network_before, member_added
-    ) == {("SN1", "Port-channel20")}
+    assert ManageInterfaceGroupOrchestrator._affected_interfaces(network_before, member_added) == {("SN1", "Port-channel20")}
 
     network_removed = _group(
         "pc",
         networks=[],
         members=[("SN1", ["Port-channel10"])],
     )
-    assert ManageInterfaceGroupOrchestrator._affected_interfaces(
-        network_before, network_removed
-    ) == {("SN1", "Port-channel10")}
+    assert ManageInterfaceGroupOrchestrator._affected_interfaces(network_before, network_removed) == {("SN1", "Port-channel10")}
 
 
 def test_manage_interface_group_00020() -> None:
@@ -193,9 +160,7 @@ def test_manage_interface_group_00020() -> None:
             "interfaceGroupName": "policy",
             "type": "ethernet",
             "networkNames": ["network-a"],
-            "switchInterfaces": [
-                {"switchId": "SN2", "interfaceNames": ["Ethernet1/10"]}
-            ],
+            "switchInterfaces": [{"switchId": "SN2", "interfaceNames": ["Ethernet1/10"]}],
             "policyDetails": {
                 "policyType": "sharedTrunkHost",
                 "ethernetAttributes": {
@@ -206,9 +171,7 @@ def test_manage_interface_group_00020() -> None:
         }
     )
     empty = _group("empty")
-    orchestrator._existing_groups = {
-        item.interface_group_name: item for item in [policy, empty, custom]
-    }
+    orchestrator._existing_groups = {item.interface_group_name: item for item in [policy, empty, custom]}
 
     def names(filters=None):
         return [item["interface_group_name"] for item in orchestrator.gather(filters)]
@@ -232,21 +195,11 @@ def test_manage_interface_group_00020() -> None:
             )
         ]
     ) == ["custom"]
+    assert names([InterfaceGroupGatheredFilterModel.model_validate({"networks": [], "switch_interfaces": []})]) == ["empty"]
     assert names(
         [
-            InterfaceGroupGatheredFilterModel.model_validate(
-                {"networks": [], "switch_interfaces": []}
-            )
-        ]
-    ) == ["empty"]
-    assert names(
-        [
-            InterfaceGroupGatheredFilterModel.model_validate(
-                {"switch_interfaces": [{"switch_id": "SN1"}]}
-            ),
-            InterfaceGroupGatheredFilterModel.model_validate(
-                {"networks": ["network-a"]}
-            ),
+            InterfaceGroupGatheredFilterModel.model_validate({"switch_interfaces": [{"switch_id": "SN1"}]}),
+            InterfaceGroupGatheredFilterModel.model_validate({"networks": ["network-a"]}),
         ]
     ) == ["custom", "policy"]
     assert names(
@@ -262,25 +215,14 @@ def test_manage_interface_group_00020() -> None:
             )
         ]
     ) == ["policy"]
-    assert (
-        names(
-            [
-                InterfaceGroupGatheredFilterModel.model_validate(
-                    {"interface_group_name": "missing"}
-                )
-            ]
-        )
-        == []
-    )
+    assert names([InterfaceGroupGatheredFilterModel.model_validate({"interface_group_name": "missing"})]) == []
 
 
 def test_manage_interface_group_00021() -> None:
     """Resolve member management IPs before Interface Group preflight planning."""
     calls: list[str] = []
     orchestrator = _orchestrator()
-    orchestrator._fabric_context = SimpleNamespace(
-        get_switch_id=lambda switch_ip: calls.append(switch_ip) or "SN1"
-    )
+    orchestrator._fabric_context = SimpleNamespace(get_switch_id=lambda switch_ip: calls.append(switch_ip) or "SN1")
     proposed = InterfaceGroupConfigModel.from_config(
         {
             "interface_group_name": "group-a",
@@ -305,9 +247,7 @@ def test_manage_interface_group_00022() -> None:
     """Resolve gathered switch filters while leaving serial-number inputs untouched."""
     calls: list[str] = []
     orchestrator = _orchestrator(state="gathered")
-    orchestrator._fabric_context = SimpleNamespace(
-        get_switch_id=lambda switch_ip: calls.append(switch_ip) or "SN1"
-    )
+    orchestrator._fabric_context = SimpleNamespace(get_switch_id=lambda switch_ip: calls.append(switch_ip) or "SN1")
     orchestrator._existing_groups = {
         "group-a": _group(
             "group-a",
@@ -325,9 +265,7 @@ def test_manage_interface_group_00022() -> None:
         }
     )
 
-    assert orchestrator.gather([ip_filter]) == [
-        orchestrator._existing_groups["group-a"].to_config()
-    ]
+    assert orchestrator.gather([ip_filter]) == [orchestrator._existing_groups["group-a"].to_config()]
     assert calls == ["10.0.0.1"]
     assert ip_filter.switch_interfaces[0].switch_id == "SN1"
 
@@ -338,18 +276,15 @@ def test_manage_interface_group_00022() -> None:
 def test_manage_interface_group_00023() -> None:
     """Report an actionable error when an input management IP is unknown."""
     orchestrator = _orchestrator()
-    orchestrator._fabric_context = SimpleNamespace(
-        get_switch_id=lambda switch_ip: (_ for _ in ()).throw(
-            RuntimeError(f"unknown {switch_ip}")
-        )
-    )
+
+    def raise_unknown_switch(switch_ip):
+        raise RuntimeError(f"unknown {switch_ip}")
+
+    orchestrator._fabric_context = SimpleNamespace(get_switch_id=raise_unknown_switch)
 
     with pytest.raises(
         RuntimeError,
-        match=(
-            r"Unable to resolve switch IP '10\.0\.0\.99' to a serial number "
-            r"in fabric 'fab1'"
-        ),
+        match=(r"Unable to resolve switch IP '10\.0\.0\.99' to a serial number " r"in fabric 'fab1'"),
     ):
         orchestrator._resolve_switch_id("10.0.0.99")
 
@@ -494,9 +429,7 @@ def test_manage_interface_group_00027(monkeypatch) -> None:
 
     gathered = _orchestrator(state="gathered")
     gathered._existing_groups = {"source": source}
-    gathered_filter = InterfaceGroupGatheredFilterModel.model_validate(
-        {"switch_interfaces": [{"switch_id": "SN1", "interface_names": ["vPC200"]}]}
-    )
+    gathered_filter = InterfaceGroupGatheredFilterModel.model_validate({"switch_interfaces": [{"switch_id": "SN1", "interface_names": ["vPC200"]}]})
     assert gathered.gather([gathered_filter]) == [source.to_config()]
 
     replaced = _orchestrator(
@@ -580,9 +513,7 @@ def test_manage_interface_group_00030() -> None:
     merged = _orchestrator(state="merged")
     merged._existing_groups = {"source": source, "target": target}
     target_merged = deepcopy(target)
-    target_merged.switch_interfaces = [
-        {"switch_id": "SN1", "interface_names": ["Port-channel20", "Port-channel10"]}
-    ]
+    target_merged.switch_interfaces = [{"switch_id": "SN1", "interface_names": ["Port-channel20", "Port-channel10"]}]
     with pytest.raises(RuntimeError, match="state=merged is additive"):
         merged._plan_moves([target_merged], {"target": target_merged})
 
@@ -636,9 +567,7 @@ def test_manage_interface_group_00050(monkeypatch) -> None:
             "interface_group_name": "pc",
             "type": "portChannel",
             "networks": ["net-a"],
-            "switch_interfaces": [
-                {"switch_id": "SN1", "interface_names": ["Port-channel10"]}
-            ],
+            "switch_interfaces": [{"switch_id": "SN1", "interface_names": ["Port-channel10"]}],
         }
     ]
     orchestrator = _orchestrator(
@@ -667,15 +596,11 @@ def test_manage_interface_group_00050(monkeypatch) -> None:
 def test_manage_interface_group_00055() -> None:
     """Create-only fields are enforced after existing groups are known."""
     orchestrator = _orchestrator()
-    missing_type = InterfaceGroupConfigModel.from_config(
-        {"interface_group_name": "new-group"}
-    )
+    missing_type = InterfaceGroupConfigModel.from_config({"interface_group_name": "new-group"})
     with pytest.raises(RuntimeError, match="requires type"):
         orchestrator.preflight_create([missing_type])
 
-    missing_template = InterfaceGroupConfigModel.from_config(
-        {"interface_group_name": "custom-group", "type": "ethernetCustom"}
-    )
+    missing_template = InterfaceGroupConfigModel.from_config({"interface_group_name": "custom-group", "type": "ethernetCustom"})
     with pytest.raises(RuntimeError, match="requires template_name"):
         orchestrator.preflight_create([missing_template])
 
@@ -704,9 +629,7 @@ def test_manage_interface_group_00065(monkeypatch) -> None:
     proposed = InterfaceGroupConfigModel.from_config(
         {
             "interface_group_name": "pc",
-            "switch_interfaces": [
-                {"switch_id": "SN1", "interface_names": ["Port-channel10"]}
-            ],
+            "switch_interfaces": [{"switch_id": "SN1", "interface_names": ["Port-channel10"]}],
         }
     )
     orchestrator = _orchestrator(config_actions={"deploy": False, "type": "switch"})
@@ -715,9 +638,7 @@ def test_manage_interface_group_00065(monkeypatch) -> None:
     monkeypatch.setattr(
         ManageInterfaceGroupOrchestrator,
         "_network_exists",
-        lambda self, network_name: pytest.fail(
-            f"unexpected network query for {network_name}"
-        ),
+        lambda self, network_name: pytest.fail(f"unexpected network query for {network_name}"),
     )
 
     orchestrator.preflight([proposed])
@@ -857,15 +778,11 @@ def test_manage_interface_group_00100(monkeypatch) -> None:
     responses = iter(
         [
             {
-                "interfaceGroupDetails": [
-                    {"interfaceGroupName": "group-a", "type": "portChannel"}
-                ],
+                "interfaceGroupDetails": [{"interfaceGroupName": "group-a", "type": "portChannel"}],
                 "meta": {"counts": {"remaining": 1, "total": 2}},
             },
             {
-                "interfaceGroupDetails": [
-                    {"interfaceGroupName": "group-b", "type": "vpc"}
-                ],
+                "interfaceGroupDetails": [{"interfaceGroupName": "group-b", "type": "vpc"}],
                 "meta": {"counts": {"remaining": 0, "total": 2}},
             },
         ]
@@ -925,9 +842,7 @@ def test_manage_interface_group_00110(monkeypatch) -> None:
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
     orchestrator = _orchestrator()
 
-    result = orchestrator.query_one(
-        InterfaceGroupConfigModel.from_config({"interface_group_name": "group/one"})
-    )
+    result = orchestrator.query_one(InterfaceGroupConfigModel.from_config({"interface_group_name": "group/one"}))
 
     assert result == {}
     assert "/interfaceGroups/group%2Fone" in calls[0]["path"]
@@ -974,12 +889,8 @@ def test_manage_interface_group_00120() -> None:
             "interfaceActions/deploy",
         )
 
-    ManageInterfaceGroupOrchestrator._raise_create_failures(
-        {"interfaceGroups": [{"type": "vpc", "status": "success"}]}
-    )
-    ManageInterfaceGroupOrchestrator._raise_delete_failures(
-        {"interfaceGroups": [{"interfaceGroupName": "group-a", "status": "success"}]}
-    )
+    ManageInterfaceGroupOrchestrator._raise_create_failures({"interfaceGroups": [{"type": "vpc", "status": "success"}]})
+    ManageInterfaceGroupOrchestrator._raise_delete_failures({"interfaceGroups": [{"interfaceGroupName": "group-a", "status": "success"}]})
     ManageInterfaceGroupOrchestrator._raise_action_failures([], "deploy")
 
 
@@ -990,11 +901,7 @@ def test_manage_interface_group_00130(monkeypatch) -> None:
     def fake_request(self, path, verb, data=None, **kwargs):
         del self, verb, kwargs
         calls.append({"path": path, "data": data})
-        return {
-            "interfaceGroups": [
-                {"type": "portChannel", "status": "success", "message": "created"}
-            ]
-        }
+        return {"interfaceGroups": [{"type": "portChannel", "status": "success", "message": "created"}]}
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
     orchestrator = _orchestrator(
@@ -1042,11 +949,7 @@ def test_manage_interface_group_00132(monkeypatch) -> None:
         del self, verb, kwargs
         calls.append({"path": path, "data": data})
         if path.endswith("/interfaceGroups"):
-            return {
-                "interfaceGroups": [
-                    {"type": "any", "status": "success", "message": "created"}
-                ]
-            }
+            return {"interfaceGroups": [{"type": "any", "status": "success", "message": "created"}]}
         return {}
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
@@ -1107,9 +1010,7 @@ def test_manage_interface_group_00133(monkeypatch) -> None:
         return {}
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
-    orchestrator = _orchestrator(
-        state="merged", config_actions={"deploy": False, "type": "resource"}
-    )
+    orchestrator = _orchestrator(state="merged", config_actions={"deploy": False, "type": "resource"})
     existing = _group(
         "mixed",
         group_type="any",
@@ -1173,9 +1074,7 @@ def test_manage_interface_group_00134(monkeypatch) -> None:
         return {}
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
-    orchestrator = _orchestrator(
-        state="replaced", config_actions={"deploy": False, "type": "resource"}
-    )
+    orchestrator = _orchestrator(state="replaced", config_actions={"deploy": False, "type": "resource"})
     existing = _group(
         "mixed",
         group_type="any",
@@ -1193,9 +1092,7 @@ def test_manage_interface_group_00134(monkeypatch) -> None:
 
     assert len(calls) == 1
     assert calls[0]["networkNames"] == ["network-a"]
-    assert calls[0]["switchInterfaces"] == [
-        {"switchId": "SN1", "interfaceNames": ["Port-channel10"]}
-    ]
+    assert calls[0]["switchInterfaces"] == [{"switchId": "SN1", "interfaceNames": ["Port-channel10"]}]
 
 
 def test_manage_interface_group_00135(monkeypatch) -> None:
@@ -1237,9 +1134,7 @@ def test_manage_interface_group_00135(monkeypatch) -> None:
         }
     )
     orchestrator._existing_groups = {"group-a": existing}
-    proposed = InterfaceGroupConfigModel.from_config(
-        orchestrator.rest_send.params["config"][0]
-    )
+    proposed = InterfaceGroupConfigModel.from_config(orchestrator.rest_send.params["config"][0])
     effective = orchestrator._effective_model(proposed)
 
     orchestrator.update(effective)
@@ -1301,9 +1196,7 @@ def test_manage_interface_group_00137(monkeypatch, state: str) -> None:
         members=[("SN1", ["Port-channel10", "Port-channel20"])],
     )
     orchestrator._existing_groups = {"group-a": existing}
-    replacement = InterfaceGroupConfigModel.from_config(
-        {"interface_group_name": "group-a", "type": "portChannel"}
-    )
+    replacement = InterfaceGroupConfigModel.from_config({"interface_group_name": "group-a", "type": "portChannel"})
 
     orchestrator.preflight([replacement])
 
@@ -1311,10 +1204,7 @@ def test_manage_interface_group_00137(monkeypatch, state: str) -> None:
         model_class=InterfaceGroupConfigModel,
         items=[deepcopy(existing)],
     )
-    assert (
-        existing_collection.get_diff_config(replacement, exclude_unset=False)
-        == "no_diff"
-    )
+    assert existing_collection.get_diff_config(replacement, exclude_unset=False) == "no_diff"
 
     orchestrator.update(replacement)
 
@@ -1493,9 +1383,7 @@ def test_manage_interface_group_00170(monkeypatch) -> None:
             "interface_group_name": "pc",
             "type": "portChannel",
             "networks": ["network-a"],
-            "switch_interfaces": [
-                {"switch_id": "SN1", "interface_names": ["Port-channel10"]}
-            ],
+            "switch_interfaces": [{"switch_id": "SN1", "interface_names": ["Port-channel10"]}],
         }
     ]
     orchestrator = _orchestrator(
@@ -1727,9 +1615,7 @@ userDefined = false;
         ({"supportedPlatforms": []}, "supported switch platforms"),
     ],
 )
-def test_manage_interface_group_00220(
-    monkeypatch, metadata_update: dict, message: str
-) -> None:
+def test_manage_interface_group_00220(monkeypatch, metadata_update: dict, message: str) -> None:
     """Reject custom templates that the Ethernet Interface Group UI cannot use."""
     template = _eligible_custom_template()
     template.update(metadata_update)
@@ -1837,9 +1723,7 @@ def test_manage_interface_group_00240(monkeypatch) -> None:
     membership_only = InterfaceGroupConfigModel.from_config(
         {
             "interface_group_name": "custom-group",
-            "switch_interfaces": [
-                {"switch_id": "SN1", "interface_names": ["Ethernet1/1"]}
-            ],
+            "switch_interfaces": [{"switch_id": "SN1", "interface_names": ["Ethernet1/1"]}],
         }
     )
     orchestrator.preflight([membership_only])
@@ -1851,9 +1735,7 @@ def test_manage_interface_group_00250() -> None:
     """Collapse serial and management-IP entries before constructing payloads."""
     calls: list[str] = []
     orchestrator = _orchestrator(config_actions={"deploy": False, "type": "switch"})
-    orchestrator._fabric_context = SimpleNamespace(
-        get_switch_id=lambda switch_ip: calls.append(switch_ip) or "SN1"
-    )
+    orchestrator._fabric_context = SimpleNamespace(get_switch_id=lambda switch_ip: calls.append(switch_ip) or "SN1")
     proposed = InterfaceGroupConfigModel.from_config(
         {
             "interface_group_name": "group-a",
@@ -1885,9 +1767,7 @@ def test_manage_interface_group_00250() -> None:
 def test_manage_interface_group_00260() -> None:
     """Reject cross-group ownership hidden by IP-to-serial translation."""
     orchestrator = _orchestrator(config_actions={"deploy": False, "type": "switch"})
-    orchestrator._fabric_context = SimpleNamespace(
-        get_switch_id=lambda _switch_ip: "SN1"
-    )
+    orchestrator._fabric_context = SimpleNamespace(get_switch_id=lambda _switch_ip: "SN1")
     first = _group(
         "group-a",
         members=[("SN1", ["Port-channel10"])],
@@ -1899,10 +1779,7 @@ def test_manage_interface_group_00260() -> None:
 
     with pytest.raises(
         RuntimeError,
-        match=(
-            r"Interface 'Port-channel10' on switch 'SN1' is present in both "
-            r"'group-a' and 'group-b'"
-        ),
+        match=(r"Interface 'Port-channel10' on switch 'SN1' is present in both " r"'group-a' and 'group-b'"),
     ):
         orchestrator.preflight([first, second])
 
@@ -1931,10 +1808,7 @@ def test_manage_interface_group_00270(monkeypatch) -> None:
 
     with pytest.raises(
         RuntimeError,
-        match=(
-            r"Interface 'vPC200' on vPC pair 'SN1/SN2' is present in both "
-            r"'group-a' and 'group-b'"
-        ),
+        match=(r"Interface 'vPC200' on vPC pair 'SN1/SN2' is present in both " r"'group-a' and 'group-b'"),
     ):
         orchestrator.preflight([first, second])
 
@@ -1998,16 +1872,12 @@ def test_manage_interface_group_00290(monkeypatch) -> None:
                 {
                     "interface_group_name": "group-a",
                     "type": "vpc",
-                    "switch_interfaces": [
-                        {"switch_id": "SN1", "interface_names": ["vPC200"]}
-                    ],
+                    "switch_interfaces": [{"switch_id": "SN1", "interface_names": ["vPC200"]}],
                 },
                 {
                     "interface_group_name": "group-b",
                     "type": "vpc",
-                    "switch_interfaces": [
-                        {"switch_id": "SN2", "interface_names": ["vPC200"]}
-                    ],
+                    "switch_interfaces": [{"switch_id": "SN2", "interface_names": ["vPC200"]}],
                 },
             ],
         },

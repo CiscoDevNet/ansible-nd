@@ -157,9 +157,7 @@ class EpManageConfigTemplateParametersGet(NDEndpointBaseModel):
         """Build the endpoint path with optional query string."""
         if self.template_name is None:
             raise ValueError("template_name must be set before accessing path")
-        base = BasePath.path(
-            "configTemplates", quote(self.template_name, safe=""), "parameters"
-        )
+        base = BasePath.path("configTemplates", quote(self.template_name, safe=""), "parameters")
         qs = self.endpoint_params.to_query_string()
         return f"{base}?{qs}" if qs else base
 

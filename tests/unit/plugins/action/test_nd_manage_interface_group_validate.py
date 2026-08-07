@@ -240,9 +240,7 @@ def test_vpc_member_accepts_opposite_peer_echo_and_normalises_name(action_plugin
             {
                 "interface_group_name": "ANSIBLE-IG-VPC",
                 "type": "vpc",
-                "switch_interfaces": [
-                    {"switch_id": "SN1", "interface_names": ["vpc200"]}
-                ],
+                "switch_interfaces": [{"switch_id": "SN1", "interface_names": ["vpc200"]}],
             }
         ],
         mode="exact",
@@ -296,9 +294,7 @@ def test_mixed_any_group_canonicalises_only_vpc_member(action_plugin):
     ("interface_name", "actual_switch_id"),
     [("Ethernet1/3", "SN2"), ("Port-channel504", "SN2"), ("vPC200", "SN3")],
 )
-def test_peer_mapping_does_not_hide_non_vpc_or_unrelated_switch_mismatch(
-    action_plugin, interface_name, actual_switch_id
-):
+def test_peer_mapping_does_not_hide_non_vpc_or_unrelated_switch_mismatch(action_plugin, interface_name, actual_switch_id):
     result = _run(
         action_plugin,
         nd_data={
@@ -316,9 +312,7 @@ def test_peer_mapping_does_not_hide_non_vpc_or_unrelated_switch_mismatch(
         test_data=[
             {
                 "interface_group_name": "ANSIBLE-IG-ANY",
-                "switch_interfaces": [
-                    {"switch_id": "SN1", "interface_names": [interface_name]}
-                ],
+                "switch_interfaces": [{"switch_id": "SN1", "interface_names": [interface_name]}],
             }
         ],
         mode="exact",
@@ -384,10 +378,7 @@ def test_scoped_type_and_unique_members_invariants(action_plugin):
     )
 
     assert result["failed"] is True
-    assert (
-        "members assigned to multiple groups"
-        in result["report"]["invariant_failures"][0]
-    )
+    assert "members assigned to multiple groups" in result["report"]["invariant_failures"][0]
 
 
 def test_invalid_mode_and_missing_data_fail_cleanly(action_plugin):
@@ -556,11 +547,5 @@ def test_consistent_count_invariant_validates_members_and_networks(action_plugin
     )
 
     assert failing["failed"] is True
-    assert any(
-        "expected interface_count=2, got 1" in item
-        for item in failing["report"]["invariant_failures"]
-    )
-    assert any(
-        "missing network_count" in item
-        for item in failing["report"]["invariant_failures"]
-    )
+    assert any("expected interface_count=2, got 1" in item for item in failing["report"]["invariant_failures"])
+    assert any("missing network_count" in item for item in failing["report"]["invariant_failures"])

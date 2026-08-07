@@ -84,13 +84,9 @@ def test_nd_manage_interface_group_00005() -> None:
     def fake_normalize(module):
         events.append(("normalize", module))
 
-    with patch.object(
-        nd_manage_interface_group, "AnsibleModule", FakeAnsibleModule
-    ), patch.object(
+    with patch.object(nd_manage_interface_group, "AnsibleModule", FakeAnsibleModule), patch.object(
         nd_manage_interface_group, "require_pydantic", fake_require_pydantic
-    ), patch.object(
-        nd_manage_interface_group, "setup_logging"
-    ), patch.object(
+    ), patch.object(nd_manage_interface_group, "setup_logging"), patch.object(
         nd_manage_interface_group, "_normalize_module_params", fake_normalize
     ), patch.object(
         nd_manage_interface_group, "NDStateMachine", FakeStateMachine
@@ -127,9 +123,7 @@ def test_nd_manage_interface_group_00007() -> None:
     state_machine = SimpleNamespace(
         output=NDOutput("normal"),
         results=results,
-        model_orchestrator=SimpleNamespace(
-            warnings=["Resource-level deployment does not deploy network-a."]
-        ),
+        model_orchestrator=SimpleNamespace(warnings=["Resource-level deployment does not deploy network-a."]),
     )
     module = SimpleNamespace(params={"output_level": "normal"}, _verbosity=2)
 
@@ -153,9 +147,7 @@ def test_nd_manage_interface_group_00007() -> None:
         ("debug", {"proposed", "logs"}, set()),
     ],
 )
-def test_nd_manage_interface_group_00008(
-    output_level, expected_keys, excluded_keys
-) -> None:
+def test_nd_manage_interface_group_00008(output_level, expected_keys, excluded_keys) -> None:
     """Return the standard NDOutput shape even before state-machine creation."""
     module = SimpleNamespace(params={"output_level": output_level}, _verbosity=0)
 
@@ -206,9 +198,7 @@ def test_nd_manage_interface_group_00009() -> None:
     )
 
     assert "api_paths" not in quiet_query
-    assert verbose_query["api_paths"] == [
-        "/api/v1/manage/fabrics/fabric-1/interfaceGroups"
-    ]
+    assert verbose_query["api_paths"] == ["/api/v1/manage/fabrics/fabric-1/interfaceGroups"]
     assert verbose_query["api_verbs"] == [HttpVerbEnum.GET]
     assert {
         "api_response",
@@ -415,13 +405,9 @@ def test_nd_manage_interface_group_00027() -> None:
         def manage_state():
             raise AssertionError("manage_state must not run for gathered")
 
-    with patch.object(
-        nd_manage_interface_group, "AnsibleModule", FakeAnsibleModule
-    ), patch.object(nd_manage_interface_group, "require_pydantic"), patch.object(
-        nd_manage_interface_group, "setup_logging"
-    ), patch.object(
-        nd_manage_interface_group, "NDStateMachine", FakeStateMachine
-    ), pytest.raises(
+    with patch.object(nd_manage_interface_group, "AnsibleModule", FakeAnsibleModule), patch.object(
+        nd_manage_interface_group, "require_pydantic"
+    ), patch.object(nd_manage_interface_group, "setup_logging"), patch.object(nd_manage_interface_group, "NDStateMachine", FakeStateMachine), pytest.raises(
         ModuleExited
     ):
         nd_manage_interface_group.main()
@@ -469,11 +455,9 @@ def test_nd_manage_interface_group_00030() -> None:
     def unexpected_state_machine(**kwargs):
         raise AssertionError(f"state machine constructed unexpectedly: {kwargs}")
 
-    with patch.object(
-        nd_manage_interface_group, "AnsibleModule", FakeAnsibleModule
-    ), patch.object(nd_manage_interface_group, "require_pydantic"), patch.object(
-        nd_manage_interface_group, "setup_logging"
-    ), patch.object(
+    with patch.object(nd_manage_interface_group, "AnsibleModule", FakeAnsibleModule), patch.object(
+        nd_manage_interface_group, "require_pydantic"
+    ), patch.object(nd_manage_interface_group, "setup_logging"), patch.object(
         nd_manage_interface_group, "_normalize_module_params", reject_input
     ), patch.object(
         nd_manage_interface_group, "NDStateMachine", unexpected_state_machine

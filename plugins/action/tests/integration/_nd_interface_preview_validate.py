@@ -166,26 +166,20 @@ class ActionModule(ActionBase):
         args = self._task.args or {}
         unknown = sorted(set(args) - _SUPPORTED_ARGUMENTS)
         if unknown:
-            return self._fail(
-                result, "unsupported argument(s): {0}".format(", ".join(unknown))
-            )
+            return self._fail(result, "unsupported argument(s): {0}".format(", ".join(unknown)))
         if args.get("nd_data") is None:
             return self._fail(result, "'nd_data' is required")
         if isinstance(args["nd_data"], dict) and args["nd_data"].get("failed"):
             return self._fail(
                 result,
-                "upstream Interface preview failed: {0}".format(
-                    args["nd_data"].get("msg", "no message")
-                ),
+                "upstream Interface preview failed: {0}".format(args["nd_data"].get("msg", "no message")),
             )
 
         test_data = args.get("test_data")
         if isinstance(test_data, dict):
             test_data = [test_data]
         if not isinstance(test_data, list) or not test_data:
-            return self._fail(
-                result, "test_data must be a non-empty list or dictionary"
-            )
+            return self._fail(result, "test_data must be a non-empty list or dictionary")
 
         entries = _extract_diffs(args["nd_data"])
         by_identity: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -219,9 +213,7 @@ class ActionModule(ActionBase):
             if unknown_expected:
                 return self._fail(
                     result,
-                    "unsupported test_data key(s): {0}".format(
-                        ", ".join(unknown_expected)
-                    ),
+                    "unsupported test_data key(s): {0}".format(", ".join(unknown_expected)),
                 )
             if not expected.get("switch_id") or not expected.get("interface_name"):
                 return self._fail(
@@ -232,9 +224,7 @@ class ActionModule(ActionBase):
             if pending not in _SUPPORTED_PENDING:
                 return self._fail(
                     result,
-                    "pending must be one of: {0}".format(
-                        ", ".join(sorted(_SUPPORTED_PENDING))
-                    ),
+                    "pending must be one of: {0}".format(", ".join(sorted(_SUPPORTED_PENDING))),
                 )
 
             identity = _identity(expected)
@@ -255,9 +245,7 @@ class ActionModule(ActionBase):
                 )
 
             lines = _pending_lines(actual)
-            if (pending == "clean" and lines != 0) or (
-                pending == "present" and lines <= 0
-            ):
+            if (pending == "clean" and lines != 0) or (pending == "present" and lines <= 0):
                 report["pending_mismatches"].append(
                     {
                         "interface": label,

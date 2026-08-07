@@ -123,9 +123,7 @@ def test_manage_config_templates_00060():
 
     instance.template_name = "custom-template"
     instance.endpoint_params.cluster_name = "cluster1"
-    assert instance.path == (
-        "/api/v1/manage/configTemplates/custom-template?clusterName=cluster1"
-    )
+    assert instance.path == ("/api/v1/manage/configTemplates/custom-template?clusterName=cluster1")
 
 
 # =============================================================================
@@ -237,9 +235,7 @@ def test_manage_config_templates_00140():
         instance.template_name = "switch_freeform"
         instance.endpoint_params.cluster_name = "cluster1"
         result = instance.path
-    assert result == (
-        "/api/v1/manage/configTemplates/switch_freeform/parameters?clusterName=cluster1"
-    )
+    assert result == ("/api/v1/manage/configTemplates/switch_freeform/parameters?clusterName=cluster1")
 
 
 def test_manage_config_templates_00150():
@@ -263,6 +259,4 @@ def test_manage_config_templates_00150():
 def test_manage_config_templates_00160():
     """Encode template names before appending the parameters segment."""
     instance = EpManageConfigTemplateParametersGet(template_name="custom/template")
-    assert instance.path == (
-        "/api/v1/manage/configTemplates/custom%2Ftemplate/parameters"
-    )
+    assert instance.path == ("/api/v1/manage/configTemplates/custom%2Ftemplate/parameters")

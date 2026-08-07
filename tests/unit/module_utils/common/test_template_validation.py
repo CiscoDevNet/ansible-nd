@@ -89,9 +89,7 @@ class FakeEndpoint:
         # Endpoint_params is a small struct so callers can set cluster_name
         # / ticket_id via attribute assignment, mirroring the real
         # ``EpManageConfigTemplateParametersGet`` model.
-        self.endpoint_params = type(
-            "EP", (), {"cluster_name": None, "ticket_id": None}
-        )()
+        self.endpoint_params = type("EP", (), {"cluster_name": None, "ticket_id": None})()
 
     @property
     def path(self) -> str:
@@ -254,9 +252,7 @@ def test_template_validation_00200() -> None:
     - ``validate_template_inputs``
     """
     params = [{"name": "hostname", "parameterType": "string", "optional": True}]
-    errors = validate_template_inputs(
-        "tpl_a", {"hostname": "leaf-01", "foo": "bar"}, params
-    )
+    errors = validate_template_inputs("tpl_a", {"hostname": "leaf-01", "foo": "bar"}, params)
     assert len(errors) == 1
     assert "foo" in errors[0]
     assert "tpl_a" in errors[0]
@@ -320,9 +316,7 @@ def test_template_validation_00220() -> None:
             "annotations": {"IsInternal": "true"},
         },
     ]
-    errors = validate_template_inputs(
-        "tpl_a", {"hostname": "leaf-01", "FABRIC_NAME": "fab1"}, params
-    )
+    errors = validate_template_inputs("tpl_a", {"hostname": "leaf-01", "FABRIC_NAME": "fab1"}, params)
     assert errors == []
 
 
@@ -727,9 +721,7 @@ def test_template_validation_00460() -> None:
 
     - ``validate_template_inputs``
     """
-    params = [
-        {"name": "cidr", "parameterType": "ipV4AddressWithSubnet", "optional": True}
-    ]
+    params = [{"name": "cidr", "parameterType": "ipV4AddressWithSubnet", "optional": True}]
     bad = validate_template_inputs("tpl_a", {"cidr": "10.0.0.1"}, params)
     good = validate_template_inputs("tpl_a", {"cidr": "10.0.0.1/24"}, params)
     assert len(bad) == 1
@@ -869,9 +861,7 @@ def test_template_validation_00500() -> None:
         {"name": "flag", "parameterType": "boolean", "optional": True},
         {"name": "ip", "parameterType": "ipV4Address", "optional": True},
     ]
-    errors = validate_template_inputs(
-        "tpl_a", {"vlan": "", "flag": "  ", "ip": ""}, params
-    )
+    errors = validate_template_inputs("tpl_a", {"vlan": "", "flag": "  ", "ip": ""}, params)
     assert errors == []
 
 
@@ -1008,10 +998,7 @@ def test_template_validation_00550() -> None:
     """
     params = [{"name": "flag", "parameterType": "boolean", "optional": True}]
     log_pass = ListLogger()
-    assert (
-        validate_template_inputs("tpl_a", {"flag": "true"}, params, logger=log_pass)
-        == []
-    )
+    assert validate_template_inputs("tpl_a", {"flag": "true"}, params, logger=log_pass) == []
     assert any("ENTER: validate_template_inputs" in m for m in log_pass.debug_msgs)
     assert any("validation passed" in m for m in log_pass.debug_msgs)
 
@@ -1132,9 +1119,7 @@ def test_template_validation_00720() -> None:
         raise RuntimeError("simulated controller outage")
 
     factory, _produced = _make_factory()
-    result = fetch_template_params(
-        "tpl_a", request_fn, cache, endpoint_factory=factory, logger=log
-    )
+    result = fetch_template_params("tpl_a", request_fn, cache, endpoint_factory=factory, logger=log)
 
     assert result == []
     assert cache == {"tpl_a": []}
@@ -1228,10 +1213,7 @@ def test_template_validation_00810() -> None:
         return {"other": "data"}
 
     factory, _produced = _make_factory()
-    assert (
-        fetch_template_params("tpl_a", request_fn, cache, endpoint_factory=factory)
-        == []
-    )
+    assert fetch_template_params("tpl_a", request_fn, cache, endpoint_factory=factory) == []
 
 
 def test_template_validation_00820() -> None:
@@ -1257,10 +1239,7 @@ def test_template_validation_00820() -> None:
             return _resp
 
         factory, _produced = _make_factory()
-        assert (
-            fetch_template_params("tpl_a", request_fn, cache, endpoint_factory=factory)
-            == []
-        )
+        assert fetch_template_params("tpl_a", request_fn, cache, endpoint_factory=factory) == []
         assert cache == {"tpl_a": []}
 
 
@@ -1430,12 +1409,8 @@ def test_template_validation_00940() -> None:
         return {"parameters": [{"name": "a"}, {"name": "b"}]}
 
     factory, _produced = _make_factory()
-    fetch_template_params(
-        "tpl_a", request_fn, cache, endpoint_factory=factory, logger=log
-    )
-    fetch_template_params(
-        "tpl_a", request_fn, cache, endpoint_factory=factory, logger=log
-    )
+    fetch_template_params("tpl_a", request_fn, cache, endpoint_factory=factory, logger=log)
+    fetch_template_params("tpl_a", request_fn, cache, endpoint_factory=factory, logger=log)
 
     enters = [m for m in log.debug_msgs if "ENTER: fetch_template_params" in m]
     assert len(enters) == 2
@@ -1466,19 +1441,14 @@ def test_template_validation_00950() -> None:
         return {"parameters": [{"name": "a"}]}
 
     factory, _produced = _make_factory()
-    assert fetch_template_params(
-        "tpl_a", good_fn, cache_ok, endpoint_factory=factory
-    ) == [{"name": "a"}]
+    assert fetch_template_params("tpl_a", good_fn, cache_ok, endpoint_factory=factory) == [{"name": "a"}]
 
     cache_err: dict[str, list[dict]] = {}
 
     def bad_fn(path: str, verb: Any) -> dict:
         raise RuntimeError("boom")
 
-    assert (
-        fetch_template_params("tpl_b", bad_fn, cache_err, endpoint_factory=factory)
-        == []
-    )
+    assert fetch_template_params("tpl_b", bad_fn, cache_err, endpoint_factory=factory) == []
 
 
 # =============================================================================
@@ -1557,10 +1527,7 @@ def test_template_validation_01020() -> None:
     assert strip_system_injected_keys("tpl_a", {}, SYSTEM_INJECTED_TEMPLATE_KEYS) == {}
 
     only_sys = {"POLICY_ID": "x", "FABRIC_ID": "y"}
-    assert (
-        strip_system_injected_keys("tpl_a", only_sys, SYSTEM_INJECTED_TEMPLATE_KEYS)
-        == {}
-    )
+    assert strip_system_injected_keys("tpl_a", only_sys, SYSTEM_INJECTED_TEMPLATE_KEYS) == {}
 
     only_user = {"hostname": "leaf-01", "vlan_id": "10"}
     out = strip_system_injected_keys("tpl_a", only_user, SYSTEM_INJECTED_TEMPLATE_KEYS)
@@ -1637,9 +1604,7 @@ def test_template_validation_01050() -> None:
     - ``strip_system_injected_keys``
     """
     log = ListLogger()
-    strip_system_injected_keys(
-        "tpl_a", {"hostname": "leaf-01"}, SYSTEM_INJECTED_TEMPLATE_KEYS, logger=log
-    )
+    strip_system_injected_keys("tpl_a", {"hostname": "leaf-01"}, SYSTEM_INJECTED_TEMPLATE_KEYS, logger=log)
     assert not any("Stripped" in m for m in log.debug_msgs)
 
 
@@ -1710,9 +1675,7 @@ def test_template_validation_01100() -> None:
         },
     ]
 
-    cleaned = strip_system_injected_keys(
-        "tpl_a", gathered, SYSTEM_INJECTED_TEMPLATE_KEYS
-    )
+    cleaned = strip_system_injected_keys("tpl_a", gathered, SYSTEM_INJECTED_TEMPLATE_KEYS)
     errors = validate_template_inputs("tpl_a", cleaned, schema)
 
     assert cleaned == {"hostname": "leaf-01", "vlan_id": "10"}

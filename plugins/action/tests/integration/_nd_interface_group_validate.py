@@ -196,13 +196,9 @@ def _normalise_members(value: Any) -> Dict[str, List[str]]:
         if switch_id is None:
             continue
         members.setdefault(str(switch_id), set()).update(
-            InterfaceGroupValidators.normalize_interface_name(interface_name)
-            for interface_name in _normalise_string_list(interface_names)
+            InterfaceGroupValidators.normalize_interface_name(interface_name) for interface_name in _normalise_string_list(interface_names)
         )
-    return {
-        switch_id: sorted(interface_names)
-        for switch_id, interface_names in sorted(members.items())
-    }
+    return {switch_id: sorted(interface_names) for switch_id, interface_names in sorted(members.items())}
 
 
 def _normalise_vpc_peer_switch_ids(value: Any) -> Dict[str, str]:
@@ -223,23 +219,15 @@ def _normalise_vpc_peer_switch_ids(value: Any) -> Dict[str, str]:
         if switch_id == peer_id:
             raise ValueError("vpc_peer_switch_ids cannot map a switch to itself")
         if switch_id in peers and peers[switch_id] != peer_id:
-            raise ValueError(
-                "vpc_peer_switch_ids contains conflicting peers for {0}".format(
-                    switch_id
-                )
-            )
+            raise ValueError("vpc_peer_switch_ids contains conflicting peers for {0}".format(switch_id))
         if peer_id in peers and peers[peer_id] != switch_id:
-            raise ValueError(
-                "vpc_peer_switch_ids contains conflicting peers for {0}".format(peer_id)
-            )
+            raise ValueError("vpc_peer_switch_ids contains conflicting peers for {0}".format(peer_id))
         peers[switch_id] = peer_id
         peers[peer_id] = switch_id
     return peers
 
 
-def _canonicalise_vpc_member_switch_ids(
-    members: Dict[str, List[str]], vpc_peer_switch_ids: Dict[str, str]
-) -> Dict[str, List[str]]:
+def _canonicalise_vpc_member_switch_ids(members: Dict[str, List[str]], vpc_peer_switch_ids: Dict[str, str]) -> Dict[str, List[str]]:
     """Canonicalize only vPC member switch IDs across a confirmed peer pair."""
     canonical: Dict[str, Set[str]] = {}
     for switch_id, interface_names in members.items():
@@ -250,10 +238,7 @@ def _canonicalise_vpc_member_switch_ids(
                 if peer_id is not None:
                     canonical_switch_id = min(switch_id, peer_id)
             canonical.setdefault(canonical_switch_id, set()).add(interface_name)
-    return {
-        switch_id: sorted(interface_names)
-        for switch_id, interface_names in sorted(canonical.items())
-    }
+    return {switch_id: sorted(interface_names) for switch_id, interface_names in sorted(canonical.items())}
 
 
 def _normalise_ethernet_attributes(value: Any) -> Dict[str, Any]:
@@ -265,9 +250,7 @@ def _normalise_ethernet_attributes(value: Any) -> Dict[str, Any]:
 def _normalise_group(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Project API or module-shaped input into a stable comparison shape."""
     raw = InterfaceGroupValidators.normalize_response_group(raw)
-    association, _present = _first(
-        raw, "interfaceGroupAssociation", "interface_group_association"
-    )
+    association, _present = _first(raw, "interfaceGroupAssociation", "interface_group_association")
     if not isinstance(association, dict):
         association = {}
 
@@ -286,11 +269,7 @@ def _normalise_group(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     for field_name, field_aliases in aliases.items():
         value, present = _first(raw, *field_aliases)
-        if (
-            not present
-            and field_name in {"networks", "switch_interfaces"}
-            and association
-        ):
+        if not present and field_name in {"networks", "switch_interfaces"} and association:
             value, present = _first(association, *field_aliases)
         if not present:
             continue
@@ -368,24 +347,17 @@ def _compare_group(
         compared_expected = expected
         compared_actual = actual
         if field_name == "switch_interfaces":
-            compared_expected = _canonicalise_vpc_member_switch_ids(
-                expected or {}, vpc_peer_switch_ids
-            )
-            compared_actual = _canonicalise_vpc_member_switch_ids(
-                actual or {}, vpc_peer_switch_ids
-            )
+            compared_expected = _canonicalise_vpc_member_switch_ids(expected or {}, vpc_peer_switch_ids)
+            compared_actual = _canonicalise_vpc_member_switch_ids(actual or {}, vpc_peer_switch_ids)
         matches = compared_expected == compared_actual
         if field_name == "networks" and mode == "subset":
             matches = set(expected or []) <= set(actual or [])
         elif field_name == "switch_interfaces" and mode == "subset":
             matches = all(
-                set(interface_names) <= set((compared_actual or {}).get(switch_id, []))
-                for switch_id, interface_names in (compared_expected or {}).items()
+                set(interface_names) <= set((compared_actual or {}).get(switch_id, [])) for switch_id, interface_names in (compared_expected or {}).items()
             )
         elif field_name == "template_config":
-            matches = InterfaceGroupValidators.template_config_is_subset(
-                expected or {}, actual or {}
-            )
+            matches = InterfaceGroupValidators.template_config_is_subset(expected or {}, actual or {})
         elif field_name == "ethernet_attributes":
             matches = _dict_is_subset(expected or {}, actual or {})
         if not matches:
@@ -416,9 +388,7 @@ def _normalise_absent(absent: Any) -> List[str]:
     return sorted(set(names))
 
 
-def _check_invariants(
-    groups: List[Dict[str, Any]], invariants: Dict[str, Any]
-) -> List[str]:
+def _check_invariants(groups: List[Dict[str, Any]], invariants: Dict[str, Any]) -> List[str]:
     unknown = sorted(set(invariants) - _SUPPORTED_INVARIANTS)
     if unknown:
         return ["unsupported invariant(s): {0}".format(", ".join(unknown))]
@@ -426,63 +396,42 @@ def _check_invariants(
     failures: List[str] = []
     count = len(groups)
     if "total_count" in invariants and count != int(invariants["total_count"]):
-        failures.append(
-            "expected total_count={0}, got {1}".format(invariants["total_count"], count)
-        )
+        failures.append("expected total_count={0}, got {1}".format(invariants["total_count"], count))
     if "min_count" in invariants and count < int(invariants["min_count"]):
-        failures.append(
-            "expected min_count={0}, got {1}".format(invariants["min_count"], count)
-        )
+        failures.append("expected min_count={0}, got {1}".format(invariants["min_count"], count))
     if "max_count" in invariants and count > int(invariants["max_count"]):
-        failures.append(
-            "expected max_count={0}, got {1}".format(invariants["max_count"], count)
-        )
+        failures.append("expected max_count={0}, got {1}".format(invariants["max_count"], count))
 
     if invariants.get("required_types"):
         actual_types = {group.get("type") for group in groups}
         missing_types = sorted(set(invariants["required_types"]) - actual_types)
         if missing_types:
-            failures.append(
-                "missing required type(s): {0}".format(", ".join(missing_types))
-            )
+            failures.append("missing required type(s): {0}".format(", ".join(missing_types)))
 
     if invariants.get("unique_group_names", False):
         names = [group.get("interface_group_name") for group in groups]
-        duplicates = sorted(
-            {name for name in names if name is not None and names.count(name) > 1}
-        )
+        duplicates = sorted({name for name in names if name is not None and names.count(name) > 1})
         if duplicates:
-            failures.append(
-                "duplicate interface group name(s): {0}".format(", ".join(duplicates))
-            )
+            failures.append("duplicate interface group name(s): {0}".format(", ".join(duplicates)))
 
     if invariants.get("unique_members", False):
         owners: Dict[Tuple[str, str], List[str]] = {}
         for group in groups:
-            for switch_id, interface_names in group.get(
-                "switch_interfaces", {}
-            ).items():
+            for switch_id, interface_names in group.get("switch_interfaces", {}).items():
                 for interface_name in interface_names:
-                    owners.setdefault((switch_id, interface_name), []).append(
-                        group.get("interface_group_name")
-                    )
+                    owners.setdefault((switch_id, interface_name), []).append(group.get("interface_group_name"))
         duplicates = [
             "{0}/{1}: {2}".format(switch_id, interface_name, ", ".join(names))
             for (switch_id, interface_name), names in sorted(owners.items())
             if len(set(names)) > 1
         ]
         if duplicates:
-            failures.append(
-                "members assigned to multiple groups: {0}".format("; ".join(duplicates))
-            )
+            failures.append("members assigned to multiple groups: {0}".format("; ".join(duplicates)))
 
     if invariants.get("consistent_counts", False):
         for group in groups:
             group_name = group.get("interface_group_name") or "?"
-            member_count = sum(
-                len(interface_names)
-                for interface_names in group.get("switch_interfaces", {}).values()
-            )
+            member_count = sum(len(interface_names) for interface_names in group.get("switch_interfaces", {}).values())
             network_count = len(group.get("networks", []))
             for count_name, expected in (
                 ("interface_count", member_count),
@@ -524,21 +473,15 @@ class ActionModule(ActionBase):
         if isinstance(nd_data, dict) and nd_data.get("failed"):
             return self._fail(
                 result,
-                "upstream ND query failed: {0}".format(
-                    nd_data.get("msg", "no message")
-                ),
+                "upstream ND query failed: {0}".format(nd_data.get("msg", "no message")),
             )
 
         mode = args.get("mode", "subset")
         if mode not in _SUPPORTED_MODES:
-            return self._fail(
-                result, "mode must be one of: {0}".format(", ".join(_SUPPORTED_MODES))
-            )
+            return self._fail(result, "mode must be one of: {0}".format(", ".join(_SUPPORTED_MODES)))
 
         try:
-            vpc_peer_switch_ids = _normalise_vpc_peer_switch_ids(
-                args.get("vpc_peer_switch_ids")
-            )
+            vpc_peer_switch_ids = _normalise_vpc_peer_switch_ids(args.get("vpc_peer_switch_ids"))
         except ValueError as exc:
             return self._fail(result, str(exc))
 
@@ -546,19 +489,9 @@ class ActionModule(ActionBase):
         groups = [_normalise_group(group) for group in raw_groups]
         scope_prefix = args.get("scope_prefix")
         if scope_prefix:
-            groups = [
-                group
-                for group in groups
-                if str(group.get("interface_group_name", "")).startswith(
-                    str(scope_prefix)
-                )
-            ]
+            groups = [group for group in groups if str(group.get("interface_group_name", "")).startswith(str(scope_prefix))]
 
-        by_name = {
-            group.get("interface_group_name"): group
-            for group in groups
-            if group.get("interface_group_name")
-        }
+        by_name = {group.get("interface_group_name"): group for group in groups if group.get("interface_group_name")}
         test_data = args.get("test_data") or []
         if isinstance(test_data, dict):
             test_data = [test_data]
@@ -580,14 +513,10 @@ class ActionModule(ActionBase):
             if have is None:
                 report["missing"].append(group_name)
                 continue
-            report["mismatches"].extend(
-                _compare_group(want, have, mode, vpc_peer_switch_ids)
-            )
+            report["mismatches"].extend(_compare_group(want, have, mode, vpc_peer_switch_ids))
 
         absent_names = _normalise_absent(args.get("absent"))
-        report["unexpected_present"] = [
-            name for name in absent_names if name in by_name
-        ]
+        report["unexpected_present"] = [name for name in absent_names if name in by_name]
         invariants = args.get("invariants")
         if invariants is None:
             invariants = {}
@@ -595,17 +524,11 @@ class ActionModule(ActionBase):
             return self._fail(result, "invariants must be a dictionary")
         report["invariant_failures"] = _check_invariants(groups, invariants)
 
-        failures = [
-            value
-            for key, value in report.items()
-            if key != "invariant_failures" and value
-        ]
+        failures = [value for key, value in report.items() if key != "invariant_failures" and value]
         if report["invariant_failures"]:
             failures.append(report["invariant_failures"])
 
-        result.update(
-            changed=False, groups=self._serialise_groups(groups), report=report
-        )
+        result.update(changed=False, groups=self._serialise_groups(groups), report=report)
         if failures:
             result.update(
                 failed=True,

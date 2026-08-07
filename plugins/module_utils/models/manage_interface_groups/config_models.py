@@ -50,9 +50,7 @@ class InterfaceGroupSwitchInterfacesModel(NDNestedModel):
         min_length=1,
         description="Switch serial number or management IP address",
     )
-    interface_names: list[str] = Field(
-        alias="interfaceNames", min_length=1, description="Member interface names"
-    )
+    interface_names: list[str] = Field(alias="interfaceNames", min_length=1, description="Member interface names")
 
     @field_validator("switch_id", mode="before")
     @classmethod
@@ -67,12 +65,7 @@ class InterfaceGroupSwitchInterfacesModel(NDNestedModel):
         normalized = InterfaceGroupValidators.normalize_unique_strings(value)
         if normalized is None or not isinstance(normalized, list):
             return normalized
-        return sorted(
-            {
-                InterfaceGroupValidators.normalize_interface_name(item)
-                for item in normalized
-            }
-        )
+        return sorted({InterfaceGroupValidators.normalize_interface_name(item) for item in normalized})
 
 
 class InterfaceGroupEthernetAttributesModel(NDNestedModel):
@@ -87,12 +80,8 @@ class InterfaceGroupEthernetAttributesModel(NDNestedModel):
     )
 
     admin_status: bool | None = Field(default=None, alias="adminStatus")
-    auto_negotiation: Literal["on", "off"] | None = Field(
-        default=None, alias="autoNegotiation"
-    )
-    bpdu_guard: Literal["enabled", "disabled", "default"] | None = Field(
-        default=None, alias="bpduGuard"
-    )
+    auto_negotiation: Literal["on", "off"] | None = Field(default=None, alias="autoNegotiation")
+    bpdu_guard: Literal["enabled", "disabled", "default"] | None = Field(default=None, alias="bpduGuard")
     cdp: bool | None = Field(default=None)
     description: AsciiDescription = Field(default=None, max_length=254)
     extra_config: str | None = Field(default=None, alias="extraConfig")
@@ -102,14 +91,10 @@ class InterfaceGroupEthernetAttributesModel(NDNestedModel):
     netflow: bool | None = Field(default=None)
     netflow_monitor: str | None = Field(default=None, alias="netflowMonitor")
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
-    port_duplex_mode: Literal["auto", "full", "half"] | None = Field(
-        default=None, alias="portDuplexMode"
-    )
+    port_duplex_mode: Literal["auto", "full", "half"] | None = Field(default=None, alias="portDuplexMode")
     port_type_fast: bool | None = Field(default=None, alias="portTypeFast")
     ptp: bool | None = Field(default=None)
-    ptp_timestamp_tagging: bool | None = Field(
-        default=None, alias="ptpTimestampTagging"
-    )
+    ptp_timestamp_tagging: bool | None = Field(default=None, alias="ptpTimestampTagging")
     speed: SpeedEnum | None = Field(default=None)
     trunk_allowed_vlans: str | None = Field(
         default=None,
@@ -123,9 +108,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
     """One playbook-facing Interface Group resource."""
 
     identifiers: ClassVar[list[str]] = ["interface_group_name"]
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "single"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
     exclude_from_diff: ClassVar[set[str]] = {
         "deploy",
         "interface_count",
@@ -144,12 +127,8 @@ class InterfaceGroupConfigModel(NDBaseModel):
         "policy_id",
     }
 
-    interface_group_name: str = Field(
-        alias="interfaceGroupName", min_length=1, description="Interface group name"
-    )
-    type: InterfaceGroupType | None = Field(
-        default=None, description="Interface group type"
-    )
+    interface_group_name: str = Field(alias="interfaceGroupName", min_length=1, description="Interface group name")
+    type: InterfaceGroupType | None = Field(default=None, description="Interface group type")
     networks: list[str] | None = Field(
         default=None,
         alias="networkNames",
@@ -160,9 +139,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
         alias="switchInterfaces",
         description="Switch and interface membership",
     )
-    template_name: str | None = Field(
-        default=None, alias="templateName", description="Custom ethernet template name"
-    )
+    template_name: str | None = Field(default=None, alias="templateName", description="Custom ethernet template name")
     template_config: dict[str, Any] | None = Field(
         default=None,
         alias="templateConfig",
@@ -196,13 +173,9 @@ class InterfaceGroupConfigModel(NDBaseModel):
     )
 
     @classmethod
-    def from_config(
-        cls, ansible_config: dict[str, Any], **kwargs
-    ) -> "InterfaceGroupConfigModel":
+    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "InterfaceGroupConfigModel":
         """Preserve explicit nulls inside opaque custom-template inputs."""
-        template_config = ansible_config.get(
-            "template_config", ansible_config.get("templateConfig")
-        )
+        template_config = ansible_config.get("template_config", ansible_config.get("templateConfig"))
         model = super().from_config(ansible_config, **kwargs)
         if isinstance(template_config, dict):
             model.template_config = deepcopy(template_config)
@@ -242,26 +215,13 @@ class InterfaceGroupConfigModel(NDBaseModel):
         """Accept both flattened responses and the nested association response shape."""
         if not isinstance(data, dict):
             return data
-        normalized = (
-            InterfaceGroupValidators.normalize_response_group(data)
-            if (info.context or {}).get("mode") == "response"
-            else dict(data)
-        )
-        association = normalized.get("interfaceGroupAssociation") or normalized.get(
-            "interface_group_association"
-        )
+        normalized = InterfaceGroupValidators.normalize_response_group(data) if (info.context or {}).get("mode") == "response" else dict(data)
+        association = normalized.get("interfaceGroupAssociation") or normalized.get("interface_group_association")
         if isinstance(association, dict):
             if "networks" not in normalized and "networkNames" not in normalized:
-                normalized["networkNames"] = association.get(
-                    "networkNames", association.get("networks")
-                )
-            if (
-                "switch_interfaces" not in normalized
-                and "switchInterfaces" not in normalized
-            ):
-                normalized["switchInterfaces"] = association.get(
-                    "switchInterfaces", association.get("switch_interfaces")
-                )
+                normalized["networkNames"] = association.get("networkNames", association.get("networks"))
+            if "switch_interfaces" not in normalized and "switchInterfaces" not in normalized:
+                normalized["switchInterfaces"] = association.get("switchInterfaces", association.get("switch_interfaces"))
         return normalized
 
     @field_validator("interface_group_name", "template_name", mode="before")
@@ -295,9 +255,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
             merged.setdefault(switch_id, []).extend(interface_names)
         return [
             {"switch_id": switch_id, "interface_names": interface_names}
-            for switch_id, interface_names in sorted(
-                merged.items(), key=lambda entry: str(entry[0])
-            )
+            for switch_id, interface_names in sorted(merged.items(), key=lambda entry: str(entry[0]))
         ]
 
     @model_validator(mode="after")
@@ -319,16 +277,10 @@ class InterfaceGroupConfigModel(NDBaseModel):
             for interface_name in switch_entry.interface_names:
                 member_kind = InterfaceGroupValidators.interface_kind(interface_name)
                 if member_kind not in allowed_member_kinds:
-                    raise ValueError(
-                        f"interface '{interface_name}' is not valid for interface group type '{self.type}'"
-                    )
+                    raise ValueError(f"interface '{interface_name}' is not valid for interface group type '{self.type}'")
 
-        if self.type != InterfaceGroupType.ETHERNET_CUSTOM.value and (
-            self.template_name is not None or self.template_config is not None
-        ):
-            raise ValueError(
-                "template_name and template_config are valid only for type=ethernetCustom"
-            )
+        if self.type != InterfaceGroupType.ETHERNET_CUSTOM.value and (self.template_name is not None or self.template_config is not None):
+            raise ValueError("template_name and template_config are valid only for type=ethernetCustom")
         if (
             self.type
             not in (
@@ -337,34 +289,23 @@ class InterfaceGroupConfigModel(NDBaseModel):
             )
             and self.ethernet_attributes is not None
         ):
-            raise ValueError(
-                "ethernet_attributes is valid only for ethernetWithPolicy or ethernetWithoutPolicy groups"
-            )
-        if (
-            self.type == InterfaceGroupType.ETHERNET_WITH_POLICY.value
-            and self.ethernet_attributes is None
-        ):
+            raise ValueError("ethernet_attributes is valid only for ethernetWithPolicy or ethernetWithoutPolicy groups")
+        if self.type == InterfaceGroupType.ETHERNET_WITH_POLICY.value and self.ethernet_attributes is None:
             object.__setattr__(
                 self,
                 "ethernet_attributes",
-                InterfaceGroupEthernetAttributesModel(
-                    **InterfaceGroupValidators.ethernet_with_policy_defaults()
-                ),
+                InterfaceGroupEthernetAttributesModel(**InterfaceGroupValidators.ethernet_with_policy_defaults()),
             )
         if (
             self.type == InterfaceGroupType.ETHERNET_WITHOUT_POLICY.value
             and self.ethernet_attributes is not None
             and self.ethernet_attributes.model_dump(exclude_none=True)
         ):
-            raise ValueError(
-                "ethernet_attributes must be empty for type=ethernetWithoutPolicy"
-            )
+            raise ValueError("ethernet_attributes must be empty for type=ethernetWithoutPolicy")
         return self
 
     @staticmethod
-    def _merge_string_lists(
-        current: list[str] | None, proposed: list[str]
-    ) -> list[str] | None:
+    def _merge_string_lists(current: list[str] | None, proposed: list[str]) -> list[str] | None:
         """Add proposed values without removing values already present."""
         if not proposed:
             return current
@@ -381,9 +322,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
 
         merged: dict[str, set[str]] = {}
         for switch_entry in [*(current or []), *proposed]:
-            merged.setdefault(switch_entry.switch_id, set()).update(
-                switch_entry.interface_names
-            )
+            merged.setdefault(switch_entry.switch_id, set()).update(switch_entry.interface_names)
 
         return [
             {
@@ -394,9 +333,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
         ]
 
     @classmethod
-    def _merge_dicts(
-        cls, current: dict[str, Any] | None, proposed: dict[str, Any]
-    ) -> dict[str, Any] | None:
+    def _merge_dicts(cls, current: dict[str, Any] | None, proposed: dict[str, Any]) -> dict[str, Any] | None:
         """Recursively merge explicitly supplied dictionary keys."""
         if not proposed:
             return current
@@ -450,10 +387,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
 
         candidate = deepcopy(current_without_template)
         candidate.merge(proposed_without_template)
-        return (
-            template_matches
-            and candidate.to_diff_dict() == current_without_template.to_diff_dict()
-        )
+        return template_matches and candidate.to_diff_dict() == current_without_template.to_diff_dict()
 
     def merge(self, other: "NDBaseModel") -> "InterfaceGroupConfigModel":
         """Merge one Interface Group additively for ``state=merged``.
@@ -464,9 +398,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
         ``overridden``, whose state-machine paths do not call this method.
         """
         if not isinstance(other, type(self)):
-            raise TypeError(
-                f"Cannot merge {type(other).__name__} into {type(self).__name__}. Both must be the same type."
-            )
+            raise TypeError(f"Cannot merge {type(other).__name__} into {type(self).__name__}. Both must be the same type.")
 
         for field_name in other.model_fields_set:
             value = getattr(other, field_name, None)
@@ -491,16 +423,10 @@ class InterfaceGroupConfigModel(NDBaseModel):
 class InterfaceGroupConfigActionsModel(BaseModel):
     """Deployment controls supported by the Interface Groups module."""
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, validate_assignment=True, extra="forbid"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
-    deploy: bool = Field(
-        default=True, description="Whether to deploy staged Interface Group changes"
-    )
-    type: InterfaceGroupConfigActionType = Field(
-        default=InterfaceGroupConfigActionType.SWITCH, description="Deployment scope"
-    )
+    deploy: bool = Field(default=True, description="Whether to deploy staged Interface Group changes")
+    type: InterfaceGroupConfigActionType = Field(default=InterfaceGroupConfigActionType.SWITCH, description="Deployment scope")
 
 
 class InterfaceGroupGatheredSwitchFilterModel(NDNestedModel):
@@ -531,12 +457,7 @@ class InterfaceGroupGatheredSwitchFilterModel(NDNestedModel):
         normalized = InterfaceGroupValidators.normalize_unique_strings(value)
         if normalized is None or not isinstance(normalized, list):
             return normalized
-        return sorted(
-            {
-                InterfaceGroupValidators.normalize_interface_name(item)
-                for item in normalized
-            }
-        )
+        return sorted({InterfaceGroupValidators.normalize_interface_name(item) for item in normalized})
 
 
 class InterfaceGroupGatheredFilterModel(BaseModel):
@@ -561,9 +482,7 @@ class InterfaceGroupGatheredFilterModel(BaseModel):
         min_length=1,
         description="Exact Interface Group name",
     )
-    type: InterfaceGroupType | None = Field(
-        default=None, description="Exact normalized Interface Group type"
-    )
+    type: InterfaceGroupType | None = Field(default=None, description="Exact normalized Interface Group type")
     networks: list[str] | None = Field(
         default=None,
         alias="networkNames",
@@ -609,23 +528,15 @@ class InterfaceGroupGatheredFilterModel(BaseModel):
         switch_ids: set[str] = set()
         for item in self.switch_interfaces or []:
             if item.switch_id in switch_ids:
-                raise ValueError(
-                    f"duplicate switch_id '{item.switch_id}' in gathered filter"
-                )
+                raise ValueError(f"duplicate switch_id '{item.switch_id}' in gathered filter")
             switch_ids.add(item.switch_id)
 
         if (
             self.type is not None
             and self.type != InterfaceGroupType.ETHERNET_CUSTOM.value
-            and (
-                "template_name" in self.model_fields_set
-                or "template_config" in self.model_fields_set
-            )
+            and ("template_name" in self.model_fields_set or "template_config" in self.model_fields_set)
         ):
-            raise ValueError(
-                "template_name and template_config filters require type=ethernetCustom "
-                "when type is supplied"
-            )
+            raise ValueError("template_name and template_config filters require type=ethernetCustom when type is supplied")
         if (
             self.type is not None
             and self.type
@@ -635,10 +546,7 @@ class InterfaceGroupGatheredFilterModel(BaseModel):
             )
             and "ethernet_attributes" in self.model_fields_set
         ):
-            raise ValueError(
-                "ethernet_attributes filter requires an Ethernet policy type "
-                "when type is supplied"
-            )
+            raise ValueError("ethernet_attributes filter requires an Ethernet policy type when type is supplied")
         return self
 
     def to_filter_config(self) -> dict[str, Any]:
@@ -678,15 +586,9 @@ class InterfaceGroupModuleConfigModel(BaseModel):
     )
 
     fabric_name: str = Field(min_length=1, description="Fabric name")
-    config: list[Any] = Field(
-        default_factory=list, description="Interface group resources"
-    )
-    config_actions: InterfaceGroupConfigActionsModel | None = Field(
-        default=None, description="Deployment controls"
-    )
-    state: InterfaceGroupState = Field(
-        default=InterfaceGroupState.MERGED, description="Desired resource state"
-    )
+    config: list[Any] = Field(default_factory=list, description="Interface group resources")
+    config_actions: InterfaceGroupConfigActionsModel | None = Field(default=None, description="Deployment controls")
+    state: InterfaceGroupState = Field(default=InterfaceGroupState.MERGED, description="Desired resource state")
 
     @model_validator(mode="before")
     @classmethod
@@ -714,27 +616,18 @@ class InterfaceGroupModuleConfigModel(BaseModel):
                 unknown_config_keys = set(item) - cls._config_input_keys
                 if unknown_config_keys:
                     unknown = ", ".join(sorted(unknown_config_keys))
-                    raise ValueError(
-                        f"unsupported option(s) in config[{config_index}]: {unknown}"
-                    )
+                    raise ValueError(f"unsupported option(s) in config[{config_index}]: {unknown}")
 
-                normalized_item = {
-                    key: value for key, value in item.items() if value is not None
-                }
+                normalized_item = {key: value for key, value in item.items() if value is not None}
                 switch_interfaces = normalized_item.get("switch_interfaces")
                 if isinstance(switch_interfaces, list):
                     for switch_index, switch_entry in enumerate(switch_interfaces):
                         if not isinstance(switch_entry, dict):
                             continue
-                        unknown_switch_keys = (
-                            set(switch_entry) - cls._switch_interface_input_keys
-                        )
+                        unknown_switch_keys = set(switch_entry) - cls._switch_interface_input_keys
                         if unknown_switch_keys:
                             unknown = ", ".join(sorted(unknown_switch_keys))
-                            raise ValueError(
-                                "unsupported option(s) in "
-                                f"config[{config_index}].switch_interfaces[{switch_index}]: {unknown}"
-                            )
+                            raise ValueError("unsupported option(s) in " f"config[{config_index}].switch_interfaces[{switch_index}]: {unknown}")
 
                 normalized_config.append(normalized_item)
             normalized["config"] = normalized_config
@@ -743,25 +636,15 @@ class InterfaceGroupModuleConfigModel(BaseModel):
     @model_validator(mode="after")
     def validate_module_contract(self) -> "InterfaceGroupModuleConfigModel":
         """Validate state requirements, uniqueness, and deployment semantics."""
-        state = (
-            self.state.value
-            if isinstance(self.state, InterfaceGroupState)
-            else self.state
-        )
-        model_class = (
-            InterfaceGroupGatheredFilterModel
-            if state == InterfaceGroupState.GATHERED.value
-            else InterfaceGroupConfigModel
-        )
+        state = self.state.value if isinstance(self.state, InterfaceGroupState) else self.state
+        model_class = InterfaceGroupGatheredFilterModel if state == InterfaceGroupState.GATHERED.value else InterfaceGroupConfigModel
         validated_config = []
         for item in self.config:
             if isinstance(item, model_class):
                 validated_config.append(item)
                 continue
             if isinstance(item, BaseModel):
-                item = item.model_dump(
-                    by_alias=False, exclude_unset=True, mode="python"
-                )
+                item = item.model_dump(by_alias=False, exclude_unset=True, mode="python")
             validated_config.append(model_class.model_validate(item))
         object.__setattr__(self, "config", validated_config)
 
@@ -773,17 +656,11 @@ class InterfaceGroupModuleConfigModel(BaseModel):
 
         group_names: set[str] = set()
         memberships: dict[tuple[str, str], str] = {}
-        action_type = (
-            self.config_actions.type
-            if self.config_actions
-            else InterfaceGroupConfigActionType.SWITCH.value
-        )
+        action_type = self.config_actions.type if self.config_actions else InterfaceGroupConfigActionType.SWITCH.value
 
         for item in validated_config:
             if item.interface_group_name in group_names:
-                raise ValueError(
-                    f"duplicate interface_group_name '{item.interface_group_name}' in config"
-                )
+                raise ValueError(f"duplicate interface_group_name '{item.interface_group_name}' in config")
             group_names.add(item.interface_group_name)
 
             if state in (
@@ -791,24 +668,12 @@ class InterfaceGroupModuleConfigModel(BaseModel):
                 InterfaceGroupState.OVERRIDDEN.value,
             ):
                 if item.type is None:
-                    raise ValueError(
-                        f"type is required for interface group '{item.interface_group_name}' when state={state}"
-                    )
-                if (
-                    item.type == InterfaceGroupType.ETHERNET_CUSTOM.value
-                    and not item.template_name
-                ):
-                    raise ValueError(
-                        f"template_name is required for ethernetCustom interface group '{item.interface_group_name}'"
-                    )
+                    raise ValueError(f"type is required for interface group '{item.interface_group_name}' when state={state}")
+                if item.type == InterfaceGroupType.ETHERNET_CUSTOM.value and not item.template_name:
+                    raise ValueError(f"template_name is required for ethernetCustom interface group '{item.interface_group_name}'")
 
-            if (
-                "deploy" in item.model_fields_set
-                and action_type != InterfaceGroupConfigActionType.RESOURCE.value
-            ):
-                raise ValueError(
-                    "config[].deploy is valid only when config_actions.type=resource"
-                )
+            if "deploy" in item.model_fields_set and action_type != InterfaceGroupConfigActionType.RESOURCE.value:
+                raise ValueError("config[].deploy is valid only when config_actions.type=resource")
 
             for switch_entry in item.switch_interfaces or []:
                 for interface_name in switch_entry.interface_names:
@@ -863,9 +728,7 @@ class InterfaceGroupModuleConfigModel(BaseModel):
             },
         }
         config_actions = config_actions_spec(include=("deploy", "type"))
-        config_actions["config_actions"]["options"]["type"][
-            "choices"
-        ] = InterfaceGroupConfigActionType.choices()
+        config_actions["config_actions"]["options"]["type"]["choices"] = InterfaceGroupConfigActionType.choices()
         spec.update(config_actions)
         return spec
 

@@ -42,34 +42,26 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
             HttpVerbEnum.POST,
         ),
         (
-            EpManageFabricsInterfaceGroupsInterfaceGroupNameGet(
-                fabric_name="fab1", interface_group_name="group1"
-            ),
+            EpManageFabricsInterfaceGroupsInterfaceGroupNameGet(fabric_name="fab1", interface_group_name="group1"),
             "EpManageFabricsInterfaceGroupsInterfaceGroupNameGet",
             "/api/v1/manage/fabrics/fab1/interfaceGroups/group1",
             HttpVerbEnum.GET,
         ),
         (
-            EpManageFabricsInterfaceGroupsInterfaceGroupNamePut(
-                fabric_name="fab1", interface_group_name="group1"
-            ),
+            EpManageFabricsInterfaceGroupsInterfaceGroupNamePut(fabric_name="fab1", interface_group_name="group1"),
             "EpManageFabricsInterfaceGroupsInterfaceGroupNamePut",
             "/api/v1/manage/fabrics/fab1/interfaceGroups/group1",
             HttpVerbEnum.PUT,
         ),
         (
-            EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete(
-                fabric_name="fab1", interface_group_name="group1"
-            ),
+            EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete(fabric_name="fab1", interface_group_name="group1"),
             "EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete",
             "/api/v1/manage/fabrics/fab1/interfaceGroups/group1",
             HttpVerbEnum.DELETE,
         ),
     ],
 )
-def test_manage_interface_groups_00005(
-    endpoint, class_name: str, path: str, verb: HttpVerbEnum
-) -> None:
+def test_manage_interface_groups_00005(endpoint, class_name: str, path: str, verb: HttpVerbEnum) -> None:
     """Verify every Interface Groups endpoint has a query-free path and identity."""
     assert endpoint.class_name == class_name
     assert endpoint.path == path
@@ -151,10 +143,7 @@ def test_manage_interface_groups_00030() -> None:
     endpoint = EpManageFabricsInterfaceGroupsActionsRemovePost(fabric_name="fab1")
     endpoint.endpoint_params.ticket_id = "CHG123"
 
-    assert (
-        endpoint.path
-        == "/api/v1/manage/fabrics/fab1/interfaceGroups/actions/remove?ticketId=CHG123"
-    )
+    assert endpoint.path == "/api/v1/manage/fabrics/fab1/interfaceGroups/actions/remove?ticketId=CHG123"
     assert endpoint.verb == HttpVerbEnum.POST
 
 
@@ -178,10 +167,7 @@ def test_manage_interface_groups_00040() -> None:
     )
     endpoint.endpoint_params.cluster_name = "cluster-a"
 
-    assert (
-        endpoint.path
-        == "/api/v1/manage/fabrics/fabric%2Fone/interfaceGroups/server%20group%2F1?clusterName=cluster-a"
-    )
+    assert endpoint.path == "/api/v1/manage/fabrics/fabric%2Fone/interfaceGroups/server%20group%2F1?clusterName=cluster-a"
     assert endpoint.verb == HttpVerbEnum.GET
 
 
@@ -210,10 +196,7 @@ def test_manage_interface_groups_00050() -> None:
         interface_group_name="group1",
     )
 
-    assert (
-        put_endpoint.path
-        == "/api/v1/manage/fabrics/fab1/interfaceGroups/group1?ticketId=CHG123"
-    )
+    assert put_endpoint.path == "/api/v1/manage/fabrics/fab1/interfaceGroups/group1?ticketId=CHG123"
     assert put_endpoint.verb == HttpVerbEnum.PUT
     assert delete_endpoint.path == "/api/v1/manage/fabrics/fab1/interfaceGroups/group1"
     assert delete_endpoint.verb == HttpVerbEnum.DELETE
@@ -292,12 +275,8 @@ def test_manage_interface_groups_00080(ticket_id: str) -> None:
     [
         EpManageFabricsInterfaceGroupsPost(fabric_name="fab1"),
         EpManageFabricsInterfaceGroupsActionsRemovePost(fabric_name="fab1"),
-        EpManageFabricsInterfaceGroupsInterfaceGroupNamePut(
-            fabric_name="fab1", interface_group_name="group1"
-        ),
-        EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete(
-            fabric_name="fab1", interface_group_name="group1"
-        ),
+        EpManageFabricsInterfaceGroupsInterfaceGroupNamePut(fabric_name="fab1", interface_group_name="group1"),
+        EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete(fabric_name="fab1", interface_group_name="group1"),
     ],
 )
 def test_manage_interface_groups_00090(endpoint) -> None:

@@ -33,11 +33,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_networks import (
     EpManageFabricsNetworksNetworkNameGet,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import (
-    EpVpcPairGet,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
     EpManageSwitchActionsDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import (
+    EpVpcPairGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
@@ -97,31 +97,19 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     supports_bulk_delete: ClassVar[bool] = True
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsInterfaceGroupsPost
-    update_endpoint: type[NDEndpointBaseModel] = (
-        EpManageFabricsInterfaceGroupsInterfaceGroupNamePut
-    )
-    delete_endpoint: type[NDEndpointBaseModel] = (
-        EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete
-    )
-    query_one_endpoint: type[NDEndpointBaseModel] = (
-        EpManageFabricsInterfaceGroupsInterfaceGroupNameGet
-    )
+    update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsInterfaceGroupsInterfaceGroupNamePut
+    delete_endpoint: type[NDEndpointBaseModel] = EpManageFabricsInterfaceGroupsInterfaceGroupNameDelete
+    query_one_endpoint: type[NDEndpointBaseModel] = EpManageFabricsInterfaceGroupsInterfaceGroupNameGet
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageFabricsInterfaceGroupsGet
     create_bulk_endpoint: type[NDEndpointBaseModel] = EpManageFabricsInterfaceGroupsPost
-    delete_bulk_endpoint: type[NDEndpointBaseModel] = (
-        EpManageFabricsInterfaceGroupsActionsRemovePost
-    )
+    delete_bulk_endpoint: type[NDEndpointBaseModel] = EpManageFabricsInterfaceGroupsActionsRemovePost
 
     _fabric_context: FabricContext | None = PrivateAttr(default=None)
-    _existing_groups: dict[str, InterfaceGroupConfigModel] = PrivateAttr(
-        default_factory=dict
-    )
+    _existing_groups: dict[str, InterfaceGroupConfigModel] = PrivateAttr(default_factory=dict)
     _move_plan: dict[str, InterfaceGroupConfigModel] = PrivateAttr(default_factory=dict)
     _pending_interfaces: set[tuple[str, str]] = PrivateAttr(default_factory=set)
     _pending_switches: set[str] = PrivateAttr(default_factory=set)
-    _custom_template_cache: dict[str, dict[str, Any] | None] = PrivateAttr(
-        default_factory=dict
-    )
+    _custom_template_cache: dict[str, dict[str, Any] | None] = PrivateAttr(default_factory=dict)
     _vpc_peer_cache: dict[str, str | None] = PrivateAttr(default_factory=dict)
     _warnings: list[str] = PrivateAttr(default_factory=list)
 
@@ -134,9 +122,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     def fabric_context(self) -> FabricContext:
         """Return a cached fabric context."""
         if self._fabric_context is None:
-            self._fabric_context = FabricContext(
-                rest_send=self.rest_send, fabric_name=self.fabric_name
-            )
+            self._fabric_context = FabricContext(rest_send=self.rest_send, fabric_name=self.fabric_name)
         return self._fabric_context
 
     @staticmethod
@@ -161,9 +147,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 "or management IP from the fabric inventory."
             ) from exc
 
-    def _resolve_config_switch_identifiers(
-        self, model_instances: Sequence[InterfaceGroupConfigModel]
-    ) -> None:
+    def _resolve_config_switch_identifiers(self, model_instances: Sequence[InterfaceGroupConfigModel]) -> None:
         """Resolve switch management IPs in Interface Group membership in place."""
         for model_instance in model_instances:
             for switch_entry in model_instance.switch_interfaces or []:
@@ -186,9 +170,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 continue
             by_switch: dict[str, set[str]] = {}
             for switch_entry in model_instance.switch_interfaces:
-                by_switch.setdefault(switch_entry.switch_id, set()).update(
-                    switch_entry.interface_names
-                )
+                by_switch.setdefault(switch_entry.switch_id, set()).update(switch_entry.interface_names)
             model_instance.switch_interfaces = [
                 {
                     "switch_id": switch_id,
@@ -197,9 +179,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 for switch_id, interface_names in sorted(by_switch.items())
             ]
 
-    def _resolve_gathered_switch_identifiers(
-        self, filters: Sequence[InterfaceGroupGatheredFilterModel]
-    ) -> None:
+    def _resolve_gathered_switch_identifiers(self, filters: Sequence[InterfaceGroupGatheredFilterModel]) -> None:
         """Resolve switch management IPs in gathered filters in place."""
         for filter_item in filters:
             for switch_entry in filter_item.switch_interfaces or []:
@@ -219,12 +199,8 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             not_found_ok=True,
             operation_type=OperationType.QUERY,
         )
-        response_switch_id = (
-            response.get("switchId") if isinstance(response, dict) else None
-        )
-        peer_switch_id = (
-            response.get("peerSwitchId") if isinstance(response, dict) else None
-        )
+        response_switch_id = response.get("switchId") if isinstance(response, dict) else None
+        peer_switch_id = response.get("peerSwitchId") if isinstance(response, dict) else None
         if response_switch_id and peer_switch_id:
             self._vpc_peer_cache[response_switch_id] = peer_switch_id
             self._vpc_peer_cache[peer_switch_id] = response_switch_id
@@ -237,9 +213,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             self._vpc_peer_cache.setdefault(peer_switch_id, switch_id)
         return peer_switch_id
 
-    def _vpc_switch_ids_are_equivalent(
-        self, first_switch_id: str, second_switch_id: str
-    ) -> bool:
+    def _vpc_switch_ids_are_equivalent(self, first_switch_id: str, second_switch_id: str) -> bool:
         """Return whether two serials identify peers in the same vPC pair."""
         if first_switch_id == second_switch_id:
             return True
@@ -247,9 +221,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             return True
         return self._get_vpc_peer_id(second_switch_id) == first_switch_id
 
-    def _validate_runtime_member_ownership(
-        self, model_instances: Sequence[InterfaceGroupConfigModel]
-    ) -> None:
+    def _validate_runtime_member_ownership(self, model_instances: Sequence[InterfaceGroupConfigModel]) -> None:
         """Revalidate member ownership after runtime switch canonicalization.
 
         Raw Pydantic validation cannot know that an IP and serial identify the
@@ -275,24 +247,17 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                         )
                     exact_owners[membership] = group_name
                     if InterfaceGroupValidators.interface_kind(interface_name) == "vpc":
-                        vpc_candidates.setdefault(interface_name, []).append(
-                            (switch_entry.switch_id, group_name)
-                        )
+                        vpc_candidates.setdefault(interface_name, []).append((switch_entry.switch_id, group_name))
 
         for interface_name, candidates in vpc_candidates.items():
             for index, (switch_id, group_name) in enumerate(candidates):
                 for other_switch_id, other_group_name in candidates[:index]:
                     if group_name == other_group_name or switch_id == other_switch_id:
                         continue
-                    if not self._vpc_switch_ids_are_equivalent(
-                        switch_id, other_switch_id
-                    ):
+                    if not self._vpc_switch_ids_are_equivalent(switch_id, other_switch_id):
                         continue
                     pair = "/".join(sorted((switch_id, other_switch_id)))
-                    raise RuntimeError(
-                        f"Interface '{interface_name}' on vPC pair '{pair}' is "
-                        f"present in both '{other_group_name}' and '{group_name}'."
-                    )
+                    raise RuntimeError(f"Interface '{interface_name}' on vPC pair '{pair}' is " f"present in both '{other_group_name}' and '{group_name}'.")
 
     def _existing_vpc_member_switches(self) -> dict[str, set[str]]:
         """Return existing vPC member names mapped to their echoed switch IDs."""
@@ -301,14 +266,10 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             for switch_entry in group.switch_interfaces or []:
                 for interface_name in switch_entry.interface_names:
                     if InterfaceGroupValidators.interface_kind(interface_name) == "vpc":
-                        result.setdefault(interface_name, set()).add(
-                            switch_entry.switch_id
-                        )
+                        result.setdefault(interface_name, set()).add(switch_entry.switch_id)
         return result
 
-    def _align_vpc_member_switch_ids(
-        self, model_instances: Sequence[InterfaceGroupConfigModel]
-    ) -> None:
+    def _align_vpc_member_switch_ids(self, model_instances: Sequence[InterfaceGroupConfigModel]) -> None:
         """Align only vPC members with ND's existing peer representation.
 
         A vPC interface is one logical resource across a switch pair, but the
@@ -330,21 +291,15 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 for interface_name in switch_entry.interface_names:
                     aligned_switch_id = switch_entry.switch_id
                     if InterfaceGroupValidators.interface_kind(interface_name) == "vpc":
-                        for existing_switch_id in sorted(
-                            existing_switches.get(interface_name, set())
-                        ):
-                            if self._vpc_switch_ids_are_equivalent(
-                                switch_entry.switch_id, existing_switch_id
-                            ):
+                        for existing_switch_id in sorted(existing_switches.get(interface_name, set())):
+                            if self._vpc_switch_ids_are_equivalent(switch_entry.switch_id, existing_switch_id):
                                 aligned_switch_id = existing_switch_id
                                 break
                     changed = changed or aligned_switch_id != switch_entry.switch_id
                     aligned_members.add((aligned_switch_id, interface_name))
 
             if changed:
-                model_instance.switch_interfaces = self._with_interface_pairs(
-                    model_instance, aligned_members
-                ).switch_interfaces
+                model_instance.switch_interfaces = self._with_interface_pairs(model_instance, aligned_members).switch_interfaces
 
     @property
     def config_actions(self) -> dict[str, Any]:
@@ -406,9 +361,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         parsed = InterfaceGroupsListResponseModel.from_response(response or {})
         return parsed.interface_group_details
 
-    def query_all(
-        self, model_instance: InterfaceGroupConfigModel | None = None, **kwargs
-    ) -> ResponseType:
+    def query_all(self, model_instance: InterfaceGroupConfigModel | None = None, **kwargs) -> ResponseType:
         """Query all Interface Groups using offset/max pagination."""
         try:
             if self.rest_send.params.get("state") == "gathered":
@@ -436,13 +389,8 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                     break
                 offset += len(page)
 
-            self._existing_groups = {
-                item.interface_group_name: deepcopy(item) for item in groups
-            }
-            return [
-                item.model_dump(by_alias=True, exclude_none=True, mode="json")
-                for item in groups
-            ]
+            self._existing_groups = {item.interface_group_name: deepcopy(item) for item in groups}
+            return [item.model_dump(by_alias=True, exclude_none=True, mode="json") for item in groups]
         except Exception as exc:
             raise RuntimeError(f"Query all Interface Groups failed: {exc}") from exc
 
@@ -451,10 +399,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         group: InterfaceGroupConfigModel,
     ) -> dict[str, set[str]]:
         """Return normalized member interfaces keyed by switch ID."""
-        return {
-            item.switch_id: set(item.interface_names)
-            for item in group.switch_interfaces or []
-        }
+        return {item.switch_id: set(item.interface_names) for item in group.switch_interfaces or []}
 
     @staticmethod
     def _dict_is_subset(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
@@ -463,9 +408,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             if key not in actual:
                 return False
             if isinstance(value, dict):
-                if not isinstance(actual[key], dict) or not (
-                    ManageInterfaceGroupOrchestrator._dict_is_subset(value, actual[key])
-                ):
+                if not isinstance(actual[key], dict) or not (ManageInterfaceGroupOrchestrator._dict_is_subset(value, actual[key])):
                     return False
             elif actual[key] != value:
                 return False
@@ -483,13 +426,8 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             if exact_members is not None:
                 return True
             return any(
-                any(
-                    InterfaceGroupValidators.interface_kind(interface_name) == "vpc"
-                    for interface_name in interface_names
-                )
-                and self._vpc_switch_ids_are_equivalent(
-                    expected_switch.switch_id, actual_switch_id
-                )
+                any(InterfaceGroupValidators.interface_kind(interface_name) == "vpc" for interface_name in interface_names)
+                and self._vpc_switch_ids_are_equivalent(expected_switch.switch_id, actual_switch_id)
                 for actual_switch_id, interface_names in actual_members.items()
             )
 
@@ -501,10 +439,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             if InterfaceGroupValidators.interface_kind(interface_name) != "vpc":
                 return False
             if not any(
-                interface_name in interface_names
-                and self._vpc_switch_ids_are_equivalent(
-                    expected_switch.switch_id, actual_switch_id
-                )
+                interface_name in interface_names and self._vpc_switch_ids_are_equivalent(expected_switch.switch_id, actual_switch_id)
                 for actual_switch_id, interface_names in actual_members.items()
             ):
                 return False
@@ -518,16 +453,11 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         """Apply one authoritative local gathered filter to one group."""
         supplied = filter_item.model_fields_set
 
-        if (
-            "interface_group_name" in supplied
-            and group.interface_group_name != filter_item.interface_group_name
-        ):
+        if "interface_group_name" in supplied and group.interface_group_name != filter_item.interface_group_name:
             return False
         if "type" in supplied and group.type != filter_item.type:
             return False
-        if "template_name" in supplied and group.template_name != (
-            filter_item.template_name
-        ):
+        if "template_name" in supplied and group.template_name != (filter_item.template_name):
             return False
 
         if "networks" in supplied:
@@ -547,9 +477,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                     return False
             else:
                 for expected_switch in expected_switches:
-                    if not self._gathered_switch_filter_matches(
-                        expected_switch, actual_members
-                    ):
+                    if not self._gathered_switch_filter_matches(expected_switch, actual_members):
                         return False
 
         if "template_config" in supplied and not (
@@ -586,9 +514,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
 
         return True
 
-    def gather(
-        self, filters: Sequence[InterfaceGroupGatheredFilterModel] | None = None
-    ) -> list[dict[str, Any]]:
+    def gather(self, filters: Sequence[InterfaceGroupGatheredFilterModel] | None = None) -> list[dict[str, Any]]:
         """Return replayable Interface Group config using reliable local filters.
 
         The controller exposes a generic Lucene filter on the list endpoint,
@@ -606,19 +532,10 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             key=lambda item: item.interface_group_name,
         )
         if filter_items:
-            groups = [
-                group
-                for group in groups
-                if any(
-                    self._matches_gathered_filter(group, filter_item)
-                    for filter_item in filter_items
-                )
-            ]
+            groups = [group for group in groups if any(self._matches_gathered_filter(group, filter_item) for filter_item in filter_items)]
         return [group.to_config() for group in groups]
 
-    def query_one(
-        self, model_instance: InterfaceGroupConfigModel, **kwargs
-    ) -> ResponseType:
+    def query_one(self, model_instance: InterfaceGroupConfigModel, **kwargs) -> ResponseType:
         """Query one Interface Group by name."""
         endpoint = self._configure_endpoint(self.query_one_endpoint())
         endpoint.set_identifiers(model_instance.interface_group_name)
@@ -633,24 +550,15 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     def _raise_create_failures(response: Any) -> None:
         parsed = InterfaceGroupsCreateResponseModel.from_response(response or {})
         if parsed.failures:
-            messages = [
-                item.message or f"type={item.type or '?'}" for item in parsed.failures
-            ]
-            raise RuntimeError(
-                f"Interface Group create reported per-item failures: {'; '.join(messages)}"
-            )
+            messages = [item.message or f"type={item.type or '?'}" for item in parsed.failures]
+            raise RuntimeError(f"Interface Group create reported per-item failures: {'; '.join(messages)}")
 
     @staticmethod
     def _raise_delete_failures(response: Any) -> None:
         parsed = InterfaceGroupsDeleteResponseModel.from_response(response or {})
         if parsed.failures:
-            messages = [
-                f"{item.interface_group_name or '?'}: {item.message or 'unknown error'}"
-                for item in parsed.failures
-            ]
-            raise RuntimeError(
-                f"Interface Group delete reported per-item failures: {'; '.join(messages)}"
-            )
+            messages = [f"{item.interface_group_name or '?'}: {item.message or 'unknown error'}" for item in parsed.failures]
+            raise RuntimeError(f"Interface Group delete reported per-item failures: {'; '.join(messages)}")
 
     @classmethod
     def _raise_action_failures(cls, response: Any, action: str) -> None:
@@ -668,21 +576,12 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 status = str(item.get("status") or "").strip().lower()
                 if status not in _FAILURE_STATUSES:
                     continue
-                identity = (
-                    item.get("interfaceName")
-                    or item.get("switchId")
-                    or item.get("name")
-                    or "?"
-                )
+                identity = item.get("interfaceName") or item.get("switchId") or item.get("name") or "?"
                 failures.append(f"{identity}: {item.get('message') or status}")
         if failures:
-            raise RuntimeError(
-                f"{action} reported per-item failures: {'; '.join(failures)}"
-            )
+            raise RuntimeError(f"{action} reported per-item failures: {'; '.join(failures)}")
 
-    def create_bulk(
-        self, model_instances: list[InterfaceGroupConfigModel], **kwargs
-    ) -> ResponseType:
+    def create_bulk(self, model_instances: list[InterfaceGroupConfigModel], **kwargs) -> ResponseType:
         """Create Interface Groups and populate ``any`` membership safely.
 
         ND rejects a single request whose newly associated members contain
@@ -694,17 +593,13 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         create_models: list[InterfaceGroupConfigModel] = []
         deferred_any_members: list[InterfaceGroupConfigModel] = []
         for item in model_instances:
-            if item.type == InterfaceGroupType.ANY.value and self._interface_pairs(
-                item
-            ):
+            if item.type == InterfaceGroupType.ANY.value and self._interface_pairs(item):
                 create_models.append(self._with_interface_pairs(item, set()))
                 deferred_any_members.append(item)
             else:
                 create_models.append(item)
 
-        payload = InterfaceGroupsCreateRequestModel(
-            interface_groups=create_models
-        ).to_payload()
+        payload = InterfaceGroupsCreateRequestModel(interface_groups=create_models).to_payload()
         response = self._request(
             path=endpoint.path,
             verb=endpoint.verb,
@@ -721,15 +616,11 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             self._existing_groups[item.interface_group_name] = deepcopy(item)
         return response
 
-    def create(
-        self, model_instance: InterfaceGroupConfigModel, **kwargs
-    ) -> ResponseType:
+    def create(self, model_instance: InterfaceGroupConfigModel, **kwargs) -> ResponseType:
         """Create one Interface Group through the bulk endpoint."""
         return self.create_bulk([model_instance])
 
-    def _payload_for_update(
-        self, model_instance: InterfaceGroupConfigModel
-    ) -> dict[str, Any]:
+    def _payload_for_update(self, model_instance: InterfaceGroupConfigModel) -> dict[str, Any]:
         """Build a PUT payload for one Interface Group update."""
         payload = model_instance.to_payload()
         if self.rest_send.params.get("state") in {"replaced", "overridden"}:
@@ -789,16 +680,9 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         added_pairs = after_pairs - before_pairs
 
         additions_by_kind = {
-            kind: {
-                member
-                for member in added_pairs
-                if InterfaceGroupValidators.interface_kind(member[1]) == kind
-            }
-            for kind in _ANY_MEMBER_KIND_ORDER
+            kind: {member for member in added_pairs if InterfaceGroupValidators.interface_kind(member[1]) == kind} for kind in _ANY_MEMBER_KIND_ORDER
         }
-        populated_kinds = [
-            kind for kind in _ANY_MEMBER_KIND_ORDER if additions_by_kind[kind]
-        ]
+        populated_kinds = [kind for kind in _ANY_MEMBER_KIND_ORDER if additions_by_kind[kind]]
         if not populated_kinds:
             return self._put_group(after)
 
@@ -806,31 +690,21 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         response: ResponseType = None
         for kind in populated_kinds:
             cumulative_pairs.update(additions_by_kind[kind])
-            response = self._put_group(
-                self._with_interface_pairs(after, cumulative_pairs)
-            )
+            response = self._put_group(self._with_interface_pairs(after, cumulative_pairs))
         return response
 
-    def update(
-        self, model_instance: InterfaceGroupConfigModel, **kwargs
-    ) -> ResponseType:
+    def update(self, model_instance: InterfaceGroupConfigModel, **kwargs) -> ResponseType:
         """Update one Interface Group and queue only switch-affecting changes."""
         before = self._existing_groups.get(model_instance.interface_group_name)
         if model_instance.type == InterfaceGroupType.ANY.value:
             response = self._put_any_group_batches(before, model_instance)
         else:
             response = self._put_group(model_instance)
-        self._queue_deploy_change(
-            before, model_instance, model_instance.interface_group_name
-        )
-        self._existing_groups[model_instance.interface_group_name] = deepcopy(
-            model_instance
-        )
+        self._queue_deploy_change(before, model_instance, model_instance.interface_group_name)
+        self._existing_groups[model_instance.interface_group_name] = deepcopy(model_instance)
         return response
 
-    def delete_bulk(
-        self, model_instances: list[InterfaceGroupConfigModel], **kwargs
-    ) -> ResponseType:
+    def delete_bulk(self, model_instances: list[InterfaceGroupConfigModel], **kwargs) -> ResponseType:
         """Clear associations, then delete Interface Groups in one bulk request."""
         for item in model_instances:
             before = self._existing_groups.get(item.interface_group_name, item)
@@ -843,11 +717,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 self._existing_groups[item.interface_group_name] = deepcopy(detached)
 
         endpoint = self._configure_endpoint(self.delete_bulk_endpoint())
-        payload = InterfaceGroupsRemoveRequestModel(
-            interface_group_names=[
-                item.interface_group_name for item in model_instances
-            ]
-        ).to_payload()
+        payload = InterfaceGroupsRemoveRequestModel(interface_group_names=[item.interface_group_name for item in model_instances]).to_payload()
         response = self._request(
             path=endpoint.path,
             verb=endpoint.verb,
@@ -859,27 +729,18 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             self._existing_groups.pop(item.interface_group_name, None)
         return response
 
-    def delete(
-        self, model_instance: InterfaceGroupConfigModel, **kwargs
-    ) -> ResponseType:
+    def delete(self, model_instance: InterfaceGroupConfigModel, **kwargs) -> ResponseType:
         """Delete one Interface Group through the bulk endpoint."""
         return self.delete_bulk([model_instance])
 
-    def preflight_create(
-        self, model_instances: Sequence[InterfaceGroupConfigModel]
-    ) -> None:
+    def preflight_create(self, model_instances: Sequence[InterfaceGroupConfigModel]) -> None:
         """Require type and custom-template identity for new groups."""
         failures: list[str] = []
         for item in model_instances:
             if item.type is None:
                 failures.append(f"'{item.interface_group_name}' requires type")
-            elif (
-                item.type == InterfaceGroupType.ETHERNET_CUSTOM.value
-                and not item.template_name
-            ):
-                failures.append(
-                    f"'{item.interface_group_name}' requires template_name for type=ethernetCustom"
-                )
+            elif item.type == InterfaceGroupType.ETHERNET_CUSTOM.value and not item.template_name:
+                failures.append(f"'{item.interface_group_name}' requires template_name for type=ethernetCustom")
         if failures:
             raise RuntimeError("; ".join(failures))
 
@@ -889,11 +750,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     ) -> set[tuple[str, str]]:
         if model is None:
             return set()
-        return {
-            (entry.switch_id, interface_name)
-            for entry in model.switch_interfaces or []
-            for interface_name in entry.interface_names
-        }
+        return {(entry.switch_id, interface_name) for entry in model.switch_interfaces or [] for interface_name in entry.interface_names}
 
     @staticmethod
     def _policy_signature(
@@ -961,13 +818,9 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         if self.config_actions["type"] == InterfaceGroupConfigActionType.RESOURCE.value:
             self._pending_interfaces.update(affected)
         else:
-            self._pending_switches.update(
-                switch_id for switch_id, _interface_name in affected
-            )
+            self._pending_switches.update(switch_id for switch_id, _interface_name in affected)
 
-    def _effective_model(
-        self, proposed: InterfaceGroupConfigModel
-    ) -> InterfaceGroupConfigModel:
+    def _effective_model(self, proposed: InterfaceGroupConfigModel) -> InterfaceGroupConfigModel:
         """Build and validate the complete configuration for one proposed item.
 
         The initial Interface Group query has already populated
@@ -982,9 +835,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             return deepcopy(existing).merge(proposed)
         return deepcopy(proposed)
 
-    def _preserve_omitted_associations(
-        self, model_instances: Sequence[InterfaceGroupConfigModel]
-    ) -> None:
+    def _preserve_omitted_associations(self, model_instances: Sequence[InterfaceGroupConfigModel]) -> None:
         """Keep existing association lists when authoritative input omits them.
 
         ``replaced`` and ``overridden`` treat a supplied association list as the
@@ -1023,11 +874,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     ) -> InterfaceGroupConfigModel:
         remaining: list[dict[str, Any]] = []
         for entry in model.switch_interfaces or []:
-            interface_names = [
-                interface_name
-                for interface_name in entry.interface_names
-                if (entry.switch_id, interface_name) not in members
-            ]
+            interface_names = [interface_name for interface_name in entry.interface_names if (entry.switch_id, interface_name) not in members]
             if interface_names:
                 remaining.append(
                     {
@@ -1061,13 +908,8 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                     )
 
                 source_desired = effective.get(source_name)
-                source_will_be_deleted = (
-                    state == "overridden" and source_desired is None
-                )
-                source_removes_member = (
-                    source_desired is not None
-                    and member not in self._interface_pairs(source_desired)
-                )
+                source_will_be_deleted = state == "overridden" and source_desired is None
+                source_removes_member = source_desired is not None and member not in self._interface_pairs(source_desired)
                 if not source_will_be_deleted and not source_removes_member:
                     raise RuntimeError(
                         f"Moving interface '{member[1]}' on switch '{member[0]}' from '{source_name}' to "
@@ -1076,12 +918,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                     )
                 moving_from.setdefault(source_name, set()).add(member)
 
-        self._move_plan = {
-            source_name: self._remove_members(
-                self._existing_groups[source_name], members
-            )
-            for source_name, members in moving_from.items()
-        }
+        self._move_plan = {source_name: self._remove_members(self._existing_groups[source_name], members) for source_name, members in moving_from.items()}
 
     def _network_exists(self, network_name: str) -> bool:
         endpoint = self._configure_endpoint(EpManageFabricsNetworksNetworkNameGet())
@@ -1097,20 +934,13 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     @staticmethod
     def _normalize_template_metadata_token(value: Any) -> str:
         """Normalize controller enum spelling across camel/snake/upper variants."""
-        return "".join(
-            character for character in str(value or "").lower() if character.isalnum()
-        )
+        return "".join(character for character in str(value or "").lower() if character.isalnum())
 
     @staticmethod
     def _normalize_template_tags(value: Any) -> set[str]:
         """Normalize tags returned as a CSV string or comma-suffixed list entries."""
         raw_tags = [value] if isinstance(value, str) else value or []
-        return {
-            token.strip().lower()
-            for raw_tag in raw_tags
-            for token in str(raw_tag).split(",")
-            if token.strip()
-        }
+        return {token.strip().lower() for raw_tag in raw_tags for token in str(raw_tag).split(",") if token.strip()}
 
     @classmethod
     def _template_property(cls, template: dict[str, Any], property_name: str) -> Any:
@@ -1129,9 +959,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             if not in_properties:
                 continue
             key, separator, value = stripped.partition("=")
-            if separator and cls._normalize_template_metadata_token(
-                key
-            ) == cls._normalize_template_metadata_token(property_name):
+            if separator and cls._normalize_template_metadata_token(key) == cls._normalize_template_metadata_token(property_name):
                 return value.strip().rstrip(";").strip()
         return None
 
@@ -1139,20 +967,11 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     def _custom_template_eligibility_errors(cls, template: dict[str, Any]) -> list[str]:
         """Return customer-facing reasons a template cannot back an Ethernet group."""
         errors: list[str] = []
-        if (
-            cls._normalize_template_metadata_token(template.get("templateType"))
-            != "policy"
-        ):
+        if cls._normalize_template_metadata_token(template.get("templateType")) != "policy":
             errors.append("it is not a policy template")
-        if (
-            cls._normalize_template_metadata_token(template.get("templateSubType"))
-            != "interfaceethernet"
-        ):
+        if cls._normalize_template_metadata_token(template.get("templateSubType")) != "interfaceethernet":
             errors.append("its subtype is not Ethernet interface")
-        if (
-            cls._normalize_template_metadata_token(template.get("contentType"))
-            not in _CUSTOM_TEMPLATE_CONTENT_TYPES
-        ):
+        if cls._normalize_template_metadata_token(template.get("contentType")) not in _CUSTOM_TEMPLATE_CONTENT_TYPES:
             errors.append("its content type is not Python or Python CLI")
 
         tags = cls._normalize_template_tags(template.get("tags"))
@@ -1188,9 +1007,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 operation_type=OperationType.QUERY,
             )
         except Exception as exc:
-            raise RuntimeError(
-                f"Unable to validate custom template '{template_name}': {exc}"
-            ) from exc
+            raise RuntimeError(f"Unable to validate custom template '{template_name}': {exc}") from exc
 
         if not isinstance(response, dict) or not response:
             self._custom_template_cache[template_name] = None
@@ -1211,11 +1028,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 continue
 
             before = self._existing_groups.get(proposed.interface_group_name)
-            template_fields_changed = (
-                before is None
-                or "template_name" in proposed.model_fields_set
-                or "template_config" in proposed.model_fields_set
-            )
+            template_fields_changed = before is None or "template_name" in proposed.model_fields_set or "template_config" in proposed.model_fields_set
             if not template_fields_changed or not after.template_name:
                 continue
 
@@ -1240,9 +1053,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 template.get("parameters") or [],
                 input_label="template_config",
             )
-            failures.extend(
-                f"'{after.interface_group_name}': {message}" for message in input_errors
-            )
+            failures.extend(f"'{after.interface_group_name}': {message}" for message in input_errors)
 
         if failures:
             raise RuntimeError("; ".join(failures))
@@ -1252,8 +1063,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         if missing:
             quoted = ", ".join(f"'{name}'" for name in missing)
             raise RuntimeError(
-                f"Referenced network(s) {quoted} do not exist in fabric '{self.fabric_name}'. "
-                "The Interface Groups module does not create networks."
+                f"Referenced network(s) {quoted} do not exist in fabric '{self.fabric_name}'. " "The Interface Groups module does not create networks."
             )
 
     def _warn_resource_network_deploy_scope(self, networks: set[str]) -> None:
@@ -1278,22 +1088,12 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         self._align_vpc_member_switch_ids(model_instances)
         self._collapse_switch_entries(model_instances)
         self._validate_runtime_member_ownership(model_instances)
-        effective = {
-            item.interface_group_name: self._effective_model(item)
-            for item in model_instances
-        }
+        effective = {item.interface_group_name: self._effective_model(item) for item in model_instances}
 
         for item in model_instances:
             existing = self._existing_groups.get(item.interface_group_name)
-            if (
-                existing is not None
-                and item.type is not None
-                and item.type != existing.type
-            ):
-                raise RuntimeError(
-                    f"Interface Group '{item.interface_group_name}' type cannot be changed "
-                    f"from '{existing.type}' to '{item.type}'."
-                )
+            if existing is not None and item.type is not None and item.type != existing.type:
+                raise RuntimeError(f"Interface Group '{item.interface_group_name}' type cannot be changed " f"from '{existing.type}' to '{item.type}'.")
 
         self._validate_custom_templates(model_instances, effective)
         self._plan_moves(model_instances, effective)
@@ -1305,11 +1105,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             referenced_networks.update(set(after.networks or []) - before_networks)
         self._validate_networks_exist(referenced_networks)
 
-        if (
-            self.config_actions["deploy"]
-            and self.config_actions["type"]
-            == InterfaceGroupConfigActionType.RESOURCE.value
-        ):
+        if self.config_actions["deploy"] and self.config_actions["type"] == InterfaceGroupConfigActionType.RESOURCE.value:
             resource_networks: set[str] = set()
             for group_name, after in effective.items():
                 if not self._resource_deploy_enabled(group_name):
@@ -1348,10 +1144,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             endpoint = EpManageInterfacesDeploy()
             endpoint.fabric_name = self.fabric_name
             payload = {
-                "interfaces": [
-                    {"switchId": switch_id, "interfaceName": interface_name}
-                    for switch_id, interface_name in sorted(self._pending_interfaces)
-                ]
+                "interfaces": [{"switchId": switch_id, "interfaceName": interface_name} for switch_id, interface_name in sorted(self._pending_interfaces)]
             }
             response = self._request(
                 path=endpoint.path,
