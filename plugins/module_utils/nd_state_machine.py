@@ -3,7 +3,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 from typing import Any, Callable
 
@@ -64,6 +64,8 @@ class NDStateMachine:
         self.ignore_errors = self.module.params.get("ignore_errors", False)
         self.supports_bulk_create = self.model_orchestrator.supports_bulk_create
         self.supports_bulk_delete = self.model_orchestrator.supports_bulk_delete
+        self.track_deletes_in_sent = self.model_orchestrator.track_deletes_in_sent
+        self.merge_allow_list_superset = self.model_orchestrator.merge_allow_list_superset
 
         # Initialize collections
         try:
@@ -79,7 +81,9 @@ class NDStateMachine:
             # state-aware validation (e.g. require certain fields for write states while accepting
             # identifier-only items for ``deleted``). Models that do not read the context ignore it.
             self.proposed = NDConfigCollection.from_ansible_config(
-                data=self.module.params.get("config", []), model_class=self.model_class, context={"state": self.state}
+                data=self.module.params.get("config", []),
+                model_class=self.model_class,
+                context={"state": self.state},
             )
 
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
@@ -134,23 +138,54 @@ class NDStateMachine:
         else:
             raise NDStateMachineError(f"Invalid state: {self.state}")
 
+    def pending_create_update_items(self) -> list[NDBaseModel]:
+        """Return the proposed items a real run would create or update.
+
+        Mirrors the create/update classification in ``_manage_create_update_state``
+        -- same ``exclude_unset``/``allow_superset`` diff test -- but performs no
+        mutation. A check-mode preflight can use this to validate exactly the
+        items the execution path would touch, instead of every proposed item,
+        so a dry-run neither approves nor rejects a set that differs from the
+        real run (PR #281 review). Returns an empty list for non-write states.
+        """
+        if self.state not in ("merged", "replaced", "overridden"):
+            return []
+        exclude_unset = self.state == "merged"
+        allow_superset = exclude_unset and self.merge_allow_list_superset
+        pending: list[NDBaseModel] = []
+        for proposed_item in self.proposed:
+            diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset, allow_superset=allow_superset)
+            if diff_status != "no_diff":
+                pending.append(proposed_item)
+        return pending
+
     def _execute_operation(
         self,
         operation: Callable[..., ResponseType],
         *args: Any,
         error_msg_prefix: str = "Operation failed",
         **kwargs: Any,
-    ) -> ResponseType | None:
-        """Execute an API operation with standardized error handling."""
+    ) -> bool:
+        """Execute an API operation with standardized error handling.
+
+        Returns True if the operation completed without raising. In check mode
+        the API call is skipped but still reported as completed (True) so that
+        the previewed 'after' state can be built. Returns False only when the
+        operation raised and the error was suppressed via ``ignore_errors``.
+
+        The orchestrator's return value is deliberately not used as the success
+        signal: some orchestrators defer the actual API call (queue-and-deploy)
+        and legitimately return None on success.
+        """
         try:
             if not self.check_mode:
-                return operation(*args, **kwargs)
-            return None
+                operation(*args, **kwargs)
+            return True
         except Exception as e:
             error_msg = f"{error_msg_prefix}: {e}"
             if not self.ignore_errors:
                 raise NDStateMachineError(error_msg) from e
-        return None
+        return False
 
     def _manage_create_update_state(self) -> None:
         """
@@ -167,9 +202,17 @@ class NDStateMachine:
                 # Determine diff status
                 # For merged state, only compare fields explicitly provided by
                 # the user so that Pydantic default values do not trigger false
-                # diffs or overwrite existing configuration.
+                # diffs or overwrite existing configuration. Merged also matches
+                # list elements one-directionally (allow_superset) so an
+                # existing item with extra list entries is not seen as changed --
+                # but only for orchestrators that opt in via
+                # ``merge_allow_list_superset`` and whose models merge lists
+                # element-wise, so diff and merge agree (PR #281 review). Modules
+                # that do not opt in keep wholesale list-replace semantics in
+                # both diff and merge.
                 exclude_unset = self.state == "merged"
-                diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset)
+                allow_superset = exclude_unset and self.merge_allow_list_superset
+                diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset, allow_superset=allow_superset)
 
                 # No changes needed
                 if diff_status == "no_diff":
@@ -204,21 +247,28 @@ class NDStateMachine:
         # The policy-required-on-create guard (issue #350) runs in manage_state, before the capability
         # preflight and before this method mutates self.existing (PR #362 review).
 
-        # Execute updates (always individual)
+        # Execute updates (always individual). An operation that does not fail
+        # is counted as sent; check mode skips the API call but returns True.
+        successfully_sent: list[NDBaseModel] = []
         for item in items_to_update:
-            self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}")
+            if self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}"):
+                successfully_sent.append(item)
 
         # Execute creates (bulk or individual)
         if items_to_create:
             if self.supports_bulk_create:
-                self._execute_operation(self.model_orchestrator.create_bulk, items_to_create, error_msg_prefix="Failed to create in bulk")
+                if self._execute_operation(self.model_orchestrator.create_bulk, items_to_create, error_msg_prefix="Failed to create in bulk"):
+                    successfully_sent.extend(items_to_create)
             else:
                 for item in items_to_create:
-                    self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}")
+                    if self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}"):
+                        successfully_sent.append(item)
 
-        # Mark as sent only after successful API operations
-        successfully_sent = items_to_update + items_to_create
-        if successfully_sent:
+        # Mark as sent only for items actually pushed to the controller. In
+        # check mode no API call is made, so nothing is marked as sent (avoids
+        # false deploy triggers); the previewed 'after' state is still reflected
+        # in self.existing (mutated above), which is what drives 'changed'.
+        if not self.check_mode and successfully_sent:
             self.sent.add_many(successfully_sent)
 
         # Log operation
@@ -244,16 +294,28 @@ class NDStateMachine:
         if not items:
             return
 
-        # Execute deletes (bulk or individual)
+        # Execute deletes (bulk or individual). An item is counted as deleted
+        # when the operation does not fail; check mode skips the API call but
+        # returns True so the deletion is still previewed. Items whose delete
+        # failed under ignore_errors are left in 'existing' so the reported
+        # 'after' state stays accurate.
+        deleted: list[NDBaseModel] = []
         if self.supports_bulk_delete:
-            self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
+            if self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk"):
+                deleted.extend(items)
         else:
             for item in items:
-                self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}")
+                if self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}"):
+                    deleted.append(item)
 
-        # Batch remove from collection (single index rebuild)
-        keys_to_delete = [item.get_identifier_value() for item in items]
-        self.existing.delete_many(keys_to_delete)
+        # Batch remove from collection (single index rebuild).
+        self.existing.delete_many([item.get_identifier_value() for item in deleted])
+
+        # Mark as sent only for items actually pushed to the controller. In
+        # check mode no API call is made, so nothing is marked as sent (avoids
+        # false deploy triggers).
+        if not self.check_mode and self.track_deletes_in_sent and deleted:
+            self.sent.add_many(deleted)
 
         # Log deletion
         self.output.assign(after=self.existing)

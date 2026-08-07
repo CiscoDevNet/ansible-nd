@@ -1,0 +1,10 @@
+---
+# This nd_manage_vrf_lite test data structure is auto-generated
+# DO NOT EDIT MANUALLY
+#
+# Template: nd_manage_vrf_lite_conf.j2
+# Variables: vrf_lite_conf (list of dicts)
+
+- attach:
+  - ip_address: 10.122.84.55
+  vrf_name: VRF_LITE_IT_50001
