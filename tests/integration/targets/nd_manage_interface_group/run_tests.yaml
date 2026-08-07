@@ -4,7 +4,7 @@
 # Usage:
 #   ansible-playbook -i tests/integration/inventory.networking \
 #     tests/integration/targets/nd_manage_interface_group/run_tests.yaml \
-#     -e @tests/integration/targets/nd_manage_interface_group/integration_config.yml
+#     -e @tests/integration/targets/nd_manage_interface_group/interface_group_test_vars.yml
 
 - name: ND Interface Group Integration Tests
   hosts: nd
