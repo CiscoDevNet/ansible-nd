@@ -86,6 +86,9 @@ def _is_effectively_empty(value: Any) -> bool:
 
     None
     """
+    # Lists are only empty-normalized when literally `[]` -- a list of empty markers ([""], [{}]) is NOT collapsed,
+    # unlike the dict branch below. ND has only been observed echoing literal `[]` for never-configured list fields;
+    # collapsing non-empty lists without lab evidence could mask a real pending removal.
     if value is None or value == "" or value == [] or value == {}:
         return True
     if isinstance(value, dict):
@@ -116,6 +119,10 @@ def has_removals(existing_data: Any, proposed_data: Any) -> bool:
             continue
         if key not in proposed_data:
             return True
+        # Recurse into dicts only -- lists are deliberately not descended into. A removal inside a list element
+        # (e.g. a nested dict that loses a key) is already caught by the forward `issubset` pass, which matches
+        # list elements bidirectionally, so any element divergence classifies as changed there; a wholly-omitted
+        # list key is caught by the key-presence check above.
         if isinstance(value, dict) and has_removals(value, proposed_data[key]):
             return True
 

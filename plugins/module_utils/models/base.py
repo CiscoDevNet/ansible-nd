@@ -77,6 +77,9 @@ class NDBaseModel(BaseModel, ABC):
     # value equal to its declared default is normalized to absent during removal detection -- omitting it from
     # proposed config is not a pending reset. Source the values from the ND OpenAPI template schema for the
     # model's policyType (see the `nd-openapi` MCP); a wrong value here breaks replaced/overridden idempotency.
+    # Values MUST be in the model's DUMPED form, not the schema-declared form: when a validator coerces a field
+    # on read (e.g. loopback `routeMapTag` schema integer 12345 stored as string "12345"), the table must hold
+    # the coerced value or the default never matches and the field silently reopens issue #410 for that model.
     reverse_diff_defaults: ClassVar[Dict[str, Any]] = {}
 
     # Keys (field ALIASES / wire keys) stripped from this model's level of the reverse-pass dump regardless of
