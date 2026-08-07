@@ -342,15 +342,7 @@
       ansible.builtin.include_tasks: deleted.yaml
 
     - name: Validate fabric-wide overridden behavior
-      ansible.builtin.include_tasks:
-        file: overridden.yaml
-        apply:
-          tags:
-            - never
-            - interface_groups_overridden
-      tags:
-        - never
-        - interface_groups_overridden
+      ansible.builtin.include_tasks: overridden.yaml
   always:
     - name: Remove Interface Group integration-test resources
       ansible.builtin.include_tasks: cleanup.yaml

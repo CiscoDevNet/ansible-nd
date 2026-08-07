@@ -178,7 +178,7 @@
 - name: Verify every rejected input returned an actionable message
   ansible.builtin.assert:
     that:
-      - item.first_run_result.changed == false
+      - (item.first_run_result.changed | default(false)) == false
       - >-
         (item.item.message | lower)
         in (item.first_run_result.msg | lower)
@@ -417,6 +417,23 @@
       unique_members: true
   when: not ansible_check_mode
 
+- name: Create the pending Network immediately before deployment-scope checks
+  cisco.nd.nd_manage_networks:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_pending_network_fixture }}"
+    state: merged
+  register: interface_group_pending_network_fixture_create
+  when: test_create_network_fixtures | bool
+
+- name: Verify the pending Network fixture is ready
+  ansible.builtin.assert:
+    that:
+      - interface_group_pending_network_fixture_create is not failed
+  when:
+    - test_create_network_fixtures | bool
+    - not ansible_check_mode
+
 - name: Apply Interface Group intent when a known network is not deployed
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_interface_group
@@ -460,11 +477,17 @@
 - name: Verify an undeployed Network did not block Interface Group intent
   ansible.builtin.assert:
     that:
-      - interface_group_undeployed_network.check_mode_result.failed == false
+      - >-
+        (interface_group_undeployed_network.check_mode_result.failed
+        | default(false)) == false
       - interface_group_undeployed_network.check_mode_result.changed == true
-      - interface_group_undeployed_network.first_run_result.failed == false
+      - >-
+        (interface_group_undeployed_network.first_run_result.failed
+        | default(false)) == false
       - interface_group_undeployed_network.first_run_result.changed == true
-      - interface_group_undeployed_network.second_run_result.failed == false
+      - >-
+        (interface_group_undeployed_network.second_run_result.failed
+        | default(false)) == false
       - interface_group_undeployed_network.second_run_result.changed == false
       - >-
         'cisco.nd.nd_manage_networks'

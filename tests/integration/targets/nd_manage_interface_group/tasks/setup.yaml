@@ -69,15 +69,6 @@
   register: interface_group_deployed_network_fixture_create
   when: test_create_network_fixtures | bool
 
-- name: Create the reserved pending Network fixture without deployment
-  cisco.nd.nd_manage_networks:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config: "{{ interface_group_pending_network_fixture }}"
-    state: merged
-  register: interface_group_pending_network_fixture_create
-  when: test_create_network_fixtures | bool
-
 - name: Gather the reserved Network fixtures
   cisco.nd.nd_manage_networks:
     output_level: "{{ nd_info.output_level }}"
@@ -90,7 +81,7 @@
 - name: Validate the reserved Network fixtures
   cisco.nd.tests.integration._nd_network_validate:
     nd_data: "{{ interface_group_network_fixtures_gathered }}"
-    test_data: "{{ interface_group_network_fixture_config }}"
+    test_data: "{{ interface_group_deployed_network_fixtures }}"
   register: interface_group_network_fixture_validation
   when: test_create_network_fixtures | bool
 
@@ -98,7 +89,6 @@
   ansible.builtin.assert:
     that:
       - interface_group_deployed_network_fixture_create is not failed
-      - interface_group_pending_network_fixture_create is not failed
       - interface_group_network_fixture_validation.failed == false
     fail_msg: >-
       The reserved Network fixtures could not be created. Confirm that their

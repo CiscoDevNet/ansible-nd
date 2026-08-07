@@ -191,12 +191,6 @@ interface_group_pending_network_fixture:
     deploy: false
     deploy_type: switch
 
-interface_group_network_fixture_config: >-
-  {{
-    interface_group_deployed_network_fixtures
-    + interface_group_pending_network_fixture
-  }}
-
 interface_group_network_delete_config:
   - network_name: "{{ test_network_1 }}"
     is_l2only: true
@@ -220,12 +214,6 @@ test_custom_extra_config_key: >-
   }}
 
 interface_group_test_prefix: "ANSIBLE-IG-"
-interface_group_destructive_tests_enabled: >-
-  {{
-    nd_interface_group_destructive_tests_enabled
-    | default(false)
-    | bool
-  }}
 
 interface_group_names:
   any: "ANSIBLE-IG-ANY"

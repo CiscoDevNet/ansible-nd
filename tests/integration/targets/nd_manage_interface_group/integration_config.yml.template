@@ -36,20 +36,14 @@
 # The same physical port number may be used on different switches. Fixtures on
 # the same switch must use distinct interfaces where exclusive use is required.
 #
-# NORMAL RUN
+# RUN
 #
 # ansible-playbook -i tests/integration/inventory.networking \
 #   tests/integration/targets/nd_manage_interface_group/run_tests.yaml \
 #   -e @tests/integration/targets/nd_manage_interface_group/integration_config.yml
 #
-# DESTRUCTIVE OVERRIDDEN RUN
-# Set nd_interface_group_destructive_tests_enabled to true in the copied file,
-# use only a fabric reserved for Interface Groups testing, and run:
-#
-# ansible-playbook -i tests/integration/inventory.networking \
-#   tests/integration/targets/nd_manage_interface_group/run_tests.yaml \
-#   -e @tests/integration/targets/nd_manage_interface_group/integration_config.yml \
-#   --tags interface_groups_overridden
+# The normal run includes state=overridden. Before applying the override, the
+# suite refuses to proceed if the fabric contains any non-test Interface Group.
 
 # Required environment-specific values.
 nd_test_fabric_name: <FABRIC_NAME>
@@ -64,7 +58,6 @@ nd_test_interface_group_vpc_pair_use_virtual_peer_link: true
 nd_test_interface_group_create_vpc_fixture: true
 nd_test_interface_group_create_port_channel_fixtures: true
 nd_test_interface_group_create_network_fixtures: true
-nd_interface_group_destructive_tests_enabled: false
 
 # vPC fixture. The numeric ID is used for the vPC and peer port-channels.
 nd_test_interface_group_vpc_id: 200

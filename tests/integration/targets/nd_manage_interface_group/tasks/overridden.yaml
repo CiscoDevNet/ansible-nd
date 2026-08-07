@@ -1,13 +1,4 @@
 ---
-- name: Require explicit opt-in for fabric-wide Interface Group override
-  ansible.builtin.assert:
-    that:
-      - interface_group_destructive_tests_enabled | bool
-    fail_msg: >-
-      state=overridden deletes every Interface Group omitted from config. Run
-      only on a dedicated test fabric and set
-      nd_interface_group_destructive_tests_enabled=true.
-
 - name: Fetch fabric-wide Interface Group scope before override
   cisco.nd.nd_rest:
     method: GET

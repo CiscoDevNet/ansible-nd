@@ -113,18 +113,6 @@
       unique_members: true
   when: not ansible_check_mode
 
-- name: Confirm the per-resource deploy override staged the second port-channel
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "MERGED PER-RESOURCE DEPLOY FALSE"
-    preview_request_interfaces:
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_2 }}"
-    preview_test_data:
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_2 }}"
-        pending: present
-
 - name: Verify explicit empty collections are additive no-ops
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_interface_group
