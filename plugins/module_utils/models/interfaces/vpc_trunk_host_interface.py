@@ -234,6 +234,11 @@ class TrunkVpcHostPolicyModel(StormControlMutexMixin):
     # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {
         "adminState": True,
+        # Dumped-form keys: the write-side dump fans the single user-facing `allowed_vlans` out to the per-peer
+        # wire keys (vpc-interface-peer-vlan-collapse), so the reverse pass sees peer1/peer2AllowedVlans, never
+        # the collapsed `allowedVlans` that ND echoes on GET.
+        "peer1AllowedVlans": "none",
+        "peer2AllowedVlans": "none",
         "bpduFilter": "default",
         "bpduGuard": "enable",
         "cdp": True,

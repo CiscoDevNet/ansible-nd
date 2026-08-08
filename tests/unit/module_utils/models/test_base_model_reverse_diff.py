@@ -753,6 +753,52 @@ def test_base_model_reverse_diff_00580() -> None:
     assert existing.get_diff(proposed, exclude_unset=False) is False
 
 
+def test_base_model_reverse_diff_00590() -> None:
+    """
+    # Summary
+
+    ND 4.2.1 echoes a collapsed `allowedVlans: "none"` on trunkVpcHost GETs when the user never set it (lab-verified
+    2026-08-07 on SITE1), but the write-side dump fans the field out to per-peer `peer1AllowedVlans`/`peer2AllowedVlans`
+    (deviation: vpc-interface-peer-vlan-collapse). The `reverse_diff_defaults` entries must therefore use the dumped-form
+    per-peer keys -- a collapsed-form `allowedVlans` entry never matches and replaced/overridden loops forever.
+
+    ## Test
+
+    - An existing `TrunkVpcHostPolicyModel` built from a response carrying the collapsed `allowedVlans: "none"` echo.
+    - A proposed model re-stating the configured fields but omitting `allowed_vlans`: `get_diff` is `True` (no difference).
+    - A proposed model explicitly setting `allowed_vlans: "100-200"`: `get_diff` is `False` (difference detected).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - NDBaseModel.to_reverse_diff_dict()
+    """
+    existing = TrunkVpcHostPolicyModel.from_response(
+        {
+            "policyType": "trunkVpcHost",
+            "peerSwitchId": "FDOPEER0001",
+            "adminState": True,
+            "allowedVlans": "none",
+            "peer1PortChannelId": 20,
+            "peer1MemberPorts": ["Ethernet1/6"],
+            "peer2PortChannelId": 20,
+            "peer2MemberPorts": ["Ethernet1/6"],
+        }
+    )
+    trunk_config = {
+        "admin_state": True,
+        "peer1_port_channel_id": 20,
+        "peer1_member_ports": ["Ethernet1/6"],
+        "peer2_port_channel_id": 20,
+        "peer2_member_ports": ["Ethernet1/6"],
+    }
+    proposed = TrunkVpcHostPolicyModel.from_config(dict(trunk_config))
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+    proposed_explicit = TrunkVpcHostPolicyModel.from_config({**trunk_config, "allowed_vlans": "100-200"})
+    assert existing.get_diff(proposed_explicit, exclude_unset=False) is False
+
+
 # --- 006xx: efficiency contract -- the reverse pass reuses the forward dumps ---
 
 
