@@ -137,6 +137,9 @@ class VxlanL3FabricDataModel(NDNestedModel):
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion", ge=1, le=3)
     netflow: bool | None = Field(default=False, description="Enable netflow")
+    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
+    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
     gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
     ipv4_trm: bool | None = Field(default=None, alias="ipv4Trm")
     ipv6_trm: bool | None = Field(default=None, alias="ipv6Trm")
@@ -155,6 +158,9 @@ class DefaultL3FabricDataModel(NDNestedModel):
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion", ge=1, le=3)
     netflow: bool | None = Field(default=False, description="Enable netflow")
+    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
+    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
     gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
 
     @field_validator("igmp_version", mode="before")
@@ -325,7 +331,7 @@ class NetworkCommonModel(NDBaseModel):
     vrf_name: str | None = Field(default=None, alias="vrfName", max_length=32)
     vlan_id: int | None = Field(default=None, alias="vlanId", ge=2, le=4094)
     tenant_name: str | None = Field(default=None, alias="tenantName", max_length=63)
-    layer: NetworkLayer | None = Field(default=None)
+    layer: NetworkLayer | None = Field(default=None, alias="networkMode")
 
     @field_validator("network_name", mode="before")
     @classmethod
@@ -360,6 +366,7 @@ class NetworkBaseModel(NetworkCommonModel):
     member_fabric_network_info: list[MemberFabricNetworkInfoModel] | None = Field(default=None, alias="memberFabricNetworkInfo")
     network_template_name: str | None = Field(default=None, alias="networkTemplateName")
     network_extension_template_name: str | None = Field(default=None, alias="networkExtensionTemplateName")
+    service_network_template_name: str | None = Field(default=None, alias="serviceNetworkTemplateName")
     network_template_config: dict[str, str] | None = Field(default=None, alias="networkTemplateConfig")
     interface_group_names: list[str] | None = Field(default=None, alias="interfaceGroupNames")
 

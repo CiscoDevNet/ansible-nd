@@ -78,11 +78,18 @@ def test_manage_network_data_models_00100() -> None:
         vrfName="vrf1",
         vlanId=3000,
         tenantName="tenant1",
+        layer="layer3",
         l2Data=DefaultL2DataModel(vlanName="VLAN3000"),
         l3Data=DefaultL3DataModel(
             gatewayIpv4Address="192.0.2.1/24",
             gatewayIpv6Address="2001:db8::1/64",
             secondaryGatewayIpv4Collection=["192.0.2.2/24"],
+            fabricData={
+                "netflow": True,
+                "l2NetflowMonitor": "L2_MON",
+                "l3NetflowMonitor": "L3_MON",
+                "netflowSampler": "NF_SAMPLER",
+            },
         ),
     )
 
@@ -90,9 +97,14 @@ def test_manage_network_data_models_00100() -> None:
 
     assert payload["networkType"] == "vxlan"
     assert payload["networkName"] == "net1"
+    assert payload["networkMode"] == "layer3"
+    assert "layer" not in payload
     assert payload["l2Data"]["vlanName"] == "VLAN3000"
     assert payload["l3Data"]["gatewayIpv4Address"] == "192.0.2.1/24"
     assert payload["l3Data"]["mtu"] == 9216
+    assert payload["l3Data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
+    assert payload["l3Data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
+    assert payload["l3Data"]["fabricData"]["netflowSampler"] == "NF_SAMPLER"
 
 
 def test_manage_network_data_models_00105() -> None:

@@ -28,6 +28,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.va
 _CUSTOM_NETWORK_TEMPLATE_FIELDS = (
     "network_template_name",
     "network_extension_template_name",
+    "service_network_template_name",
     "network_template_config",
 )
 
@@ -107,6 +108,9 @@ class NetworkChildConfigModel(NDNestedModel):
     trm_enable: bool | None = Field(default=None, alias="trmEnable")
     ipv6_trm: bool | None = Field(default=None, alias="ipv6Trm")
     netflow_enable: bool | None = Field(default=None, alias="netflowEnable")
+    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
+    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
     gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
 
     @model_validator(mode="before")
@@ -119,6 +123,8 @@ class NetworkChildConfigModel(NDNestedModel):
         aliases = {
             "dhcp_loopback_id": "loopback_id",
             "l3gw_on_border": "gateway_on_border",
+            "vlan_nf_monitor": "l2_netflow_monitor",
+            "intfvlan_nf_monitor": "l3_netflow_monitor",
         }
         for legacy, current in aliases.items():
             if legacy in normalized and current not in normalized:
@@ -177,9 +183,13 @@ class NetworkConfigModel(NDBaseModel):
     trm_enable: bool | None = Field(default=None, alias="trmEnable")
     ipv6_trm: bool | None = Field(default=None, alias="ipv6Trm")
     netflow_enable: bool | None = Field(default=False, alias="netflowEnable")
+    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
+    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
     gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
     network_template_name: str | None = Field(default=None, alias="networkTemplateName")
     network_extension_template_name: str | None = Field(default=None, alias="networkExtensionTemplateName")
+    service_network_template_name: str | None = Field(default=None, alias="serviceNetworkTemplateName")
     network_template_config: dict[str, str] | None = Field(default=None, alias="networkTemplateConfig")
     deploy: bool = True
     deploy_type: str = Field(default="switch", alias="deployType")
@@ -204,6 +214,8 @@ class NetworkConfigModel(NDBaseModel):
             "dhcp_loopback_id": "loopback_id",
             "l3gw_on_border": "gateway_on_border",
             "route_target_both": "rt_auto",
+            "vlan_nf_monitor": "l2_netflow_monitor",
+            "intfvlan_nf_monitor": "l3_netflow_monitor",
         }
         for legacy, current in aliases.items():
             if legacy in normalized and current not in normalized:

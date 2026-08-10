@@ -128,7 +128,6 @@ class PlatformType(str, Enum):
     OTHER = "other"
     IOS_XE = "ios-xe"
     IOS_XR = "ios-xr"
-    SONIC = "sonic"
     APIC = "apic"
 
     @classmethod
@@ -166,7 +165,6 @@ class ShallowDiscoveryPlatformType(str, Enum):
     OTHER = "other"
     IOS_XE = "ios-xe"
     IOS_XR = "ios-xr"
-    SONIC = "sonic"
 
     @classmethod
     def choices(cls) -> list[str]:

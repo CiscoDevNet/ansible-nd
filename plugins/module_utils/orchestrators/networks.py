@@ -72,6 +72,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         "net_extension_template",
         "network_extension_template_name",
         "networkExtensionTemplateName",
+        "service_network_template_name",
+        "serviceNetworkTemplateName",
         "network_template_config",
         "networkTemplateConfig",
         "network_id",
@@ -124,6 +126,14 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         "trmEnable",
         "ipv6_trm",
         "ipv6Trm",
+        "l2_netflow_monitor",
+        "l2NetflowMonitor",
+        "l3_netflow_monitor",
+        "l3NetflowMonitor",
+        "netflow_sampler",
+        "netflowSampler",
+        "intfvlan_nf_monitor",
+        "vlan_nf_monitor",
         "gateway_on_border",
         "gatewayOnBorder",
         "child_fabric_config",
@@ -243,6 +253,9 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 "netflow",
                 default=None if self.strategy and self.strategy.is_child else False,
             ),
+            l2_netflow_monitor=self._value(config, "l2_netflow_monitor", "l2NetflowMonitor", "vlan_nf_monitor"),
+            l3_netflow_monitor=self._value(config, "l3_netflow_monitor", "l3NetflowMonitor", "intfvlan_nf_monitor"),
+            netflow_sampler=self._value(config, "netflow_sampler", "netflowSampler"),
             gateway_on_border=self._value(config, "gateway_on_border", "gatewayOnBorder"),
             ipv4_trm=self._value(config, "trm_enable", "trmEnable", "ipv4Trm"),
             ipv6_trm=self._value(config, "ipv6_trm", "ipv6Trm"),
@@ -297,6 +310,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         for target, names in {
             "network_template_name": ("network_template_name", "networkTemplateName"),
             "network_extension_template_name": ("network_extension_template_name", "networkExtensionTemplateName"),
+            "service_network_template_name": ("service_network_template_name", "serviceNetworkTemplateName"),
             "network_template_config": ("network_template_config", "networkTemplateConfig"),
         }.items():
             value = self._value(config, *names)
@@ -689,6 +703,9 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             "dhcpServers": dhcp_servers,
             "loopbackId": self._top_down_int(template_config.get("loopbackId")),
             "netflow": self._top_down_bool(template_config.get("ENABLE_NETFLOW")),
+            "l2NetflowMonitor": template_config.get("l2NetflowMonitor") or template_config.get("vlanNfMonitor"),
+            "l3NetflowMonitor": template_config.get("l3NetflowMonitor") or template_config.get("intfVlanNfMonitor"),
+            "netflowSampler": template_config.get("netflowSampler"),
             "gatewayOnBorder": self._top_down_bool(template_config.get("enableL3OnBorder")),
             "ipv4Trm": self._top_down_bool(template_config.get("trmEnabled")),
         }
@@ -845,12 +862,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if payload.get("networkMode") == NetworkLayer.LAYER2.value:
             payload["l3Data"] = self._mcfg_parent_default_l3_data()
             return payload
-
-        l3_data = payload.get("l3Data")
-        if isinstance(l3_data, dict):
-            l3_data = dict(l3_data)
-            l3_data.pop("fabricData", None)
-            payload["l3Data"] = l3_data
 
         return payload
 

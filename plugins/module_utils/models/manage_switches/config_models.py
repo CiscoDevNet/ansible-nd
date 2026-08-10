@@ -113,11 +113,6 @@ class POAPConfigModel(NDNestedModel):
         alias="discoveryPassword",
         description="Password for device discovery during POAP",
     )
-    image_policy: str | None = Field(
-        default=None,
-        alias="imagePolicy",
-        description="Name of the image policy to be applied on switch",
-    )
 
     @field_validator("hostname", mode="before")
     @classmethod
@@ -174,11 +169,6 @@ class PreprovisionConfigModel(NDNestedModel):
         alias="discoveryPassword",
         description="Password for device discovery during pre-provision",
     )
-    image_policy: str | None = Field(
-        default=None,
-        alias="imagePolicy",
-        description="Image policy to apply during pre-provision",
-    )
 
     @field_validator("hostname", mode="before")
     @classmethod
@@ -221,11 +211,6 @@ class RMAConfigModel(NDNestedModel):
     )
 
     # Optional
-    image_policy: str | None = Field(
-        default=None,
-        alias="imagePolicy",
-        description="Name of the image policy to be applied on the replacement switch",
-    )
     discovery_username: str | None = Field(
         default=None,
         alias="discoveryUsername",
@@ -631,7 +616,6 @@ class SwitchConfigModel(NDBaseModel):
                             hostname=dict(type="str", required=True),
                             discovery_username=dict(type="str"),
                             discovery_password=dict(type="str", no_log=True),
-                            image_policy=dict(type="str"),
                         ),
                     ),
                     preprovision=dict(
@@ -643,7 +627,6 @@ class SwitchConfigModel(NDBaseModel):
                             hostname=dict(type="str", required=True),
                             discovery_username=dict(type="str"),
                             discovery_password=dict(type="str", no_log=True),
-                            image_policy=dict(type="str"),
                             config_data=dict(
                                 type="dict",
                                 required=True,
@@ -665,7 +648,6 @@ class SwitchConfigModel(NDBaseModel):
                             new_serial_number=dict(type="str", required=True),
                             discovery_username=dict(type="str"),
                             discovery_password=dict(type="str", no_log=True),
-                            image_policy=dict(type="str"),
                         ),
                     ),
                 ),

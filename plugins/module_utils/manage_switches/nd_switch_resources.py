@@ -1509,7 +1509,6 @@ class POAPHandler:
                     f
                     for f in [
                         "hostname",
-                        "image_policy",
                         "discovery_username",
                         "discovery_password",
                     ]
@@ -1522,7 +1521,6 @@ class POAPHandler:
                         "version",
                         "hostname",
                         "config_data",
-                        "image_policy",
                         "discovery_username",
                         "discovery_password",
                     ]
@@ -1723,7 +1721,6 @@ class POAPHandler:
         switch_role = switch_cfg.role
         password = switch_cfg.password
         auth_proto = SnmpV3AuthProtocol.MD5  # POAP/bootstrap always uses MD5
-        image_policy = poap_cfg.image_policy
 
         discovery_username = getattr(poap_cfg, "discovery_username", None)
         discovery_password = getattr(poap_cfg, "discovery_password", None)
@@ -1732,6 +1729,7 @@ class POAPHandler:
         # bootstrap-only operations.
         model = bs.get("model", "")
         version = bs.get("softwareVersion", "")
+        software_image = bs.get("softwareImage")
 
         gateway_ip_mask = bs.get("gatewayIpMask") or bs_data.get("gatewayIpMask")
         data_models = bs_data.get("models", [])
@@ -1780,7 +1778,8 @@ class POAPHandler:
         # Bootstrap API response fields
         fingerprint = bs.get("fingerPrint") or bs.get("fingerprint", "")
         public_key = bs.get("publicKey", "")
-        re_add = bs.get("reAdd", False)
+        dhcp_bootstrap_ip = bs.get("dhcpBootstrapIp")
+        seed_switch = bs.get("seedSwitch", False)
         in_inventory = bs.get("inInventory", False)
 
         bootstrap_model = BootstrapImportSwitchModel(
@@ -1795,11 +1794,12 @@ class POAPHandler:
             data=data_block,
             fingerprint=fingerprint,
             publicKey=public_key,
-            reAdd=re_add,
+            dhcpBootstrapIp=dhcp_bootstrap_ip,
+            seedSwitch=seed_switch,
             inInventory=in_inventory,
-            imagePolicy=image_policy or "",
             switchRole=switch_role,
             softwareVersion=version,
+            softwareImage=software_image,
             gatewayIpMask=gateway_ip_mask,
         )
 
@@ -1871,7 +1871,6 @@ class POAPHandler:
         ip = switch_cfg.seed_ip
         model_name = preprov_cfg.model
         version = preprov_cfg.version
-        image_policy = preprov_cfg.image_policy
         gateway_ip_mask = preprov_cfg.config_data.gateway
         switch_role = switch_cfg.role
         password = switch_cfg.password
@@ -1895,7 +1894,6 @@ class POAPHandler:
             discoveryUsername=discovery_username,
             discoveryPassword=discovery_password,
             data=data_block,
-            imagePolicy=image_policy or None,
             switchRole=switch_role,
         )
 
@@ -2381,8 +2379,7 @@ class RMAHandler:
 
         All switch properties (model, version, gateway, modules) are sourced
         exclusively from the bootstrap API response.  Only the new serial number,
-        optional image policy, and optional discovery credentials come from the
-        playbook config.
+        optional discovery credentials come from the playbook config.
 
         Args:
             switch_cfg: Parent switch config.
@@ -2407,6 +2404,7 @@ class RMAHandler:
         data_models = bs_data.get("models", [])
         model = bootstrap_data.get("model", "")
         software_version = bootstrap_data.get("softwareVersion", "")
+        software_image = bootstrap_data.get("softwareImage")
         public_key = bootstrap_data.get("publicKey", "")
         finger_print = bootstrap_data.get("fingerPrint") or bootstrap_data.get("fingerprint", "")
 
@@ -2414,7 +2412,7 @@ class RMAHandler:
             gatewayIpMask=gateway_ip_mask,
             model=model,
             softwareVersion=software_version,
-            imagePolicy=rma_cfg.image_policy,
+            softwareImage=software_image,
             switchRole=switch_cfg.role,
             password=switch_cfg.password,
             discoveryAuthProtocol=SnmpV3AuthProtocol.MD5,
@@ -2438,8 +2436,8 @@ class RMAHandler:
     ) -> None:
         """Submit an RMA provisioning request for one switch.
 
-        The old and new switch IDs are embedded in the payload via
-        ``oldSwitchId`` and ``newSwitchId`` fields on the model.
+        The old switch ID is sent as the endpoint path parameter.  The request
+        body contains only the ND 4.2 ``RMASwitch`` fields.
 
         Args:
             rma_model: RMA model for the replacement switch.

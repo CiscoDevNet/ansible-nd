@@ -76,17 +76,17 @@ class PreProvisionSwitchModel(NDBaseModel):
         alias="softwareVersion",
         description="Software version of the switch to pre-provision",
     )
+    software_image: str | None = Field(
+        default=None,
+        alias="softwareImage",
+        description="Software image file for the switch to pre-provision",
+    )
     gateway_ip_mask: str = Field(
         alias="gatewayIpMask",
         description="Gateway IP address with mask (e.g., 10.23.244.1/24)",
     )
 
     # --- bootstrapBase fields (optional) ---
-    image_policy: str | None = Field(
-        default=None,
-        alias="imagePolicy",
-        description="Image policy associated with the switch during pre-provision",
-    )
     switch_role: SwitchRole | None = Field(
         default=None,
         alias="switchRole",

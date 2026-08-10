@@ -86,6 +86,9 @@ options:
       network_extension_template_name:
         description: Network extension template name.
         type: str
+      service_network_template_name:
+        description: Service network template name.
+        type: str
       network_template_config:
         description: Network template configuration values.
         type: dict
@@ -295,6 +298,15 @@ options:
         description: Enable netflow.
         type: bool
         default: false
+      l2_netflow_monitor:
+        description: Netflow monitor for L2 VLAN.
+        type: str
+      l3_netflow_monitor:
+        description: Netflow monitor for L3 VLAN.
+        type: str
+      netflow_sampler:
+        description: Netflow sampler name.
+        type: str
       intfvlan_nf_monitor:
         description: Interface VLAN netflow monitor name.
         type: str
@@ -383,6 +395,15 @@ options:
           netflow_enable:
             description: Enable netflow.
             type: bool
+          l2_netflow_monitor:
+            description: Netflow monitor for L2 VLAN.
+            type: str
+          l3_netflow_monitor:
+            description: Netflow monitor for L3 VLAN.
+            type: str
+          netflow_sampler:
+            description: Netflow sampler name.
+            type: str
           gateway_on_border:
             description: Enable gateway on border.
             type: bool

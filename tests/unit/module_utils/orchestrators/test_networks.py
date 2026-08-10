@@ -1472,6 +1472,44 @@ def test_mcfg_parent_network_create_uses_onemanage_manage_schema_payload():
     }
 
 
+def test_mcfg_parent_network_create_keeps_onemanage_netflow_monitor_fields():
+    orchestrator = _mcfg_parent_orchestrator()
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        return {"results": [{"networkName": "GREEN_NET", "status": "success"}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+    model = NDNetworkOrchestrator.model_class.from_config(
+        orchestrator.prepare_config_data(
+            [
+                {
+                    "network_name": "GREEN_NET",
+                    "network_id": 901031,
+                    "vlan_id": 3131,
+                    "vrf_name": "VRF_GREEN",
+                    "gateway_ipv4_address": "192.0.2.1/24",
+                    "netflow_enable": True,
+                    "l2_netflow_monitor": "L2_MON",
+                    "l3_netflow_monitor": "L3_MON",
+                    "netflow_sampler": "NF_SAMPLER",
+                }
+            ]
+        )[0]
+    )
+
+    orchestrator.create_bulk([model])
+
+    payload = requests[0]["data"]["networks"][0]
+    assert requests[0]["path"] == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks"
+    assert payload["networkMode"] == "layer3"
+    assert payload["l3Data"]["fabricData"]["netflow"] is True
+    assert payload["l3Data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
+    assert payload["l3Data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
+    assert payload["l3Data"]["fabricData"]["netflowSampler"] == "NF_SAMPLER"
+
+
 def test_mcfg_parent_network_update_uses_l2_onemanage_manage_schema_payload():
     orchestrator = _mcfg_parent_orchestrator()
     requests = []
@@ -1679,7 +1717,10 @@ def test_mcfg_parent_network_query_normalizes_top_down_template_config():
         "networkStatus": "NA",
         "vrf": "NA",
         "networkTemplateConfig": (
-            '{"segmentId":"901030","vlanId":"3130","vlanName":"BLUE_VLAN",' '"isLayer2Only":"true","rtBothAuto":"true","enableIR":"false"}'
+            '{"segmentId":"901030","vlanId":"3130","vlanName":"BLUE_VLAN",'
+            '"isLayer2Only":"true","rtBothAuto":"true","enableIR":"false",'
+            '"ENABLE_NETFLOW":"true","l2NetflowMonitor":"L2_MON",'
+            '"l3NetflowMonitor":"L3_MON","netflowSampler":"NF_SAMPLER"}'
         ),
     }
 
@@ -1696,6 +1737,10 @@ def test_mcfg_parent_network_query_normalizes_top_down_template_config():
     assert normalized["l2Data"]["vlanName"] == "BLUE_VLAN"
     assert normalized["l2Data"]["rtAuto"] is True
     assert normalized["l2Data"]["fabricData"]["enableIr"] is False
+    assert normalized["l3Data"]["fabricData"]["netflow"] is True
+    assert normalized["l3Data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
+    assert normalized["l3Data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
+    assert normalized["l3Data"]["fabricData"]["netflowSampler"] == "NF_SAMPLER"
 
 
 def test_mcfg_parent_delete_does_not_seed_empty_network_level_deploy():
@@ -2795,6 +2840,9 @@ def test_transform_l3_network_payload_uses_l3_data_fabric_data():
                 "gateway_ipv4_address": "192.0.2.1/24",
                 "trm_enable": True,
                 "netflow_enable": True,
+                "vlan_nf_monitor": "L2_MON",
+                "intfvlan_nf_monitor": "L3_MON",
+                "netflow_sampler": "NF_SAMPLER",
             }
         ]
     )[0]
@@ -2804,6 +2852,9 @@ def test_transform_l3_network_payload_uses_l3_data_fabric_data():
     assert payload["l3_data"]["gatewayIpv4Address"] == "192.0.2.1/24"
     assert payload["l3_data"]["fabricData"]["ipv4Trm"] is True
     assert payload["l3_data"]["fabricData"]["netflow"] is True
+    assert payload["l3_data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
+    assert payload["l3_data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
+    assert payload["l3_data"]["fabricData"]["netflowSampler"] == "NF_SAMPLER"
 
 
 def test_transform_l3_network_payload_omits_trm_flags_when_unset():

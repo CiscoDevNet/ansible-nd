@@ -154,10 +154,6 @@ options:
                         description:
                         - Password for device discovery during POAP.
                         type: str
-                    image_policy:
-                        description:
-                        - Name of the image policy to be applied on the switch.
-                        type: str
             preprovision:
                 description:
                 - Pre-provision config for the switch.
@@ -197,10 +193,6 @@ options:
                         - Hostname for the switch during pre-provision.
                         type: str
                         required: true
-                    image_policy:
-                        description:
-                        - Image policy to apply during pre-provision.
-                        type: str
                     config_data:
                         description:
                         - Basic configuration data for the switch during Pre-provision.
@@ -235,10 +227,6 @@ options:
                         - Serial number of the replacement switch in the POAP/bootstrap loop.
                         type: str
                         required: true
-                    image_policy:
-                        description:
-                        - Name of the image policy to be applied on the replacement switch.
-                        type: str
                     discovery_username:
                         description:
                         - Username for device discovery during RMA bootstrap.
@@ -311,7 +299,6 @@ EXAMPLES = """
           model: N9K-C93180YC-EX
           version: "10.3(1)"
           hostname: leaf-preprov
-          image_policy: my-image-policy
           discovery_username: root
           discovery_password: "{{ discovery_password }}"
           config_data:
@@ -331,7 +318,6 @@ EXAMPLES = """
         poap:
           serial_number: SAL5678EFGH
           hostname: leaf-bootstrap
-          image_policy: my-image-policy
           discovery_username: root
           discovery_password: "{{ discovery_password }}"
     state: merged
@@ -358,7 +344,6 @@ EXAMPLES = """
         password: "{{ switch_password }}"
         rma:
           - new_serial_number: SAL9999ZZZZ
-            image_policy: my-image-policy
             discovery_username: root
             discovery_password: "{{ discovery_password }}"
     state: merged
