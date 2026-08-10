@@ -34,6 +34,7 @@ from __future__ import annotations
 __metaclass__ = type
 
 from typing import ClassVar, Literal
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
@@ -150,7 +151,7 @@ class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         segments = ["fabrics"]
         if self.fabric_name is not None:
-            segments.append(self.fabric_name)
+            segments.append(quote(self.fabric_name, safe=""))
         if self._path_suffix:
             segments.append(self._path_suffix)
         base_path = BasePath.path(*segments)
@@ -205,7 +206,7 @@ class EpManageFabricsGet(_EpManageFabricsBase):
     ```
     """
 
-    class_name: Literal["EpManageFabricsGet"] = Field(default="EpManageFabricsGet", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricsGet"] = Field(default="EpManageFabricsGet", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -317,7 +318,7 @@ class EpManageFabricsListGet(_EpManageFabricsBase):
 
     _require_fabric_name: ClassVar[bool] = False
 
-    class_name: Literal["EpManageFabricsListGet"] = Field(default="EpManageFabricsListGet", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricsListGet"] = Field(default="EpManageFabricsListGet", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: FabricsListEndpointParams = Field(default_factory=FabricsListEndpointParams, description="Endpoint-specific query parameters")
 
@@ -379,7 +380,7 @@ class EpManageFabricsPost(_EpManageFabricsBase):
 
     _require_fabric_name: ClassVar[bool] = False
 
-    class_name: Literal["EpManageFabricsPost"] = Field(default="EpManageFabricsPost", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricsPost"] = Field(default="EpManageFabricsPost", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -433,7 +434,7 @@ class EpManageFabricsPut(_EpManageFabricsBase):
     ```
     """
 
-    class_name: Literal["EpManageFabricsPut"] = Field(default="EpManageFabricsPut", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricsPut"] = Field(default="EpManageFabricsPut", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -477,7 +478,7 @@ class EpManageFabricsDelete(_EpManageFabricsBase):
     ```
     """
 
-    class_name: Literal["EpManageFabricsDelete"] = Field(default="EpManageFabricsDelete", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricsDelete"] = Field(default="EpManageFabricsDelete", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -522,7 +523,7 @@ class EpManageFabricsSummaryGet(_EpManageFabricsBase):
     ```
     """
 
-    class_name: Literal["EpManageFabricsSummaryGet"] = Field(default="EpManageFabricsSummaryGet", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricsSummaryGet"] = Field(default="EpManageFabricsSummaryGet", frozen=True, description="Class name for backward compatibility")
 
     _path_suffix: ClassVar[str | None] = "summary"
 
@@ -588,7 +589,7 @@ class EpManageFabricConfigDeployPost(_EpManageFabricsBase):
         """Build the endpoint path with optional query string."""
         if self.fabric_name is None:
             raise ValueError("fabric_name must be set before accessing path")
-        base = BasePath.path("fabrics", self.fabric_name, "actions", "configDeploy")
+        base = BasePath.path("fabrics", quote(self.fabric_name, safe=""), "actions", "configDeploy")
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base}?{query_string}"
