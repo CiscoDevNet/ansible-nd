@@ -10,7 +10,6 @@
 
 - name: Set vars
   ansible.builtin.set_fact:
-    ansible_command_timeout: 90
     nd_info: &nd_info
       host: '{{ ansible_host }}'
       username: '{{ ansible_user }}'

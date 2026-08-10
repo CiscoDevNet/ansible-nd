@@ -237,12 +237,13 @@ def test_vrf_attachment_query_chunks_large_vrf_name_sets():
     assert coordinator.queried_chunks == [["vrf-0", "vrf-1"], ["vrf-2", "vrf-3"], ["vrf-4"]]
 
 
-def test_vrf_delete_wait_timeout_uses_adaptive_workflow_timeout():
+def test_vrf_delete_wait_timeout_ignores_removed_override_and_scales_adaptively_without_connection():
     class Coordinator:
         module = type("Module", (), {"params": {"timeout": 600}})()
 
     manager = VrfAttachmentManager(coordinator=Coordinator())
 
+    # Stale top-level timeout values no longer override this internal wait policy.
     assert manager._delete_wait_timeout({"timeout": 300}, 1) == 30
     assert manager._delete_wait_timeout({"timeout": 300}, 30) == 30
     assert manager._delete_wait_timeout({"timeout": 300}, 31) == 35

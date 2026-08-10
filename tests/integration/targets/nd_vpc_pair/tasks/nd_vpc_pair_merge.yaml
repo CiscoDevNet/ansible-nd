@@ -8,7 +8,6 @@
 
 - name: MERGE - Set nd_info defaults
   ansible.builtin.set_fact:
-    ansible_command_timeout: 90
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
   tags: merge
