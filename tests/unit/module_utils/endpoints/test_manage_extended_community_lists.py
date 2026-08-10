@@ -19,6 +19,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageExtendedCommunityListsPut,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import LuceneQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import ClusterNameMixin
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
@@ -132,3 +133,8 @@ def test_manage_extended_community_lists_00060(lucene_config: dict) -> None:
     """Verify collection endpoints inherit shared Lucene validation."""
     with pytest.raises(ValueError):
         EpManageExtendedCommunityListsListGet(lucene_params=LuceneQueryParams(**lucene_config))
+
+
+def test_manage_extended_community_lists_00070() -> None:
+    """Verify endpoint parameters reuse the shared cluster-name contract."""
+    assert ClusterNameMixin in ExtendedCommunityListsEndpointParams.__bases__
