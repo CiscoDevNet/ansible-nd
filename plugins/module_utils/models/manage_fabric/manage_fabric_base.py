@@ -83,7 +83,7 @@ def _unwrap_optional(annotation):
     origin = get_origin(annotation)
     # Handle typing.Union (Python 3.9 Optional[X]) and types.UnionType (Python 3.10+ X | None)
     if origin is typing.Union or isinstance(annotation, types.UnionType):
-        args = [a for a in get_args(annotation) if a is not type(None)]
+        args = [a for a in get_args(annotation) if a is not types.NoneType]
         if len(args) == 1:
             return args[0], True
     return annotation, False
