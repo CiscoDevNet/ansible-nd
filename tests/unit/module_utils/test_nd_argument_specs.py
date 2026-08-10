@@ -33,7 +33,7 @@ def test_nd_argument_specs_00000() -> None:
 
     ## Test
 
-    - The key set matches the historical spec from nd.py exactly
+    - The key set matches the historical spec from nd.py, minus the removed `timeout` option
     - `password` has `no_log=True`
     - The removed module-level `timeout` option is absent and `output_level` defaults to "normal"
     - `host` carries the `hostname` alias
