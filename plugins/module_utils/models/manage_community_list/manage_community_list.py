@@ -246,6 +246,8 @@ class CommunityListModel(NDBaseModel):
 
     def to_diff_dict(self, **kwargs) -> dict[str, Any]:
         """Ignore false and empty defaults ND adds to standard entry responses."""
+        # TODO(4.2.1) TBD
+        # ND echoes false/empty defaults for unset standard-entry fields on GET; strip them so diffs stay idempotent.
         data = super().to_diff_dict(**kwargs)
         for entry in data.get("entries") or []:
             for field_name in _STANDARD_FALSE_DEFAULT_ALIASES:
