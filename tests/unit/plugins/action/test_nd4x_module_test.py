@@ -875,6 +875,7 @@ def test_snapshot_query_failure_stops_before_target(
     assert action_plugin._execute_module.call_count == 1
     assert action_plugin._task.check_mode is False
 
+
 def test_jsonpath_values_support_extended_filters(action_plugin):
     controller_state = {
         "current": {
