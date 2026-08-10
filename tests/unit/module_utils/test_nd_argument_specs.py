@@ -16,11 +16,13 @@ config_actions fragment with its include-allowlist selection (config_actions_spe
 from __future__ import annotations
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec as nd_legacy_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import (
     _select_options,
     config_actions_spec,
     nd_argument_spec,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import nd_argument_spec as nd_v2_argument_spec
 
 
 def test_nd_argument_specs_00000() -> None:
@@ -80,6 +82,18 @@ def test_nd_argument_specs_00001() -> None:
     assert first is not second
     del first["host"]
     assert "host" in nd_argument_spec()
+
+
+def test_nd_argument_specs_00002() -> None:
+    """
+    # Summary
+
+    Verify the legacy `nd.py` and `nd_v2.py` exports use the shared argument spec without the removed module-level `timeout` option.
+    """
+    assert nd_legacy_argument_spec is nd_argument_spec
+    assert nd_v2_argument_spec is nd_argument_spec
+    assert "timeout" not in nd_legacy_argument_spec()
+    assert "timeout" not in nd_v2_argument_spec()
 
 
 def test_nd_argument_specs_00100() -> None:

@@ -9,9 +9,7 @@
     nd_info: &nd_info
       output_level: "info"
 
-- name: Run service tests with an extended command timeout
-  vars:
-    ansible_command_timeout: 90
+- name: Run service tests
   block:
     # Cleanup part - remove all imported service packages
     - name: Query all imported service packages to clear the environment

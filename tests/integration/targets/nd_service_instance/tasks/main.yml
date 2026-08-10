@@ -9,9 +9,7 @@
     nd_info: &nd_info
       output_level: "info"
 
-- name: Run service instance tests with an extended command timeout
-  vars:
-    ansible_command_timeout: 90
+- name: Run service instance tests
   block:
     # Cleanup part
     - name: Disable an active service instance - setup part

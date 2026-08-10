@@ -8,9 +8,7 @@
     nd_info: &nd_info
       output_level: '{{ mso_output_level | default("debug") }}'
 
-- name: Run backup restore tests with an extended command timeout
-  vars:
-    ansible_command_timeout: 90
+- name: Run backup restore tests
   block:
     # QUERY VERSION
     - name: Query ND version

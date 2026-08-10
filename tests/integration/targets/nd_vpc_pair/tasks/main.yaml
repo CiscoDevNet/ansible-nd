@@ -12,6 +12,7 @@
   vars:
     nd_vpc_pair_root: "{{ playbook_dir | dirname }}"
     nd_vpc_pair_tasks_dir: "{{ playbook_dir }}"
+    ansible_command_timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
   tasks:
     - name: Test that we have a Nexus Dashboard host, username and password
       tags: always
@@ -52,8 +53,6 @@
     - name: Run nd_vpc_pair test cases
       tags: always
       ansible.builtin.include_tasks: "{{ test_case_to_run }}"
-      vars:
-        ansible_command_timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
       loop: "{{ test_items }}"
       loop_control:
         loop_var: test_case_to_run
