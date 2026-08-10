@@ -9,7 +9,7 @@ Pydantic models for the nd_manage_extended_community_list module.
 Extended community lists come in two flavours that share the same top-level
 schema but differ in their entry structure:
 
-- **standard** - entries may specify any combination of:
+- **standard** - entries must specify at least one of:
     - routerMacCollection: MAC addresses in eeee.eeee.eeee, ee:ee:ee:ee:ee:ee,
       or ee-ee-ee-ee-ee-ee format.
     - routeTargetCollection: route targets in ASN2:NN, ASN4:NN, or IPv4:NN format.
@@ -78,13 +78,20 @@ _STANDARD_EMPTY_COLLECTION_ALIASES = (
     "transitiveGenericExtendedCollection",
     "nonTransitiveGenericExtendedCollection",
 )
+_STANDARD_SELECTOR_FIELDS = (
+    "router_mac_collection",
+    "route_target_collection",
+    "site_of_origin_collection",
+    "transitive_generic_extended_collection",
+    "non_transitive_generic_extended_collection",
+)
 
 
 class ExtendedCommunityListEntryModel(NDNestedModel):
     """
     A single entry inside an extended community list.
 
-    For **standard** extended community lists the entry may set any combination
+    For **standard** extended community lists the entry must set at least one
     of:
     - ``router_mac_collection``
     - ``route_target_collection``
@@ -376,14 +383,6 @@ class ExtendedCommunityListModel(NDBaseModel):
         if (info.context or {}).get("mode") == "response":
             return self
 
-        standard_only_fields = {
-            "router_mac_collection",
-            "route_target_collection",
-            "site_of_origin_collection",
-            "transitive_generic_extended_collection",
-            "non_transitive_generic_extended_collection",
-        }
-
         if self.type is None or self.entries is None:
             return self
 
@@ -391,13 +390,15 @@ class ExtendedCommunityListModel(NDBaseModel):
             if self.type == ExtendedCommunityListTypeEnum.EXPANDED:
                 if not entry.community_number_regex:
                     raise ValueError(f"entries[{i}].community_number_regex is required " "for type='expanded'.")
-                for field in standard_only_fields:
+                for field in _STANDARD_SELECTOR_FIELDS:
                     if getattr(entry, field) is not None:
                         raise ValueError(f"entries[{i}].{field} must not be set for " "type='expanded'. Use community_number_regex instead.")
             else:
                 # standard
                 if entry.community_number_regex is not None:
                     raise ValueError(f"entries[{i}].community_number_regex must not be set " "for type='standard'. Use standard-only fields instead.")
+                if not any(getattr(entry, field) for field in _STANDARD_SELECTOR_FIELDS):
+                    raise ValueError(f"entries[{i}] must set at least one standard selector collection " "for type='standard'.")
         return self
 
     # ------------------------------------------------------------------

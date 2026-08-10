@@ -117,7 +117,7 @@ def test_manage_extended_community_list_00050() -> None:
             "name": "tenantA~ECL-TENANT",
             "tenant_name": "tenantA",
             "type": "standard",
-            "entries": [{"sequence_number": 10, "action": "permit"}],
+            "entries": [{"sequence_number": 10, "action": "permit", "route_target_collection": ["65000:100"]}],
         }
     )
 
@@ -184,7 +184,7 @@ def test_manage_extended_community_list_00090() -> None:
         {
             "name": "ECL1",
             "type": "standard",
-            "entries": [{"sequence_number": 10, "action": "permit"}],
+            "entries": [{"sequence_number": 10, "action": "permit", "route_target_collection": ["65000:100"]}],
         },
         context={"state": "merged"},
     )
@@ -321,3 +321,66 @@ def test_manage_extended_community_list_00140(route_targets: list[str]) -> None:
                 ],
             }
         )
+
+
+@pytest.mark.parametrize(
+    "entry",
+    (
+        {"sequence_number": 10, "action": "permit"},
+        {
+            "sequence_number": 10,
+            "action": "permit",
+            "router_mac_collection": [],
+            "route_target_collection": [],
+            "site_of_origin_collection": [],
+            "transitive_generic_extended_collection": [],
+            "non_transitive_generic_extended_collection": [],
+        },
+    ),
+)
+def test_manage_extended_community_list_00150(entry: dict) -> None:
+    """Verify standard entries require at least one non-empty selector collection."""
+    with pytest.raises(ValueError, match="at least one standard selector collection"):
+        ExtendedCommunityListModel.from_config(
+            {
+                "name": "ECL-FLAGLESS",
+                "type": "standard",
+                "entries": [entry],
+            }
+        )
+
+
+def test_manage_extended_community_list_00160() -> None:
+    """Verify sparse standard entries returned by ND remain readable."""
+    instance = ExtendedCommunityListModel.from_response(
+        {
+            "name": "ECL-RESPONSE",
+            "type": "standard",
+            "entries": [{"sequenceNumber": 10, "action": "permit"}],
+        }
+    )
+
+    assert instance.entries[0].route_target_collection is None
+
+
+@pytest.mark.parametrize(
+    ("selector", "value"),
+    (
+        ("router_mac_collection", "d478.1111.57b8"),
+        ("route_target_collection", "65000:100"),
+        ("site_of_origin_collection", "64512:300"),
+        ("transitive_generic_extended_collection", "65000:123"),
+        ("non_transitive_generic_extended_collection", "64512:789"),
+    ),
+)
+def test_manage_extended_community_list_00170(selector: str, value: str) -> None:
+    """Verify each standard selector collection independently satisfies the requirement."""
+    instance = ExtendedCommunityListModel.from_config(
+        {
+            "name": "ECL-SELECTOR",
+            "type": "standard",
+            "entries": [{"sequence_number": 10, "action": "permit", selector: [value]}],
+        }
+    )
+
+    assert getattr(instance.entries[0], selector) == [value]

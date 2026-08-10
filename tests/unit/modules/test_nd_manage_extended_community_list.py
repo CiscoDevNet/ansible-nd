@@ -8,3 +8,10 @@ def test_nd_manage_extended_community_list_documents_packed_route_target_normali
     documentation = nd_manage_extended_community_list.DOCUMENTATION
 
     assert "Comma-separated route targets in one list item are accepted and normalized to separate values" in documentation
+
+
+def test_nd_manage_extended_community_list_documents_standard_selector_requirement() -> None:
+    """Verify module documentation describes the standard-entry selector requirement."""
+    documentation = nd_manage_extended_community_list.DOCUMENTATION
+
+    assert "Standard entries require at least one non-empty selector collection" in documentation

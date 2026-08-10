@@ -70,6 +70,7 @@ options:
         - Required for create and update operations; not required when O(state=deleted).
         - Each entry defines a permit/deny action and one or more extended
           communities to match.
+        - Standard entries require at least one non-empty selector collection.
         type: list
         elements: dict
         suboptions:
@@ -164,7 +165,8 @@ notes:
 - This module is only supported on Nexus Dashboard version 4.2.1 or higher.
 - Extended community lists are created and deleted in bulk via separate API
   endpoints.
-- Standard-type entries may set any combination of O(config.entries.router_mac_collection),
+- Standard-type entries must set at least one non-empty selector collection from
+  O(config.entries.router_mac_collection),
   O(config.entries.route_target_collection), O(config.entries.site_of_origin_collection),
   O(config.entries.transitive_generic_extended_collection), and
   O(config.entries.non_transitive_generic_extended_collection).
