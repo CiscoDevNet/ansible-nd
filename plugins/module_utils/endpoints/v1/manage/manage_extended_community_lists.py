@@ -44,6 +44,7 @@ class ExtendedCommunityListsEndpointParams(ClusterNameMixin, EndpointQueryParams
 
     model_config = ConfigDict(extra="forbid")
 
+
 class _EpManageExtendedCommunityListsBase(FabricNameMixin, ExtendedCommunityListNameMixin, NDEndpointBaseModel):
     """
     Base class for ND Manage Extended Community Lists endpoints.
