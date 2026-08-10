@@ -798,7 +798,6 @@ class TestExecuteConfigActions:
         # 3 API calls: GET switches + save + POST switchActions/deploy
         assert len(results._tasks) == 3
 
-
     def test_execute_skips_switchless_fabric(self):
         """
         # Summary
