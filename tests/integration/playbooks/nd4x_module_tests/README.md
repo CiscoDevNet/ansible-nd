@@ -783,13 +783,16 @@ A migrated target should use:
 
 ```text
 tests/integration/targets/<module_name>/
+├── PARITY.md
 ├── tasks/
 │   ├── main.yaml
 │   ├── setup.yaml
+│   ├── nd4x_demo_preflight.yaml
 │   ├── nd4x_demo_merged.yaml
 │   ├── nd4x_demo_replaced.yaml
 │   ├── nd4x_demo_deleted.yaml
-│   └── nd4x_demo_overridden.yaml
+│   ├── nd4x_demo_overridden.yaml
+│   └── nd4x_demo_negative.yaml
 └── vars/
     └── main.yaml
 ```
@@ -1575,6 +1578,15 @@ ansible-test network-integration nd_interface_loopback \
 ansible-test network-integration nd_interface_loopback \
   --inventory /absolute/path/to/inventory.networking \
   --tags nd4x_demo_deleted \
+  -vv
+```
+
+### Loopback negative validation
+
+```bash
+ansible-test network-integration nd_interface_loopback \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo_negative \
   -vv
 ```
 

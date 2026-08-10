@@ -57,7 +57,28 @@
     - name: Run nd_interface_loopback deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
 
-    - name: Run merged state test using ND 4.x demo harness
+    - name: Run ND 4.x harness preflight discovery
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_preflight.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_merged
+            - nd4x_demo_replaced
+            - nd4x_demo_deleted
+            - nd4x_demo_negative
+            - nd4x_demo_overridden
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+        - nd4x_demo_replaced
+        - nd4x_demo_deleted
+        - nd4x_demo_negative
+        - nd4x_demo_overridden
+
+    - name: Run merged state tests using the ND 4.x harness
       ansible.builtin.include_tasks:
         file: nd4x_demo_merged.yaml
         apply:
@@ -69,8 +90,9 @@
         - never
         - nd4x_demo
         - nd4x_demo_merged
+      when: nd4x_supported | default(false) | bool
 
-    - name: Run replaced state test using ND 4.x demo harness
+    - name: Run replaced state tests using the ND 4.x harness
       ansible.builtin.include_tasks:
         file: nd4x_demo_replaced.yaml
         apply:
@@ -82,8 +104,9 @@
         - never
         - nd4x_demo
         - nd4x_demo_replaced
+      when: nd4x_supported | default(false) | bool
 
-    - name: Run deleted state test using ND 4.x demo harness
+    - name: Run deleted state tests using the ND 4.x harness
       ansible.builtin.include_tasks:
         file: nd4x_demo_deleted.yaml
         apply:
@@ -95,8 +118,23 @@
         - never
         - nd4x_demo
         - nd4x_demo_deleted
+      when: nd4x_supported | default(false) | bool
 
-    - name: Run overridden state test using ND 4.x demo harness
+    - name: Run negative validation tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_negative.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_negative
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_negative
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run overridden state tests using the ND 4.x harness
       ansible.builtin.include_tasks:
         file: nd4x_demo_overridden.yaml
         apply:
@@ -108,6 +146,7 @@
         - never
         - nd4x_demo
         - nd4x_demo_overridden
+      when: nd4x_supported | default(false) | bool
   module_defaults:
     cisco.nd.nd_interface_loopback:
       timeout: 300

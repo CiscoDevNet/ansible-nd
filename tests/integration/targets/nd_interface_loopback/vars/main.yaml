@@ -6,7 +6,6 @@
 
 test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
-test_switch_id: "{{ nd_test_switch_id }}"
 
 # Loopback interface configs used across tests.
 # Loopback IDs 100-109 are reserved for these integration tests.
@@ -28,6 +27,11 @@ nd4x_loopback_reserved_interfaces:
   - loopback107
   - loopback108
   - loopback109
+
+nd4x_loopback_overridden_allowed_interfaces:
+  - loopback100
+  - loopback101
+  - loopback102
 
 loopback_100:
   switch_ip: "{{ test_switch_ip }}"

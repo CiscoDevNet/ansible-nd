@@ -10,7 +10,7 @@ __metaclass__ = type
 import json
 
 try:
-    from jsonpath_ng import parse
+    from jsonpath_ng.ext import parse
 
     HAS_JSONPATH_NG_PARSE = True
 except ImportError:

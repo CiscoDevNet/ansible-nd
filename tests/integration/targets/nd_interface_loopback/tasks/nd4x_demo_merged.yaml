@@ -1,18 +1,29 @@
 ---
-# Demo merged state test using the shared ND 4.x action plugin pattern.
-#
-# This file lives under the target so ansible-test copies it into the temporary
-# test workdir. The proposed shared-layout copy lives under
-# tests/integration/playbooks/nd4x_module_tests/.
-
-- name: Run standardized nd_interface_loopback merged tests
+- name: Run nd_interface_loopback merged harness tests
   block:
-    - name: "MERGED CREATE: Create loopback100 using standard runner"
+    - name: "MERGED SETUP: Remove loopback100 through loopback103"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        timeout: 300
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback101
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback102
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback103
+        state: deleted
+
+    - name: "MERGED CREATE: Create loopback100 using the ND 4.x harness"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_interface_loopback
         state: merged
         common_args:
           output_level: "{{ nd_info.output_level }}"
+          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ loopback_100 }}"
@@ -26,7 +37,6 @@
           idempotency:
             changed: false
             failed: false
-
         check_mode_queries:
           - name: Snapshot all managed interfaces on test switch
             path: >-
@@ -36,41 +46,285 @@
             unordered: true
             ignore_keys:
               - operData
-
         nd_queries:
           - name: Validate loopback100 from ND API
-            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/loopback100"
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback100
             method: get
+            expected_status: 200
             expect:
               - jsonpath: "$.current.interfaceName"
-                equals: "loopback100"
+                equals: loopback100
               - jsonpath: "$.current.configData.networkOS.policy.ip"
                 equals: "10.100.100.1"
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Ansible integration test loopback100
       register: merged_create_100
-      tags:
-        - nd4x_demo
-        - nd4x_demo_create
 
-    - name: "MERGED CREATE: Verify loopback100 exists"
+    - name: "MERGED CREATE: Verify loopback100 creation"
       ansible.builtin.assert:
         that:
+          - merged_create_100.check_mode_result.changed | bool
+          - merged_create_100.first_run_result.changed | bool
           - merged_create_100.first_run_result.after
             | selectattr('interface_name', 'equalto', 'loopback100')
             | list
             | length == 1
-      tags:
-        - nd4x_demo
-        - nd4x_demo_verify
+
+    - name: "MERGED MULTI: Create loopback101 and loopback102"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          timeout: 300
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_101 }}"
+          - "{{ loopback_102 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries:
+          - name: Snapshot all managed interfaces on test switch
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            expected_status: 200
+            unordered: true
+            ignore_keys:
+              - operData
+        nd_queries:
+          - name: Validate loopback101 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback101
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: loopback101
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.101.1"
+          - name: Validate loopback102 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback102
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: loopback102
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.102.1"
+      register: merged_create_multi
+
+    - name: "MERGED MULTI: Verify both loopbacks were created"
+      ansible.builtin.assert:
+        that:
+          - merged_create_multi.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback101')
+            | list
+            | length == 1
+          - merged_create_multi.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback102')
+            | list
+            | length == 1
+          - merged_create_multi.nd_query_results | length == 2
+
+    - name: "MERGED IDEMPOTENT: Re-run loopback100 through all phases"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          timeout: 300
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_100 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries:
+          - name: Snapshot all managed interfaces on test switch
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            expected_status: 200
+            unordered: true
+            ignore_keys:
+              - operData
+        nd_queries:
+          - name: Revalidate idempotent loopback100
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.100.1"
+      register: merged_idempotent_100
+
+    - name: "MERGED IDEMPOTENT: Verify predictive and real no-change results"
+      ansible.builtin.assert:
+        that:
+          - not merged_idempotent_100.check_mode_result.changed | bool
+          - not merged_idempotent_100.first_run_result.changed | bool
+          - not merged_idempotent_100.second_run_result.changed | bool
+
+    - name: "MERGED UPDATE: Update loopback100"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          timeout: 300
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_100_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries:
+          - name: Snapshot all managed interfaces on test switch
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            expected_status: 200
+            unordered: true
+            ignore_keys:
+              - operData
+        nd_queries:
+          - name: Validate updated loopback100 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.100.2"
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Updated loopback100 description
+              - jsonpath: "$.current.configData.networkOS.policy.routeMapTag"
+                equals: 54321
+      register: merged_update_100
+
+    - name: "MERGED UPDATE: Verify updated returned values"
+      vars:
+        loopback100_after: >-
+          {{
+            merged_update_100.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback100')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - loopback100_after.config_data.network_os.policy.ip
+            == "10.100.100.2"
+          - loopback100_after.config_data.network_os.policy.description
+            == "Updated loopback100 description"
+          - loopback100_after.config_data.network_os.policy.route_map_tag
+            == "54321"
+          - not merged_update_100.second_run_result.changed | bool
+
+    - name: "MERGED NO-DEPLOY: Stage loopback103 without deployment"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          timeout: 300
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          deploy: false
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback103
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  ip: "10.100.103.1"
+                  description: No-deploy test loopback103
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries:
+          - name: Snapshot all managed interfaces on test switch
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            expected_status: 200
+            unordered: true
+            ignore_keys:
+              - operData
+        nd_queries:
+          - name: Validate staged loopback103 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback103
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: loopback103
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.103.1"
+      register: merged_no_deploy
+
+    - name: "MERGED NO-DEPLOY: Verify configuration was staged"
+      ansible.builtin.assert:
+        that:
+          - merged_no_deploy.first_run_result.changed | bool
+          - merged_no_deploy.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback103')
+            | list
+            | length == 1
 
   always:
-    - name: "MERGED CLEANUP: Remove loopback100"
+    - name: "MERGED CLEANUP: Remove loopback100 through loopback103"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
+        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_name: loopback100
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback101
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback102
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback103
         state: deleted
-      tags:
-        - nd4x_demo
-        - nd4x_demo_cleanup

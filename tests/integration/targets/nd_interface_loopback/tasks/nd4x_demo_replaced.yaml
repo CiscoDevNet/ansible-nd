@@ -1,37 +1,48 @@
-#What this file does:
-# Creates loopback100 with the original config.
-# Calls the same nd4x_module_test action plugin with state: replaced.
-# Replaces loopback100 using loopback_100_updated.
-# Verifies the updated IP, description, and route_map_tag.
-# Cleans up loopback100 at the end.
-
-
-
 ---
-# Demo replaced state test using the shared ND 4.x action plugin pattern.
-
-- name: Run standardized nd_interface_loopback replaced tests
+- name: Run nd_interface_loopback replaced harness tests
   block:
-    - name: "REPLACED SETUP: Create loopback100 original config"
+    - name: "REPLACED SETUP: Remove loopback100 through loopback102"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
+        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
-          - "{{ loopback_100 }}"
-        state: merged
-      tags:
-        - nd4x_demo
-        - nd4x_demo_replaced
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback101
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback102
+        state: deleted
 
-    - name: "REPLACED: Replace loopback100 using standard runner"
+    - name: "REPLACED SETUP: Recreate post-merged loopback state"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        timeout: 300
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_100_updated }}"
+          - "{{ loopback_101 }}"
+          - "{{ loopback_102 }}"
+        state: merged
+
+    - name: "REPLACED: Replace loopback100 with the original test payload"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_interface_loopback
         state: replaced
         common_args:
           output_level: "{{ nd_info.output_level }}"
+          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
-          - "{{ loopback_100_updated }}"
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  ip: "10.100.100.3"
+                  description: Replaced loopback100
         expected:
           check_mode:
             changed: true
@@ -42,7 +53,6 @@
           idempotency:
             changed: false
             failed: false
-
         check_mode_queries:
           - name: Snapshot all managed interfaces on test switch
             path: >-
@@ -52,45 +62,137 @@
             unordered: true
             ignore_keys:
               - operData
-
         nd_queries:
-          - name: Validate loopback100 replaced in ND API
-            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/loopback100"
+          - name: Validate replaced loopback100 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback100
             method: get
+            expected_status: 200
             expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: loopback100
               - jsonpath: "$.current.configData.networkOS.policy.ip"
-                equals: "10.100.100.2"
+                equals: "10.100.100.3"
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Replaced loopback100
       register: replaced_loopback_100
-      tags:
-        - nd4x_demo
-        - nd4x_demo_replaced
 
-    - name: "REPLACED VERIFY: Verify loopback100 updated"
+    - name: "REPLACED: Verify loopback100 returned values"
       vars:
-        lb100_after: >-
+        loopback100_after: >-
           {{
             replaced_loopback_100.first_run_result.after
             | selectattr('interface_name', 'equalto', 'loopback100')
             | first
           }}
-      tags:
-        - nd4x_demo
-        - nd4x_demo_replaced
       ansible.builtin.assert:
         that:
-          - lb100_after.config_data.network_os.policy.ip == "10.100.100.2"
-          - lb100_after.config_data.network_os.policy.description == "Updated loopback100 description"
-          - lb100_after.config_data.network_os.policy.route_map_tag == "54321"
+          - loopback100_after.config_data.network_os.policy.ip
+            == "10.100.100.3"
+          - loopback100_after.config_data.network_os.policy.description
+            == "Replaced loopback100"
+          - not replaced_loopback_100.second_run_result.changed | bool
+
+    - name: "REPLACED MULTI: Replace loopback100 and loopback101"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          timeout: 300
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  ip: "10.100.100.4"
+                  description: Replaced again loopback100
+          - "{{ loopback_101_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries:
+          - name: Snapshot all managed interfaces on test switch
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            expected_status: 200
+            unordered: true
+            ignore_keys:
+              - operData
+        nd_queries:
+          - name: Validate multi-replaced loopback100
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.100.4"
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Replaced again loopback100
+          - name: Validate multi-replaced loopback101
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback101
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.101.2"
+              - jsonpath: "$.current.configData.networkOS.policy.adminState"
+                equals: false
+      register: replaced_loopbacks_multi
+
+    - name: "REPLACED MULTI: Verify both returned configurations"
+      vars:
+        loopback100_after: >-
+          {{
+            replaced_loopbacks_multi.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback100')
+            | first
+          }}
+        loopback101_after: >-
+          {{
+            replaced_loopbacks_multi.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback101')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - loopback100_after.config_data.network_os.policy.ip
+            == "10.100.100.4"
+          - loopback100_after.config_data.network_os.policy.description
+            == "Replaced again loopback100"
+          - loopback101_after.config_data.network_os.policy.ip
+            == "10.100.101.2"
+          - loopback101_after.config_data.network_os.policy.admin_state
+            == false
+          - replaced_loopbacks_multi.nd_query_results | length == 2
 
   always:
-    - name: "REPLACED CLEANUP: Remove loopback100"
+    - name: "REPLACED CLEANUP: Remove loopback100 through loopback102"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
+        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_name: loopback100
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback101
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback102
         state: deleted
-      tags:
-        - nd4x_demo
-        - nd4x_demo_replaced

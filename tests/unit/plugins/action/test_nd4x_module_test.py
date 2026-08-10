@@ -874,3 +874,56 @@ def test_snapshot_query_failure_stops_before_target(
 
     assert action_plugin._execute_module.call_count == 1
     assert action_plugin._task.check_mode is False
+
+def test_jsonpath_values_support_extended_filters(action_plugin):
+    controller_state = {
+        "current": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback100",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "loopback",
+                            }
+                        }
+                    },
+                },
+                {
+                    "interfaceName": "loopback101",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {},
+                        }
+                    },
+                },
+            ]
+        }
+    }
+
+    managed_loopback100 = (
+        "$.current.interfaces[?("
+        "@.interfaceName == 'loopback100' & "
+        "@.configData.networkOS.policy.policyType == 'loopback'"
+        ")]"
+    )
+    managed_loopback101 = (
+        "$.current.interfaces[?("
+        "@.interfaceName == 'loopback101' & "
+        "@.configData.networkOS.policy.policyType == 'loopback'"
+        ")]"
+    )
+
+    assert len(
+        action_plugin._jsonpath_values(
+            controller_state,
+            managed_loopback100,
+        )
+    ) == 1
+    assert (
+        action_plugin._jsonpath_values(
+            controller_state,
+            managed_loopback101,
+        )
+        == []
+    )
