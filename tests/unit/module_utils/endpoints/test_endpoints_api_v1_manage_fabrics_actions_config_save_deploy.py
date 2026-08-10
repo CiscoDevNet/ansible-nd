@@ -65,7 +65,7 @@ def test_endpoints_api_v1_manage_fabrics_actions_config_save_00110():
     """
     instance = EpFabricConfigSavePost()
     with pytest.raises(ValueError, match="fabric_name is required"):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_actions_config_save_00120():
@@ -126,7 +126,7 @@ def test_endpoints_api_v1_manage_fabrics_actions_deploy_00110():
     """
     instance = EpFabricDeployPost()
     with pytest.raises(ValueError, match="fabric_name is required"):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_actions_deploy_00120():
