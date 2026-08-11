@@ -170,6 +170,25 @@ class ResponseHandler:
         else:
             self._handle_post_put_delete_response()
 
+    def _is_terminal_client_error(self, return_code) -> bool:
+        """
+        # Summary
+
+        Return True when `return_code` is a 4xx client error other than 429 (Too Many Requests).
+
+        ## Description
+
+        A 4xx response proves the request reached the application and was rejected: replaying the identical request
+        cannot succeed, so the failure is terminal for every verb. 429 is the one transient 4xx (rate limiting) and
+        stays retryable. No retryable 4xx is documented for any ND 4.2.1 endpoint (the dcnm-era retry-on-400 cases
+        do not carry over). See issue #457.
+
+        ## Raises
+
+        None
+        """
+        return isinstance(return_code, int) and 400 <= return_code <= 499 and return_code != 429
+
     def _handle_get_response(self) -> None:
         """
         # Summary
@@ -183,6 +202,11 @@ class ResponseHandler:
             -   success:
                     -   True if RETURN_CODE in (200, 201, 202, 204, 207, 404)
                     -   False otherwise (error status codes)
+            -   retryable:
+                    -   False when the request succeeded, or when it failed with a 4xx code other than 429 (the
+                        request reached the application and was rejected; an identical replay cannot succeed)
+                    -   True when it failed with any other code (e.g. 5xx — potentially transient, and GET retries
+                        also serve eventual-consistency polling)
         """
         result = {}
         return_code = self.response.get("RETURN_CODE")
@@ -191,14 +215,17 @@ class ResponseHandler:
         if self._strategy.is_not_found(return_code):
             result["found"] = False
             result["success"] = True
+            result["retryable"] = False
         # Success codes with no embedded error - resource found
         elif self._strategy.is_success(self.response):
             result["found"] = True
             result["success"] = True
+            result["retryable"] = False
         # Error codes - request failed
         else:
             result["found"] = False
             result["success"] = False
+            result["retryable"] = not self._is_terminal_client_error(return_code)
 
         self.result = copy.copy(result)
 
@@ -219,8 +246,10 @@ class ResponseHandler:
             -   `retryable`:
                 -   False when the request succeeded, or when it failed with a success-class RETURN_CODE (the application
                     definitively rejected the request, e.g. a Multi-Status per-item failure — replaying the identical
-                    payload cannot succeed, so `RestSend` must not retry)
-                -   True when the request failed with a non-success RETURN_CODE (e.g. 5xx — potentially transient)
+                    payload cannot succeed, so `RestSend` must not retry), or when it failed with a 4xx code other than
+                    429 (the request reached the application and was rejected; same reasoning — see issue #457)
+                -   True when the request failed with any other non-success RETURN_CODE (e.g. 5xx — potentially
+                    transient) or with 429 (rate limiting)
 
         ## Raises
 
@@ -237,12 +266,13 @@ class ResponseHandler:
             result["retryable"] = False
         else:
             # A failure on a success-class RETURN_CODE is an application-level rejection
-            # (embedded error or per-item failure): deterministic, so not retryable.
-            # A failure on a non-success RETURN_CODE keeps the historical retry behavior.
+            # (embedded error or per-item failure): deterministic, so not retryable. A 4xx
+            # other than 429 is equally deterministic — the application rejected the request
+            # (issue #457). Any other non-success RETURN_CODE keeps the historical retry behavior.
             return_code = self.response.get("RETURN_CODE", -1)
             result["success"] = False
             result["changed"] = self._strategy.is_changed_on_failure(self.response)
-            result["retryable"] = return_code not in self._strategy.success_codes
+            result["retryable"] = return_code not in self._strategy.success_codes and not self._is_terminal_client_error(return_code)
 
         self.result = copy.copy(result)
 
