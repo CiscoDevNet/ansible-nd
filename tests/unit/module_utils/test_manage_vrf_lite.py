@@ -713,9 +713,7 @@ def test_manage_vrf_lite_00481_query_enriches_pending_attachment_from_switch_det
     assert module.params["_raw_vrf_attachment_map"]["BLUE"]["SN1"]["extension_values"] == extension_values
     assert module.params["_raw_vrf_attachment_map"]["BLUE"]["SN1"]["freeform_config"] == "router ospf 100"
     assert module.params["_raw_vrf_attachment_map"]["BLUE"]["SN1"]["vlan"] == 2
-    assert module.params["_pending_deploy_targets"] == [
-        {"vrf_name": "BLUE", "switch_ip": "SN1", "operation": "write"}
-    ]
+    assert module.params["_pending_deploy_targets"] == [{"vrf_name": "BLUE", "switch_ip": "SN1", "operation": "write"}]
 
 
 def test_manage_vrf_lite_00481aa_query_preserves_pending_empty_removal_marker(monkeypatch):
@@ -759,9 +757,7 @@ def test_manage_vrf_lite_00481aa_query_preserves_pending_empty_removal_marker(mo
 
     assert result == [{"vrf_name": "BLUE", "vlan_id": 500, "deploy": False, "attach": []}]
     assert module.params["_not_in_sync_vrfs"] == ["BLUE"]
-    assert module.params["_pending_deploy_targets"] == [
-        {"vrf_name": "BLUE", "switch_ip": "SN1", "operation": "delete"}
-    ]
+    assert module.params["_pending_deploy_targets"] == [{"vrf_name": "BLUE", "switch_ip": "SN1", "operation": "delete"}]
 
 
 def test_manage_vrf_lite_00481ab_query_does_not_claim_unrelated_pending_extension(monkeypatch):

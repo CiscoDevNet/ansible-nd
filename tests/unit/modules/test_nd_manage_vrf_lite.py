@@ -100,9 +100,7 @@ def _run_vrf_lite_module(module_args, current_state=None, runtime_metadata=None)
             module.params["_ip_to_sn_mapping"] = ip_to_sn_mapping
             module.params["_sn_to_ip_mapping"] = {serial: ip_address for ip_address, serial in ip_to_sn_mapping.items()}
         if "pending_deploy_targets" in runtime_metadata:
-            module.params["_pending_deploy_targets"] = [
-                dict(target) for target in runtime_metadata["pending_deploy_targets"]
-            ]
+            module.params["_pending_deploy_targets"] = [dict(target) for target in runtime_metadata["pending_deploy_targets"]]
         return [dict(item) for item in current_state]
 
     def exit_json(module, **kwargs):
@@ -286,9 +284,7 @@ def test_vrf_lite_wrapper_documents_projected_deployment_fields_in_check_mode():
 @pytest.mark.parametrize(
     ("state", "config", "current_state", "operation"),
     [
-        pytest.param(
-            "merged", _DESIRED_CONFIG, [_EXISTING_ENTRY], "write", id="merged-write"
-        ),
+        pytest.param("merged", _DESIRED_CONFIG, [_EXISTING_ENTRY], "write", id="merged-write"),
         pytest.param(
             "replaced",
             [{"vrf_name": "VRF1", "attach": []}],
@@ -333,11 +329,7 @@ def test_vrf_lite_wrapper_later_identical_run_deploys_controller_pending_target(
         run = _run_vrf_lite_module(
             module_args,
             current_state=current_state,
-            runtime_metadata={
-                "pending_deploy_targets": [
-                    {"vrf_name": "VRF1", "switch_ip": "SERIAL1", "operation": operation}
-                ]
-            },
+            runtime_metadata={"pending_deploy_targets": [{"vrf_name": "VRF1", "switch_ip": "SERIAL1", "operation": operation}]},
         )
 
     assert run["module"].params["_changed_vrfs"] == []

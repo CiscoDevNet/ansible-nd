@@ -521,9 +521,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         # Start with targets rediscovered from the controller, then let this
         # run's journal replace them. For example, an overridden run can turn a
         # previously pending write into a delete before the final deployment.
-        journal_by_pair: dict[tuple[str, str], str] = {
-            (target["vrf_name"], target["switch_ip"]): target["operation"] for target in pending_targets
-        }
+        journal_by_pair: dict[tuple[str, str], str] = {(target["vrf_name"], target["switch_ip"]): target["operation"] for target in pending_targets}
         for target in deploy_targets:
             if not isinstance(target, dict) or not target.get("vrf_name") or not target.get("switch_ip"):
                 continue
