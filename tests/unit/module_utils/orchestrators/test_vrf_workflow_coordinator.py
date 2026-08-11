@@ -22,6 +22,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflo
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachment_manager import (
     VrfAttachmentManager,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_state_machine import (
+    VrfStateMachine,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_dependency_checker import (
     VrfDependencyChecker,
 )
@@ -212,6 +215,103 @@ class _AttachmentQueryOrchestrator:
     def _request(self, **kwargs):
         self.requests.append(kwargs)
         return self.responses.pop(0)
+
+
+class _FakeStateMachine:
+    existing = []
+
+    def __init__(self, calls):
+        self.calls = calls
+
+    def manage_state(self):
+        self.calls.append(("manage_state",))
+
+
+class _ReplacedVrfCoordinator:
+    def __init__(self):
+        self.module = _Module({"state": "replaced"}, check_mode=False)
+        self.calls = []
+        self.state_machine = _FakeStateMachine(self.calls)
+
+    @staticmethod
+    def _desired_attachment_map(_module_args, _strategy):
+        return {("BLUE", "SW1"): {"vrfName": "BLUE", "switchId": "SW1", "attach": True}}
+
+    @staticmethod
+    def _configured_vrf_names(_config):
+        return ["BLUE"]
+
+    def _new_state_machine(self, _module_args, _strategy):
+        self.calls.append(("new_state_machine",))
+        return self.state_machine, "original-config", "original-state"
+
+    def _current_attachment_details_ignore_missing(self, *_args, **_kwargs):
+        raise AssertionError("first-create replaced must not query missing VRF attachments")
+
+    @staticmethod
+    def _attachment_map_from_details(_attachments, _vrf_names):
+        return {}
+
+    def _apply_attachment_phase(self, _module_args, _strategy, phase, desired=None, current_vrf_names=None, current=None):
+        self.calls.append((phase, current_vrf_names, current))
+        if phase == "pre":
+            assert current_vrf_names == []
+            assert current == {}
+            return {"current": current, "payloads": [], "desired": desired, "deploy_targets": {}}
+        assert phase == "post"
+        assert current_vrf_names == ["BLUE"]
+        assert current == {}
+        return {"payloads": [desired[("BLUE", "SW1")]], "deploy_targets": {"BLUE": {"SW1"}}}
+
+    @staticmethod
+    def _attachment_map_after_detach(current, _payloads):
+        return current
+
+    @staticmethod
+    def _format_state_machine_output(_state_machine):
+        return {"changed": True, "failed": False, "after": [{"vrf_name": "BLUE"}]}
+
+    @staticmethod
+    def _merge_api_trace(result, trace, prepend=False):
+        if prepend:
+            result.setdefault("prepended", []).append(trace)
+        if trace.get("changed"):
+            result["changed"] = True
+
+    @staticmethod
+    def _build_deploy_payloads(_config, *_target_maps):
+        return []
+
+    @staticmethod
+    def _build_pending_vrf_deploy_payloads(_result, _config, _module_args, _strategy):
+        return []
+
+    def _restore_state_machine_params(self, original_config, original_state):
+        self.calls.append(("restore", original_config, original_state))
+
+    def _trace(self, event, **_details):
+        self.calls.append(("trace", event))
+
+
+def test_vrf_replaced_first_create_with_attachment_skips_missing_pre_query():
+    """
+    # Summary
+
+    Verify first-create state=replaced does not query attachments for a VRF
+    that is absent before CRUD creation.
+    """
+    coordinator = _ReplacedVrfCoordinator()
+    state_machine = VrfStateMachine(coordinator)
+
+    result = state_machine.run(
+        {"state": "replaced", "config": [{"vrf_name": "BLUE", "attach": [{"ip_address": "192.0.2.10"}]}]},
+        _StandaloneStrategy(),
+    )
+
+    assert result["changed"] is True
+    assert ("pre", [], {}) in coordinator.calls
+    assert ("manage_state",) in coordinator.calls
+    assert ("post", ["BLUE"], {}) in coordinator.calls
 
 
 def test_vrf_attachment_query_chunks_large_vrf_name_sets():

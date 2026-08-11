@@ -89,6 +89,86 @@ class _ParentStrategy:
         }
 
 
+class _FakeStateMachine:
+    existing = []
+
+    def __init__(self, calls):
+        self.calls = calls
+
+    def manage_state(self):
+        self.calls.append(("manage_state",))
+
+
+class _ReplacedNetworkCoordinator:
+    def __init__(self):
+        self.module = _Module({"state": "replaced"})
+        self.calls = []
+        self.state_machine = _FakeStateMachine(self.calls)
+
+    @staticmethod
+    def _desired_attachment_map(_module_args, _strategy):
+        return {("BLUE_NET", "SW1"): {"networkName": "BLUE_NET", "switchId": "SW1", "attach": True}}
+
+    @staticmethod
+    def _configured_network_names(_config):
+        return ["BLUE_NET"]
+
+    @staticmethod
+    def _deploy_enabled_by_network(_config):
+        return {"BLUE_NET": True}
+
+    def _new_state_machine(self, _module_args, _strategy):
+        self.calls.append(("new_state_machine",))
+        return self.state_machine, "original-config", "original-state"
+
+    def _current_attachment_details_ignore_missing(self, *_args, **_kwargs):
+        raise AssertionError("first-create replaced must not query missing Network attachments")
+
+    @staticmethod
+    def _attachment_map_from_details(_attachments, _network_names):
+        return {}
+
+    def _apply_attachment_phase(self, _module_args, _strategy, phase, desired=None, current_network_names=None, current=None):
+        self.calls.append((phase, current_network_names, current))
+        if phase == "pre":
+            assert current_network_names == []
+            assert current == {}
+            return {"current": current, "payloads": [], "desired": desired, "deploy_targets": {}}
+        assert phase == "post"
+        assert current_network_names == ["BLUE_NET"]
+        assert current == {}
+        return {"payloads": [desired[("BLUE_NET", "SW1")]], "deploy_targets": {"BLUE_NET": {"SW1"}}}
+
+    @staticmethod
+    def _attachment_map_after_detach(current, _payloads):
+        return current
+
+    @staticmethod
+    def _format_state_machine_output(_state_machine):
+        return {"changed": True, "failed": False, "after": [{"network_name": "BLUE_NET"}]}
+
+    @staticmethod
+    def _merge_api_trace(result, trace, prepend=False):
+        if prepend:
+            result.setdefault("prepended", []).append(trace)
+        if trace.get("changed"):
+            result["changed"] = True
+
+    @staticmethod
+    def _build_deploy_payloads(_config, *_target_maps):
+        return []
+
+    @staticmethod
+    def _build_pending_network_deploy_payloads(_result, _config, _module_args, _strategy):
+        return []
+
+    def _restore_state_machine_params(self, original_config, original_state):
+        self.calls.append(("restore", original_config, original_state))
+
+    def _trace(self, event, **_details):
+        self.calls.append(("trace", event))
+
+
 def _orchestrator():
     strategy = StandaloneNetworkStrategy(
         fabric_name="fab1",
@@ -98,6 +178,40 @@ def _orchestrator():
         rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}),
         strategy=strategy,
     )
+
+
+def test_network_replaced_first_create_with_attachment_skips_missing_pre_query():
+    """
+    # Summary
+
+    Verify first-create state=replaced does not query attachments for a Network
+    that is absent before CRUD creation.
+    """
+    coordinator = _ReplacedNetworkCoordinator()
+    state_machine = NetworkStateMachine(coordinator)
+
+    result = state_machine.run(
+        {
+            "state": "replaced",
+            "config": [
+                {
+                    "network_name": "BLUE_NET",
+                    "attach": [
+                        {
+                            "ip_address": "192.0.2.10",
+                            "interfaces": [{"interface_range": "Ethernet1/1", "mode": "trunk"}],
+                        }
+                    ],
+                }
+            ],
+        },
+        StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}),
+    )
+
+    assert result["changed"] is True
+    assert ("pre", [], {}) in coordinator.calls
+    assert ("manage_state",) in coordinator.calls
+    assert ("post", ["BLUE_NET"], {}) in coordinator.calls
 
 
 def test_network_workflow_coordinator_resolves_strategy_with_gen3_restsend():
