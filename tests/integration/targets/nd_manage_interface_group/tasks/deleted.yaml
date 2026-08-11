@@ -37,7 +37,7 @@
   register: interface_group_deleted_network_group
 
 - name: Confirm deleted network group is absent and source group remains
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: >-
       {{ interface_group_deleted_network_group.nd_query_results[1].result }}
     test_data:
@@ -182,7 +182,7 @@
   register: interface_group_deleted_bulk
 
 - name: Confirm both groups were removed in the bulk operation
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_deleted_bulk.nd_query_results[0].result }}"
     absent: >-
       {{

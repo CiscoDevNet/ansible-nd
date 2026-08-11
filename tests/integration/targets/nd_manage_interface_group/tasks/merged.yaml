@@ -32,7 +32,7 @@
   register: interface_group_merged_first
 
 - name: Validate the first additive single-group result
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_merged_first.nd_query_results[0].result }}"
     test_data:
       - "{{ interface_group_pc_one_member }}"
@@ -94,7 +94,7 @@
   register: interface_group_merged_second
 
 - name: Validate merged union preserves old and new associations
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_merged_second.nd_query_results[0].result }}"
     test_data:
       - interface_group_name: "{{ interface_group_names.port_channel }}"
@@ -144,7 +144,7 @@
   register: interface_group_merged_empty
 
 - name: Confirm empty merged input removed nothing
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_merged_empty.nd_query_results[0].result }}"
     test_data:
       - "{{ interface_group_pc_two_members }}"
@@ -180,7 +180,7 @@
   register: interface_group_merged_omitted
 
 - name: Confirm omitted merged collections preserved all associations
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_merged_omitted.nd_query_results[0].result }}"
     test_data:
       - "{{ interface_group_pc_two_members }}"

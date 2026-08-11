@@ -10,7 +10,7 @@ __metaclass__ = type
 
 DOCUMENTATION = r"""
 ---
-module: _nd_interface_preview_validate
+module: nd_interface_preview_validate
 short_description: Validate Interface preview results in ND integration tests
 version_added: "2.0.0"
 description:
@@ -79,7 +79,7 @@ EXAMPLES = r"""
   register: interface_preview
 
 - name: Verify that the Interface has no pending configuration
-  cisco.nd.tests.integration._nd_interface_preview_validate:
+  cisco.nd.tests.integration.nd_interface_preview_validate:
     nd_data: "{{ interface_preview }}"
     test_data:
       - switch_id: FDO12345678

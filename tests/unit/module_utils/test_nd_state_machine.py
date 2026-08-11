@@ -32,31 +32,15 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
-    NDStateMachineError,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
-    NDStateMachine,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import (
-    LoopbackInterfaceOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
-    ResponseType,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
-    ResponseHandler,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
-    does_not_raise,
-)
-from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import (
-    MockAnsibleModule,
-)
-from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
-    ResponseGenerator,
-)
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 
@@ -204,12 +188,7 @@ def test_nd_state_machine_00110() -> None:
         instance.manage_state()
 
     names = [name for name, _ in instance.model_orchestrator._calls]
-    assert names == [
-        "preflight_create",
-        "preflight",
-        "prepare_mutations",
-        "create_bulk",
-    ]
+    assert names == ["preflight_create", "preflight", "prepare_mutations", "create_bulk"]
     assert instance.model_orchestrator._calls[2] == ("prepare_mutations", False)
 
 

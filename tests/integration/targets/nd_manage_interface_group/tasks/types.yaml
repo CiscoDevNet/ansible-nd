@@ -60,7 +60,7 @@
     - nd_info.output_level in ['info', 'debug']
 
 - name: Validate all Interface Group types from the list response
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_types_result.nd_query_results[0].result }}"
     test_data: "{{ interface_group_all_types }}"
     mode: exact

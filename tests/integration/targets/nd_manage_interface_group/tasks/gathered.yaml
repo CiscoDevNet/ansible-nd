@@ -15,7 +15,7 @@
   register: interface_group_gathered_all
 
 - name: Validate gathered-all type coverage and normalized output
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_gathered_all }}"
     test_data: "{{ interface_group_all_types_after_deployment }}"
     mode: subset
@@ -62,7 +62,7 @@
   when: test_ethernet_custom_flow_enabled | bool
 
 - name: Validate the combined custom-group filter
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_gathered_custom }}"
     test_data:
       - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
@@ -107,7 +107,7 @@
   register: interface_group_gathered_policy
 
 - name: Validate the shared-policy attribute filter
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_gathered_policy }}"
     test_data:
       - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
@@ -140,7 +140,7 @@
   register: interface_group_gathered_empty
 
 - name: Validate explicit-empty association filtering
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_gathered_empty }}"
     test_data:
       - interface_group_name: "{{ interface_group_names.port_channel }}"
@@ -186,7 +186,7 @@
   register: interface_group_gathered_or
 
 - name: Validate OR semantics and de-duplication
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_gathered_or }}"
     test_data: >-
       {{
@@ -235,7 +235,7 @@
   register: interface_group_gathered_switch
 
 - name: Validate switch-only filtering includes the known secondary-leaf groups
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_gathered_switch }}"
     test_data:
       - interface_group_name: "{{ interface_group_names.any }}"

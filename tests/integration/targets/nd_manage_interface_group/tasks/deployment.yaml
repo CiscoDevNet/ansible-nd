@@ -53,7 +53,7 @@
   register: interface_group_selective_resource_deploy
 
 - name: Validate selectively deployed policy intent
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: >-
       {{ interface_group_selective_resource_deploy.nd_query_results[0].result }}
     test_data: >-
@@ -157,7 +157,7 @@
   register: interface_group_switch_deploy
 
 - name: Validate switch-deployed policy intent
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_switch_deploy.nd_query_results[0].result }}"
     test_data:
       - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"

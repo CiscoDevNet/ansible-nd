@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 from ansible.plugins.action import ActionBase
-from ansible_collections.cisco.nd.plugins.action.tests.integration._nd_interface_group_validate import (
+from ansible_collections.cisco.nd.plugins.action.tests.integration.nd_interface_group_validate import (
     ActionModule,
     _extract_groups,
     _normalise_group,

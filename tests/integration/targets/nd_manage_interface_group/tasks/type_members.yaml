@@ -27,7 +27,7 @@
   register: interface_group_type_members
 
 - name: Validate all initial type-specific member associations
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_type_members.nd_query_results[0].result }}"
     test_data: "{{ interface_group_initial_member_expected }}"
     mode: exact

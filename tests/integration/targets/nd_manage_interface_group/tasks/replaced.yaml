@@ -34,7 +34,7 @@
 - name: >-
     Confirm replaced used the supplied network and member lists
     authoritatively
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_replaced_partial.nd_query_results[0].result }}"
     test_data:
       - "{{ interface_group_pc_one_member }}"
@@ -110,7 +110,7 @@
   register: interface_group_replaced_omitted
 
 - name: Confirm omitted replaced collections preserved all associations
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_replaced_omitted.nd_query_results[0].result }}"
     test_data:
       - "{{ interface_group_pc_two_members }}"
@@ -170,7 +170,7 @@
   register: interface_group_replaced_explicit_empty
 
 - name: Confirm explicit empty replaced collections cleared all associations
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: >-
       {{ interface_group_replaced_explicit_empty.nd_query_results[0].result }}
     test_data:
@@ -242,7 +242,7 @@
   register: interface_group_replaced_move
 
 - name: Validate remove-before-add move and distinct network associations
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_replaced_move.nd_query_results[0].result }}"
     test_data:
       - "{{ interface_group_pc_one_member }}"
@@ -313,7 +313,7 @@
   when: test_ethernet_custom_flow_enabled | bool
 
 - name: Validate authoritative custom-template result
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_custom_replaced.nd_query_results[0].result }}"
     test_data:
       - interface_group_name: "{{ interface_group_names.ethernet_custom }}"

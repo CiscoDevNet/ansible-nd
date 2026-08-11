@@ -243,7 +243,7 @@
   when: not ansible_check_mode
 
 - name: Confirm atomic preflight wrote neither resource
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_atomic_preflight_live }}"
     absent:
       - "{{ interface_group_names.atomic_valid }}"
@@ -291,7 +291,7 @@
   when: not ansible_check_mode
 
 - name: Confirm missing-network update preserved the existing group
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_missing_network_update_live }}"
     test_data:
       - "{{ interface_group_pc_two_members }}"
@@ -403,7 +403,7 @@
   when: not ansible_check_mode
 
 - name: Confirm rejected changes left source and targets unchanged
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_rejected_changes_live }}"
     test_data:
       - "{{ interface_group_pc_two_members }}"
@@ -506,7 +506,7 @@
   when: not ansible_check_mode
 
 - name: Validate the undeployed network association was retained
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: >-
       {{ interface_group_undeployed_network.nd_query_results[0].result }}
     test_data:

@@ -18,7 +18,7 @@
   when: not ansible_check_mode
 
 - name: "{{ preview_name }} - Validate Interface configuration preview"
-  cisco.nd.tests.integration._nd_interface_preview_validate:
+  cisco.nd.tests.integration.nd_interface_preview_validate:
     nd_data: "{{ interface_group_interface_preview }}"
     test_data: "{{ preview_test_data }}"
   when: not ansible_check_mode

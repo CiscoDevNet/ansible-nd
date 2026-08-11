@@ -10,7 +10,7 @@ __metaclass__ = type
 
 DOCUMENTATION = r"""
 ---
-module: _nd_interface_group_validate
+module: nd_interface_group_validate
 short_description: Validate live Interface Group state in ND integration tests
 version_added: "2.0.0"
 description:
@@ -71,7 +71,7 @@ EXAMPLES = r"""
   register: interface_group_live
 
 - name: Validate exact association state
-  cisco.nd.tests.integration._nd_interface_group_validate:
+  cisco.nd.tests.integration.nd_interface_group_validate:
     nd_data: "{{ interface_group_live }}"
     mode: exact
     test_data:

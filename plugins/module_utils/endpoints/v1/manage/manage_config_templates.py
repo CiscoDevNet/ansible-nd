@@ -74,19 +74,10 @@ class EpManageConfigTemplateGet(NDEndpointBaseModel):
     """GET one configuration template, including metadata and parameters."""
 
     class_name: Literal["EpManageConfigTemplateGet"] = Field(
-        default="EpManageConfigTemplateGet",
-        frozen=True,
-        description="Class name for backward compatibility",
+        default="EpManageConfigTemplateGet", frozen=True, description="Class name for backward compatibility"
     )
-    template_name: str | None = Field(
-        default=None,
-        min_length=1,
-        description="Configuration template name",
-    )
-    endpoint_params: ConfigTemplateEndpointParams = Field(
-        default_factory=ConfigTemplateEndpointParams,
-        description="Query parameters: clusterName",
-    )
+    template_name: str | None = Field(default=None, min_length=1, description="Configuration template name")
+    endpoint_params: ConfigTemplateEndpointParams = Field(default_factory=ConfigTemplateEndpointParams, description="Query parameters: clusterName")
 
     @property
     def path(self) -> str:

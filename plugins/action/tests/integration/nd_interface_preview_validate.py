@@ -11,7 +11,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 DOCUMENTATION = r"""
 ---
-module: _nd_interface_preview_validate
+module: nd_interface_preview_validate
 short_description: Validate interface preview results in ND integration tests
 version_added: "2.0.0"
 description:
