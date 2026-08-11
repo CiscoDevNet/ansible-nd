@@ -302,10 +302,10 @@ def test_loopback_interface_00130() -> None:
     """
     # Summary
 
-    Verify `create` raises `RuntimeError` when the create response's `DATA.results[]` contains an item whose
-    `status` is not exactly `"success"`, even though the HTTP-level request itself succeeded (207 multi-status).
-    Lab-verified 2026-07-18: ND can return a per-item failure while the top-level status looks benign, so `create`
-    must inspect `results[]` rather than trusting `_request`'s success/failure classification alone.
+    Verify `create` raises `RuntimeError` when the create response's `DATA.results[]` contains a failed item, even
+    though the HTTP-level request itself succeeded (207 multi-status). Lab-verified 2026-07-18: ND can return a
+    per-item failure while the top-level status looks benign. The per-item scan lives centrally in
+    `NdV1Strategy.is_success` (PR #398), which `_request` consults, so the failure surfaces through `_request`.
 
     ## Test
 
@@ -317,7 +317,7 @@ def test_loopback_interface_00130() -> None:
     ## Classes and Methods
 
     - LoopbackInterfaceOrchestrator.create()
-    - LoopbackInterfaceOrchestrator._raise_on_failed_result_items()
+    - NdV1Strategy.is_success()
     """
     method_name = inspect.stack()[0][3]
 
@@ -684,7 +684,8 @@ def test_loopback_interface_00440() -> None:
     contains a failed item, using the real lab-verified (2026-07-18) rejection wire shape: HTTP 207 with a single
     `results[]` item whose `status` is `"failed"` and whose `message` names the mixed-policy-type rejection. Nothing
     is created on the controller side in this scenario, so no deploy may be queued (bug-tracker vault:
-    `bulk-interface-create-rejects-mixed-policy-types`, `multi-status-207-status-field-inconsistent`).
+    `bulk-interface-create-rejects-mixed-policy-types`, `multi-status-207-status-field-inconsistent`). The per-item
+    failure is detected centrally by `NdV1Strategy.is_success` (PR #398) and surfaces through `_request`.
 
     ## Test
 
@@ -697,7 +698,7 @@ def test_loopback_interface_00440() -> None:
     ## Classes and Methods
 
     - LoopbackInterfaceOrchestrator.create_bulk()
-    - LoopbackInterfaceOrchestrator._raise_on_failed_result_items()
+    - NdV1Strategy.is_success()
     """
     method_name = inspect.stack()[0][3]
 

@@ -140,9 +140,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
         ### RuntimeError
 
-        - If the create API request fails.
-        - If the create response's `DATA.results[]` contains an item whose `status` is not exactly `"success"` (see
-          `_raise_on_failed_result_items`).
+        - If the create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item
+          (detected centrally by `NdV1Strategy.is_success`, which `_request` consults).
         """
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
@@ -151,44 +150,10 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             payload["switchId"] = switch_id
             request_body = {"interfaces": [payload]}
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-            # Validate the full envelope, not `result`: _request() returns the already-unwrapped DATA dict,
-            # on which the helper's DATA.results lookup would always no-op and mask real 207 failures.
-            self._raise_on_failed_result_items(self.rest_send.response_current)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
             raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
-
-    def _raise_on_failed_result_items(self, response: dict | None) -> None:
-        """
-        # Summary
-
-        Inspect `response["DATA"]["results"]` (an ND multi-status per-item results array) and raise if any item's
-        `status` is not exactly `"success"`. Tolerates a missing or empty `results` array - some create responses have
-        no per-item results at all, and that is not itself a failure signal.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If any item in `results` has a `status` other than exactly `"success"` (a missing `status` key counts as
-          failure). The message lists every failing item's `name`/`interfaceName` and `message`.
-        """
-        results = response.get("DATA", {}).get("results", []) if isinstance(response, dict) else []
-        if not results:
-            return
-        failures: list[str] = []
-        for item in results:
-            # TODO(4.2.1) multi-status-207-status-field-inconsistent
-            # HTTP 207 is returned even when items failed, and the per-item status vocabulary is unreliable
-            # ('failed', 'error', 'Failed', or absent) - only an exact 'success' may be trusted.
-            # PR #398 adds 207 handling to NdV1Strategy; remove this orchestrator-level check when that merges.
-            if item.get("status") != "success":
-                name = item.get("name") or item.get("interfaceName") or "<unknown>"
-                message = item.get("message", "")
-                failures.append(f"{name}: {message}")
-        if failures:
-            raise RuntimeError("Result item(s) failed: " + "; ".join(failures))
 
     def update(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
@@ -269,9 +234,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
         ### RuntimeError
 
-        - If any create API request fails.
-        - If a create response's `DATA.results[]` contains an item whose `status` is not exactly `"success"` (see
-          `_raise_on_failed_result_items`); no deploy is queued for that group's items in that case.
+        - If any create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item
+          (detected centrally by `NdV1Strategy.is_success`, which `_request` consults); no deploy is queued for that
+          group's items in that case.
         """
         try:
             groups = self._group_by_switch_and_policy_type(model_instances)
@@ -281,9 +246,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
                 api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=group_key.switch_id)  # pyright: ignore[reportOptionalCall]
                 request_body = {"interfaces": [item.payload for item in items]}
                 result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-                # Validate the full envelope, not `result`: _request() returns the already-unwrapped DATA dict,
-                # on which the helper's DATA.results lookup would always no-op and mask real 207 failures.
-                self._raise_on_failed_result_items(self.rest_send.response_current)
                 results.append(result)
                 for item in items:
                     self._queue_deploy(item.interface_name, group_key.switch_id)

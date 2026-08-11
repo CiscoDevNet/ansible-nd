@@ -691,7 +691,7 @@
     "test_loopback_interface_00130a": {
         "TEST_NOTES": [
             "create single-item 207 rejection: switches list (1 switch)",
-            "2026-07-18 integration-run evidence: ND returns HTTP 207 with a per-item results[] entry whose status is not 'success' even though the top-level code alone looks benign; create() must inspect results[] rather than trusting the returned status code (multi-status-207-status-field-inconsistent)."
+            "2026-07-18 integration-run evidence: ND returns HTTP 207 with a per-item results[] entry whose status is not 'success' even though the top-level code alone looks benign; the results[] scan lives centrally in NdV1Strategy.is_success (PR #398), so the returned status code alone is never trusted (multi-status-207-status-field-inconsistent)."
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
