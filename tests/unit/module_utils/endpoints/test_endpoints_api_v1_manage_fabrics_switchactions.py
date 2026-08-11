@@ -17,6 +17,7 @@ __metaclass__ = type
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
     EpManageFabricsSwitchActionsChangeRolesPost,
+    EpManageFabricsSwitchActionsDeployPost,
     EpManageFabricsSwitchActionsImportBootstrapPost,
     EpManageFabricsSwitchActionsPreProvisionPost,
     EpManageFabricsSwitchActionsRediscoverPost,
@@ -489,3 +490,25 @@ def test_endpoints_api_v1_manage_fabrics_switchactions_00730():
         instance.endpoint_params.ticket_id = "CHG12345"
         result = instance.path
     assert result == "/api/v1/manage/fabrics/MyFabric/switchActions/rediscover?ticketId=CHG12345"
+
+
+def test_endpoints_api_v1_manage_fabrics_switchactions_00800():
+    """
+    # Summary
+
+    Verify fabric_name is percent-encoded in the switchActions base path (issue #292).
+
+    ## Test
+
+    - Reserved characters (``/``, space, ``#``) in fabric_name are encoded so a
+      malformed request path is not produced.
+
+    ## Classes and Methods
+
+    - EpManageFabricsSwitchActionsDeployPost.path
+    """
+    with does_not_raise():
+        instance = EpManageFabricsSwitchActionsDeployPost()
+        instance.fabric_name = "my/fabric name#1"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/my%2Ffabric%20name%231/switchActions/deploy"
