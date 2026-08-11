@@ -66,7 +66,7 @@ def test_endpoints_api_v1_manage_fabrics_actions_config_save_00110():
     instance = EpFabricConfigSavePost()
     with pytest.raises(ValueError, match="fabric_name is required"):
         result = instance.path  # pylint: disable=unused-variable
-        
+
 
 def test_endpoints_api_v1_manage_fabrics_actions_config_save_00120():
     """
