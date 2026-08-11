@@ -4110,10 +4110,13 @@ def test_manage_merged_update_keeps_request_local_return_codes():
 
     nd.request.side_effect = request_with_status
 
-    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
-        (
-            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
-            "nd_manage_resource_manager_resources.ResourceManagerDiffEngine.validate_resource_api_fields"
+    with (
+         patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes),
+         patch(
+             (
+                 "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+                 "nd_manage_resource_manager_resources.ResourceManagerDiffEngine.validate_resource_api_fields"
+             ),
         ),
     ):
         module.manage_merged()
