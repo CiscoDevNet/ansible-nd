@@ -41,7 +41,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv6CIDR
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv4HostStrict, IPv6CIDR
 
 
 class LoopbackPolicyStrictBase(NDNestedModel):
@@ -173,7 +173,7 @@ class SecondaryIpModel(NDNestedModel):
     None
     """
 
-    ip: str | None = Field(default=None, alias="ip", description="Secondary IPv4 address")
+    ip: IPv4HostStrict = Field(default=None, alias="ip", description="Secondary IPv4 address (bare host form; the mask length is set via `prefix`)")
     prefix: int | None = Field(default=None, alias="prefix", ge=4, le=32, description="Subnet mask length (4-32)")
 
 

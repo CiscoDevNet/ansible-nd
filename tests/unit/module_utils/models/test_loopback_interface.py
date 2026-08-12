@@ -19,6 +19,7 @@ import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
     Csr1kvLoopbackPolicyModel,
     CsrLoopbackPolicyModel,
+    IpfmLoopbackPolicyModel,
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
     NexusLoopbackNetworkOSModel,
@@ -1881,6 +1882,85 @@ def test_ipfm_loopback_strict_rejects_foreign_field():
 
     with pytest.raises(ValidationError):
         IpfmLoopbackPolicyModel(policyType="ipfmLoopback", ospfAreaId="0")
+
+
+def test_ipfm_secondary_ip_accepts_valid_ipv4():
+    """
+    # Summary
+
+    Verify `SecondaryIpModel.ip` accepts a valid bare IPv4 address via `IpfmLoopbackPolicyModel.secondaryIpList`.
+
+    ## Test
+
+    - Construct with secondaryIpList=[{"ip": "10.2.2.3", "prefix": 32}]
+    - Value is accepted unchanged
+
+    ## Classes and Methods
+
+    - SecondaryIpModel.ip (IPv4HostStrict Annotated type)
+    """
+    with does_not_raise():
+        model = IpfmLoopbackPolicyModel(policyType="ipfmLoopback", secondaryIpList=[{"ip": "10.2.2.3", "prefix": 32}])
+    assert model.secondary_ip_list[0].ip == "10.2.2.3"
+
+
+def test_ipfm_secondary_ip_rejects_malformed():
+    """
+    # Summary
+
+    Verify `SecondaryIpModel.ip` rejects a non-IP garbage string (the ND item schema is `format: ipv4`).
+
+    ## Test
+
+    - Construct with secondaryIpList=[{"ip": "not-an-ip", "prefix": 32}]
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - SecondaryIpModel.ip (IPv4HostStrict Annotated type)
+    """
+    with pytest.raises(ValidationError, match="is not a valid bare IPv4 address"):
+        IpfmLoopbackPolicyModel(policyType="ipfmLoopback", secondaryIpList=[{"ip": "not-an-ip", "prefix": 32}])
+
+
+def test_ipfm_secondary_ip_rejects_ipv6():
+    """
+    # Summary
+
+    Verify `SecondaryIpModel.ip` rejects an IPv6 address (the ND item schema is IPv4-only).
+
+    ## Test
+
+    - Construct with secondaryIpList=[{"ip": "2001:db8::1", "prefix": 32}]
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - SecondaryIpModel.ip (IPv4HostStrict Annotated type)
+    """
+    with pytest.raises(ValidationError, match="is not a valid bare IPv4 address"):
+        IpfmLoopbackPolicyModel(policyType="ipfmLoopback", secondaryIpList=[{"ip": "2001:db8::1", "prefix": 32}])
+
+
+def test_ipfm_secondary_ip_rejects_cidr():
+    """
+    # Summary
+
+    Verify `SecondaryIpModel.ip` rejects CIDR notation. Unlike the primary loopback `ip` (which normalizes CIDR to
+    the bare host form), the secondary-IP item carries its mask length in the separate `prefix` field, so CIDR input
+    is ambiguous and rejected rather than normalized.
+
+    ## Test
+
+    - Construct with secondaryIpList=[{"ip": "10.2.2.3/32", "prefix": 32}]
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - SecondaryIpModel.ip (IPv4HostStrict Annotated type)
+    """
+    with pytest.raises(ValidationError, match="is not a valid bare IPv4 address"):
+        IpfmLoopbackPolicyModel(policyType="ipfmLoopback", secondaryIpList=[{"ip": "10.2.2.3/32", "prefix": 32}])
 
 
 # =============================================================================

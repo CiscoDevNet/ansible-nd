@@ -150,7 +150,8 @@ options:
                     suboptions:
                       ip:
                         description:
-                        - The secondary IPv4 address.
+                        - The secondary IPv4 address, in bare host form (e.g. 10.2.2.3).
+                        - The mask length is set separately via O(config.config_data.network_os.policy.secondary_ip_list.prefix); CIDR notation is rejected.
                         type: str
                       prefix:
                         description:
@@ -496,6 +497,90 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed, or in check mode would change, the interface configuration.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
+  - An empty list when no matching interface configuration existed.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: loopback10
+    config_data:
+      network_os:
+        network_os_type: nx-os
+        policy:
+          policy_type: loopback
+          admin_state: true
+          ip: 10.1.1.1
+          vrf: management
+after:
+  description:
+  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
+  - In check mode, the configuration that would result had the module run outside of check mode.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: loopback10
+    config_data:
+      network_os:
+        network_os_type: nx-os
+        policy:
+          policy_type: loopback
+          admin_state: true
+          ip: 10.1.1.2
+          vrf: management
+diff:
+  description: The per-interface difference between C(before) and C(after).
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: loopback10
+    config_data:
+      network_os:
+        policy:
+          ip: 10.1.1.2
+proposed:
+  description: The configuration the module proposed to apply, before reconciliation with the controller.
+  returned: when O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: loopback10
+    config_data:
+      network_os:
+        network_os_type: nx-os
+        policy:
+          policy_type: loopback
+          ip: 10.1.1.2
+logs:
+  description: Internal diagnostic log messages collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample:
+  - "Querying existing loopback interface configuration"
+msg:
+  description: A human-readable error message, present only when the module fails.
+  returned: on failure
+  type: str
+  sample: "Configuration error: ..."
 """
 # pylint: disable=wrong-import-position
 
