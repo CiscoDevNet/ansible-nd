@@ -264,10 +264,12 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
 
     # `ptp` is deliberately NOT modeled (deviation: interface-get-undocumented-ptp-field). ND injects a `ptp`
     # boolean into every port-channel policy GET even though intPortChannelTrunkHostTemplate declares no such
-    # property, and a lab probe (2026-08-12, SITE1, ND 4.2.1.10) proved a client-sent `ptp` is persist-but-inert:
-    # ND stores and echoes it but generates zero pending CLI, so exposing it would be a silent no-op that fakes
-    # success. The injected echo is dropped at parse time by `extra="ignore"`, same as the sibling ethernet/vPC
-    # models. Do not re-add the field from wire observation alone; it belongs only if a future template declares it.
+    # property. A lab probe (2026-08-12, SITE1, ND 4.2.1.10, fabric PTP disabled) proved a client-sent `ptp` is
+    # persist-but-inert there: ND stores and echoes it but generates zero pending CLI. On a PTP-enabled fabric the
+    # fabric-level deploy rewrites the stored value fabric-wide regardless of per-interface intent (vault note,
+    # 2026-06-10), so the field is fabric-owned in both regimes and exposing it would fake per-interface control.
+    # The injected echo is dropped at parse time by `extra="ignore"`, same as the sibling ethernet/vPC models.
+    # Do not re-add the field from wire observation alone; it belongs only if a future template declares it.
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
     allowed_vlans: AllowedVlans = Field(
