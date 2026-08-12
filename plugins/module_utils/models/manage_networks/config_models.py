@@ -227,8 +227,6 @@ class NetworkConfigModel(NDBaseModel):
             "gw_ip_subnet": "gateway_ipv4_address",
             "gw_ipv6_subnet": "gateway_ipv6_address",
             "int_desc": "vlan_intf_desc",
-            "mtu_l3intf": "mtu",
-            "arp_suppress": "arp_suppression",
             "dhcp_loopback_id": "loopback_id",
             "l3gw_on_border": "gateway_on_border",
             "vlan_nf_monitor": "l2_netflow_monitor",

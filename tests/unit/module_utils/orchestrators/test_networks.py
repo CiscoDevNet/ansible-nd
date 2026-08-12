@@ -734,7 +734,8 @@ def test_argument_spec_uses_manage_json_defaults():
     spec = network_parent_argument_spec()
 
     assert spec["mtu"]["default"] == 9216
-    assert spec["mtu_l3intf"]["default"] == 9216
+    assert "mtu_l3intf" not in spec
+    assert "arp_suppress" not in spec
     assert "default" not in spec["trm_enable"]
     assert "default" not in spec["ipv6_trm"]
     assert "enable_ir" not in spec
@@ -1009,8 +1010,8 @@ def test_legacy_network_names_are_normalized():
             "gw_ipv6_subnet": "2001:db8::1/64",
             "secondary_ip_gw1": "192.0.2.2/24",
             "int_desc": "Legacy SVI",
-            "mtu_l3intf": 9216,
-            "arp_suppress": True,
+            "mtu": 9216,
+            "arp_suppression": True,
             "dhcp_srvr1_ip": "10.1.1.10",
             "dhcp_srvr1_vrf": "management",
             "dhcp_loopback_id": 101,

@@ -232,16 +232,8 @@ options:
         description: Network interface MTU.
         type: int
         default: 9216
-      mtu_l3intf:
-        description: Compatibility alias for C(mtu).
-        type: int
-        default: 9216
       arp_suppression:
         description: Enable ARP suppression.
-        type: bool
-        default: false
-      arp_suppress:
-        description: Compatibility alias for C(arp_suppression).
         type: bool
         default: false
       routing_tag:
