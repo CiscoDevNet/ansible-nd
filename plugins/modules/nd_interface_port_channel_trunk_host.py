@@ -193,10 +193,6 @@ options:
                       interfaces inherit trunk-mode settings from this policy.
                     type: list
                     elements: str
-                  ptp:
-                    description:
-                    - Whether Precision Time Protocol is enabled on the port-channel.
-                    type: bool
                   qos:
                     description:
                     - Whether a QoS policy is applied to the port-channel.

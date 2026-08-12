@@ -262,13 +262,12 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
         "vlanMapping": False,
     }
 
-    # TODO(4.2.1) interface-get-undocumented-ptp-field
-    # ND injects a `ptp` boolean into every port-channel policy GET even though intPortChannelTrunkHostTemplate
-    # declares no such property. The value is not interface state: it reads false until a fabric-PTP deploy, after
-    # which ND rewrites ALL physical/port-channel records to true fabric-wide. Because `ptp` is a declared field on
-    # this model, the echo survives from_response and would count as a pending removal in the reverse pass, so it is
-    # stripped unconditionally (a defaults-table entry of False would re-break after the fabric-wide true rewrite).
-    reverse_diff_exclude: ClassVar[set[str]] = {"ptp"}
+    # `ptp` is deliberately NOT modeled (deviation: interface-get-undocumented-ptp-field). ND injects a `ptp`
+    # boolean into every port-channel policy GET even though intPortChannelTrunkHostTemplate declares no such
+    # property, and a lab probe (2026-08-12, SITE1, ND 4.2.1.10) proved a client-sent `ptp` is persist-but-inert:
+    # ND stores and echoes it but generates zero pending CLI, so exposing it would be a silent no-op that fakes
+    # success. The injected echo is dropped at parse time by `extra="ignore"`, same as the sibling ethernet/vPC
+    # models. Do not re-add the field from wire observation alone; it belongs only if a future template declares it.
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
     allowed_vlans: AllowedVlans = Field(
@@ -308,7 +307,6 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Configure as edge trunk port (PortFast on trunk)")
     ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['Ethernet1/1', 'Ethernet1/2'])")
-    ptp: bool | None = Field(default=None, alias="ptp", description="Enable Precision Time Protocol on the interface")
     qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
     qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
     queuing_policy: str | None = Field(default=None, alias="queuingPolicy", description="Custom queuing policy name")
@@ -611,7 +609,6 @@ class PortChannelTrunkHostInterfaceModel(NDBaseModel):
                                             port_channel_mode=dict(type="str", choices=[e.value for e in PortChannelModeEnum]),
                                             port_type_edge_trunk=dict(type="bool"),
                                             ports=dict(type="list", elements="str"),
-                                            ptp=dict(type="bool"),
                                             qos=dict(type="bool"),
                                             qos_policy=dict(type="str"),
                                             queuing_policy=dict(type="str"),

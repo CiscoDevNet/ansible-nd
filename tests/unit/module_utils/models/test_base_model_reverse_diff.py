@@ -664,8 +664,10 @@ def test_base_model_reverse_diff_00550() -> None:
 
 
 # The ND-injected `ptp` echo observed on port-channel policy GETs (deviation: interface-get-undocumented-ptp-field).
-# `ptp` is a declared field on PortChannelTrunkHostPolicyModel, so unlike the sibling models (where the injected key
-# lands in `model_extra` and is scrubbed as an extra) it survives `from_response` and must be stripped explicitly.
+# `ptp` is deliberately NOT a field on PortChannelTrunkHostPolicyModel: intPortChannelTrunkHostTemplate declares no
+# such property, and a lab probe (2026-08-12, SITE1, ND 4.2.1.10) proved ND persists and echoes a client-sent `ptp`
+# but generates ZERO pending CLI from it (persist-but-inert). Like the sibling ethernet/vPC models, the injected key
+# is dropped at parse time by `extra="ignore"`, so no reverse-pass exclusion is needed.
 PORT_CHANNEL_TRUNK_HOST_PTP_ECHO = {
     "policyType": "trunkPoHost",
     "adminState": True,
@@ -685,9 +687,9 @@ def test_base_model_reverse_diff_00560() -> None:
     # Summary
 
     ND injects `ptp: false` into port-channel trunkPoHost policy GETs even though `intPortChannelTrunkHostTemplate`
-    declares no `ptp` property (deviation: interface-get-undocumented-ptp-field). Because `ptp` is a declared field
-    on `PortChannelTrunkHostPolicyModel`, the echo survives `from_response`; a proposed config omitting `ptp` must
-    still be `no_diff` on the replaced/overridden path (PR #422 review finding).
+    declares no `ptp` property (deviation: interface-get-undocumented-ptp-field). `ptp` is deliberately not modeled,
+    so the echo is dropped at parse time by `extra="ignore"` and a proposed config omitting `ptp` is `no_diff` on the
+    replaced/overridden path (PR #422 review finding).
 
     ## Test
 
@@ -697,8 +699,8 @@ def test_base_model_reverse_diff_00560() -> None:
 
     ## Classes and Methods
 
+    - NDBaseModel.from_response()
     - NDBaseModel.get_diff()
-    - NDBaseModel.to_reverse_diff_dict()
     """
     existing = PortChannelTrunkHostPolicyModel.from_response({**PORT_CHANNEL_TRUNK_HOST_PTP_ECHO, "ptp": False})
     proposed = PortChannelTrunkHostPolicyModel.from_config(dict(PORT_CHANNEL_TRUNK_HOST_PTP_CONFIG))
@@ -711,8 +713,8 @@ def test_base_model_reverse_diff_00570() -> None:
 
     After a fabric-PTP deploy, ND rewrites the injected `ptp` to `true` fabric-wide on ALL existing physical and
     port-channel records, even on interfaces with no PTP configuration (deviation:
-    interface-get-undocumented-ptp-field). The strip must therefore be value-independent (`reverse_diff_exclude`,
-    not a `reverse_diff_defaults` entry of `False`) so idempotency also holds against the `true` rewrite.
+    interface-get-undocumented-ptp-field). The parse-time drop is value-independent, so idempotency also holds
+    against the `true` rewrite.
 
     ## Test
 
@@ -722,8 +724,8 @@ def test_base_model_reverse_diff_00570() -> None:
 
     ## Classes and Methods
 
+    - NDBaseModel.from_response()
     - NDBaseModel.get_diff()
-    - NDBaseModel.to_reverse_diff_dict()
     """
     existing = PortChannelTrunkHostPolicyModel.from_response({**PORT_CHANNEL_TRUNK_HOST_PTP_ECHO, "ptp": True})
     proposed = PortChannelTrunkHostPolicyModel.from_config(dict(PORT_CHANNEL_TRUNK_HOST_PTP_CONFIG))
@@ -734,23 +736,25 @@ def test_base_model_reverse_diff_00580() -> None:
     """
     # Summary
 
-    The `ptp` strip is reverse-pass-only: a user-set `ptp` that differs from the existing-side echo must still be
-    detected by the forward diff, so explicit PTP configuration keeps working.
+    `ptp` is not part of the model's writable surface: it is not a declared field, and a response-injected value is
+    dropped entirely at parse time (no attribute, absent from every dump) rather than retained as an extra. A lab
+    probe (2026-08-12, SITE1, ND 4.2.1.10) proved a client-sent `ptp` is persist-but-inert — ND stores and echoes
+    it but generates no pending CLI — so exposing it would be a silent no-op that fakes success.
 
     ## Test
 
-    - An existing `PortChannelTrunkHostPolicyModel` built from a response carrying `ptp: false`.
-    - A proposed model explicitly setting `ptp: true`.
-    - `get_diff(proposed, exclude_unset=False)` is `False` (difference detected).
+    - `ptp` is not in `PortChannelTrunkHostPolicyModel.model_fields`.
+    - `from_response` with an injected `ptp` yields a model without the key in `to_diff_dict()` or `model_extra`.
 
     ## Classes and Methods
 
-    - NDBaseModel.get_diff()
+    - NDBaseModel.from_response()
     - NDBaseModel.to_diff_dict()
     """
-    existing = PortChannelTrunkHostPolicyModel.from_response({**PORT_CHANNEL_TRUNK_HOST_PTP_ECHO, "ptp": False})
-    proposed = PortChannelTrunkHostPolicyModel.from_config({**PORT_CHANNEL_TRUNK_HOST_PTP_CONFIG, "ptp": True})
-    assert existing.get_diff(proposed, exclude_unset=False) is False
+    assert "ptp" not in list(PortChannelTrunkHostPolicyModel.model_fields)
+    existing = PortChannelTrunkHostPolicyModel.from_response({**PORT_CHANNEL_TRUNK_HOST_PTP_ECHO, "ptp": True})
+    assert "ptp" not in existing.to_diff_dict()
+    assert not getattr(existing, "model_extra", None)
 
 
 def test_base_model_reverse_diff_00590() -> None:
