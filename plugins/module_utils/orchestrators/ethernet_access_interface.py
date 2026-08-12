@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import ClassVar, Type
 
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import AccessHostPolicyTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
@@ -39,6 +40,17 @@ class EthernetAccessInterfaceOrchestrator(EthernetBaseOrchestrator):
     """
 
     model_class: ClassVar[Type[NDBaseModel]] = EthernetAccessInterfaceModel
+
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(
+            ("interfaceType", "ethernet"),
+            ("policyType", "accessHost"),
+        ),
+        field_map={
+            ("interface_name",): "interfaceName",
+        },
+    )
 
     def _managed_policy_types(self) -> set[str]:
         """

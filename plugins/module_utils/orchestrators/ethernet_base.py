@@ -30,7 +30,9 @@ from typing import ClassVar
 
 logger = logging.getLogger(__name__)
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
@@ -39,9 +41,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPut,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
+    InterfaceDefaultConfig,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    NDBaseInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 
 ModelType = NDBaseModel
 
@@ -91,7 +99,24 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     # template body (InterfaceDefaultConfig), which resets the interface and drops it from type-specific query filters.
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesNormalize
 
-    PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[set[str]] = {"description", "admin_state", "extra_config"}
+    PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[set[str]] = {
+        "description",
+        "admin_state",
+        "extra_config",
+    }
+
+    @staticmethod
+    def gathered_transform(item: dict) -> dict:
+        """
+        Recombine interface_name back into interface_names for gathered output.
+
+        This is the inverse of expand_config which splits interface_names into
+        interface_name on the way in. Lives on the shared ethernet base so both
+        ethernet_access and ethernet_trunk_host get it automatically.
+        """
+        if "interface_name" in item:
+            item["interface_names"] = [item.pop("interface_name")]
+        return item
 
     def model_post_init(self, __context) -> None:
         """
@@ -617,7 +642,31 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
+    def _switches_to_query(self) -> dict[str, str]:
+        """
+        # Summary
+
+        Return the `{switch_ip: switch_id}` subset that `query_all` should scan.
+
+        For `state: overridden` the scope is fabric-wide, so the full switch map is returned. For every other state
+        the state machine only consults existing interfaces identified by `switch_ip` values present in the user
+        config, so only those switches are returned. This keeps the interface-list request count proportional to
+        config size rather than fabric size.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `FabricContext.switch_map` if the switches API query fails.
+        """
+        switch_map = self.fabric_context.switch_map
+        if self.rest_send.params.get("state") in ("overridden", "gathered"):
+            return switch_map
+        config_items = self.rest_send.params.get("config") or []
+        config_ips = {item.get("switch_ip") for item in config_items if item.get("switch_ip")}
+        return {ip: sid for ip, sid in switch_map.items() if ip in config_ips}
+
+    def query_all(self, model_instance: ModelType | None = None, gathered_filters: list[dict] | None = None, **kwargs) -> ResponseType:
         """
         # Summary
 
@@ -647,18 +696,69 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         managed_types = self._managed_policy_types()
         try:
             self.validate_prerequisites()
-            all_interfaces = []
-            for switch_ip, switch_id in self._switches_to_query().items():
-                interfaces = list(self._switch_interfaces(switch_id).values())
-                ethernet_interfaces = [iface for iface in interfaces if iface.get("interfaceType") == "ethernet"]
+
+            if gathered_filters is not None and self.gathered_lucene_spec is not None:
+                return self._query_all_for_gathered(gathered_filters, managed_types)
+
+            return self._query_all_for_management_states(managed_types)
+        except Exception as e:
+            raise RuntimeError(f"Query all failed: {e}") from e
+
+    def _query_all_for_management_states(self, managed_types: set[str]) -> list[dict]:
+        """
+        # Summary
+
+        Preserve the existing list-all behaviour used by merged, replaced, overridden, and deleted states.
+
+        ## Raises
+
+        ### RuntimeError
+        - Via `_switch_interfaces` if the interface-list API request fails.
+        """
+        all_interfaces = []
+        for switch_ip, switch_id in self._switches_to_query().items():
+            interfaces = list(self._switch_interfaces(switch_id).values())
+            ethernet_interfaces = [iface for iface in interfaces if iface.get("interfaceType") == "ethernet"]
+            managed = [
+                iface for iface in ethernet_interfaces if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_types
+            ]
+            for iface in managed:
+                iface["switchIp"] = switch_ip
+            all_interfaces.extend(managed)
+        return all_interfaces
+
+    def _query_all_for_gathered(self, gathered_filters: list[dict], managed_types: set[str]) -> list[dict]:
+        """
+        # Summary
+
+        Run server-filtered gathered requests using Lucene expressions built from the orchestrator's
+        ``gathered_lucene_spec``. Each expression targets one switch with one Lucene filter. Results
+        are post-filtered by ``policyType`` and enriched with ``switchIp``.
+
+        ## Raises
+
+        ### ValueError
+
+        - Via `_build_gathered_query_plan` if a filter references a non-existent switch_ip.
+
+        ### RuntimeError
+
+        - Via `_query_interfaces_with_lucene` if pagination limits are exceeded.
+        """
+        query_plan = self._build_gathered_query_plan(gathered_filters)
+
+        all_interfaces = []
+        for switch_ip, (switch_id, expressions) in query_plan.items():
+            for expression in sorted(expressions):
+                candidates = self._query_interfaces_with_lucene(
+                    switch_id=switch_id,
+                    expression=expression,
+                )
                 managed = [
-                    iface
-                    for iface in ethernet_interfaces
-                    if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_types
+                    iface for iface in candidates if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_types
                 ]
                 for iface in managed:
                     iface["switchIp"] = switch_ip
                 all_interfaces.extend(managed)
-            return all_interfaces
-        except Exception as e:
-            raise RuntimeError(f"Query all failed: {e}") from e
+
+        return all_interfaces

@@ -1783,7 +1783,7 @@ def test_ethernet_trunk_host_interface_01100():
     assert "switch_ip" in spec["config"]["options"]
     assert spec["config"]["type"] == "list"
     assert spec["config"]["elements"] == "dict"
-    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
+    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted", "gathered"]
     assert spec["state"]["default"] == "merged"
     # interface_type, mode, and network_os_type are hardcoded in the Pydantic model
     # and intentionally absent from the user-facing argument spec.
@@ -1931,3 +1931,230 @@ def test_ethernet_trunk_host_interface_01140(kwargs, should_raise):
     else:
         with does_not_raise():
             EthernetTrunkHostPolicyModel(**kwargs)
+
+
+# =============================================================================
+#
+# Gathered state and filtering tests
+#
+# =============================================================================
+
+
+def test_ethernet_trunk_host_interface_01200():
+    """
+    # Summary
+
+    Verify state choices include ``gathered`` and default is ``merged``.
+
+    ## Test
+
+    - state choices: ["merged", "replaced", "overridden", "deleted", "gathered"]
+    - state default: "merged"
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.get_argument_spec()
+    """
+    spec = EthernetTrunkHostInterfaceModel.get_argument_spec()
+    state_spec = spec["state"]
+    assert state_spec["choices"] == [
+        "merged",
+        "replaced",
+        "overridden",
+        "deleted",
+        "gathered",
+    ]
+    assert state_spec["default"] == "merged"
+
+
+def test_ethernet_trunk_host_interface_01210():
+    """
+    # Summary
+
+    Verify ``config`` is optional so ``state=gathered`` can run without input.
+
+    ## Test
+
+    - config required is False
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.get_argument_spec()
+    """
+    spec = EthernetTrunkHostInterfaceModel.get_argument_spec()
+    assert spec["config"].get("required", False) is False
+
+
+def test_ethernet_trunk_host_interface_01220():
+    """
+    # Summary
+
+    Verify gathered filters may omit both identifiers (``switch_ip``, ``interface_names``).
+
+    ## Test
+
+    - switch_ip required is False
+    - interface_names required is False
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.get_argument_spec()
+    """
+    config_options = EthernetTrunkHostInterfaceModel.get_argument_spec()["config"]["options"]
+    assert config_options["switch_ip"].get("required", False) is False
+    assert config_options["interface_names"].get("required", False) is False
+
+
+def test_ethernet_trunk_host_interface_01230():
+    """
+    # Summary
+
+    Verify ``supports_gathered_filtering`` is ``True`` on ``EthernetTrunkHostInterfaceModel``
+    and ``False`` on the base ``NDBaseModel``.
+
+    ## Test
+
+    - NDBaseModel.supports_gathered_filtering is False
+    - EthernetTrunkHostInterfaceModel.supports_gathered_filtering is True
+
+    ## Classes and Methods
+
+    - NDBaseModel.supports_gathered_filtering
+    - EthernetTrunkHostInterfaceModel.supports_gathered_filtering
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+
+    assert NDBaseModel.supports_gathered_filtering is False
+    assert EthernetTrunkHostInterfaceModel.supports_gathered_filtering is True
+
+
+def test_ethernet_trunk_host_interface_01240():
+    """
+    # Summary
+
+    Verify ``gathered_filter_properties`` contains the expected 5 properties.
+
+    ## Test
+
+    - gathered_filter_properties tuple has exactly 5 entries
+    - Each entry matches the expected dot-path
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.gathered_filter_properties
+    """
+    assert EthernetTrunkHostInterfaceModel.gathered_filter_properties == (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.allowed_vlans",
+        "config_data.network_os.policy.native_vlan",
+    )
+
+
+def test_ethernet_trunk_host_interface_01250():
+    """
+    # Summary
+
+    Verify ``normalize_gathered_filter`` normalizes abbreviated interface names
+    to the canonical ``Ethernet`` prefix.
+
+    ## Test
+
+    - ``eth1/1`` normalizes to ``Ethernet1/1``
+    - ``e1/2`` normalizes to ``Ethernet1/2``
+    - ``ETHERNET1/3`` normalizes to ``Ethernet1/3``
+    - ``Ethernet1/4`` is idempotent
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.normalize_gathered_filter()
+    """
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": "eth1/1"}) == {"interface_name": "Ethernet1/1"}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": "e1/2"}) == {"interface_name": "Ethernet1/2"}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": "ETHERNET1/3"}) == {"interface_name": "Ethernet1/3"}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": "Ethernet1/4"}) == {"interface_name": "Ethernet1/4"}
+
+
+def test_ethernet_trunk_host_interface_01260():
+    """
+    # Summary
+
+    Verify ``normalize_gathered_filter`` passes through filters without ``interface_name``
+    unchanged.
+
+    ## Test
+
+    - Filter with only switch_ip is returned unchanged
+    - Filter with only policy fields is returned unchanged
+    - Empty filter is returned unchanged
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.normalize_gathered_filter()
+    """
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"switch_ip": "10.1.1.1"}) == {"switch_ip": "10.1.1.1"}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"config_data": {"network_os": {"policy": {"admin_state": True}}}}) == {
+        "config_data": {"network_os": {"policy": {"admin_state": True}}}
+    }
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({}) == {}
+
+
+def test_ethernet_trunk_host_interface_01270():
+    """
+    # Summary
+
+    Verify ``normalize_gathered_filter`` handles edge cases for ``interface_name``:
+    ``None``, empty string, and non-string values.
+
+    ## Test
+
+    - interface_name=None is passed through
+    - interface_name="" is passed through
+    - interface_name=123 is passed through
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.normalize_gathered_filter()
+    """
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": None}) == {"interface_name": None}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": ""}) == {"interface_name": ""}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": 123}) == {"interface_name": 123}
+
+
+def test_ethernet_trunk_host_interface_01280():
+    """
+    # Summary
+
+    Verify ``supports_gathered_server_filtering`` is ``True`` and ``gathered_lucene_spec``
+    has the correct base terms and field map on the trunk host orchestrator.
+
+    ## Test
+
+    - supports_gathered_server_filtering is True
+    - gathered_lucene_spec.base_terms includes interfaceType:ethernet and policyType:trunkHost
+    - gathered_lucene_spec.field_map maps interface_name to interfaceName
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceOrchestrator.supports_gathered_server_filtering
+    - EthernetTrunkHostInterfaceOrchestrator.gathered_lucene_spec
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import (
+        EthernetTrunkHostInterfaceOrchestrator,
+    )
+
+    assert EthernetTrunkHostInterfaceOrchestrator.supports_gathered_server_filtering is True
+
+    spec = EthernetTrunkHostInterfaceOrchestrator.gathered_lucene_spec
+    assert spec is not None
+    assert ("interfaceType", "ethernet") in spec.base_terms
+    assert ("policyType", "trunkHost") in spec.base_terms
+    assert spec.field_map == {("interface_name",): "interfaceName"}

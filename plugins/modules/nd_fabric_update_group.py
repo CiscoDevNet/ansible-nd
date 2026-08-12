@@ -5,7 +5,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
+ANSIBLE_METADATA = {
+    "metadata_version": "1.1",
+    "status": ["preview"],
+    "supported_by": "community",
+}
 
 DOCUMENTATION = r"""
 ---
@@ -28,6 +32,13 @@ options:
   config:
     description:
     - The list of fabric update groups to configure.
+    - Required for O(state=merged) (when O(auto_assign) is not used), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - When provided with O(state=gathered), each item acts as a filter criterion.
+    - For O(state=gathered), every supplied field is a filter criterion. Criteria within one list item use AND semantics,
+      while multiple list items use OR semantics.
+    - "Supported gathered filter properties: O(config.update_group_name), O(config.execution), O(config.contingency),
+      O(config.analysis), O(config.is_maintenance), O(config.is_disruptive_update), O(config.report_selection),
+      O(config.reports)."
     type: list
     elements: dict
     suboptions:
@@ -35,8 +46,9 @@ options:
         description:
         - The name of the update group.
         - The O(config.update_group_name) must be defined when creating, updating or deleting an update group.
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       execution:
         description:
         - The execution strategy for the upgrade run.
@@ -85,7 +97,6 @@ options:
         - When V(false), an ND warning (for example, that upgrading the selected switches would impact all
           roles in the fabric) fails the task. Set V(true) to acknowledge such warnings and apply anyway.
         type: bool
-        default: false
       installation_order_devices:
         description:
         - The order in which switches are upgraded when O(config.execution=serial).
@@ -175,9 +186,11 @@ options:
     - Use O(state=overridden) to enforce the configuration as the single source of truth.
       Update groups on ND but not in the configuration will be deleted. Use with caution.
     - Use O(state=deleted) to delete the update groups specified in the configuration.
+    - Use O(state=gathered) to read all user-managed fabric update groups in the fabric without making changes.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -224,6 +237,18 @@ EXAMPLES = r"""
     fabric_name: SITE1
     auto_assign: roleBased
     state: merged
+
+- name: Gather all fabric update groups
+  cisco.nd.nd_fabric_update_group:
+    fabric_name: SITE1
+    state: gathered
+
+- name: Gather only the update group named leaf_group
+  cisco.nd.nd_fabric_update_group:
+    fabric_name: SITE1
+    config:
+      - update_group_name: leaf_group
+    state: gathered
 """
 
 RETURN = r"""
@@ -233,14 +258,26 @@ import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_group.fabric_update_group import FabricUpdateGroupModel
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    require_pydantic,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_group.fabric_update_group import (
+    FabricUpdateGroupModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_update_group import FabricUpdateGroupOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+    NDStateMachine,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_update_group import (
+    FabricUpdateGroupOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
@@ -313,7 +350,7 @@ def _validate_report_analysis_exclusion(module: AnsibleModule) -> None:
 
     Calls `module.fail_json` (which raises) on a conflicting config item.
     """
-    if module.params.get("state") == "deleted":
+    if module.params.get("state") in ("deleted", "gathered"):
         return
     for item in module.params.get("config") or []:
         if not isinstance(item, dict):
@@ -339,6 +376,11 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
         mutually_exclusive=[["config", "auto_assign"]],
+        required_if=[
+            ("state", "replaced", ("config",)),
+            ("state", "overridden", ("config",)),
+            ("state", "deleted", ("config",)),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
@@ -357,7 +399,11 @@ def main():
 
         output = NDOutput(output_level=module.params.get("output_level", "normal"))
         try:
-            module_log.debug("auto_assign begin auto_assign=%s check_mode=%s", auto_assign, module.check_mode)
+            module_log.debug(
+                "auto_assign begin auto_assign=%s check_mode=%s",
+                auto_assign,
+                module.check_mode,
+            )
             _run_auto_assign(module, output)
             module_log.debug("auto_assign end")
             module.exit_json(**output.format())
@@ -372,7 +418,11 @@ def main():
     )
 
     try:
-        module_log.debug("manage_state begin state=%s check_mode=%s", module.params.get("state"), module.check_mode)
+        module_log.debug(
+            "manage_state begin state=%s check_mode=%s",
+            module.params.get("state"),
+            module.check_mode,
+        )
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
         module.exit_json(**nd_state_machine.output.format())
