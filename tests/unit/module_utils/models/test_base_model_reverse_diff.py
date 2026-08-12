@@ -665,10 +665,11 @@ def test_base_model_reverse_diff_00550() -> None:
 
 # The ND-injected `ptp` echo observed on port-channel policy GETs (deviation: interface-get-undocumented-ptp-field).
 # `ptp` is deliberately NOT a field on PortChannelTrunkHostPolicyModel: intPortChannelTrunkHostTemplate declares no
-# such property, and a lab probe (2026-08-12, SITE1, ND 4.2.1.10, fabric PTP disabled) proved ND persists and echoes
-# a client-sent `ptp` but generates ZERO pending CLI from it there; on a PTP-enabled fabric the fabric-level deploy
-# owns the stored value fabric-wide regardless of per-interface intent. Like the sibling ethernet/vPC models, the
-# injected key is dropped at parse time by `extra="ignore"`, so no reverse-pass exclusion is needed.
+# such property, and lab probes (2026-08-12, SITE1, ND 4.2.1.10, all three fabric-PTP regimes: disabled,
+# enabled-not-deployed, deployed) proved ND persists and echoes a client-sent `ptp` but generates ZERO pending CLI
+# from it in every regime; ND's own PTP CLI lands only on physical interfaces, never under port-channels. Like the
+# sibling ethernet/vPC models, the injected key is dropped at parse time by `extra="ignore"`, so no reverse-pass
+# exclusion is needed.
 PORT_CHANNEL_TRUNK_HOST_PTP_ECHO = {
     "policyType": "trunkPoHost",
     "adminState": True,
@@ -738,10 +739,10 @@ def test_base_model_reverse_diff_00580() -> None:
     # Summary
 
     `ptp` is not part of the model's writable surface: it is not a declared field, and a response-injected value is
-    dropped entirely at parse time (no attribute, absent from every dump) rather than retained as an extra. A lab
-    probe (2026-08-12, SITE1, ND 4.2.1.10, fabric PTP disabled) proved a client-sent `ptp` is persist-but-inert
-    there — ND stores and echoes it but generates no pending CLI — and on a PTP-enabled fabric the fabric-level
-    deploy owns the stored value fabric-wide, so exposing it would fake per-interface control in both regimes.
+    dropped entirely at parse time (no attribute, absent from every dump) rather than retained as an extra. Lab
+    probes (2026-08-12, SITE1, ND 4.2.1.10) covered all three fabric-PTP regimes — disabled, enabled-not-deployed,
+    and deployed — and in every one a client-sent `ptp` is persist-but-inert: ND stores and echoes it but generates
+    no pending CLI, so exposing the field would fake per-interface control unconditionally.
 
     ## Test
 
