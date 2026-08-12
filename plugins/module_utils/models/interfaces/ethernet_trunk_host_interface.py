@@ -33,6 +33,7 @@ wrapping or flattening.
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from typing import Annotated, Any, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -565,6 +566,17 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
     identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
 
+    # --- Gathered Filtering Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.allowed_vlans",
+        "config_data.network_os.policy.native_vlan",
+    )
+
     # --- Serialization Configuration ---
 
     payload_exclude_fields: ClassVar[set[str]] = {"switch_ip"}
@@ -614,6 +626,27 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
         """
         return normalize_ethernet_interface_name(value)
 
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """
+        # Summary
+
+        Normalize a partial gathered-state filter.
+
+        Gathered filters are not complete EthernetTrunkHostInterfaceModel instances,
+        so the normal Pydantic interface_name validator does not run against them.
+        This method applies the same canonical prefix normalization so that filter
+        matching works regardless of user-supplied casing or abbreviation.
+
+        ## Raises
+
+        None
+        """
+        normalized = deepcopy(filter_item)
+        if "interface_name" in normalized:
+            normalized["interface_name"] = normalize_ethernet_interface_name(normalized["interface_name"])
+        return normalized
+
     # --- Argument Spec ---
 
     @classmethod
@@ -632,10 +665,10 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
-                    switch_ip=dict(type="str", required=True),
-                    interface_names=dict(type="list", elements="str", required=True),
+                    switch_ip=dict(type="str", required=False),
+                    interface_names=dict(type="list", elements="str", required=False),
                     config_data=dict(
                         type="dict",
                         options=dict(
@@ -709,6 +742,6 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )
