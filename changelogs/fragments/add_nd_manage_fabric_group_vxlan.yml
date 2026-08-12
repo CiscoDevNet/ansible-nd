@@ -1,7 +1,0 @@
----
-minor_changes:
-  - Add ``nd_manage_fabric_group_vxlan`` module to manage VXLAN Fabric Groups (MSD)
-    on Cisco Nexus Dashboard. The module aligns to the shared fabric framework with an
-    auto-generated argument spec from the pydantic model, ``NDStateMachine`` orchestration,
-    and ``config_actions`` save/deploy controls, and supports the ``merged``, ``replaced``,
-    ``overridden``, and ``deleted`` states.
