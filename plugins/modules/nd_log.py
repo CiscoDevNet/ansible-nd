@@ -51,17 +51,18 @@ EXAMPLES = r"""
 
 - name: Log start of work
   cisco.nd.nd_log:
-    msg: Starting Nexus Dashboard version query
+    msg: Starting Nexus Dashboard query
     severity: INFO
 
-- name: Query Nexus Dashboard version
-  cisco.nd.nd_version:
-    state: query
+- name: Query Nexus Dashboard via REST
+  cisco.nd.nd_rest:
+    path: /nexus/infra/api/aaa/v4/securitydomains
+    method: get
   register: query_result
 
 - name: Log completion
   cisco.nd.nd_log:
-    msg: Nexus Dashboard version query complete
+    msg: Nexus Dashboard query complete
     severity: INFO
 """
 

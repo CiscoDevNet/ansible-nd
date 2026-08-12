@@ -2,34 +2,194 @@
 requires_ansible: '>=2.16.0'
 action_groups:
   all:
-    - nd_api_key
-    - nd_backup
-    - nd_backup_restore
-    - nd_cluster_config_route
-    - nd_compliance_analysis
-    - nd_compliance_requirement_communication
-    - nd_compliance_requirement_config_import
-    - nd_compliance_requirement_config_manual
-    - nd_compliance_requirement_config_snapshot
-    - nd_compliance_requirement_config_template
-    - nd_delta_analysis
-    - nd_epoch
-    - nd_federation_member
-    - nd_flow_rules
-    - nd_instant_assurance_analysis
-    - nd_interface_flow_rules
-    - nd_pcv
-    - nd_pcv_compliance
-    - nd_pcv_delta_analysis
-    - nd_policy_cam_statistics_hit_counts
+    - nd_fabric_update_group
+    - nd_interface_ethernet_access
+    - nd_interface_ethernet_trunk_host
+    - nd_interface_loopback
+    - nd_interface_port_channel_access
+    - nd_interface_port_channel_trunk_host
+    - nd_interface_subinterface_managed
+    - nd_interface_subinterface_unmanaged
+    - nd_interface_svi
+    - nd_interface_vpc_access
+    - nd_interface_vpc_trunk_host
+    - nd_local_user
+    - nd_log
+    - nd_maintenance_mode
+    - nd_manage_acl
+    - nd_manage_fabric_ai_ebgp_vxlan
+    - nd_manage_fabric_ai_ibgp_vxlan
+    - nd_manage_fabric_ebgp_vxlan
+    - nd_manage_fabric_external
+    - nd_manage_fabric_ibgp_vxlan
+    - nd_manage_l3out
+    - nd_manage_networks
+    - nd_manage_policy
+    - nd_manage_policy_group
+    - nd_manage_prefix_list
+    - nd_manage_resource_manager
+    - nd_manage_route_map
+    - nd_manage_switches
+    - nd_manage_vpc_pair
+    - nd_manage_vrfs
     - nd_rest
-    - nd_service
-    - nd_service_instance
-    - nd_setup
-    - nd_site
-    - nd_snapshot
-    - nd_version
 plugin_routing:
   modules:
+    # Legacy modules removed in 2.0.0. They target Nexus Dashboard <= 3.2 APIs,
+    # which the unified Nexus Dashboard (4.2+) no longer exposes.
+    nd_api_key:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_api_key was removed in cisco.nd 2.0.0. It targets Nexus Dashboard <= 3.2 APIs
+          that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_backup:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_backup was removed in cisco.nd 2.0.0. It targets Nexus Dashboard <= 3.2 APIs
+          that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_backup_restore:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_backup_restore was removed in cisco.nd 2.0.0. It targets Nexus Dashboard <= 3.2 APIs
+          that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_cluster_config_route:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_cluster_config_route was removed in cisco.nd 2.0.0. It targets Nexus Dashboard <= 3.2 APIs
+          that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_compliance_analysis:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_compliance_analysis was removed in cisco.nd 2.0.0. It targets the Nexus Dashboard Insights
+          <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_compliance_requirement_communication:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_compliance_requirement_communication was removed in cisco.nd 2.0.0. It targets the Nexus
+          Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_compliance_requirement_config_import:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_compliance_requirement_config_import was removed in cisco.nd 2.0.0. It targets the Nexus
+          Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_compliance_requirement_config_manual:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_compliance_requirement_config_manual was removed in cisco.nd 2.0.0. It targets the Nexus
+          Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_compliance_requirement_config_snapshot:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_compliance_requirement_config_snapshot was removed in cisco.nd 2.0.0. It targets the Nexus
+          Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_compliance_requirement_config_template:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_compliance_requirement_config_template was removed in cisco.nd 2.0.0. It targets the Nexus
+          Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_delta_analysis:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_delta_analysis was removed in cisco.nd 2.0.0. It targets the Nexus Dashboard Insights
+          <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
     nd_epoch:
-      redirect: cisco.nd.nd_snapshot
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_epoch was removed in cisco.nd 2.0.0. It was an alias for nd_snapshot, which targets the
+          Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_federation_member:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_federation_member was removed in cisco.nd 2.0.0. It targets Nexus Dashboard <= 3.2 APIs
+          that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_flow_rules:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_flow_rules was removed in cisco.nd 2.0.0. It targets the Nexus Dashboard Insights
+          <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_instant_assurance_analysis:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_instant_assurance_analysis was removed in cisco.nd 2.0.0. It targets the Nexus Dashboard
+          Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_interface_flow_rules:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_interface_flow_rules was removed in cisco.nd 2.0.0. It targets the Nexus Dashboard Insights
+          <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_pcv:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_pcv was removed in cisco.nd 2.0.0. It targets the Nexus Dashboard Insights <= 3.2 APIs
+          that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_pcv_compliance:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_pcv_compliance was removed in cisco.nd 2.0.0. It targets the Nexus Dashboard Insights
+          <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_pcv_delta_analysis:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_pcv_delta_analysis was removed in cisco.nd 2.0.0. It targets the Nexus Dashboard Insights
+          <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_policy_cam_statistics_hit_counts:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_policy_cam_statistics_hit_counts was removed in cisco.nd 2.0.0. It targets the Nexus
+          Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_service:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_service was removed in cisco.nd 2.0.0. It targets Nexus Dashboard <= 3.2 APIs
+          that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_service_instance:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_service_instance was removed in cisco.nd 2.0.0. It targets Nexus Dashboard <= 3.2 APIs
+          that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_setup:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_setup was removed in cisco.nd 2.0.0. It targets Nexus Dashboard <= 3.2 APIs
+          that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_site:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_site was removed in cisco.nd 2.0.0. It targets Nexus Dashboard <= 3.2 APIs
+          that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_snapshot:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_snapshot was removed in cisco.nd 2.0.0. It targets the Nexus Dashboard Insights
+          <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+    nd_version:
+      tombstone:
+        removal_version: 2.0.0
+        warning_text: >-
+          nd_version was removed in cisco.nd 2.0.0. It relies on the legacy /version.json endpoint
+          that unified Nexus Dashboard 4.2+ no longer exposes.

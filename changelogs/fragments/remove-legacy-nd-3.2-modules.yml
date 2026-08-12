@@ -1,0 +1,34 @@
+---
+breaking_changes:
+  - The cisco.nd collection 2.0.0 targets the unified Nexus Dashboard (4.2+) OpenAPI. All modules
+    that only supported Nexus Dashboard 3.2 and earlier have been removed. To manage Nexus Dashboard
+    3.2 or earlier, pin ``cisco.nd`` to a ``1.x`` release. See the removed_features list for the
+    modules affected and manage the two generations from separate virtual environments or Execution
+    Environments, since only one version of a collection can be installed per collection path.
+removed_features:
+  - nd_api_key - removed; targeted Nexus Dashboard <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_backup - removed; targeted Nexus Dashboard <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_backup_restore - removed; targeted Nexus Dashboard <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_cluster_config_route - removed; targeted Nexus Dashboard <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_compliance_analysis - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_compliance_requirement_communication - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_compliance_requirement_config_import - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_compliance_requirement_config_manual - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_compliance_requirement_config_snapshot - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_compliance_requirement_config_template - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_delta_analysis - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_epoch - removed; was an alias for nd_snapshot, which targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_federation_member - removed; targeted Nexus Dashboard <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_flow_rules - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_instant_assurance_analysis - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_interface_flow_rules - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_pcv - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_pcv_compliance - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_pcv_delta_analysis - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_policy_cam_statistics_hit_counts - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_service - removed; targeted Nexus Dashboard <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_service_instance - removed; targeted Nexus Dashboard <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_setup - removed; targeted Nexus Dashboard <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_site - removed; targeted Nexus Dashboard <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_snapshot - removed; targeted the Nexus Dashboard Insights <= 3.2 APIs that unified Nexus Dashboard 4.2+ no longer exposes.
+  - nd_version - removed; relied on the legacy /version.json endpoint that unified Nexus Dashboard 4.2+ no longer exposes.
