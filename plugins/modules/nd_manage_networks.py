@@ -152,6 +152,28 @@ options:
           attachment_options:
             description: Switch-specific attachment options.
             type: dict
+            suboptions:
+              dpu_secure:
+                description: Enable DPU secure mode for this attachment.
+                type: bool
+              dpu_affinity:
+                description: DPU affinity for this attachment.
+                type: str
+                choices: [ dynamic, dpu1, dpu2, dpu3, dpu4 ]
+              svi_enabled:
+                description: Enable SVI for this attachment.
+                type: bool
+              switch_route_target_import:
+                description: Switch-level route-target import values.
+                type: list
+                elements: str
+              switch_route_target_export:
+                description: Switch-level route-target export values.
+                type: list
+                elements: str
+              is_active:
+                description: Mark this attachment as active.
+                type: bool
           extra_config:
             description: Raw attachment extra config.
             type: str

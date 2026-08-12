@@ -32,6 +32,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
     NetworkSwitchesListModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_attachment_models import (
+    NetworkAttachmentInstanceValuesModel,
     NetworkAttachmentModel,
     NetworkAttachDetachPayloadModel,
     NetworkAttachmentQueryRequestModel,
@@ -189,29 +190,24 @@ class NetworkAttachmentManager:
         for network in config:
             network_name = network.get("network_name") or network.get("networkName")
             for attachment in network.get("attach") or []:
-                ip_address = attachment.get("ip_address") or attachment.get("ipAddress")
+                ip_address = attachment.get("ip_address")
                 switch_id = ip_to_switch.get(ip_address)
                 if not network_name or not switch_id:
                     continue
                 payload = {
                     "networkName": network_name,
                     "switchId": switch_id,
-                    "vlanId": attachment.get("vlan_id") or attachment.get("vlanId"),
+                    "vlanId": attachment.get("vlan_id"),
                     "interfaces": self._attachment_interfaces(attachment),
-                    "instanceValues": attachment.get("attachment_options"),
-                    "extraConfig": attachment.get("extra_config") or attachment.get("extraConfig"),
+                    "instanceValues": self.attachment_instance_values(attachment) if attachment.get("attachment_options") is not None else None,
+                    "extraConfig": attachment.get("extra_config"),
                     "attach": True,
                 }
                 desired[(network_name, switch_id)] = {k: v for k, v in payload.items() if v is not None}
         return desired
 
     def resolve_switch_ids(self, module_args: dict, strategy: BaseNetworkStrategy, config: list[dict]) -> dict[str, str]:
-        wanted_ips = {
-            attachment.get("ip_address") or attachment.get("ipAddress")
-            for network in config
-            for attachment in network.get("attach") or []
-            if attachment.get("ip_address") or attachment.get("ipAddress")
-        }
+        wanted_ips = {attachment.get("ip_address") for network in config for attachment in network.get("attach") or [] if attachment.get("ip_address")}
         if not wanted_ips:
             self._trace("network_attachment_switch_resolve_end", requested_count=0, resolved_count=0)
             return {}
@@ -240,16 +236,16 @@ class NetworkAttachmentManager:
             return None
         payloads = []
         for interface in interfaces:
-            mapping_type = interface.get("mapping_type") or interface.get("mappingType")
+            mapping_type = interface.get("mapping_type")
             payload = {
                 "mode": interface.get("mode") or NetworkAttachmentMode.ACCESS.value,
-                "interfaceRange": interface.get("interface_range") or interface.get("interfaceRange"),
-                "interfaceGroupName": interface.get("interface_group_name") or interface.get("interfaceGroupName"),
-                "nativeVlan": interface.get("native_vlan") if "native_vlan" in interface else interface.get("nativeVlan"),
+                "interfaceRange": interface.get("interface_range"),
+                "interfaceGroupName": interface.get("interface_group_name"),
+                "nativeVlan": interface.get("native_vlan"),
             }
             if mapping_type:
                 mapping = {"mappingType": mapping_type}
-                customer_vlan = interface.get("customer_vlan") or interface.get("customerVlan")
+                customer_vlan = interface.get("customer_vlan")
                 if mapping_type == MappingType.SINGLE.value and customer_vlan is not None:
                     mapping["customerVlan"] = customer_vlan
                 payload["mapping"] = mapping
@@ -474,8 +470,20 @@ class NetworkAttachmentManager:
 
     @staticmethod
     def attachment_instance_values(attachment: dict[str, Any]) -> dict[str, Any]:
-        """Return playbook attachment options that map to ND instanceValues."""
-        return attachment.get("attachment_options") or {}
+        """Map playbook attachment options to ND instanceValues."""
+        attachment_options = attachment.get("attachment_options") or {}
+        raw = {
+            "dpu_secure": attachment_options.get("dpu_secure"),
+            "dpu_affinity": attachment_options.get("dpu_affinity"),
+            "svi_enabled": attachment_options.get("svi_enabled"),
+            "switch_route_target_import": attachment_options.get("switch_route_target_import"),
+            "switch_route_target_export": attachment_options.get("switch_route_target_export"),
+            "is_active": attachment_options.get("is_active"),
+        }
+        raw = {key: value for key, value in raw.items() if value is not None}
+        if not raw:
+            return {}
+        return NetworkAttachmentInstanceValuesModel(**raw).to_payload()
 
     @staticmethod
     def switch_ip_candidates(switch: dict[str, Any]) -> set[str]:

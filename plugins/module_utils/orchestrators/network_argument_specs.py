@@ -4,6 +4,7 @@
 """Argument-spec helpers for nd_manage_networks.py."""
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
+    DpuAffinity,
     MappingType,
     NetworkAttachmentMode,
     NetworkLayer,
@@ -29,13 +30,24 @@ def _network_interface_spec():
     )
 
 
+def _attachment_options_spec():
+    return dict(
+        dpu_secure=dict(type="bool"),
+        dpu_affinity=dict(type="str", choices=DpuAffinity.choices()),
+        svi_enabled=dict(type="bool"),
+        switch_route_target_import=dict(type="list", elements="str"),
+        switch_route_target_export=dict(type="list", elements="str"),
+        is_active=dict(type="bool"),
+    )
+
+
 def _attachment_spec():
     return dict(
         ip_address=dict(type="str", required=True),
         vlan_id=dict(type="int"),
         interfaces=dict(type="list", elements="dict", required=True, options=_network_interface_spec()),
         deploy=dict(type="bool", default=True),
-        attachment_options=dict(type="dict"),
+        attachment_options=dict(type="dict", options=_attachment_options_spec()),
         extra_config=dict(type="str"),
     )
 

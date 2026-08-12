@@ -176,6 +176,9 @@ def test_network_parent_argument_spec_includes_child_config():
     assert "ports" not in spec["attach"]["options"]
     assert "tor_ports" not in spec["attach"]["options"]
     assert "attachment_options" in spec["attach"]["options"]
+    assert spec["attach"]["options"]["attachment_options"]["options"]["svi_enabled"]["type"] == "bool"
+    assert spec["attach"]["options"]["attachment_options"]["options"]["dpu_affinity"]["choices"] == ["dynamic", "dpu1", "dpu2", "dpu3", "dpu4"]
+    assert spec["attach"]["options"]["attachment_options"]["options"]["switch_route_target_import"]["elements"] == "str"
     assert "instance_values" not in spec["attach"]["options"]
     assert "net_name" in spec
     assert "net_id" in spec
@@ -1111,8 +1114,9 @@ def test_attachment_options_replace_instance_values():
                         }
                     ],
                     "attachment_options": {
-                        "sviEnabled": True,
-                        "dpuSecure": False,
+                        "svi_enabled": True,
+                        "dpu_secure": False,
+                        "switch_route_target_import": ["65000:100"],
                     },
                 }
             ],
@@ -1120,7 +1124,11 @@ def test_attachment_options_replace_instance_values():
     )
     config = model.to_config()
 
-    assert config["attach"][0]["attachment_options"] == {"sviEnabled": True, "dpuSecure": False}
+    assert config["attach"][0]["attachment_options"] == {
+        "dpu_secure": False,
+        "svi_enabled": True,
+        "switch_route_target_import": ["65000:100"],
+    }
 
     orchestrator = _orchestrator()
     manager = NetworkAttachmentManager(coordinator=None)
@@ -1129,9 +1137,34 @@ def test_attachment_options_replace_instance_values():
     desired = manager.desired_attachment_map(module_args, orchestrator.strategy)
 
     assert desired[("ATTACH_OPTIONS", "FDO123")]["instanceValues"] == {
-        "sviEnabled": True,
         "dpuSecure": False,
+        "sviEnabled": True,
+        "switchRouteTargetImport": ["65000:100"],
     }
+
+
+def test_attachment_config_rejects_camelcase_aliases():
+    with pytest.raises(ValueError, match="ipAddress|interfaceRange|sviEnabled|Extra inputs"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "ATTACH_ALIAS_REJECT",
+                "is_l2only": True,
+                "attach": [
+                    {
+                        "ipAddress": "10.1.1.11",
+                        "interfaces": [
+                            {
+                                "mode": "access",
+                                "interfaceRange": "Ethernet1/1",
+                            }
+                        ],
+                        "attachmentOptions": {
+                            "sviEnabled": True,
+                        },
+                    }
+                ],
+            }
+        )
 
 
 def test_resolve_switch_ids_accepts_fabric_management_ip():

@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
     Field,
     field_validator,
     model_validator,
@@ -61,53 +62,46 @@ class VrfAttachmentOptionsConfigModel(NDNestedModel):
     field name directly.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     identifiers: ClassVar[list[str]] = []
 
     dpu_secure: bool | None = Field(
         default=None,
-        alias="dpuSecure",
         description="Enable DPU secure mode for this attachment",
     )
     dpu_affinity: DpuAffinity | None = Field(
         default=None,
-        alias="dpuAffinity",
         description="DPU affinity for this attachment",
     )
     loopback_id: int | None = Field(
         default=None,
-        alias="loopbackId",
         ge=0,
         le=1023,
         description="Attachment loopback interface identifier (0-1023)",
     )
     loopback_ipv4_address: str | None = Field(
         default=None,
-        alias="loopbackIpv4Address",
         description="Attachment loopback IPv4 address",
     )
     loopback_ipv6_address: str | None = Field(
         default=None,
-        alias="loopbackIpv6Address",
         description="Attachment loopback IPv6 address",
     )
     import_vpn_rt: list[str] | None = Field(
         default=None,
-        alias="importVpnRt",
         description="Attachment-level VPN import route targets",
     )
     export_vpn_rt: list[str] | None = Field(
         default=None,
-        alias="exportVpnRt",
         description="Attachment-level VPN export route targets",
     )
     import_evpn_rt: list[str] | None = Field(
         default=None,
-        alias="importEvpnRt",
         description="Attachment-level EVPN import route targets",
     )
     export_evpn_rt: list[str] | None = Field(
         default=None,
-        alias="exportEvpnRt",
         description="Attachment-level EVPN export route targets",
     )
 
@@ -148,20 +142,19 @@ class VrfAttachmentConfigModel(NDNestedModel):
     are translated to API ``instanceValues`` internally.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     identifiers: ClassVar[list[str]] = []
 
     ip_address: str = Field(
-        alias="ipAddress",
         description="Management IP address of the switch to attach this VRF to",
     )
     freeform_config: str | None = Field(
         default=None,
-        alias="freeformConfig",
         description="Additional free-form CLI configuration mapped to API extraConfig",
     )
     attachment_options: VrfAttachmentOptionsConfigModel | None = Field(
         default=None,
-        alias="attachmentOptions",
         description="Attachment-specific options mapped to API instanceValues",
     )
 

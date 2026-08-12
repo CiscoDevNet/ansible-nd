@@ -376,6 +376,29 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
         assert attachment_options["export_evpn_rt"] == ["65000:13"]
 
 
+def test_vrfs_00025a_config_model_rejects_attachment_aliases():
+    """
+    # Summary
+
+    Verify playbook-facing VRF attachment config accepts snake_case only.
+    """
+    with pytest.raises(ValidationError, match="ipAddress|freeformConfig|attachmentOptions|dpuSecure|Extra inputs"):
+        VrfConfigModel.from_config(
+            {
+                "vrf_name": "ansible-vrf-attach-alias",
+                "attach": [
+                    {
+                        "ipAddress": "192.168.1.224",
+                        "freeformConfig": "interface loopback10",
+                        "attachmentOptions": {
+                            "dpuSecure": True,
+                        },
+                    }
+                ],
+            }
+        )
+
+
 def test_vrfs_00026_config_models_match_argument_specs():
     """
     # Summary

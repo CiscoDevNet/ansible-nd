@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
     Field,
     field_validator,
     model_validator,
@@ -18,6 +19,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
+    DpuAffinity,
     MappingType,
     NetworkType,
 )
@@ -36,14 +38,16 @@ _CUSTOM_NETWORK_TEMPLATE_FIELDS = (
 class NetworkInterfaceConfigModel(NDNestedModel):
     """Playbook-facing network interface attachment entry."""
 
+    model_config = ConfigDict(extra="forbid")
+
     identifiers: ClassVar[list[str]] = []
 
     mode: str = Field(default=...)
-    interface_range: str = Field(default=..., alias="interfaceRange")
-    interface_group_name: str | None = Field(default=None, alias="interfaceGroupName")
-    native_vlan: bool | None = Field(default=False, alias="nativeVlan")
-    mapping_type: str | None = Field(default=None, alias="mappingType")
-    customer_vlan: int | None = Field(default=None, alias="customerVlan")
+    interface_range: str = Field(default=...)
+    interface_group_name: str | None = Field(default=None)
+    native_vlan: bool | None = Field(default=False)
+    mapping_type: str | None = Field(default=None)
+    customer_vlan: int | None = Field(default=None)
 
     @field_validator("interface_range", "interface_group_name", mode="before")
     @classmethod
@@ -62,17 +66,34 @@ class NetworkInterfaceConfigModel(NDNestedModel):
         return self
 
 
-class NetworkAttachmentConfigModel(NDNestedModel):
-    """Playbook-facing switch attachment entry."""
+class NetworkAttachmentOptionsConfigModel(NDNestedModel):
+    """Playbook-facing network attachment instance values."""
+
+    model_config = ConfigDict(extra="forbid")
 
     identifiers: ClassVar[list[str]] = []
 
-    ip_address: str = Field(alias="ipAddress")
-    vlan_id: int | None = Field(default=None, alias="vlanId")
+    dpu_secure: bool | None = Field(default=None)
+    dpu_affinity: DpuAffinity | None = Field(default=None)
+    svi_enabled: bool | None = Field(default=None)
+    switch_route_target_import: list[str] | None = Field(default=None)
+    switch_route_target_export: list[str] | None = Field(default=None)
+    is_active: bool | None = Field(default=None)
+
+
+class NetworkAttachmentConfigModel(NDNestedModel):
+    """Playbook-facing switch attachment entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    identifiers: ClassVar[list[str]] = []
+
+    ip_address: str
+    vlan_id: int | None = Field(default=None)
     interfaces: list[NetworkInterfaceConfigModel] = Field(default=...)
     deploy: bool | None = True
-    attachment_options: dict[str, Any] | None = None
-    extra_config: str | None = Field(default=None, alias="extraConfig")
+    attachment_options: NetworkAttachmentOptionsConfigModel | None = Field(default=None)
+    extra_config: str | None = Field(default=None)
 
     @field_validator("ip_address", mode="before")
     @classmethod
