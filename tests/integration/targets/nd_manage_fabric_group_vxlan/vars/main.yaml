@@ -6,9 +6,7 @@ fg_vxlan_test_deleted: "fg_vxlan_test_deleted"
 
 # Common VXLAN Fabric Group (MSD) configuration for all fabric group tests
 fabric_config_fg_vxlan:
-  category: fabricGroup
   management:
-    type: vxlan
     l2_vni_range: "30000-49000"
     l3_vni_range: "50000-59000"
     downstream_vni: false

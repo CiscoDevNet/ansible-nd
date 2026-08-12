@@ -18,7 +18,7 @@ version_added: "2.0.0"
 short_description: Manage VXLAN Fabric Groups (MSD) on Cisco Nexus Dashboard
 description:
 - Manage VXLAN Fabric Groups (Multi-Site Domain) on Cisco Nexus Dashboard (ND).
-- It supports creating, updating, replacing, deleting, and gathering VXLAN fabric groups.
+- It supports creating, updating, replacing and deleting VXLAN fabric groups.
 - Fabric groups aggregate multiple member fabrics for multi-site operations.
 author:
 - Matt Tarkington (@mtarking)
@@ -36,11 +36,6 @@ options:
         - The O(config.fabric_name) must be defined when creating, updating or deleting a fabric group.
         type: str
         required: true
-      category:
-        description:
-        - The resource category. Must be C(fabricGroup) for fabric groups.
-        type: str
-        default: fabricGroup
       management:
         description:
         - The VXLAN fabric group management configuration.
@@ -48,12 +43,6 @@ options:
         type: dict
         suboptions:
           # General
-          type:
-            description:
-            - The fabric group management type. Must be C(vxlan) for VXLAN fabric groups.
-            type: str
-            default: vxlan
-            choices: [ vxlan ]
           l2_vni_range:
             description:
             - The Layer 2 VNI range (minimum 1, maximum 16777214).
@@ -335,10 +324,36 @@ options:
     - Use O(state=overridden) to enforce the configuration as the single source of truth.
       Any fabric group existing on ND but not present in the configuration will be deleted. Use with extra caution.
     - Use O(state=deleted) to remove the fabric groups specified in the configuration from the Cisco Nexus Dashboard.
-    - Use O(state=gathered) to query the current state of fabric groups from ND without making any changes.
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted, gathered ]
+    choices: [ merged, replaced, deleted, overridden ]
+  config_actions:
+    description:
+    - Controls save and deploy behavior after fabric group configuration is updated.
+    - Save writes pending configuration to the controller.
+    - Deploy pushes the saved configuration to switches.
+    - Skipped automatically when O(state=deleted) or when no changes are made.
+    type: dict
+    suboptions:
+      save:
+        description:
+        - Whether to save fabric group configuration after changes.
+        type: bool
+        default: false
+      deploy:
+        description:
+        - Whether to deploy fabric group configuration to switches after saving.
+        - Requires O(config_actions.save=true) when enabled.
+        type: bool
+        default: false
+      type:
+        description:
+        - Scope of the deploy operation.
+        - C(switch) deploys only to affected switches.
+        - C(global) deploys to all switches in the fabric group.
+        type: str
+        default: switch
+        choices: [ switch, global ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -355,9 +370,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_fabric_group
-        category: fabricGroup
         management:
-          type: vxlan
           l2_vni_range: "30000-49000"
           l3_vni_range: "50000-59000"
           anycast_gateway_mac: "2020.0000.00aa"
@@ -384,9 +397,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_fabric_group
-        category: fabricGroup
         management:
-          type: vxlan
           l2_vni_range: "30000-49000"
           l3_vni_range: "50000-59000"
           anycast_gateway_mac: "2020.0000.00aa"
@@ -407,9 +418,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_secure_group
-        category: fabricGroup
         management:
-          type: vxlan
           l2_vni_range: "30000-49000"
           l3_vni_range: "50000-59000"
           anycast_gateway_mac: "2020.0000.00aa"
@@ -424,9 +433,7 @@ EXAMPLES = r"""
     state: replaced
     config:
       - fabric_name: my_fabric_group
-        category: fabricGroup
         management:
-          type: vxlan
           l2_vni_range: "40000-59000"
           l3_vni_range: "60000-69000"
           anycast_gateway_mac: "2020.0000.00cc"
@@ -445,9 +452,6 @@ EXAMPLES = r"""
     state: replaced
     config:
       - fabric_name: my_fabric_group
-        category: fabricGroup
-        management:
-          type: vxlan
   register: result
 
 - name: Enforce exact fabric group inventory using state overridden (deletes unlisted groups)
@@ -455,18 +459,14 @@ EXAMPLES = r"""
     state: overridden
     config:
       - fabric_name: group_east
-        category: fabricGroup
         management:
-          type: vxlan
           l2_vni_range: "30000-49000"
           l3_vni_range: "50000-59000"
           anycast_gateway_mac: "2020.0000.0010"
           multisite_loopback_ip_range: "10.10.0.0/24"
           multisite_underlay_subnet_range: "10.10.1.0/24"
       - fabric_name: group_west
-        category: fabricGroup
         management:
-          type: vxlan
           l2_vni_range: "30000-49000"
           l3_vni_range: "50000-59000"
           anycast_gateway_mac: "2020.0000.0020"
@@ -490,24 +490,101 @@ EXAMPLES = r"""
       - fabric_name: group_old
   register: result
 
-- name: Gather current state of all VXLAN fabric groups
+- name: Save and deploy fabric group configuration after changes
   cisco.nd.nd_manage_fabric_group_vxlan:
-    state: gathered
+    state: merged
+    config:
+      - fabric_name: my_fabric_group
+        management:
+          l2_vni_range: "30000-49000"
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
   register: result
 """
 
 RETURN = r"""
+changed:
+    description: Whether the module made any changes.
+    type: bool
+    returned: always
+    sample: true
+before:
+    description:
+    - VXLAN fabric group configuration before changes.
+    - Queried from the controller and may contain read-only properties.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "my_fabric_group", "management": {"l2_vni_range": "30000-49000"}}]
+after:
+    description:
+    - VXLAN fabric group configuration after changes.
+    - Refreshed from the controller after write operations.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "my_fabric_group", "management": {"l2_vni_range": "40000-59000"}}]
+diff:
+    description: Configuration differences between before and after states.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "my_fabric_group", "management": {"l2_vni_range": "40000-59000"}}]
+proposed:
+    description: Proposed configuration sent to the module.
+    type: list
+    returned: info or debug output_level
+    sample: [{"fabric_name": "my_fabric_group", "management": {"l2_vni_range": "40000-59000"}}]
+output_level:
+    description: The output level set for the module.
+    type: str
+    returned: always
+    sample: normal
+logs:
+    description: Debug log messages from module execution.
+    type: list
+    returned: debug output_level
+    sample: ["Starting state machine for merged state"]
+api_paths:
+    description: API endpoint paths used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["/api/v1/manage/fabrics/my_fabric_group"]
+api_verbs:
+    description: HTTP methods used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["PUT"]
+api_response:
+    description: Full API responses from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"RETURN_CODE": 200, "MESSAGE": "Success"}]
+api_result:
+    description: Operation results from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"success": true, "changed": true}]
+api_diff:
+    description: API-level differences for each operation.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_metadata:
+    description: Operation metadata with sequence and identifiers.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_payload:
+    description: Request payloads sent to the API.
+    type: list
+    returned: verbosity >= 3 (-vvv)
 """
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import FabricGroupVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_group_vxlan import ManageFabricGroupVxlanOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 
 
 def main():
@@ -519,34 +596,59 @@ def main():
         supports_check_mode=True,
     )
 
-    state = module.params["state"]
+    require_pydantic(module)
+
+    # Parse and validate config_actions BEFORE any state mutation so invalid
+    # input fails deterministically on every run, including idempotent no-drift
+    # runs, and never mutates ND before failing.
+    config_actions = module.params.get("config_actions") or {}
+    save = config_actions.get("save", False)
+    deploy = config_actions.get("deploy", False)
+    deploy_type = config_actions.get("type", "switch")
+    state = module.params.get("state", "merged")
 
     try:
-        if state == "gathered":
-            # Handle gathered state: query and return without changes
-            nd_module = NDModule(module)
-            orchestrator = ManageFabricGroupVxlanOrchestrator(sender=nd_module)
-            response_data = orchestrator.query_all()
-            gathered = NDConfigCollection.from_api_response(
-                response_data=response_data,
-                model_class=FabricGroupVxlanModel,
-            )
-            output = NDOutput(output_level=module.params.get("output_level", "normal"))
-            output.assign(before=gathered, after=gathered)
-            module.exit_json(**output.format())
-        else:
-            # Handle merged/replaced/overridden/deleted states via the state machine
-            nd_state_machine = NDStateMachine(
-                module=module,
-                model_orchestrator=ManageFabricGroupVxlanOrchestrator,
-            )
-            nd_state_machine.manage_state()
-            module.exit_json(**nd_state_machine.output.format())
+        ManageFabricGroupVxlanOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+    except ValueError as e:
+        module.fail_json(msg=str(e))
+
+    nd_state_machine = None
+    try:
+        # Initialize StateMachine
+        nd_state_machine = NDStateMachine(
+            module=module,
+            model_orchestrator=ManageFabricGroupVxlanOrchestrator,
+        )
+
+        # Manage state
+        nd_state_machine.manage_state()
+
+        # Execute config save/deploy actions via orchestrator mixin (only on real changes)
+        if state != "deleted" and len(nd_state_machine.sent) > 0:
+            fabric_names = []
+            for item in nd_state_machine.sent:
+                name = item.get_identifier_value()
+                if name and name not in fabric_names:
+                    fabric_names.append(name)
+            if fabric_names:
+                nd_state_machine.model_orchestrator.execute_config_actions(
+                    fabric_names=fabric_names,
+                    save=save,
+                    deploy=deploy,
+                    deploy_type=deploy_type,
+                )
+
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except NDStateMachineError as e:
-        module.fail_json(msg=str(e))
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=str(e), **output)
     except Exception as e:
-        module.fail_json(msg="Module execution failed: {0}".format(str(e)))
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=f"Module execution failed: {str(e)}", **output)
 
 
 if __name__ == "__main__":

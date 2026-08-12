@@ -72,9 +72,7 @@
     state: merged
     config:
       - fabric_name: "{{ fg_vxlan_test_merged }}"
-        category: fabricGroup
         management:
-          type: vxlan
           anycast_gateway_mac: "2020.0000.00bb"
           multisite_delay_restore: 600
           auto_multisite_underlay_inter_connect: true
@@ -211,9 +209,7 @@
     state: replaced
     config:
       - fabric_name: "{{ fg_vxlan_test_replaced }}"
-        category: fabricGroup
         management:
-          type: vxlan
           l2_vni_range: "40000-59000"
           l3_vni_range: "60000-69000"
           anycast_gateway_mac: "2020.0000.00cc"
@@ -243,9 +239,7 @@
     state: replaced
     config:
       - fabric_name: "{{ fg_vxlan_test_replaced }}"
-        category: fabricGroup
         management:
-          type: vxlan
           l2_vni_range: "40000-59000"
           l3_vni_range: "60000-69000"
           anycast_gateway_mac: "2020.0000.00cc"
@@ -275,9 +269,7 @@
     state: replaced
     config:
       - fabric_name: "{{ fg_vxlan_test_replaced }}"
-        category: fabricGroup
         management:
-          type: vxlan
   register: fg_replaced_result_3
   tags: [test_fg_replaced, test_fg_replaced_update]
 
@@ -408,25 +400,6 @@
   tags: [test_fg_deleted, test_fg_deleted_idempotent]
 
 #############################################################################
-# TEST 4: STATE GATHERED - Gather current fabric group configuration
-#############################################################################
-- name: "TEST 4a: Gather all VXLAN fabric groups"
-  cisco.nd.nd_manage_fabric_group_vxlan:
-    <<: *nd_info
-    state: gathered
-  register: fg_gathered_result_1
-  tags: [test_fg_gathered]
-
-- name: "TEST 4a: Verify gathered state returns without changes"
-  assert:
-    that:
-      - fg_gathered_result_1 is not changed
-      - fg_gathered_result_1 is not failed
-    fail_msg: "Gathered state should not report changes"
-    success_msg: "Gathered state returned successfully without changes"
-  tags: [test_fg_gathered]
-
-#############################################################################
 # TEST 5: Multiple fabric group operations in single task
 #############################################################################
 - name: "TEST 5: Create multiple fabric groups in single task"
@@ -435,18 +408,14 @@
     state: merged
     config:
       - fabric_name: "multi_fg_1"
-        category: fabricGroup
         management:
-          type: vxlan
           l2_vni_range: "30000-49000"
           l3_vni_range: "50000-59000"
           anycast_gateway_mac: "2020.0000.0001"
           multisite_loopback_ip_range: "10.10.0.0/24"
           multisite_underlay_subnet_range: "10.10.1.0/24"
       - fabric_name: "multi_fg_2"
-        category: fabricGroup
         management:
-          type: vxlan
           l2_vni_range: "30000-49000"
           l3_vni_range: "50000-59000"
           anycast_gateway_mac: "2020.0000.0002"
@@ -501,9 +470,6 @@
       TEST 3: STATE DELETED
         - Delete fabric group: {{ 'PASSED' if fg_deleted_result_1 is changed else 'FAILED' }}
         - Idempotency: {{ 'PASSED' if fg_deleted_result_2 is not changed else 'FAILED' }}
-
-      TEST 4: STATE GATHERED
-        - Gather all: {{ 'PASSED' if fg_gathered_result_1 is not changed else 'FAILED' }}
 
       TEST 5: MULTI-CREATE
         - Multiple fabric groups: {{ 'PASSED' if fg_multi_result is changed else 'FAILED' }}

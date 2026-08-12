@@ -13,6 +13,7 @@ from typing import List, Dict, Optional, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import NdFabricName
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
@@ -28,6 +29,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_grou
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     BgpAuthenticationKeyTypeEnum,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import (
+    _build_options_from_model,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BGP_ASN_RE,
@@ -413,35 +417,52 @@ class FabricGroupVxlanModel(NDBaseModel):
 
     # Basic Fabric Group Properties
     category: Literal["fabricGroup"] = Field(description="Resource category", default="fabricGroup")
-    fabric_name: str = Field(alias="name", description="Fabric group name", min_length=1, max_length=64)
+    fabric_name: NdFabricName
 
     # Core Management Configuration
     management: VxlanFabricGroupManagementModel = Field(
         description="VXLAN fabric group management configuration", default_factory=VxlanFabricGroupManagementModel
     )
 
-    @field_validator("fabric_name")
-    @classmethod
-    def validate_fabric_name(cls, value: str) -> str:
-        if not re.match(r"^[a-zA-Z0-9_-]+$", value):
-            raise ValueError(f"Fabric group name can only contain letters, numbers, underscores, and hyphens, got: {value}")
-        return value
-
     @model_validator(mode="after")
     def validate_fabric_group_consistency(self) -> "FabricGroupVxlanModel":
         if self.management.type != FabricGroupTypeEnum.VXLAN:
             raise ValueError(f"Management type must be {FabricGroupTypeEnum.VXLAN}")
+        # Propagate fabric name into the management model so payloads carry it.
+        self.management.name = self.fabric_name
         return self
 
     @classmethod
     def get_argument_spec(cls) -> Dict:
+        """Auto-generate the Ansible argument spec from the pydantic model fields.
+
+        Mirrors ``FabricBaseModel.get_argument_spec`` so the module exposes the
+        full nested management option tree (types, choices, defaults) and the
+        shared ``config_actions`` save/deploy controls. Single-value Literal
+        fields (``category``, ``management.type``) are auto-excluded.
+        """
+        config_options = _build_options_from_model(cls)
         return dict(
             state={
                 "type": "str",
                 "default": "merged",
-                "choices": ["merged", "replaced", "deleted", "overridden", "gathered"],
+                "choices": ["merged", "replaced", "deleted", "overridden"],
             },
-            config={"required": False, "type": "list", "elements": "dict"},
+            config={
+                "required": False,
+                "type": "list",
+                "elements": "dict",
+                "options": config_options,
+            },
+            config_actions={
+                "type": "dict",
+                "required": False,
+                "options": {
+                    "save": {"type": "bool", "default": False},
+                    "deploy": {"type": "bool", "default": False},
+                    "type": {"type": "str", "default": "switch", "choices": ["switch", "global"]},
+                },
+            },
         )
 
 
