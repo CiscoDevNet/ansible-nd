@@ -1,3 +1,0 @@
-minor_changes:
-  - nd_manage_policy - default ``deploy`` to ``false`` so controller-side changes are staged unless deployment is explicitly requested.
-  - nd_manage_policy_group - default ``deploy`` to ``false`` so controller-side changes are staged unless deployment is explicitly requested.
