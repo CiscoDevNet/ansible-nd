@@ -1,0 +1,30 @@
+---
+# Overridden state tests for nd_manage_extended_community_list.
+# This is opt-in from tasks/main.yaml because state=overridden deletes extended
+# community lists not present in config.
+
+- name: "OVERRIDDEN SETUP: Create extra extended community lists"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ extended_community_list_standard }}"
+      - "{{ extended_community_list_expanded }}"
+    state: merged
+
+- name: "OVERRIDDEN: Keep only overridden extended community list"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ extended_community_list_overridden }}"
+    state: overridden
+  register: nm_overridden
+
+- name: "OVERRIDDEN: Verify only requested test list remains"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden is changed
+      - nm_overridden.after | selectattr('name', 'equalto', extended_community_list_overridden.name) | list | length == 1
+      - nm_overridden.after | selectattr('name', 'equalto', extended_community_list_standard.name) | list | length == 0
+      - nm_overridden.after | selectattr('name', 'equalto', extended_community_list_expanded.name) | list | length == 0

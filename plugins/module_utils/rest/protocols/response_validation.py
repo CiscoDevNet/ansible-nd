@@ -174,6 +174,34 @@ class ResponseValidationStrategy(Protocol):
         """
         ...
 
+    def is_changed_on_failure(self, response: dict) -> bool:
+        """
+        # Summary
+
+        Report whether a failed mutation nevertheless changed controller state.
+
+        ## Description
+
+        A partial-success response (e.g. HTTP 207 with mixed per-item outcomes) is an aggregate failure that still mutated state. Implementations
+        should honour the `modified` response header when present and otherwise inspect per-item outcomes, returning `True` when any member
+        succeeded. This method should only be called after `is_success` has returned `False`.
+
+        ## Parameters
+
+        - response: Response dict with keys RETURN_CODE, MESSAGE, DATA, and any HTTP
+          response headers (lowercased) forwarded by the HttpAPI plugin.
+
+        ## Returns
+
+        - True if the failed operation changed state
+        - False otherwise
+
+        ## Raises
+
+        None
+        """
+        ...
+
     def extract_error_message(self, response: dict) -> Optional[str]:
         """
         # Summary

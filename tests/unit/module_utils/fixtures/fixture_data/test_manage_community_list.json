@@ -1,0 +1,84 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_manage_community_list.py.",
+        "Keys follow test_manage_community_list_NNNNN[a|b|c]."
+    ],
+    "test_manage_community_list_00030a": {
+        "TEST_NOTES": ["query_all happy path"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "communityLists": [
+                {
+                    "name": "CL1",
+                    "type": "standard",
+                    "entries": [
+                        {
+                            "sequenceNumber": 10,
+                            "action": "permit",
+                            "communityNumbers": ["100:200"]
+                        }
+                    ]
+                }
+            ]
+        }
+    },
+    "test_manage_community_list_00100a": {
+        "TEST_NOTES": ["create_bulk happy path"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityLists",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "CL1",
+                    "status": "success",
+                    "message": "Successfully created community list CL1"
+                }
+            ]
+        }
+    },
+    "test_manage_community_list_00110a": {
+        "TEST_NOTES": ["create_bulk per-item failure"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityLists",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "CL1",
+                    "status": "failed",
+                    "message": "duplicate name"
+                }
+            ]
+        }
+    },
+    "test_manage_community_list_00200a": {
+        "TEST_NOTES": ["update happy path"],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityLists/CL1",
+        "MESSAGE": "No Content",
+        "DATA": {}
+    },
+    "test_manage_community_list_00300a": {
+        "TEST_NOTES": ["delete_bulk happy path"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityListActions/remove",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "CL1",
+                    "status": "success",
+                    "message": "Successfully deleted community list CL1"
+                }
+            ]
+        }
+    }
+}
