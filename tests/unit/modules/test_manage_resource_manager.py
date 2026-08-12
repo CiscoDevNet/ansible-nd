@@ -14,8 +14,10 @@ from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-
-from ansible_collections.cisco.nd.plugins.modules import nd_manage_resource_manager as manage_resource_manager_module
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDModuleError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import HAS_PYDANTIC
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_resources import (
     EpManageFabricResourcesGet,
 )
@@ -33,12 +35,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_ma
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_manager.resource_manager_response_model import (
     ResourceManagerResponse,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
-    NDModuleError,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import HAS_PYDANTIC
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+from ansible_collections.cisco.nd.plugins.modules import nd_manage_resource_manager as manage_resource_manager_module
 
 LOG = logging.getLogger("nd.tests.resource_manager")
 
@@ -158,24 +157,30 @@ def test_main_requires_pydantic_before_continuing():
     call_order = []
     mocked_rm_module = MagicMock()
 
-    with patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}), patch.object(
-        manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}
-    ), patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module), patch.object(
-        manage_resource_manager_module,
-        "require_pydantic",
-        side_effect=lambda module: call_order.append(("require_pydantic", module)),
-    ), patch.object(
-        manage_resource_manager_module,
-        "setup_logging",
-        side_effect=lambda *args, **kwargs: call_order.append(("setup_logging", args[0])),
-    ), patch.object(
-        manage_resource_manager_module,
-        "NDModule",
-        side_effect=lambda module: call_order.append(("NDModule", module)) or MagicMock(),
-    ), patch.object(
-        manage_resource_manager_module,
-        "NDResourceManagerModule",
-        return_value=mocked_rm_module,
+    with (
+        patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}),
+        patch.object(manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}),
+        patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module),
+        patch.object(
+            manage_resource_manager_module,
+            "require_pydantic",
+            side_effect=lambda module: call_order.append(("require_pydantic", module)),
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "setup_logging",
+            side_effect=lambda *args, **kwargs: call_order.append(("setup_logging", args[0])),
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "NDModule",
+            side_effect=lambda module: call_order.append(("NDModule", module)) or MagicMock(),
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "NDResourceManagerModule",
+            return_value=mocked_rm_module,
+        ),
     ):
         mocked_rm_module.manage_state.side_effect = lambda: call_order.append(("manage_state", None))
         mocked_rm_module.exit_module.side_effect = lambda: call_order.append(("exit_module", None))
@@ -206,18 +211,23 @@ def test_main_fails_with_structured_payload_when_fabric_name_missing():
         "username": "admin",
     }
 
-    with patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}), patch.object(
-        manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}
-    ), patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module), patch.object(
-        manage_resource_manager_module,
-        "require_pydantic",
-    ), patch.object(
-        manage_resource_manager_module,
-        "setup_logging",
-    ), patch.object(
-        manage_resource_manager_module,
-        "NDModule",
-    ) as ndmodule_mock:
+    with (
+        patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}),
+        patch.object(manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}),
+        patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module),
+        patch.object(
+            manage_resource_manager_module,
+            "require_pydantic",
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "setup_logging",
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "NDModule",
+        ) as ndmodule_mock,
+    ):
         with pytest.raises(RuntimeError, match="fail_json_called"):
             manage_resource_manager_module.main()
 
@@ -282,18 +292,23 @@ def test_main_ndmoduleerror_path_fails_with_standard_output():
         "username": "admin",
     }
 
-    with patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}), patch.object(
-        manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}
-    ), patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module), patch.object(
-        manage_resource_manager_module,
-        "require_pydantic",
-    ), patch.object(
-        manage_resource_manager_module,
-        "setup_logging",
-    ), patch.object(
-        manage_resource_manager_module,
-        "NDModule",
-        side_effect=NDModuleError(msg="auth failed", status=401),
+    with (
+        patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}),
+        patch.object(manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}),
+        patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module),
+        patch.object(
+            manage_resource_manager_module,
+            "require_pydantic",
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "setup_logging",
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "NDModule",
+            side_effect=NDModuleError(msg="auth failed", status=401),
+        ),
     ):
         with pytest.raises(RuntimeError, match="fail_json_called"):
             manage_resource_manager_module.main()
@@ -324,22 +339,28 @@ def test_main_valueerror_path_fails_with_validation_message():
     mocked_rm_module = MagicMock()
     mocked_rm_module.manage_state.side_effect = ValueError("invalid config")
 
-    with patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}), patch.object(
-        manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}
-    ), patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module), patch.object(
-        manage_resource_manager_module,
-        "require_pydantic",
-    ), patch.object(
-        manage_resource_manager_module,
-        "setup_logging",
-    ), patch.object(
-        manage_resource_manager_module,
-        "NDModule",
-        return_value=MagicMock(),
-    ), patch.object(
-        manage_resource_manager_module,
-        "NDResourceManagerModule",
-        return_value=mocked_rm_module,
+    with (
+        patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}),
+        patch.object(manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}),
+        patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module),
+        patch.object(
+            manage_resource_manager_module,
+            "require_pydantic",
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "setup_logging",
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "NDModule",
+            return_value=MagicMock(),
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "NDResourceManagerModule",
+            return_value=mocked_rm_module,
+        ),
     ):
         with pytest.raises(RuntimeError, match="fail_json_called"):
             manage_resource_manager_module.main()
@@ -369,22 +390,28 @@ def test_main_generic_exception_debug_includes_traceback():
     mocked_rm_module = MagicMock()
     mocked_rm_module.manage_state.side_effect = RuntimeError("boom")
 
-    with patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}), patch.object(
-        manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}
-    ), patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module), patch.object(
-        manage_resource_manager_module,
-        "require_pydantic",
-    ), patch.object(
-        manage_resource_manager_module,
-        "setup_logging",
-    ), patch.object(
-        manage_resource_manager_module,
-        "NDModule",
-        return_value=MagicMock(),
-    ), patch.object(
-        manage_resource_manager_module,
-        "NDResourceManagerModule",
-        return_value=mocked_rm_module,
+    with (
+        patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}),
+        patch.object(manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}),
+        patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module),
+        patch.object(
+            manage_resource_manager_module,
+            "require_pydantic",
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "setup_logging",
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "NDModule",
+            return_value=MagicMock(),
+        ),
+        patch.object(
+            manage_resource_manager_module,
+            "NDResourceManagerModule",
+            return_value=mocked_rm_module,
+        ),
     ):
         with pytest.raises(RuntimeError, match="fail_json_called"):
             manage_resource_manager_module.main()
@@ -2346,13 +2373,16 @@ def test_manage_state_deleted_matches_link_returned_under_opposite_endpoint_swit
     remove_item.model_dump.return_value = {"resourceId": 501}
     remove_response = MagicMock(resources=[remove_item])
 
-    with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.FabricSwitchInventory.from_fabric",
-        return_value=_mock_fabric_inventory(),
-    ), patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources"
-        ".RemoveResourcesByIdsResponse.from_response",
-        return_value=remove_response,
+    with (
+        patch(
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.FabricSwitchInventory.from_fabric",
+            return_value=_mock_fabric_inventory(),
+        ),
+        patch(
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources"
+            ".RemoveResourcesByIdsResponse.from_response",
+            return_value=remove_response,
+        ),
     ):
         module = NDResourceManagerModule(nd, Results(), log=LOG)
         module.manage_state()
@@ -3895,10 +3925,13 @@ def test_manage_merged_update_removes_existing_id_before_create():
         {"resources": [{"entityName": "loopback0", "status": "created"}]},
     ]
 
-    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
-        (
-            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
-            "nd_manage_resource_manager_resources.ResourceManagerDiffEngine.validate_resource_api_fields"
+    with (
+        patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes),
+        patch(
+            (
+                "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+                "nd_manage_resource_manager_resources.ResourceManagerDiffEngine.validate_resource_api_fields"
+            ),
         ),
     ):
         module.manage_merged()
@@ -4015,18 +4048,21 @@ def test_manage_merged_validates_response_fields_for_matching_entity():
     resp_item = _response(entity_name="loopback99", resource_value="99")
     fake_batch_response = MagicMock(resources=[resp_item])
 
-    with patch(
-        (
-            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
-            "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+    with (
+        patch(
+            (
+                "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+                "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+            ),
+            return_value=fake_batch_response,
         ),
-        return_value=fake_batch_response,
-    ), patch(
-        (
-            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
-            "nd_manage_resource_manager_resources.ResourceManagerDiffEngine.validate_resource_api_fields"
-        ),
-    ) as validate_fields:
+        patch(
+            (
+                "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+                "nd_manage_resource_manager_resources.ResourceManagerDiffEngine.validate_resource_api_fields"
+            ),
+        ) as validate_fields,
+    ):
         module.manage_merged()
 
     assert validate_fields.called
@@ -4104,12 +4140,15 @@ def test_manage_merged_raises_on_partial_create_response():
     create_item.model_dump.return_value = {"entityName": "loopback99", "status": "created"}
     fake_batch_response = MagicMock(resources=[create_item])
 
-    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
-        (
-            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
-            "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+    with (
+        patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes),
+        patch(
+            (
+                "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+                "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+            ),
+            return_value=fake_batch_response,
         ),
-        return_value=fake_batch_response,
     ):
         with pytest.raises(ValueError, match="Partial success in batch create"):
             module.manage_merged()
@@ -4142,12 +4181,15 @@ def test_manage_merged_raises_on_failed_create_status():
     }
     fake_batch_response = MagicMock(resources=[failed_item])
 
-    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
-        (
-            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
-            "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+    with (
+        patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes),
+        patch(
+            (
+                "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+                "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+            ),
+            return_value=fake_batch_response,
         ),
-        return_value=fake_batch_response,
     ):
         with pytest.raises(ValueError, match="Partial success in batch create") as exc_info:
             module.manage_merged()
@@ -4199,12 +4241,15 @@ def test_manage_merged_raises_on_mixed_create_success_and_failure():
 
     fake_batch_response = MagicMock(resources=[success_item, failed_item])
 
-    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
-        (
-            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
-            "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+    with (
+        patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes),
+        patch(
+            (
+                "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+                "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+            ),
+            return_value=fake_batch_response,
         ),
-        return_value=fake_batch_response,
     ):
         with pytest.raises(ValueError, match="Partial success in batch create") as exc_info:
             module.manage_merged()
@@ -4293,12 +4338,15 @@ def test_manage_deleted_success_parses_remove_response_items():
     remove_item.model_dump.return_value = {"resourceId": 101}
     fake_remove_response = MagicMock(resources=[remove_item])
 
-    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
-        (
-            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
-            "nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response"
+    with (
+        patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes),
+        patch(
+            (
+                "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+                "nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response"
+            ),
+            return_value=fake_remove_response,
         ),
-        return_value=fake_remove_response,
     ):
         module.manage_deleted()
 
@@ -4331,12 +4379,15 @@ def test_manage_deleted_raises_on_partial_delete_response():
     remove_item.model_dump.return_value = {"resourceValue": "101", "status": "deleted"}
     fake_remove_response = MagicMock(resources=[remove_item])
 
-    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
-        (
-            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
-            "nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response"
+    with (
+        patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes),
+        patch(
+            (
+                "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+                "nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response"
+            ),
+            return_value=fake_remove_response,
         ),
-        return_value=fake_remove_response,
     ):
         with pytest.raises(ValueError, match="Partial success in batch delete"):
             module.manage_deleted()
@@ -4369,12 +4420,15 @@ def test_manage_deleted_raises_on_failed_delete_status():
     }
     fake_remove_response = MagicMock(resources=[failed_item])
 
-    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
-        (
-            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
-            "nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response"
+    with (
+        patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes),
+        patch(
+            (
+                "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+                "nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response"
+            ),
+            return_value=fake_remove_response,
         ),
-        return_value=fake_remove_response,
     ):
         with pytest.raises(ValueError, match="Partial success in batch delete"):
             module.manage_deleted()

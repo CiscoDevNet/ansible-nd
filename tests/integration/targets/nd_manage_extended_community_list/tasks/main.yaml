@@ -1,0 +1,53 @@
+---
+# Test code for the nd_manage_extended_community_list module
+# Copyright: (c) 2026, Gaspard Micol (@gmicol)
+#
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
+# Run with:
+#   ansible-test integration nd_manage_extended_community_list
+#
+# Optional variables:
+#   nd_test_fabric_name - fabric in which to create test extended community lists
+#   nd_test_tenant_name_a / nd_test_tenant_name_b - enable tenant identity coverage
+#   nd_test_community_lists_run_overridden=true - opt in to destructive overridden-state coverage
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("debug") }}'
+
+- name: Run nd_manage_extended_community_list state tests
+  block:
+    - name: Pre-test cleanup
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: Run merged state tests
+      ansible.builtin.include_tasks: merged.yaml
+
+    - name: Run tenant identity tests
+      ansible.builtin.include_tasks: tenant_identity.yaml
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: Run replaced state tests
+      ansible.builtin.include_tasks: replaced.yaml
+
+    - name: Run deleted state tests
+      ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run overridden state tests
+      ansible.builtin.include_tasks: overridden.yaml
+      when: nd_test_community_lists_run_overridden | default(false) | bool
+  always:
+    - name: Post-test cleanup
+      ansible.builtin.include_tasks: setup.yaml
+  module_defaults:
+    cisco.nd.nd_manage_extended_community_list:
+      timeout: 300

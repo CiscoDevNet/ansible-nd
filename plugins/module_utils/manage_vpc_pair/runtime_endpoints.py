@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-from urllib.parse import quote
-
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     CompositeQueryParams,
     EndpointQueryParams,
@@ -103,7 +101,7 @@ class VpcPairEndpoints:
         Returns:
             Path: /api/v1/manage/fabrics/{fabricName}
         """
-        endpoint = EpManageFabricsGet(fabric_name=quote(fabric_name, safe=""))
+        endpoint = EpManageFabricsGet(fabric_name=fabric_name)
         return endpoint.path
 
     @staticmethod

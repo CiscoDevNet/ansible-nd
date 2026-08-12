@@ -50,9 +50,11 @@ def test_nd_manage_vrfs_requires_pydantic_immediately_after_module_creation():
     def fake_require_pydantic(module):
         events.append(("require_pydantic", module))
 
-    with patch.object(nd_manage_vrfs, "AnsibleModule", FakeAnsibleModule), patch.object(
-        nd_manage_vrfs, "require_pydantic", fake_require_pydantic
-    ), patch.object(nd_manage_vrfs, "VrfWorkflowCoordinator", FakeCoordinator):
+    with (
+        patch.object(nd_manage_vrfs, "AnsibleModule", FakeAnsibleModule),
+        patch.object(nd_manage_vrfs, "require_pydantic", fake_require_pydantic),
+        patch.object(nd_manage_vrfs, "VrfWorkflowCoordinator", FakeCoordinator),
+    ):
         nd_manage_vrfs.main()
 
     assert [event[0] for event in events] == [
