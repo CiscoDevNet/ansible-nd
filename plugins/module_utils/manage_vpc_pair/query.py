@@ -1174,10 +1174,12 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
 
         config_actions = get_config_actions(nrm.module)
         not_in_sync_pairs = []
-        if config_actions.get("deploy", False):
+        if config_actions.get("save", False) or config_actions.get("deploy", False):
             # Step 5: Build in-sync deployment signal from overview endpoint.
-            # This supports the config_actions.deploy=true no-diff case:
-            # pair exists, but is still not deployed/in-sync on controller.
+            # This supports the save/deploy no-diff case: the pair exists but is
+            # still not saved/deployed/in-sync on the controller. Detection must
+            # run whenever save OR deploy is requested so that "stage without
+            # deploy" (save=true, deploy=false) can still save a pending pair.
             for pair in existing_pairs:
                 switch_id = pair.get(VpcFieldNames.SWITCH_ID)
                 peer_switch_id = pair.get(VpcFieldNames.PEER_SWITCH_ID)
@@ -1203,14 +1205,22 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
                 # Resolve pair sync state from both overview and switch signals.
                 #
                 # Precedence:
-                # - overview=True is authoritative in-sync (ignore switch noise).
+                # - An explicit switch-level out-of-sync/pending signal is
+                #   authoritative not-in-sync. A pair that was created but never
+                #   deployed reports device-level "pending" while the controller
+                #   overview can still report intent-only in-sync; the device
+                #   state must win so the pair gets saved/deployed.
                 # - overview=False is authoritative not-in-sync (deploy needed).
+                # - overview=True is in-sync only when no switch reports
+                #   out-of-sync (preserves idempotency of a deployed pair).
                 # - overview=None falls back to explicit switch out-of-sync.
                 pair_not_in_sync = False
-                if sync_state is True:
-                    pair_not_in_sync = False
+                if config_sync_state is False:
+                    pair_not_in_sync = True
                 elif sync_state is False:
                     pair_not_in_sync = True
+                elif sync_state is True:
+                    pair_not_in_sync = False
                 else:
                     pair_not_in_sync = config_sync_state is False
 

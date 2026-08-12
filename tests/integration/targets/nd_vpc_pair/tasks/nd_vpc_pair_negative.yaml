@@ -1,0 +1,99 @@
+##############################################
+##                 SETUP                    ##
+##############################################
+# Negative coverage: the module must REJECT invalid combinations.
+#   N1: config_actions.save=false + deploy=true  -> deploy requires save.
+#   N2: vpc_pair_details on a fabric type where it is not allowed
+#       (vxlanFabric / vxlanIbgp / vxlanEbgp) -> rejected.
+
+- name: Import nd_vpc_pair Base Tasks
+  ansible.builtin.import_tasks: base_tasks.yaml
+  tags: negative
+
+- name: NEGATIVE - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
+  tags: negative
+
+##############################################
+##   N1 - save=false with deploy=true        ##
+##############################################
+
+- name: NEGATIVE - N1 - save=false + deploy=true must be rejected
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+  register: result_n1
+  ignore_errors: true
+  tags: negative
+
+- name: NEGATIVE - N1 - ASSERT - module failed on invalid save/deploy combo
+  ansible.builtin.assert:
+    that:
+      - result_n1.failed == true
+      - (result_n1.msg | default('') | lower) is search('save')
+      - (result_n1.msg | default('') | lower) is search('requires')
+##############################################
+
+- name: NEGATIVE - N2 - vpc_pair_details on disallowed fabric must be rejected
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: false
+        vpc_pair_details: "{{ vpc_pair_details_delete_safe }}"
+  register: result_n2
+  ignore_errors: true
+  when: vpc_pair_details_disallowed_fabric | bool
+  tags: negative
+
+- name: NEGATIVE - N2 - ASSERT - module rejected vpc_pair_details on this fabric
+  ansible.builtin.assert:
+    that:
+      - result_n2.failed == true
+    fail_msg: "vpc_pair_details must be rejected on vxlanFabric/vxlanIbgp/vxlanEbgp fabrics."
+  when: vpc_pair_details_disallowed_fabric | bool
+  tags: negative
+
+- name: NEGATIVE - N2 - SKIP note on allowed fabrics
+  ansible.builtin.debug:
+    msg: "Skipping N2: vpc_pair_details is allowed on fabric type '{{ test_fabric_type }}'."
+  when: not (vpc_pair_details_disallowed_fabric | bool)
+  tags: negative
+
+##############################################
+##                CLEANUP                  ##
+##############################################
+
+- name: NEGATIVE - CLEANUP - Ensure no vPC pair remains
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false
+  tags: negative

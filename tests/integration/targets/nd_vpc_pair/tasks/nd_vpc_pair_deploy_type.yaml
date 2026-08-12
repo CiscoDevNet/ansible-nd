@@ -1,0 +1,132 @@
+##############################################
+##                 SETUP                    ##
+##############################################
+# config_actions.type coverage: verify the deploy scope routes to the correct
+# controller endpoint.
+#   type: switch  -> POST .../switchActions/deploy   (per-switch deploy)
+#   type: global  -> POST .../actions/deploy?forceShowRun=true (fabric deploy)
+# configSave (.../actions/configSave) is identical for both.
+
+- name: Import nd_vpc_pair Base Tasks
+  ansible.builtin.import_tasks: base_tasks.yaml
+  tags: deploy_type
+
+- name: DEPLOYTYPE - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
+  tags: deploy_type
+
+- name: DEPLOYTYPE - Setup config
+  ansible.builtin.set_fact:
+    vpc_pair_conf:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+  delegate_to: localhost
+  tags: deploy_type
+
+##############################################
+##            TYPE = SWITCH                 ##
+##############################################
+
+- name: DEPLOYTYPE - SWITCH - Ensure clean before test
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions: {save: false, deploy: false, type: switch}
+    config: "{{ vpc_pair_conf }}"
+  failed_when: false
+  tags: deploy_type
+
+- name: DEPLOYTYPE - SWITCH - reset connection
+  ansible.builtin.meta: reset_connection
+  tags: deploy_type
+
+- name: DEPLOYTYPE - SWITCH - Atomic create+save+deploy (type=switch)
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions: {save: true, deploy: true, type: switch}
+    config: "{{ vpc_pair_conf }}"
+  register: result_switch
+  tags: deploy_type
+
+- name: DEPLOYTYPE - SWITCH - ASSERT - configSave + per-switch deploy trace
+  ansible.builtin.assert:
+    that:
+      - result_switch.failed == false
+      - result_switch.changed == true
+      - result_switch.deployment is defined
+      - >
+        (result_switch.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+         | list | length) > 0
+      - >
+        (result_switch.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | list | length) > 0
+    fail_msg: "type=switch must call /actions/configSave and /switchActions/deploy."
+  tags: deploy_type
+
+- name: DEPLOYTYPE - SWITCH - CLEANUP
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions: {save: true, deploy: true, type: switch}
+    config: "{{ vpc_pair_conf }}"
+  failed_when: false
+  tags: deploy_type
+
+- name: DEPLOYTYPE - reset connection between scopes
+  ansible.builtin.meta: reset_connection
+  tags: deploy_type
+
+##############################################
+##            TYPE = GLOBAL                 ##
+##############################################
+
+- name: DEPLOYTYPE - GLOBAL - Atomic create+save+deploy (type=global)
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions: {save: true, deploy: true, type: global}
+    config: "{{ vpc_pair_conf }}"
+  register: result_global
+  tags: deploy_type
+
+- name: DEPLOYTYPE - GLOBAL - ASSERT - configSave + fabric deploy trace
+  ansible.builtin.assert:
+    that:
+      - result_global.failed == false
+      - result_global.changed == true
+      - result_global.deployment is defined
+      - >
+        (result_global.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+         | list | length) > 0
+      - >
+        (result_global.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+         | list | length) > 0
+      - >
+        (result_global.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | list | length) == 0
+    fail_msg: "type=global must call /actions/configSave and /actions/deploy (not /switchActions/deploy)."
+  tags: deploy_type
+
+- name: DEPLOYTYPE - GLOBAL - CLEANUP
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions: {save: true, deploy: true, type: global}
+    config: "{{ vpc_pair_conf }}"
+  failed_when: false
+  tags: deploy_type
