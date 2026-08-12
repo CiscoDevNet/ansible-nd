@@ -598,10 +598,14 @@ class TestExecuteConfigActions:
         """
         rest_send = _make_rest_send(
             [
+                # Fabric 1: query switches (non-empty so the fabric is not skipped)
+                _success_response(data={"switches": [{"serialNumber": "FOC111AAA"}]}, method="GET"),
                 # Fabric 1: save
                 _success_response(data={"status": "Config save is completed"}),
                 # Fabric 1: deploy
                 _success_response(data={"status": "Configuration deployment completed"}),
+                # Fabric 2: query switches
+                _success_response(data={"switches": [{"serialNumber": "FOC222BBB"}]}, method="GET"),
                 # Fabric 2: save
                 _success_response(data={"status": "Config save is completed"}),
                 # Fabric 2: deploy
@@ -618,8 +622,8 @@ class TestExecuteConfigActions:
             deploy_type="global",
         )
 
-        # 4 API calls: save + deploy for each of 2 fabrics
-        assert len(results._tasks) == 4
+        # 6 API calls: switches query + save + deploy for each of 2 fabrics
+        assert len(results._tasks) == 6
 
     def test_execute_save_only(self):
         """
@@ -639,7 +643,13 @@ class TestExecuteConfigActions:
         """
         rest_send = _make_rest_send(
             [
+                # Fabric 1: query switches (non-empty so the fabric is not skipped)
+                _success_response(data={"switches": [{"serialNumber": "FOC111AAA"}]}, method="GET"),
+                # Fabric 1: save
                 _success_response(data={"status": "Config save is completed"}),
+                # Fabric 2: query switches
+                _success_response(data={"switches": [{"serialNumber": "FOC222BBB"}]}, method="GET"),
+                # Fabric 2: save
                 _success_response(data={"status": "Config save is completed"}),
             ]
         )
@@ -652,8 +662,8 @@ class TestExecuteConfigActions:
             deploy=False,
         )
 
-        # 2 API calls: save for each fabric
-        assert len(results._tasks) == 2
+        # 4 API calls: switches query + save for each fabric
+        assert len(results._tasks) == 4
 
     def test_execute_deploy_without_save_raises_value_error(self):
         """
@@ -741,10 +751,10 @@ class TestExecuteConfigActions:
 
         rest_send = _make_rest_send(
             [
+                # query switches once per fabric (reused for the deploy filter)
+                _success_response(data=switches_response, method="GET"),
                 # save
                 _success_response(data={"status": "Config save is completed"}),
-                # query switches
-                _success_response(data=switches_response, method="GET"),
                 # switch deploy
                 _success_response(data={"switchIds": [{"switchId": "FOC111AAA", "status": "success"}]}),
             ]
@@ -759,8 +769,46 @@ class TestExecuteConfigActions:
             deploy_type="switch",
         )
 
-        # 3 API calls: save + GET switches + POST switchActions/deploy
+        # 3 API calls: GET switches + save + POST switchActions/deploy
         assert len(results._tasks) == 3
+
+    def test_execute_skips_switchless_fabric(self):
+        """
+        # Summary
+
+        Verify execute_config_actions skips save/deploy for a fabric with no
+        switches and surfaces a warning instead of failing.
+
+        ## Test
+
+        - Only the switches query is made (no save, no deploy)
+        - A warning is emitted via rest_send.warn
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions()
+        - ConfigActionsMixin._get_fabric_switches()
+        """
+        rest_send = _make_rest_send(
+            [
+                # query switches: empty -> fabric is switchless
+                _success_response(data={"switches": []}, method="GET"),
+            ]
+        )
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+
+        orch.execute_config_actions(
+            fabric_names=["switchless-fabric"],
+            save=True,
+            deploy=True,
+            deploy_type="global",
+        )
+
+        # Only the switches query was made; save/deploy were skipped
+        assert len(results._tasks) == 1
+        warnings = rest_send.sender.ansible_module.warnings
+        assert any("switchless-fabric" in w and "no switches" in w for w in warnings)
 
 
 # =============================================================================

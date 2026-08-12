@@ -32,11 +32,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types impor
 _QUERY_PAGE_SIZE = 100
 _SCOPED_QUERY_MAX_IDENTIFIERS = 8
 
-# Per-item ``status`` values in a 207 Multi-Status body that count as a failure. Anything else --
-# ``success``, missing, empty, or future progress tokens -- is tolerated so informational rows do
-# not surface as spurious errors. Mirrors the maintenance_mode orchestrator's denylist approach.
-_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
-
 # Single source of truth for everything that differs between the two address families: the endpoint
 # classes plus the camelCase wrapper keys used in request/response bodies. Centralising this here
 # keeps every CRUD/bulk method address-family agnostic (no scattered ``"ipv4..." if v == "ipv4"``).
@@ -83,10 +78,10 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
     - IPv6 bulk delete: ``POST /fabrics/{fabricName}/ipv6PrefixListActions/remove``
       with ``{"ipv6PrefixListNames": [...]}``.
 
-    Because the controller answers these bulk calls with 207 (which ``ResponseHandler``
-    treats as transport success), every bulk response body is inspected per item; any
-    entry whose ``status`` is in ``_FAILURE_STATUSES`` raises with the offending prefix
-    list names, so partial failures are not silently reported as success.
+    The controller answers these bulk calls with 207 Multi-Status even when some items
+    fail; ``NdV1Strategy`` inspects the per-item ``results`` array and marks the request
+    failed on any failing item, so partial failures surface as errors from ``_request``
+    rather than being silently reported as success.
 
     ``query_all`` fetches both IPv4 and IPv6 prefix lists and injects the
     ``ipVersion`` key into each raw API response dict so ``PrefixListModel``
@@ -278,48 +273,19 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             offset += len(page)
         return results
 
-    @staticmethod
-    def _raise_on_207_failures(result: Any, operation: str) -> None:
-        """
-        Inspect a 207 Multi-Status bulk response body. If any per-item ``status`` is in
-        ``_FAILURE_STATUSES``, raise with the offending prefix list names and messages so partial
-        failures are not silently swallowed (the controller returns 207 even when some items fail).
-        """
-        if not isinstance(result, dict):
-            return
-        items = result.get("results")
-        if not isinstance(items, list) or not items:
-            return
-        failures: list[str] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            status = str(item.get("status") or "").lower()
-            if status not in _FAILURE_STATUSES:
-                continue
-            name = item.get("name") or "?"
-            message = item.get("message") or "unknown error"
-            failures.append(f"{name}: {message}")
-        if failures:
-            raise Exception(f"prefix list {operation} reported per-item failures: {'; '.join(failures)}")
-
     def _bulk_create_for_version(self, version: str, items: list[PrefixListModel]) -> ResponseType:
-        """Send a single bulk-create request for all items of the given ip_version and check the 207 body."""
+        """Send a single bulk-create request for all items of the given ip_version."""
         config = self._config_for_version(version)
         api_endpoint = self._configure_endpoint(config["post"]())
         payload = {config["list_key"]: [item.to_payload() for item in items]}
-        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.CREATE)
-        self._raise_on_207_failures(result, "create")
-        return result
+        return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.CREATE)
 
     def _bulk_delete_for_version(self, version: str, names: list[str]) -> ResponseType:
-        """Send a single bulk-delete request for the given prefix list names and check the 207 body."""
+        """Send a single bulk-delete request for the given prefix list names."""
         config = self._config_for_version(version)
         api_endpoint = self._configure_endpoint(config["bulk_delete"]())
         payload = {config["names_key"]: names}
-        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.DELETE)
-        self._raise_on_207_failures(result, "delete")
-        return result
+        return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.DELETE)
 
     def create(self, model_instance: PrefixListModel, **kwargs) -> ResponseType:
         """Create a single prefix list via the bulk endpoint."""

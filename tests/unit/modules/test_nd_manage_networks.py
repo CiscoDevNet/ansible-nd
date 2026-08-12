@@ -142,9 +142,11 @@ def test_nd_manage_networks_requires_pydantic_immediately_after_module_creation(
     def fake_require_pydantic(module):
         events.append(("require_pydantic", module))
 
-    with patch.object(nd_manage_networks, "AnsibleModule", FakeAnsibleModule), patch.object(
-        nd_manage_networks, "require_pydantic", fake_require_pydantic
-    ), patch.object(nd_manage_networks, "NetworkWorkflowCoordinator", FakeCoordinator):
+    with (
+        patch.object(nd_manage_networks, "AnsibleModule", FakeAnsibleModule),
+        patch.object(nd_manage_networks, "require_pydantic", fake_require_pydantic),
+        patch.object(nd_manage_networks, "NetworkWorkflowCoordinator", FakeCoordinator),
+    ):
         nd_manage_networks.main()
 
     assert [event[0] for event in events] == [
