@@ -16,6 +16,7 @@ from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import TrunkHostPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
     EthernetTrunkHostInterfaceModel,
 )
@@ -48,6 +49,17 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
     """
 
     model_class: ClassVar[type[NDBaseModel]] = EthernetTrunkHostInterfaceModel
+
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(
+            ("interfaceType", "ethernet"),
+            ("policyType", "trunkHost"),
+        ),
+        field_map={
+            ("interface_name",): "interfaceName",
+        },
+    )
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -100,7 +112,7 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
             return False
         return True
 
-    def query_all(self, model_instance: NDBaseModel | None = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: NDBaseModel | None = None, gathered_filters: list[dict] | None = None, **kwargs) -> ResponseType:
         """
         # Summary
 
@@ -114,7 +126,9 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
 
         - Propagated from `EthernetBaseOrchestrator.query_all` on query failure.
         """
-        result = super().query_all(model_instance=model_instance, **kwargs)
+        result = super().query_all(model_instance=model_instance, gathered_filters=gathered_filters, **kwargs)
         if not isinstance(result, list):
+            return result
+        if self.rest_send.params.get("state") == "gathered":
             return result
         return [iface for iface in result if not self._is_unconfigured_default(iface)]
