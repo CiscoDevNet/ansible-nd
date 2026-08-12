@@ -41,7 +41,6 @@
         network_id: "{{ nd_network_base_id + 262 }}"
         vlan_id: "{{ nd_network_base_vlan + 262 }}"
         vlan_name: ans_nd_net_mcfg_over_upd
-        rt_auto: true
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"

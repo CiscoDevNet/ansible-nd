@@ -74,9 +74,6 @@ options:
       is_l2only:
         description: Whether the Network is L2-only.
         type: bool
-      rt_auto:
-        description: Enable automatic route-target assignment.
-        type: bool
       x_connect:
         description: Enable xConnect.
         type: bool
@@ -274,20 +271,12 @@ options:
       ipv6_trm:
         description: Enable IPv6 Tenant Routed Multicast.
         type: bool
-      route_target_both:
-        description: Compatibility route-target auto flag.
-        type: bool
-        default: false
       l2_fabric_data:
         description: L2 fabric data overrides.
         type: dict
       stretch:
         description: Network stretch setting.
         type: str
-      enable_ir:
-        description: Enable ingress replication.
-        type: bool
-        default: false
       multicast_group_address:
         description: Multicast group address.
         type: str
@@ -383,9 +372,6 @@ options:
           stretch:
             description: Network stretch setting.
             type: str
-          enable_ir:
-            description: Enable ingress replication.
-            type: bool
           multicast_group_address:
             description: Multicast group address.
             type: str
@@ -425,8 +411,6 @@ EXAMPLES = r"""
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
-        rt_auto: true
-        enable_ir: false
         deploy: false
 
 - name: Create a Network and attach it to a switch interface
@@ -477,8 +461,6 @@ EXAMPLES = r"""
         child_fabric_config:
           - fabric_name: child_fabric_1
             multicast_group_address: 239.1.1.30
-          - fabric_name: child_fabric_2
-            enable_ir: false
 
 - name: Gather Networks on a child fabric
   cisco.nd.nd_manage_networks:

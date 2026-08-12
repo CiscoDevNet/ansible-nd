@@ -189,7 +189,7 @@ def test_network_parent_argument_spec_includes_child_config():
     assert "routing_tag" not in child_spec
     assert "mtu" not in child_spec
     assert "attach" not in child_spec
-    assert "enable_ir" in child_spec
+    assert "enable_ir" not in child_spec
     assert "netflow_enable" in child_spec
     assert "gateway_on_border" in child_spec
 
@@ -213,7 +213,7 @@ def test_parent_config_accepts_child_fabric_overrides():
             "child_fabric_config": [
                 {
                     "fabric_name": "child1",
-                    "enable_ir": True,
+                    "multicast_group_address": "239.1.1.53",
                     "gateway_on_border": True,
                 }
             ],
@@ -221,7 +221,7 @@ def test_parent_config_accepts_child_fabric_overrides():
     )
 
     assert model.to_config()["child_fabric_config"][0]["fabric_name"] == "child1"
-    assert model.to_config()["child_fabric_config"][0]["enable_ir"] is True
+    assert model.to_config()["child_fabric_config"][0]["multicast_group_address"] == "239.1.1.53"
     assert model.to_config()["child_fabric_config"][0]["gateway_on_border"] is True
 
 
@@ -255,7 +255,7 @@ def test_child_task_inherits_parent_network_name_and_layer_context():
 
 def test_child_network_config_without_fabric_options_does_not_require_child_task():
     assert NetworkWorkflowCoordinator._has_child_network_options({"fabric_name": "child1"}) is False
-    assert NetworkWorkflowCoordinator._has_child_network_options({"fabric_name": "child1", "enable_ir": False}) is True
+    assert NetworkWorkflowCoordinator._has_child_network_options({"fabric_name": "child1", "multicast_group_address": "239.1.1.53"}) is True
 
 
 def test_network_workflow_coordinator_parent_deploy_deferred_after_child_tasks():
@@ -284,7 +284,7 @@ def test_network_workflow_coordinator_parent_deploy_deferred_after_child_tasks()
                 "child_fabric_config": [
                     {
                         "fabric_name": "child1",
-                        "enable_ir": False,
+                        "multicast_group_address": "239.1.1.53",
                     }
                 ],
             }
@@ -324,7 +324,7 @@ def test_network_workflow_coordinator_parent_deploy_deferred_after_child_tasks()
         assert "deploy" not in child_network
         assert "deploy_type" not in child_network
         assert child_network["network_name"] == "ansible-msd-net"
-        assert child_network["enable_ir"] is False
+        assert child_network["multicast_group_address"] == "239.1.1.53"
         return {
             "changed": False,
             "output_level": "debug",
@@ -373,7 +373,6 @@ def test_child_network_update_payload_is_limited_to_fabric_instance_data():
                 "is_l2only": False,
                 "gateway_ipv4_address": "192.0.2.1/24",
                 "routing_tag": 12345,
-                "enable_ir": False,
                 "multicast_group_address": "239.1.1.1",
                 "gateway_on_border": True,
             }
@@ -393,7 +392,7 @@ def test_child_network_update_payload_is_limited_to_fabric_instance_data():
     assert payload["vlanId"] == 3130
     assert payload["vrfName"] == "VRF_BLUE"
     assert payload["l2Data"]["vlanName"] == "BLUE_VLAN"
-    assert payload["l2Data"]["fabricData"]["enableIr"] is False
+    assert "enableIr" not in payload["l2Data"]["fabricData"]
     assert payload["l2Data"]["fabricData"]["multicastGroup"] == "239.1.1.1"
     assert payload["l3Data"]["gatewayIpv4Address"] == "192.0.2.1/24"
     assert payload["l3Data"]["routingTag"] == 12345
@@ -446,9 +445,8 @@ def test_child_network_update_payload_maps_all_child_fabric_options_to_manage_sc
             {
                 "network_name": "BLUE_NET",
                 "is_l2only": False,
-                "l2_fabric_data": {"customL2Key": "custom-l2-value"},
+                "l2_fabric_data": {"customL2Key": "custom-l2-value", "enableIr": True},
                 "stretch": "BORDER-GW",
-                "enable_ir": True,
                 "multicast_group_address": "239.1.1.53",
                 "ds_vni": 901030,
                 "dhcp_servers": [{"server_address": "192.0.2.10", "server_vrf": "management"}],
@@ -470,7 +468,6 @@ def test_child_network_update_payload_maps_all_child_fabric_options_to_manage_sc
     assert payload["l2Data"]["fabricData"] == {
         "customL2Key": "custom-l2-value",
         "stretch": "BORDER-GW",
-        "enableIr": True,
         "multicastGroup": "239.1.1.53",
         "dsVni": 901030,
     }
@@ -541,7 +538,7 @@ def test_child_network_update_payload_uses_sparse_source_after_state_machine_mer
     assert payload["vrfName"] == "NA"
     assert "layer" not in payload
     assert payload["l2Data"]["vlanName"] == "BLUE_VLAN"
-    assert payload["l2Data"]["fabricData"]["enableIr"] is False
+    assert "enableIr" not in payload["l2Data"]["fabricData"]
     assert payload["l2Data"]["fabricData"]["multicastGroup"] == "239.1.1.1"
     assert payload["l3Data"]["fabricData"]["gatewayOnBorder"] is False
     assert payload["l3Data"]["fabricData"]["ipv4Trm"] is False
@@ -556,7 +553,6 @@ def test_attachment_only_network_config_does_not_generate_definition_defaults():
         [
             {
                 "network_name": "BLUE_NET",
-                "enable_ir": False,
                 "netflow_enable": False,
                 "arp_suppression": False,
                 "mtu": 9216,
@@ -597,7 +593,6 @@ def test_parse_config_preserves_attachment_only_shape_before_transform():
         [
             {
                 "network_name": "BLUE_NET",
-                "enable_ir": False,
                 "netflow_enable": False,
                 "arp_suppression": False,
                 "mtu": 9216,
@@ -739,7 +734,9 @@ def test_argument_spec_uses_manage_json_defaults():
     assert spec["mtu_l3intf"]["default"] == 9216
     assert "default" not in spec["trm_enable"]
     assert "default" not in spec["ipv6_trm"]
-    assert spec["enable_ir"]["default"] is False
+    assert "enable_ir" not in spec
+    assert "rt_auto" not in spec
+    assert "route_target_both" not in spec
     assert spec["dhcp_servers"]["options"]["server_address"]["required"] is True
 
 
@@ -1015,7 +1012,6 @@ def test_legacy_network_names_are_normalized():
             "dhcp_srvr1_vrf": "management",
             "dhcp_loopback_id": 101,
             "l3gw_on_border": True,
-            "route_target_both": True,
         }
     )
     config = model.to_config()
@@ -1031,7 +1027,6 @@ def test_legacy_network_names_are_normalized():
     assert config["dhcp_servers"] == [{"server_address": "10.1.1.10", "server_vrf": "management"}]
     assert config["loopback_id"] == 101
     assert config["gateway_on_border"] is True
-    assert config["rt_auto"] is True
 
 
 def test_attachment_shape_rejects_ports_without_interfaces():
@@ -1341,8 +1336,6 @@ def test_transform_l2_network_payload_uses_manage_schema_shape():
                 "is_l2only": True,
                 "vlan_id": 2301,
                 "vlan_name": "BLUE_VLAN",
-                "rt_auto": True,
-                "enable_ir": False,
                 "multicast_group_address": "239.1.1.2",
             }
         ]
@@ -1353,8 +1346,8 @@ def test_transform_l2_network_payload_uses_manage_schema_shape():
     assert payload["layer"] == "layer2"
     assert payload["vrf_name"] == "NA"
     assert payload["l2_data"]["vlanName"] == "BLUE_VLAN"
-    assert payload["l2_data"]["rtAuto"] is True
-    assert payload["l2_data"]["fabricData"]["enableIr"] is False
+    assert "rtAuto" not in payload["l2_data"]
+    assert "enableIr" not in payload["l2_data"]["fabricData"]
     assert payload["l2_data"]["fabricData"]["multicastGroup"] == "239.1.1.2"
     assert "l3_data" not in payload
 
@@ -1434,8 +1427,6 @@ def test_mcfg_parent_network_create_uses_onemanage_manage_schema_payload():
                     "vlan_id": 3130,
                     "vlan_name": "BLUE_VLAN",
                     "is_l2only": True,
-                    "rt_auto": True,
-                    "enable_ir": False,
                 }
             ]
         )[0]
@@ -1459,7 +1450,7 @@ def test_mcfg_parent_network_create_uses_onemanage_manage_schema_payload():
     assert payload["networkId"] == 901030
     assert "vlanId" not in payload
     assert payload["l2Data"]["vlanName"] == ""
-    assert payload["l2Data"]["rtAuto"] is True
+    assert "rtAuto" not in payload["l2Data"]
     assert payload["l2Data"]["fabricData"] == {}
     assert payload["l3Data"] == {
         "gatewayIpv4Address": "",
@@ -1528,7 +1519,6 @@ def test_mcfg_parent_network_update_uses_l2_onemanage_manage_schema_payload():
                     "vlan_id": 3130,
                     "vlan_name": "BLUE_VLAN",
                     "is_l2only": True,
-                    "rt_auto": True,
                 }
             ]
         )[0]
@@ -1543,7 +1533,7 @@ def test_mcfg_parent_network_update_uses_l2_onemanage_manage_schema_payload():
     assert payload["networkMode"] == "layer2"
     assert payload["vrfName"] == "NA"
     assert "vlanId" not in payload
-    assert payload["l2Data"] == {"vlanName": "", "rtAuto": True, "fabricData": {}}
+    assert payload["l2Data"] == {"vlanName": "", "fabricData": {}}
     assert payload["l3Data"] == {
         "gatewayIpv4Address": "",
         "gatewayIpv6Address": "",
@@ -1735,8 +1725,8 @@ def test_mcfg_parent_network_query_normalizes_top_down_template_config():
     assert normalized["vlanId"] == 3130
     assert normalized["layer"] == "layer2"
     assert normalized["l2Data"]["vlanName"] == "BLUE_VLAN"
-    assert normalized["l2Data"]["rtAuto"] is True
-    assert normalized["l2Data"]["fabricData"]["enableIr"] is False
+    assert "rtAuto" not in normalized["l2Data"]
+    assert "fabricData" not in normalized["l2Data"]
     assert normalized["l3Data"]["fabricData"]["netflow"] is True
     assert normalized["l3Data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
     assert normalized["l3Data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
@@ -2785,7 +2775,7 @@ def test_pending_network_delete_wait_retries_undeploy():
     assert deploy_payloads == [{"networkNames": ["BLUE_NET"]}]
 
 
-def test_network_response_normalizes_network_mode_for_l2_idempotency():
+def test_network_response_omits_unsupported_l2_fields_for_idempotency():
     model = NDNetworkOrchestrator.model_class.from_response(
         {
             "fabricName": "fab1",
@@ -2795,14 +2785,19 @@ def test_network_response_normalizes_network_mode_for_l2_idempotency():
             "networkMode": "layer2",
             "l2Data": {
                 "disableRtAuto": False,
+                "rtAuto": True,
                 "vlanName": "BLUE_VLAN",
+                "fabricData": {"enableIr": False},
             },
         }
     )
     config = model.to_config()
 
     assert config["layer"] == "layer2"
-    assert config["l2_data"]["rt_auto"] is True
+    assert "rt_auto" not in config["l2_data"]
+    assert "rtAuto" not in config["l2_data"]
+    assert "disableRtAuto" not in config["l2_data"]
+    assert "enableIr" not in config["l2_data"]["fabric_data"]
 
 
 def test_network_status_is_not_sent_in_write_payload_or_diff():

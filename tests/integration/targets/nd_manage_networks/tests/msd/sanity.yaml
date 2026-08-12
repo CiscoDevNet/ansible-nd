@@ -21,8 +21,6 @@
         network_id: "{{ nd_network_base_id + 20 }}"
         vlan_id: "{{ nd_network_base_vlan + 20 }}"
         vlan_name: ansible_nd_net_msd_sanity
-        rt_auto: true
-        enable_ir: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
         deploy: false
@@ -107,7 +105,6 @@
         network_id: "{{ nd_network_base_id + 20 }}"
         vlan_id: "{{ nd_network_base_vlan + 20 }}"
         vlan_name: ansible_nd_net_msd_sanity
-        enable_ir: false
   when: nd_network_run_msd | bool
   tags: sanity
 

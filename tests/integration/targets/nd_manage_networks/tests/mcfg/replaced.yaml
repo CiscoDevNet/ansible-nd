@@ -21,24 +21,18 @@
         network_id: "{{ nd_network_base_id + 251 }}"
         vlan_id: "{{ nd_network_base_vlan + 251 }}"
         vlan_name: ans_nd_net_mcfg_repl_base
-        rt_auto: false
-        enable_ir: false
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
-            enable_ir: false
     nd_network_mcfg_replace_config:
       - network_name: ansible-nd-net-mcfg-replaced
         is_l2only: true
         network_id: "{{ nd_network_base_id + 251 }}"
         vlan_id: "{{ nd_network_base_vlan + 251 }}"
         vlan_name: ans_nd_net_mcfg_repl_upd
-        rt_auto: true
-        enable_ir: false
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
-            enable_ir: false
   delegate_to: localhost
   tags:
     - mcfg
@@ -144,7 +138,6 @@
         network_id: "{{ nd_network_base_id + 251 }}"
         vlan_id: "{{ nd_network_base_vlan + 251 }}"
         vlan_name: ans_nd_net_mcfg_repl_upd
-        enable_ir: false
   when: nd_network_run_mcfg | bool
   tags:
     - mcfg

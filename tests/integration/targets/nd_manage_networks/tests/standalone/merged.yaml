@@ -73,8 +73,6 @@
         network_id: "{{ nd_network_base_id + 1 }}"
         vlan_id: "{{ nd_network_base_vlan + 1 }}"
         vlan_name: ansible_nd_net_merged_l2_vlan
-        rt_auto: true
-        enable_ir: false
         attach: "{{ nd_network_attach_block }}"
         deploy: false
       - network_name: ansible-nd-net-merged-l3
@@ -94,8 +92,6 @@
         network_id: "{{ nd_network_base_id + 1 }}"
         vlan_id: "{{ nd_network_base_vlan + 1 }}"
         vlan_name: ansible_nd_net_merged_l2_vlan
-        rt_auto: true
-        enable_ir: false
         attach: "{{ nd_network_deploy_attach_block }}"
         deploy: true
         deploy_type: switch

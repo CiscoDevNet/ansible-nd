@@ -99,7 +99,6 @@ class NetworkChildConfigModel(NDNestedModel):
     fabric_name: str
     l2_fabric_data: dict[str, Any] | None = Field(default=None, alias="l2FabricData")
     stretch: str | None = None
-    enable_ir: bool | None = Field(default=None, alias="enableIr")
     multicast_group_address: str | None = Field(default=None, alias="multicastGroup")
     ds_vni: int | None = Field(default=None, alias="dsVni")
     dhcp_servers: list[dict[str, Any]] | None = Field(default=None, alias="dhcpServers")
@@ -162,11 +161,9 @@ class NetworkConfigModel(NDBaseModel):
     layer: str | None = None
     is_l2only: bool | None = Field(default=None, alias="isL2Only")
     vlan_name: str | None = Field(default=None, alias="vlanName")
-    rt_auto: bool | None = Field(default=None, alias="rtAuto")
     x_connect: bool | None = Field(default=None, alias="xConnect")
     l2_fabric_data: dict[str, Any] | None = Field(default=None, alias="l2FabricData")
     stretch: str | None = None
-    enable_ir: bool | None = Field(default=False, alias="enableIr")
     multicast_group_address: str | None = Field(default=None, alias="multicastGroup")
     ds_vni: int | None = Field(default=None, alias="dsVni")
     gateway_ipv4_address: str | None = Field(default=None, alias="gatewayIpv4Address")
@@ -213,7 +210,6 @@ class NetworkConfigModel(NDBaseModel):
             "arp_suppress": "arp_suppression",
             "dhcp_loopback_id": "loopback_id",
             "l3gw_on_border": "gateway_on_border",
-            "route_target_both": "rt_auto",
             "vlan_nf_monitor": "l2_netflow_monitor",
             "intfvlan_nf_monitor": "l3_netflow_monitor",
         }

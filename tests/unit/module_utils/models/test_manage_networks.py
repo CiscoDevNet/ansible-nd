@@ -119,7 +119,6 @@ def test_manage_network_data_models_00105() -> None:
 
     payload = model.to_payload()
 
-    assert payload["fabricData"]["enableIr"] is False
     assert payload["fabricData"]["multicastGroup"] == "239.1.1.2"
     assert payload["fabricData"]["dsVni"] == 50000
 

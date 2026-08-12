@@ -93,8 +93,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         "isL2Only",
         "vlan_name",
         "vlanName",
-        "rt_auto",
-        "rtAuto",
         "x_connect",
         "xConnect",
         "l2_fabric_data",
@@ -187,9 +185,12 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             fabric_data_value = self._value(config, "l2_fabric_data", "l2FabricData") or {}
             if not isinstance(fabric_data_value, dict):
                 fabric_data_value = {}
+            else:
+                fabric_data_value = dict(fabric_data_value)
+            fabric_data_value.pop("enable_ir", None)
+            fabric_data_value.pop("enableIr", None)
             for target, names in {
                 "stretch": ("stretch",),
-                "enable_ir": ("enable_ir", "enableIr"),
                 "multicast_group": ("multicast_group_address", "multicastGroup", "multicast_group"),
                 "ds_vni": ("ds_vni", "dsVni"),
             }.items():
@@ -200,8 +201,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             if fabric_data_value:
                 known_keys = {
                     "stretch",
-                    "enable_ir",
-                    "enableIr",
                     "multicast_group",
                     "multicastGroup",
                     "ds_vni",
@@ -214,7 +213,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
 
             kwargs.update(
                 {
-                    "rt_auto": self._value(config, "rt_auto", "rtAuto"),
                     "x_connect": self._value(config, "x_connect", "xConnect"),
                     "fabric_data": fabric_data_payload,
                 }
@@ -340,8 +338,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if any(key in config and config[key] is not None for key in cls.definition_intent_fields):
             return True
         default_sensitive_fields = {
-            "enable_ir": False,
-            "enableIr": False,
             "netflow_enable": False,
             "netflowEnable": False,
             "arp_suppression": False,
@@ -680,17 +676,12 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         is_l2only = self._top_down_bool(template_config.get("isLayer2Only"))
         converted["layer"] = NetworkLayer.LAYER2.value if is_l2only else NetworkLayer.LAYER3.value
 
-        enable_ir = self._top_down_bool(template_config.get("enableIR", template_config.get("enableIr")))
-        if enable_ir is None:
-            enable_ir = False
         l2_fabric_data = {
-            "enableIr": enable_ir,
             "multicastGroup": template_config.get("mcastGroup"),
         }
         l2_fabric_data = {key: value for key, value in l2_fabric_data.items() if value not in (None, "")}
         l2_data = {
             "vlanName": template_config.get("vlanName"),
-            "rtAuto": self._top_down_bool(template_config.get("rtBothAuto")),
         }
         l2_data = {key: value for key, value in l2_data.items() if value not in (None, "")}
         if l2_fabric_data:
@@ -813,10 +804,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 "mcastGroup": self._template_value(l2_fabric_data.get("multicastGroup")),
                 "gatewayIpV6Address": self._template_value(l3_data.get("gatewayIpv6Address")),
                 "trmEnabled": self._template_value(l3_fabric_data.get("ipv4Trm")),
-                "rtBothAuto": self._template_value(l2_data.get("rtAuto")),
                 "enableL3OnBorder": self._template_value(l3_fabric_data.get("gatewayOnBorder")),
                 "ENABLE_NETFLOW": self._template_value(l3_fabric_data.get("netflow")),
-                "enableIR": self._template_value(l2_fabric_data.get("enableIr")),
             }
             for index, gateway in enumerate(l3_data.get("secondaryGatewayIpv4Collection") or [], start=1):
                 if index <= 4:

@@ -24,14 +24,12 @@
         network_id: "{{ nd_network_base_id + 6 }}"
         vlan_id: "{{ nd_network_base_vlan + 6 }}"
         vlan_name: ansible_nd_net_deleted
-        enable_ir: false
         deploy: false
       - network_name: ansible-nd-net-deleted-extra
         is_l2only: true
         network_id: "{{ nd_network_base_id + 7 }}"
         vlan_id: "{{ nd_network_base_vlan + 7 }}"
         vlan_name: ansible_nd_net_deleted_extra
-        enable_ir: false
         deploy: false
     nd_network_delete_request:
       - network_name: ansible-nd-net-deleted

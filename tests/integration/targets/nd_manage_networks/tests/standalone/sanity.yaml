@@ -27,15 +27,12 @@
         network_id: "{{ nd_network_base_id + 40 }}"
         vlan_id: "{{ nd_network_base_vlan + 40 }}"
         vlan_name: ansible_nd_net_sanity_a
-        rt_auto: true
-        enable_ir: false
         deploy: false
       - network_name: ansible-nd-net-sanity-b
         is_l2only: true
         network_id: "{{ nd_network_base_id + 41 }}"
         vlan_id: "{{ nd_network_base_vlan + 41 }}"
         vlan_name: ansible_nd_net_sanity_b
-        enable_ir: false
         deploy: false
     nd_network_sanity_replace_config:
       - network_name: ansible-nd-net-sanity-a
@@ -43,7 +40,6 @@
         network_id: "{{ nd_network_base_id + 40 }}"
         vlan_id: "{{ nd_network_base_vlan + 40 }}"
         vlan_name: ans_nd_net_sanity_a_repl
-        enable_ir: false
         deploy: false
     nd_network_sanity_delete_config:
       - network_name: ansible-nd-net-sanity-a

@@ -21,23 +21,18 @@
         network_id: "{{ nd_network_base_id + 30 }}"
         vlan_id: "{{ nd_network_base_vlan + 30 }}"
         vlan_name: ansible_nd_net_mcfg_sanity
-        rt_auto: true
-        enable_ir: false
     nd_network_mcfg_sanity_child_expected:
       - network_name: ansible-nd-net-mcfg-sanity
         is_l2only: true
         network_id: "{{ nd_network_base_id + 30 }}"
         vlan_id: "{{ nd_network_base_vlan + 30 }}"
         vlan_name: ansible_nd_net_mcfg_sanity
-        enable_ir: false
     nd_network_mcfg_sanity_config:
       - network_name: ansible-nd-net-mcfg-sanity
         is_l2only: true
         network_id: "{{ nd_network_base_id + 30 }}"
         vlan_id: "{{ nd_network_base_vlan + 30 }}"
         vlan_name: ansible_nd_net_mcfg_sanity
-        rt_auto: true
-        enable_ir: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
         deploy: false

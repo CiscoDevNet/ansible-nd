@@ -109,7 +109,6 @@ class DefaultL2FabricDataModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
     stretch: str | None = Field(default=None, description="Stretch border gateway list name")
-    enable_ir: bool | None = Field(default=False, alias="enableIr")
     multicast_group: str | None = Field(default=None, alias="multicastGroup")
     ds_vni: int | None = Field(default=None, alias="dsVni")
 
@@ -124,7 +123,6 @@ class DefaultL2DataModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
     vlan_name: str | None = Field(default=None, alias="vlanName", description="VLAN name")
-    rt_auto: bool | None = Field(default=None, alias="rtAuto", description="Enable automatic route-target")
     x_connect: bool | None = Field(default=None, alias="xConnect", description="Enable xConnect")
     fabric_data: DefaultL2FabricDataModel | dict[str, Any] | None = Field(default=None, alias="fabricData")
 
@@ -381,9 +379,15 @@ class NetworkBaseModel(NetworkCommonModel):
         if "layer" not in normalized and "networkMode" in normalized:
             normalized["layer"] = normalized["networkMode"]
         l2_data = normalized.get("l2Data")
-        if isinstance(l2_data, dict) and "rtAuto" not in l2_data and "disableRtAuto" in l2_data:
+        if isinstance(l2_data, dict):
             l2_data = dict(l2_data)
-            l2_data["rtAuto"] = not l2_data["disableRtAuto"]
+            l2_data.pop("rtAuto", None)
+            l2_data.pop("disableRtAuto", None)
+            fabric_data = l2_data.get("fabricData")
+            if isinstance(fabric_data, dict):
+                fabric_data = dict(fabric_data)
+                fabric_data.pop("enableIr", None)
+                l2_data["fabricData"] = fabric_data
             normalized["l2Data"] = l2_data
         return super().from_response(normalized, **kwargs)
 
