@@ -1,0 +1,313 @@
+---
+# Gathered state tests for nd_fabric_update_group
+# Copyright: (c) 2026, Deeksha Pandey (@deekpand)
+#
+# Prerequisites: merged.yaml must run first so ansible_leaf_group and ansible_spine_group exist.
+# At this point in the test suite:
+#   ansible_leaf_group  → execution: parallel, contingency: pause, is_maintenance: true, is_disruptive_update: false
+#   ansible_spine_group → execution: parallel, contingency: continue, is_maintenance: false, is_disruptive_update: false
+#
+# (leaf was updated by merged.yaml to parallel/pause/advanced; spine was created with parallel/continue/noReport)
+
+# =============================================================================
+# GATHERED: No filter (all groups)
+# =============================================================================
+
+- name: "GATHERED: Gather all update groups (no filter)"
+  cisco.nd.nd_fabric_update_group: &gather_all
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: nm_gathered_all
+
+- name: "GATHERED: Verify structure and changed=false"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_all is not changed
+      - nm_gathered_all.gathered is defined
+      - nm_gathered_all.gathered is iterable
+      - nm_gathered_all.gathered | length >= 2
+      - nm_gathered_all.gathered | selectattr('update_group_name', 'equalto', 'ansible_leaf_group') | list | length == 1
+      - nm_gathered_all.gathered | selectattr('update_group_name', 'equalto', 'ansible_spine_group') | list | length == 1
+
+- name: "GATHERED: Verify None default group is not in output"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_all.gathered | selectattr('update_group_name', 'equalto', 'None') | list | length == 0
+
+# =============================================================================
+# GATHERED: Idempotency (two runs produce same result)
+# =============================================================================
+
+- name: "GATHERED IDEMPOTENT: Gather again"
+  cisco.nd.nd_fabric_update_group: *gather_all
+  register: nm_gathered_idem
+
+- name: "GATHERED IDEMPOTENT: Verify identical"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_idem is not changed
+      - nm_gathered_idem.gathered == nm_gathered_all.gathered
+
+# =============================================================================
+# GATHERED: Check mode (same behavior as normal — read-only)
+# =============================================================================
+
+- name: "GATHERED CHECK MODE: Gather in check mode"
+  cisco.nd.nd_fabric_update_group: *gather_all
+  check_mode: true
+  register: cm_gathered_all
+
+- name: "GATHERED CHECK MODE: Verify same as normal"
+  ansible.builtin.assert:
+    that:
+      - cm_gathered_all is not changed
+      - cm_gathered_all.gathered == nm_gathered_all.gathered
+
+# =============================================================================
+# GATHERED: Filter by update_group_name (identifier)
+# =============================================================================
+
+- name: "GATHERED FILTER NAME: Filter by ansible_leaf_group"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - update_group_name: ansible_leaf_group
+    state: gathered
+  register: nm_gathered_by_name
+
+- name: "GATHERED FILTER NAME: Verify only leaf returned"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_by_name is not changed
+      - nm_gathered_by_name.gathered | length == 1
+      - nm_gathered_by_name.gathered[0].update_group_name == "ansible_leaf_group"
+
+- name: "GATHERED FILTER NAME: Non-existent name returns empty"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - update_group_name: this_group_does_not_exist
+    state: gathered
+  register: nm_gathered_name_missing
+
+- name: "GATHERED FILTER NAME: Verify empty"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_name_missing is not changed
+      - nm_gathered_name_missing.gathered | length == 0
+
+# =============================================================================
+# GATHERED: Filter by execution
+# =============================================================================
+
+- name: "GATHERED FILTER EXECUTION: execution=parallel"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - execution: parallel
+    state: gathered
+  register: nm_gathered_parallel
+
+- name: "GATHERED FILTER EXECUTION: Verify both groups have parallel"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_parallel is not changed
+      - nm_gathered_parallel.gathered | length == 2
+      - nm_gathered_parallel.gathered | selectattr('update_group_name', 'equalto', 'ansible_leaf_group') | list | length == 1
+      - nm_gathered_parallel.gathered | selectattr('update_group_name', 'equalto', 'ansible_spine_group') | list | length == 1
+
+- name: "GATHERED FILTER EXECUTION: execution=serial returns empty (neither group is serial)"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - execution: serial
+    state: gathered
+  register: nm_gathered_serial
+
+- name: "GATHERED FILTER EXECUTION: Verify empty"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_serial is not changed
+      - nm_gathered_serial.gathered | length == 0
+
+# =============================================================================
+# GATHERED: Filter by contingency (selectivity — groups differ here)
+# =============================================================================
+
+- name: "GATHERED FILTER CONTINGENCY: contingency=pause → only leaf"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - contingency: pause
+    state: gathered
+  register: nm_gathered_pause
+
+- name: "GATHERED FILTER CONTINGENCY: Verify only leaf returned"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_pause is not changed
+      - nm_gathered_pause.gathered | length == 1
+      - nm_gathered_pause.gathered[0].update_group_name == "ansible_leaf_group"
+
+- name: "GATHERED FILTER CONTINGENCY: contingency=continue → only spine"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - contingency: continue
+    state: gathered
+  register: nm_gathered_continue
+
+- name: "GATHERED FILTER CONTINGENCY: Verify only spine returned"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_continue is not changed
+      - nm_gathered_continue.gathered | length == 1
+      - nm_gathered_continue.gathered[0].update_group_name == "ansible_spine_group"
+
+# =============================================================================
+# GATHERED: Boolean filter (is_maintenance — groups differ here)
+# =============================================================================
+
+- name: "GATHERED FILTER BOOL: is_maintenance=true → only leaf"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - is_maintenance: true
+    state: gathered
+  register: nm_gathered_maint_true
+
+- name: "GATHERED FILTER BOOL: Verify only leaf (maintenance=true)"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_maint_true is not changed
+      - nm_gathered_maint_true.gathered | length == 1
+      - nm_gathered_maint_true.gathered[0].update_group_name == "ansible_leaf_group"
+
+- name: "GATHERED FILTER BOOL: is_maintenance=false → only spine"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - is_maintenance: false
+    state: gathered
+  register: nm_gathered_maint_false
+
+- name: "GATHERED FILTER BOOL: Verify only spine (maintenance=false)"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_maint_false is not changed
+      - nm_gathered_maint_false.gathered | length == 1
+      - nm_gathered_maint_false.gathered[0].update_group_name == "ansible_spine_group"
+
+# =============================================================================
+# GATHERED: AND semantics (multiple criteria in one item — ALL must match)
+# =============================================================================
+
+- name: "GATHERED FILTER AND: execution=parallel AND contingency=pause → only leaf"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - execution: parallel
+        contingency: pause
+    state: gathered
+  register: nm_gathered_and_match
+
+- name: "GATHERED FILTER AND: Verify only leaf"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_and_match is not changed
+      - nm_gathered_and_match.gathered | length == 1
+      - nm_gathered_and_match.gathered[0].update_group_name == "ansible_leaf_group"
+
+- name: "GATHERED FILTER AND: execution=parallel AND contingency=pause AND is_maintenance=false → empty (no group has all three)"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - execution: parallel
+        contingency: pause
+        is_maintenance: false
+    state: gathered
+  register: nm_gathered_and_nomatch
+
+- name: "GATHERED FILTER AND: Verify empty (cross-group criteria)"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_and_nomatch is not changed
+      - nm_gathered_and_nomatch.gathered | length == 0
+
+# =============================================================================
+# GATHERED: OR semantics (multiple items — ANY match includes the group)
+# =============================================================================
+
+- name: "GATHERED FILTER OR: contingency=pause OR contingency=continue → both groups"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - contingency: pause
+      - contingency: continue
+    state: gathered
+  register: nm_gathered_or_both
+
+- name: "GATHERED FILTER OR: Verify both groups returned"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_or_both is not changed
+      - nm_gathered_or_both.gathered | length == 2
+
+- name: "GATHERED FILTER OR: is_maintenance=true OR contingency=continue → both (each item matches different group)"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - is_maintenance: true
+      - contingency: continue
+    state: gathered
+  register: nm_gathered_or_cross
+
+- name: "GATHERED FILTER OR: Verify cross-property OR returns both"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_or_cross is not changed
+      - nm_gathered_or_cross.gathered | length == 2
+
+- name: "GATHERED FILTER OR: neither item matches → empty"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - execution: serial
+        contingency: pause
+      - execution: serial
+        contingency: continue
+    state: gathered
+  register: nm_gathered_or_empty
+
+- name: "GATHERED FILTER OR: Verify empty (neither item matches)"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_or_empty is not changed
+      - nm_gathered_or_empty.gathered | length == 0
+
+# =============================================================================
+# GATHERED: Switch IP denormalization (switchIds → IPs)
+# =============================================================================
+
+- name: "GATHERED SWITCHIP: Verify switches are IPs not switchIds"
+  vars:
+    leaf_group: "{{ nm_gathered_all.gathered | selectattr('update_group_name', 'equalto', 'ansible_leaf_group') | first }}"
+  ansible.builtin.assert:
+    that:
+      - leaf_group.update_group_switches is defined
+      - leaf_group.update_group_switches | length > 0
+      - "'.' in leaf_group.update_group_switches[0]"
