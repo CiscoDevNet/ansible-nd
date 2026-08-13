@@ -1205,15 +1205,10 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
                 # Resolve pair sync state from both overview and switch signals.
                 #
                 # Precedence:
-                # - An explicit switch-level out-of-sync/pending signal is
-                #   authoritative not-in-sync. A pair that was created but never
-                #   deployed reports device-level "pending" while the controller
-                #   overview can still report intent-only in-sync; the device
-                #   state must win so the pair gets saved/deployed.
+                # - Switch-level pending/out-of-sync is authoritative not-in-sync (checked first).
                 # - overview=False is authoritative not-in-sync (deploy needed).
-                # - overview=True is in-sync only when no switch reports
-                #   out-of-sync (preserves idempotency of a deployed pair).
-                # - overview=None falls back to explicit switch out-of-sync.
+                # - overview=True is in-sync (preserves idempotency of a deployed pair).
+                # - overview=None with no switch signal defaults to in-sync.
                 pair_not_in_sync = False
                 if config_sync_state is False:
                     pair_not_in_sync = True
@@ -1222,7 +1217,7 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
                 elif sync_state is True:
                     pair_not_in_sync = False
                 else:
-                    pair_not_in_sync = config_sync_state is False
+                    pair_not_in_sync = False
 
                 if pair_not_in_sync:
                     not_in_sync_pairs.append(
