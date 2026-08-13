@@ -2108,6 +2108,37 @@ def test_network_check_mode_attachment_phase_returns_planned_payload():
     ]
 
 
+def test_network_workflow_coordinator_apply_attachment_phase_forwards_attachment_details():
+    module_args = {"state": "replaced", "config": []}
+    strategy = _orchestrator().strategy
+    coordinator = NetworkWorkflowCoordinator(module=_Module(module_args), strategy=strategy)
+    desired = {("BLUE_NET", "SERIAL1"): {"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": True}}
+    current = {("BLUE_NET", "SERIAL2"): {"networkName": "BLUE_NET", "switchId": "SERIAL2", "attach": True}}
+    attachment_details = [{"networkName": "BLUE_NET", "switchId": "SERIAL1", "peerSwitchId": "SERIAL2", "attach": False}]
+    calls = []
+
+    class Attachments:
+        @staticmethod
+        def apply_phase(module_args, strategy, phase, desired, current_network_names, current, attachment_details):
+            calls.append((module_args, strategy, phase, desired, current_network_names, current, attachment_details))
+            return {"attachment_details": attachment_details}
+
+    object.__setattr__(coordinator, "_attachments", Attachments())
+
+    trace = coordinator._apply_attachment_phase(
+        module_args,
+        strategy,
+        phase="post",
+        desired=desired,
+        current_network_names=["BLUE_NET"],
+        current=current,
+        attachment_details=attachment_details,
+    )
+
+    assert trace == {"attachment_details": attachment_details}
+    assert calls == [(module_args, strategy, "post", desired, ["BLUE_NET"], current, attachment_details)]
+
+
 def test_network_attachment_post_validates_interfaces_before_attach():
     calls = []
 
