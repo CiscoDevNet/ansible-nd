@@ -398,11 +398,11 @@ class _StagedVrfCoordinator:
 
     @staticmethod
     def _build_deploy_payloads(_config, *_target_maps):
-        return []
+        raise AssertionError("staged must not build deploy payloads")
 
     @staticmethod
     def _build_pending_vrf_deploy_payloads(_result, _config, _module_args, _strategy):
-        return []
+        raise AssertionError("staged must not build pending deploy payloads")
 
     def _restore_state_machine_params(self, original_config, original_state):
         self.calls.append(("restore", original_config, original_state))

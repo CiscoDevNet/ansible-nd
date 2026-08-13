@@ -13,7 +13,8 @@ This wrapper owns the Network-specific workflow around that CRUD phase:
   - deploy of pending attachment changes
 
 The private ``staged`` state follows overridden attachment handling but maps
-the CRUD phase to replaced so omitted Networks are detached without delete calls.
+the CRUD phase to replaced and suppresses deploy so omitted Networks are
+detached without deploy or delete calls.
 
 It deliberately composes the generic NDStateMachine through the workflow
 coordinator helpers instead of changing the shared state-machine contract.
@@ -259,6 +260,9 @@ class NetworkStateMachine:
             self._trace("attachment_phase_post_end", changed=post_attach.get("changed"), payload_count=len(post_attach.get("payloads", [])))
             self.coordinator._merge_api_trace(result, post_attach)
 
+            if state == "staged":
+                return result
+
             return self._deploy_after_attachment_changes(
                 result,
                 config,
@@ -403,6 +407,8 @@ class NetworkStateMachine:
             omitted_network_names,
             attachment_details=omitted_attachment_details,
         )
+        if module_args.get("state") == "staged":
+            return [detach_trace] if detach_trace else []
         return self._deploy_detach_traces(
             api_args=module_args,
             wait_args=module_args,

@@ -297,24 +297,24 @@ class _StagedNetworkCoordinator:
 
     @staticmethod
     def _build_delete_deploy_payloads(_config, *_target_maps):
-        return []
+        raise AssertionError("staged must not build delete deploy payloads")
 
     @staticmethod
     def _build_deploy_payloads(_config, *_target_maps):
-        return []
+        raise AssertionError("staged must not build deploy payloads")
 
     @staticmethod
     def _build_pending_network_deploy_payloads(_result, _config, _module_args, _strategy):
-        return []
+        raise AssertionError("staged must not build pending deploy payloads")
 
     def _query_current_networks_with_trace(self, *_args):
         raise AssertionError("staged test should not need the fallback pending Network query")
 
     def _wait_for_network_attachments_delete_ready(self, _module_args, _strategy, network_names):
-        self.calls.append(("wait_attachments_delete_ready", network_names))
+        raise AssertionError(f"staged must not wait for attachment delete readiness: {network_names}")
 
     def _wait_for_networks_delete_ready(self, _module_args, _strategy, network_names):
-        self.calls.append(("wait_networks_delete_ready", network_names))
+        raise AssertionError(f"staged must not wait for Network delete readiness: {network_names}")
 
     def _restore_state_machine_params(self, original_config, original_state):
         self.calls.append(("restore", original_config, original_state))
