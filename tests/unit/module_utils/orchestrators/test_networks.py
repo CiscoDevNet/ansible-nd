@@ -152,7 +152,7 @@ def test_network_config_model_requires_attachment_interfaces():
         NetworkConfigModel.from_config(
             {
                 "network_name": "BLUE_NET",
-                "is_l2only": True,
+                "layer": "layer2",
                 "vlan_id": 2301,
                 "attach": [
                     {
@@ -180,9 +180,13 @@ def test_network_parent_argument_spec_includes_child_config():
     assert spec["attach"]["options"]["attachment_options"]["options"]["dpu_affinity"]["choices"] == ["dynamic", "dpu1", "dpu2", "dpu3", "dpu4"]
     assert spec["attach"]["options"]["attachment_options"]["options"]["switch_route_target_import"]["elements"] == "str"
     assert "instance_values" not in spec["attach"]["options"]
-    assert "net_name" in spec
-    assert "net_id" in spec
-    assert "gw_ip_subnet" in spec
+    assert "freeform_config" in spec["attach"]["options"]
+    assert "extra_config" not in spec["attach"]["options"]
+    assert "net_name" not in spec
+    assert "net_id" not in spec
+    assert "network_type" not in spec
+    assert "l2_fabric_data" not in spec
+    assert "gw_ip_subnet" not in spec
     assert spec["deploy_type"]["choices"] == ["switch", "network"]
     assert "network_id" not in child_spec
     assert "vlan_id" not in child_spec
@@ -193,11 +197,23 @@ def test_network_parent_argument_spec_includes_child_config():
     assert "mtu" not in child_spec
     assert "attach" not in child_spec
     assert "enable_ir" not in child_spec
+    assert "l2_fabric_data" not in child_spec
     assert "netflow_enable" in child_spec
     assert "gateway_on_border" in child_spec
 
 
-def test_user_defined_template_fields_require_user_defined_type():
+def test_user_defined_template_fields_infer_user_defined_type():
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "CUSTOM_TEMPLATE",
+            "network_template_name": "Custom_Network",
+        }
+    )
+
+    assert model.network_type == "userDefined"
+
+
+def test_user_defined_template_fields_reject_explicit_non_user_defined_type():
     with pytest.raises(ValueError, match="network template fields require"):
         NetworkConfigModel.from_config(
             {
@@ -208,11 +224,22 @@ def test_user_defined_template_fields_require_user_defined_type():
         )
 
 
+def test_l2_fabric_data_raw_override_is_not_supported():
+    with pytest.raises(ValueError):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "RAW_L2_OVERRIDE",
+                "layer": "layer2",
+                "l2_fabric_data": {"customL2Key": "custom-l2-value"},
+            }
+        )
+
+
 def test_parent_config_accepts_child_fabric_overrides():
     model = NetworkParentConfigModel.from_config(
         {
             "network_name": "BLUE_NET",
-            "is_l2only": True,
+            "layer": "layer2",
             "child_fabric_config": [
                 {
                     "fabric_name": "child1",
@@ -239,7 +266,7 @@ def test_child_task_inherits_parent_network_name_and_layer_context():
             "vlan_id": 3130,
             "vlan_name": "BLUE_VLAN",
             "vrf_name": "NA",
-            "is_l2only": True,
+            "layer": "layer2",
         },
         child_cfg={"fabric_name": "child1"},
         child_tasks_dict={},
@@ -249,7 +276,7 @@ def test_child_task_inherits_parent_network_name_and_layer_context():
 
     child_config = child_tasks["child1"]["module_args"]["config"][0]
     assert child_config["network_name"] == "BLUE_NET"
-    assert child_config["is_l2only"] is True
+    assert child_config["layer"] == "layer2"
     assert "network_id" not in child_config
     assert "vlan_id" not in child_config
     assert "vlan_name" not in child_config
@@ -275,7 +302,7 @@ def test_network_workflow_coordinator_parent_deploy_deferred_after_child_tasks()
                 "network_name": "ansible-msd-net",
                 "network_id": 30101,
                 "vlan_id": 2301,
-                "is_l2only": False,
+                "layer": "layer3",
                 "vrf_name": "ansible-msd-vrf",
                 "deploy": True,
                 "attach": [
@@ -373,7 +400,7 @@ def test_child_network_update_payload_is_limited_to_fabric_instance_data():
                 "vlan_id": 3130,
                 "vlan_name": "BLUE_VLAN",
                 "vrf_name": "VRF_BLUE",
-                "is_l2only": False,
+                "layer": "layer3",
                 "gateway_ipv4_address": "192.0.2.1/24",
                 "routing_tag": 12345,
                 "multicast_group_address": "239.1.1.1",
@@ -415,7 +442,7 @@ def test_child_network_update_payload_uses_manage_schema_for_sparse_child_option
         [
             {
                 "network_name": "BLUE_NET",
-                "is_l2only": False,
+                "layer": "layer3",
                 "multicast_group_address": "239.1.1.1",
             }
         ]
@@ -447,9 +474,7 @@ def test_child_network_update_payload_maps_all_child_fabric_options_to_manage_sc
         [
             {
                 "network_name": "BLUE_NET",
-                "is_l2only": False,
-                "l2_fabric_data": {"customL2Key": "custom-l2-value", "enableIr": True},
-                "stretch": "BORDER-GW",
+                "layer": "layer3",
                 "multicast_group_address": "239.1.1.53",
                 "ds_vni": 901030,
                 "dhcp_servers": [{"server_address": "192.0.2.10", "server_vrf": "management"}],
@@ -469,8 +494,6 @@ def test_child_network_update_payload_maps_all_child_fabric_options_to_manage_sc
     assert payload["networkMode"] == "layer3"
     assert "layer" not in payload
     assert payload["l2Data"]["fabricData"] == {
-        "customL2Key": "custom-l2-value",
-        "stretch": "BORDER-GW",
         "multicastGroup": "239.1.1.53",
         "dsVni": 901030,
     }
@@ -498,7 +521,7 @@ def test_child_network_update_payload_uses_sparse_source_after_state_machine_mer
         [
             {
                 "network_name": "BLUE_NET",
-                "is_l2only": True,
+                "layer": "layer2",
                 "multicast_group_address": "239.1.1.1",
             }
         ]
@@ -672,7 +695,7 @@ def test_mcfg_parent_workflow_validates_but_skips_child_network_crud():
             "config": [
                 {
                     "network_name": "BLUE_NET",
-                    "is_l2only": True,
+                    "layer": "layer2",
                     "child_fabric_config": [{"fabric_name": "child1"}],
                 }
             ],
@@ -999,45 +1022,11 @@ def test_network_query_all_unfiltered_walks_paginated_results():
     ]
 
 
-def test_legacy_network_names_are_normalized():
-    model = NetworkConfigModel.from_config(
-        {
-            "net_name": "LEGACY_NET",
-            "net_id": 50001,
-            "vrf_name": "Tenant_A",
-            "vlan_id": 2301,
-            "gw_ip_subnet": "192.0.2.1/24",
-            "gw_ipv6_subnet": "2001:db8::1/64",
-            "secondary_ip_gw1": "192.0.2.2/24",
-            "int_desc": "Legacy SVI",
-            "mtu": 9216,
-            "arp_suppression": True,
-            "dhcp_srvr1_ip": "10.1.1.10",
-            "dhcp_srvr1_vrf": "management",
-            "dhcp_loopback_id": 101,
-            "l3gw_on_border": True,
-        }
-    )
-    config = model.to_config()
-
-    assert config["network_name"] == "LEGACY_NET"
-    assert config["network_id"] == 50001
-    assert config["gateway_ipv4_address"] == "192.0.2.1/24"
-    assert config["gateway_ipv6_address"] == "2001:db8::1/64"
-    assert config["secondary_gateway_ipv4_collection"] == ["192.0.2.2/24"]
-    assert config["vlan_intf_desc"] == "Legacy SVI"
-    assert config["mtu"] == 9216
-    assert config["arp_suppression"] is True
-    assert config["dhcp_servers"] == [{"server_address": "10.1.1.10", "server_vrf": "management"}]
-    assert config["loopback_id"] == 101
-    assert config["gateway_on_border"] is True
-
-
 def test_attachment_shape_rejects_ports_without_interfaces():
     model = NetworkConfigModel.from_config(
         {
-            "net_name": "LEGACY_ATTACH",
-            "is_l2only": True,
+            "network_name": "ATTACH_SHAPE",
+            "layer": "layer2",
             "attach": [
                 {
                     "ip_address": "10.1.1.11",
@@ -1060,8 +1049,8 @@ def test_attachment_shape_rejects_ports_without_interfaces():
     with pytest.raises(ValueError, match="interfaces"):
         NetworkConfigModel.from_config(
             {
-                "net_name": "LEGACY_ATTACH",
-                "is_l2only": True,
+                "network_name": "ATTACH_PORTS",
+                "layer": "layer2",
                 "attach": [
                     {
                         "ip_address": "10.1.1.11",
@@ -1074,8 +1063,8 @@ def test_attachment_shape_rejects_ports_without_interfaces():
     with pytest.raises(ValueError, match="mode"):
         NetworkConfigModel.from_config(
             {
-                "net_name": "MISSING_MODE",
-                "is_l2only": True,
+                "network_name": "MISSING_MODE",
+                "layer": "layer2",
                 "attach": [
                     {
                         "ip_address": "10.1.1.11",
@@ -1088,8 +1077,8 @@ def test_attachment_shape_rejects_ports_without_interfaces():
     with pytest.raises(ValueError, match="interface_range|interfaceRange"):
         NetworkConfigModel.from_config(
             {
-                "net_name": "MISSING_RANGE",
-                "is_l2only": True,
+                "network_name": "MISSING_RANGE",
+                "layer": "layer2",
                 "attach": [
                     {
                         "ip_address": "10.1.1.11",
@@ -1103,8 +1092,8 @@ def test_attachment_shape_rejects_ports_without_interfaces():
 def test_attachment_options_replace_instance_values():
     model = NetworkConfigModel.from_config(
         {
-            "net_name": "ATTACH_OPTIONS",
-            "is_l2only": True,
+            "network_name": "ATTACH_OPTIONS",
+            "layer": "layer2",
             "attach": [
                 {
                     "ip_address": "10.1.1.11",
@@ -1119,6 +1108,7 @@ def test_attachment_options_replace_instance_values():
                         "dpu_secure": False,
                         "switch_route_target_import": ["65000:100"],
                     },
+                    "freeform_config": "interface Ethernet1/1\n  description attached by test",
                 }
             ],
         }
@@ -1142,6 +1132,7 @@ def test_attachment_options_replace_instance_values():
         "sviEnabled": True,
         "switchRouteTargetImport": ["65000:100"],
     }
+    assert desired[("ATTACH_OPTIONS", "FDO123")]["extraConfig"] == "interface Ethernet1/1\n  description attached by test"
 
 
 def test_attachment_config_rejects_camelcase_aliases():
@@ -1149,7 +1140,7 @@ def test_attachment_config_rejects_camelcase_aliases():
         NetworkConfigModel.from_config(
             {
                 "network_name": "ATTACH_ALIAS_REJECT",
-                "is_l2only": True,
+                "layer": "layer2",
                 "attach": [
                     {
                         "ipAddress": "10.1.1.11",
@@ -1162,6 +1153,7 @@ def test_attachment_config_rejects_camelcase_aliases():
                         "attachmentOptions": {
                             "sviEnabled": True,
                         },
+                        "extra_config": "unsupported",
                     }
                 ],
             }
@@ -1291,8 +1283,8 @@ def test_network_attachment_query_missing_network_falls_back_to_unscoped_read():
 def test_tor_is_modeled_as_normal_attachment_payload():
     model = NetworkConfigModel.from_config(
         {
-            "net_name": "TOR_ATTACH",
-            "is_l2only": True,
+            "network_name": "TOR_ATTACH",
+            "layer": "layer2",
             "attach": [
                 {
                     "ip_address": "10.1.1.11",
@@ -1337,23 +1329,11 @@ def test_tor_is_modeled_as_normal_attachment_payload():
     ]
 
 
-def test_module_level_query_is_normalized_to_gathered():
-    module_args = {
-        "state": "query",
-        "config": [{"net_name": "LEGACY_NET", "is_l2only": True}],
-    }
-
-    NetworkWorkflowCoordinator._normalize_module_args(module_args)
-
-    assert module_args["state"] == "gathered"
-    assert "deploy_type" not in module_args["config"][0]
-
-
 def test_network_deploy_type_network_builds_network_level_payload():
     model = NetworkConfigModel.from_config(
         {
             "network_name": "BLUE_NET",
-            "is_l2only": True,
+            "layer": "layer2",
             "deploy_type": "network",
         }
     )
@@ -1367,7 +1347,7 @@ def test_transform_l2_network_payload_uses_manage_schema_shape():
         [
             {
                 "network_name": "BLUE_NET",
-                "is_l2only": True,
+                "layer": "layer2",
                 "vlan_id": 2301,
                 "vlan_name": "BLUE_VLAN",
                 "multicast_group_address": "239.1.1.2",
@@ -1460,7 +1440,7 @@ def test_mcfg_parent_network_create_uses_onemanage_manage_schema_payload():
                     "network_id": 901030,
                     "vlan_id": 3130,
                     "vlan_name": "BLUE_VLAN",
-                    "is_l2only": True,
+                    "layer": "layer2",
                 }
             ]
         )[0]
@@ -1552,7 +1532,7 @@ def test_mcfg_parent_network_update_uses_l2_onemanage_manage_schema_payload():
                     "network_id": 901030,
                     "vlan_id": 3130,
                     "vlan_name": "BLUE_VLAN",
-                    "is_l2only": True,
+                    "layer": "layer2",
                 }
             ]
         )[0]
@@ -2869,8 +2849,8 @@ def test_transform_l3_network_payload_uses_l3_data_fabric_data():
                 "gateway_ipv4_address": "192.0.2.1/24",
                 "trm_enable": True,
                 "netflow_enable": True,
-                "vlan_nf_monitor": "L2_MON",
-                "intfvlan_nf_monitor": "L3_MON",
+                "l2_netflow_monitor": "L2_MON",
+                "l3_netflow_monitor": "L3_MON",
                 "netflow_sampler": "NF_SAMPLER",
             }
         ]

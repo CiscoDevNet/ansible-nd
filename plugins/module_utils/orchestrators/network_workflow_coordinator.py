@@ -121,7 +121,6 @@ class NetworkWorkflowCoordinator:
             check_mode=self.module.check_mode,
         )
         try:
-            self._normalize_module_args(module_args)
             fabric_type: str = self.strategy.fabric_type
             self._validate_topology_argument_scope(module_args, fabric_type)
 
@@ -199,12 +198,6 @@ class NetworkWorkflowCoordinator:
         if self._trace_enabled():
             result["workflow_trace"] = list(self._workflow_trace)
         return result
-
-    @staticmethod
-    def _normalize_module_args(module_args: dict) -> None:
-        """Normalize legacy module-level aliases before workflow routing."""
-        if module_args.get("state") == "query":
-            module_args["state"] = "gathered"
 
     def _validate_topology_argument_scope(
         self,
@@ -465,11 +458,10 @@ class NetworkWorkflowCoordinator:
         # Inherit the Network identifier plus layer context from the parent
         # definition.  The parent owns create/delete and immutable identity
         # fields; layer context only prevents child PUTs from being interpreted
-        # as an isLayer2Only change by ND.
+        # as a network-mode change by ND.
         child_cfg["network_name"] = parent_network.get("network_name")
-        for field in ("layer", "is_l2only"):
-            if child_cfg.get(field) is None and parent_network.get(field) is not None:
-                child_cfg[field] = parent_network.get(field)
+        if child_cfg.get("layer") is None and parent_network.get("layer") is not None:
+            child_cfg["layer"] = parent_network.get("layer")
 
         if child_fabric_name in child_tasks_dict:
             # Append to existing child task (batch multiple Networks together)

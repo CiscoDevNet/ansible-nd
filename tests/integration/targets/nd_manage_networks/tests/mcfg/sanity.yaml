@@ -14,22 +14,22 @@
       - ansible-nd-net-mcfg-sanity
     target_network_delete_config:
       - network_name: ansible-nd-net-mcfg-sanity
-        is_l2only: true
+        layer: layer2
     nd_network_mcfg_sanity_parent_expected:
       - network_name: ansible-nd-net-mcfg-sanity
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 30 }}"
         vlan_id: "{{ nd_network_base_vlan + 30 }}"
         vlan_name: ansible_nd_net_mcfg_sanity
     nd_network_mcfg_sanity_child_expected:
       - network_name: ansible-nd-net-mcfg-sanity
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 30 }}"
         vlan_id: "{{ nd_network_base_vlan + 30 }}"
         vlan_name: ansible_nd_net_mcfg_sanity
     nd_network_mcfg_sanity_config:
       - network_name: ansible-nd-net-mcfg-sanity
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 30 }}"
         vlan_id: "{{ nd_network_base_vlan + 30 }}"
         vlan_name: ansible_nd_net_mcfg_sanity

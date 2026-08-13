@@ -14,12 +14,12 @@
     target_fabric: "{{ nd_network_mcfg_parent_fabric }}"
     target_network_delete_config:
       - network_name: ansible-nd-net-mcfg-merged-switch
-        is_l2only: true
+        layer: layer2
       - network_name: ansible-nd-net-mcfg-merged-resource
-        is_l2only: true
+        layer: layer2
     nd_network_mcfg_merged_stage_config:
       - network_name: ansible-nd-net-mcfg-merged-switch
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 241 }}"
         vlan_id: "{{ nd_network_base_vlan + 241 }}"
         vlan_name: ans_nd_net_mcfg_mrg_sw
@@ -28,7 +28,7 @@
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
       - network_name: ansible-nd-net-mcfg-merged-resource
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 242 }}"
         vlan_id: "{{ nd_network_base_vlan + 242 }}"
         vlan_name: ans_nd_net_mcfg_mrg_res
@@ -38,7 +38,7 @@
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
     nd_network_mcfg_merged_deploy_config:
       - network_name: ansible-nd-net-mcfg-merged-switch
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 241 }}"
         vlan_id: "{{ nd_network_base_vlan + 241 }}"
         vlan_name: ans_nd_net_mcfg_mrg_sw
@@ -47,7 +47,7 @@
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
       - network_name: ansible-nd-net-mcfg-merged-resource
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 242 }}"
         vlan_id: "{{ nd_network_base_vlan + 242 }}"
         vlan_name: ans_nd_net_mcfg_mrg_res

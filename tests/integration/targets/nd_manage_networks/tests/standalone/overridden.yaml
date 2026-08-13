@@ -15,25 +15,25 @@
       - ansible-nd-net-over-remove
     target_network_delete_config:
       - network_name: ansible-nd-net-over-keep
-        is_l2only: true
+        layer: layer2
       - network_name: ansible-nd-net-over-remove
-        is_l2only: true
+        layer: layer2
     nd_network_overridden_seed:
       - network_name: ansible-nd-net-over-keep
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 8 }}"
         vlan_id: "{{ nd_network_base_vlan + 8 }}"
         vlan_name: ansible_nd_net_over_keep_seed
         deploy: false
       - network_name: ansible-nd-net-over-remove
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 9 }}"
         vlan_id: "{{ nd_network_base_vlan + 9 }}"
         vlan_name: ansible_nd_net_over_remove_seed
         deploy: false
     nd_network_overridden_config:
       - network_name: ansible-nd-net-over-keep
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 8 }}"
         vlan_id: "{{ nd_network_base_vlan + 8 }}"
         vlan_name: ans_nd_net_over_keep_upd

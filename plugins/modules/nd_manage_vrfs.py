@@ -67,44 +67,25 @@ options:
       vrf_id:
         description: L3 VNI (VRF segment ID), 1-16777214.
         type: int
-      vrf_type:
-        description:
-          - VRF schema type.
-          - Leave unset to derive the value from the fabric C(management.type).
-          - Set to V(userDefined) to use custom VRF template fields.
-        type: str
-        choices:
-          - userDefined
-          - vxlan
-          - vxlanIbgp
-          - vxlanEbgp
-          - vxlanCampus
-          - aimlVxlanIbgp
-          - aimlVxlanEbgp
-          - classicLanEnhanced
-          - vxlanAci
-          - aci
-          - externalConnectivity
-          - vxlanExternal
       vrf_template_name:
         description:
           - Custom VRF template name.
-          - Supported only when C(vrf_type=userDefined).
+          - Supplying custom template fields makes the module use the user-defined VRF schema internally.
         type: str
       vrf_extension_template_name:
         description:
           - Custom VRF extension template name.
-          - Supported only when C(vrf_type=userDefined).
+          - Supplying custom template fields makes the module use the user-defined VRF schema internally.
         type: str
       service_vrf_template_name:
         description:
           - Custom service VRF template name.
-          - Supported only when C(vrf_type=userDefined).
+          - Supplying custom template fields makes the module use the user-defined VRF schema internally.
         type: str
       vrf_template_config:
         description:
           - Custom VRF template parameters.
-          - Supported only when C(vrf_type=userDefined).
+          - Supplying custom template fields makes the module use the user-defined VRF schema internally.
           - Values must be strings as required by the ND schema.
         type: dict
       default_security_action:
@@ -535,7 +516,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - vrf_name: VRF_CUSTOM
-        vrf_type: userDefined
         vrf_template_name: Custom_VRF_Template
         vrf_extension_template_name: Custom_VRF_Extension_Template
         service_vrf_template_name: Custom_Service_VRF_Template

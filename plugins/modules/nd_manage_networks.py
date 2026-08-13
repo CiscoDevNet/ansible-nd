@@ -23,9 +23,8 @@ options:
   state:
     description:
       - Desired state of Network resources.
-      - V(query) is accepted as a compatibility alias for V(gathered).
     type: str
-    choices: [ merged, replaced, overridden, deleted, gathered, query ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
     default: merged
   config:
     description:
@@ -37,27 +36,6 @@ options:
       network_name:
         description: Name of the Network.
         type: str
-      net_name:
-        description: Compatibility alias for C(network_name).
-        type: str
-      network_type:
-        description: Network type.
-        type: str
-        choices:
-          - vxlan
-          - vxlanIbgp
-          - vxlanEbgp
-          - vxlanCampus
-          - aimlVxlanIbgp
-          - aimlVxlanEbgp
-          - aimlRouted
-          - routed
-          - classicLanEnhanced
-          - userDefined
-          - vxlanAci
-          - aci
-          - externalConnectivity
-          - vxlanExternal
       display_name:
         description: Display name.
         type: str
@@ -71,30 +49,29 @@ options:
         description: Network layer.
         type: str
         choices: [ layer2, layer2WithSecurityGroup, layer3 ]
-      is_l2only:
-        description: Whether the Network is L2-only.
-        type: bool
       x_connect:
         description: Enable xConnect.
         type: bool
       network_template_name:
-        description: Network template name.
+        description:
+          - Custom Network template name.
+          - Supplying custom template fields makes the module use the user-defined Network schema internally.
         type: str
       network_extension_template_name:
-        description: Network extension template name.
+        description:
+          - Custom Network extension template name.
+          - Supplying custom template fields makes the module use the user-defined Network schema internally.
         type: str
       service_network_template_name:
-        description: Service network template name.
+        description:
+          - Custom service Network template name.
+          - Supplying custom template fields makes the module use the user-defined Network schema internally.
         type: str
       network_template_config:
-        description: Network template configuration values.
+        description:
+          - Custom Network template configuration values.
+          - Supplying custom template fields makes the module use the user-defined Network schema internally.
         type: dict
-      net_template:
-        description: Compatibility Network template name.
-        type: str
-      net_extension_template:
-        description: Compatibility Network extension template name.
-        type: str
       deploy:
         description: Deploy pending changes for this Network.
         type: bool
@@ -174,15 +151,12 @@ options:
               is_active:
                 description: Mark this attachment as active.
                 type: bool
-          extra_config:
-            description: Raw attachment extra config.
+          freeform_config:
+            description: Additional free-form CLI configuration mapped to API C(extraConfig).
             type: str
 
       network_id:
         description: Network segment ID.
-        type: int
-      net_id:
-        description: Compatibility alias for C(network_id).
         type: int
       vlan_id:
         description: VLAN ID.
@@ -193,40 +167,19 @@ options:
       gateway_ipv4_address:
         description: IPv4 gateway address and prefix.
         type: str
-      gw_ip_subnet:
-        description: Compatibility alias for C(gateway_ipv4_address).
-        type: str
       gateway_ipv6_address:
         description: IPv6 gateway address and prefix.
-        type: str
-      gw_ipv6_subnet:
-        description: Compatibility alias for C(gateway_ipv6_address).
         type: str
       secondary_gateway_ipv4_collection:
         description: Secondary IPv4 gateway addresses.
         type: list
         elements: str
-      secondary_ip_gw1:
-        description: Compatibility secondary IPv4 gateway field.
-        type: str
-      secondary_ip_gw2:
-        description: Compatibility secondary IPv4 gateway field.
-        type: str
-      secondary_ip_gw3:
-        description: Compatibility secondary IPv4 gateway field.
-        type: str
-      secondary_ip_gw4:
-        description: Compatibility secondary IPv4 gateway field.
-        type: str
       secondary_gateway_ipv6_collection:
         description: Secondary IPv6 gateway addresses.
         type: list
         elements: str
       vlan_intf_desc:
         description: VLAN interface description.
-        type: str
-      int_desc:
-        description: Compatibility alias for C(vlan_intf_desc).
         type: str
       mtu:
         description: Network interface MTU.
@@ -251,29 +204,8 @@ options:
           server_vrf:
             description: DHCP server VRF.
             type: str
-      dhcp_srvr1_ip:
-        description: Compatibility DHCP server address field.
-        type: str
-      dhcp_srvr1_vrf:
-        description: Compatibility DHCP server VRF field.
-        type: str
-      dhcp_srvr2_ip:
-        description: Compatibility DHCP server address field.
-        type: str
-      dhcp_srvr2_vrf:
-        description: Compatibility DHCP server VRF field.
-        type: str
-      dhcp_srvr3_ip:
-        description: Compatibility DHCP server address field.
-        type: str
-      dhcp_srvr3_vrf:
-        description: Compatibility DHCP server VRF field.
-        type: str
       loopback_id:
         description: Loopback ID.
-        type: int
-      dhcp_loopback_id:
-        description: Compatibility alias for C(loopback_id).
         type: int
       igmp_version:
         description: IGMP version.
@@ -285,12 +217,6 @@ options:
       ipv6_trm:
         description: Enable IPv6 Tenant Routed Multicast.
         type: bool
-      l2_fabric_data:
-        description: L2 fabric data overrides.
-        type: dict
-      stretch:
-        description: Network stretch setting.
-        type: str
       multicast_group_address:
         description: Multicast group address.
         type: str
@@ -310,17 +236,8 @@ options:
       netflow_sampler:
         description: Netflow sampler name.
         type: str
-      intfvlan_nf_monitor:
-        description: Interface VLAN netflow monitor name.
-        type: str
-      vlan_nf_monitor:
-        description: VLAN netflow monitor name.
-        type: str
       gateway_on_border:
         description: Enable gateway on border.
-        type: bool
-      l3gw_on_border:
-        description: Compatibility alias for C(gateway_on_border).
         type: bool
       child_fabric_config:
         description:
@@ -346,29 +263,8 @@ options:
               server_vrf:
                 description: DHCP server VRF.
                 type: str
-          dhcp_srvr1_ip:
-            description: Compatibility DHCP server address field.
-            type: str
-          dhcp_srvr1_vrf:
-            description: Compatibility DHCP server VRF field.
-            type: str
-          dhcp_srvr2_ip:
-            description: Compatibility DHCP server address field.
-            type: str
-          dhcp_srvr2_vrf:
-            description: Compatibility DHCP server VRF field.
-            type: str
-          dhcp_srvr3_ip:
-            description: Compatibility DHCP server address field.
-            type: str
-          dhcp_srvr3_vrf:
-            description: Compatibility DHCP server VRF field.
-            type: str
           loopback_id:
             description: Loopback ID.
-            type: int
-          dhcp_loopback_id:
-            description: Compatibility alias for C(loopback_id).
             type: int
           igmp_version:
             description: IGMP version.
@@ -380,12 +276,6 @@ options:
           ipv6_trm:
             description: Enable IPv6 Tenant Routed Multicast.
             type: bool
-          l2_fabric_data:
-            description: L2 fabric data overrides.
-            type: dict
-          stretch:
-            description: Network stretch setting.
-            type: str
           multicast_group_address:
             description: Multicast group address.
             type: str
@@ -407,9 +297,6 @@ options:
           gateway_on_border:
             description: Enable gateway on border.
             type: bool
-          l3gw_on_border:
-            description: Compatibility alias for C(gateway_on_border).
-            type: bool
 extends_documentation_fragment:
   - cisco.nd.modules
   - cisco.nd.check_mode
@@ -421,7 +308,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: Network_BLUE
-        is_l2only: true
+        layer: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
@@ -433,7 +320,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: Network_BLUE
-        is_l2only: true
+        layer: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
@@ -452,7 +339,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: Network_L3
-        is_l2only: false
+        layer: layer3
         vrf_name: Tenant_A
         network_id: 50020
         vlan_id: 2002
@@ -468,7 +355,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: Network_PARENT
-        is_l2only: true
+        layer: layer2
         network_id: 50030
         vlan_id: 2030
         vlan_name: Network_PARENT_VLAN
@@ -488,7 +375,7 @@ EXAMPLES = r"""
     state: deleted
     config:
       - network_name: Network_BLUE
-        is_l2only: true
+        layer: layer2
 """
 RETURN = r"""
 changed:
@@ -597,7 +484,7 @@ def main():
         state=dict(
             type="str",
             default="merged",
-            choices=["merged", "replaced", "overridden", "deleted", "gathered", "query"],
+            choices=["merged", "replaced", "overridden", "deleted", "gathered"],
         ),
         config=dict(
             type="list",

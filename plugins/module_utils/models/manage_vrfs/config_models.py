@@ -48,6 +48,17 @@ _CUSTOM_VRF_TEMPLATE_FIELDS = (
 )
 
 
+def _infer_user_defined_vrf_type(data):
+    """Set the internal VRF discriminator when custom template fields are supplied."""
+    if not isinstance(data, dict):
+        return data
+    normalized = dict(data)
+    has_custom_template_fields = any(normalized.get(field) is not None for field in _CUSTOM_VRF_TEMPLATE_FIELDS)
+    if has_custom_template_fields and not normalized.get("vrf_type"):
+        normalized["vrf_type"] = VrfType.USER_DEFINED.value
+    return normalized
+
+
 # =============================================================================
 # VrfAttachmentOptionsConfigModel — playbook-facing instance values
 # =============================================================================
@@ -692,6 +703,12 @@ class VrfConfigModel(NDBaseModel):
     # Field validators
     # ------------------------------------------------------------------
 
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_user_defined_type(cls, data):
+        """Infer the internal user-defined discriminator for template configs."""
+        return _infer_user_defined_vrf_type(data)
+
     @field_validator("vrf_name", mode="before")
     @classmethod
     def _validate_vrf_name(cls, v: str) -> str:
@@ -1155,6 +1172,12 @@ class VrfParentConfigModel(NDBaseModel):
     # ------------------------------------------------------------------
     # Field validators
     # ------------------------------------------------------------------
+
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_user_defined_type(cls, data):
+        """Infer the internal user-defined discriminator for template configs."""
+        return _infer_user_defined_vrf_type(data)
 
     @field_validator("vrf_name", mode="before")
     @classmethod

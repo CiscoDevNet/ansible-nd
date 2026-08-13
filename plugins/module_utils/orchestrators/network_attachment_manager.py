@@ -200,7 +200,7 @@ class NetworkAttachmentManager:
                     "vlanId": attachment.get("vlan_id"),
                     "interfaces": self._attachment_interfaces(attachment),
                     "instanceValues": self.attachment_instance_values(attachment) if attachment.get("attachment_options") is not None else None,
-                    "extraConfig": attachment.get("extra_config"),
+                    "extraConfig": attachment.get("freeform_config"),
                     "attach": True,
                 }
                 desired[(network_name, switch_id)] = {k: v for k, v in payload.items() if v is not None}

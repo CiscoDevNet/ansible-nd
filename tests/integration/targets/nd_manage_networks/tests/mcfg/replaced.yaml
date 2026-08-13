@@ -14,10 +14,10 @@
     target_fabric: "{{ nd_network_mcfg_parent_fabric }}"
     target_network_delete_config:
       - network_name: ansible-nd-net-mcfg-replaced
-        is_l2only: true
+        layer: layer2
     nd_network_mcfg_replace_base:
       - network_name: ansible-nd-net-mcfg-replaced
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 251 }}"
         vlan_id: "{{ nd_network_base_vlan + 251 }}"
         vlan_name: ans_nd_net_mcfg_repl_base
@@ -26,7 +26,7 @@
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
     nd_network_mcfg_replace_config:
       - network_name: ansible-nd-net-mcfg-replaced
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 251 }}"
         vlan_id: "{{ nd_network_base_vlan + 251 }}"
         vlan_name: ans_nd_net_mcfg_repl_upd

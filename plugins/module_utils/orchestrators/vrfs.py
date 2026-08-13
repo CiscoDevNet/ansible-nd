@@ -115,7 +115,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     @staticmethod
     def _value(config: dict[str, Any], *names: str, default: Any = None) -> Any:
-        """Return the first present config value across Python and alias names."""
+        """Return the first present config value."""
         for name in names:
             if name in config:
                 return config[name]
@@ -126,42 +126,24 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         """Return True when playbook config explicitly sets fabric-level VRF options."""
         fabric_field_names = {
             "l3vni_wo_vlan",
-            "l3_vni_without_vlan",
             "adv_host_routes",
-            "advertise_host_route",
             "adv_default_routes",
-            "advertise_default_route",
             "static_default_route",
-            "configure_static_default_route",
             "bgp_password",
-            "bgpPassword",
             "bgp_passwd_encrypt",
-            "bgp_password_key_type",
             "netflow_enable",
-            "netflow",
             "nf_monitor",
-            "netflow_monitor",
             "trm_enable",
-            "ipv4_trm",
             "ipv6_trm",
             "no_rp",
-            "v4_rp_absent",
             "rp_external",
-            "v4_rp_external",
             "rp_address",
-            "v4_rp_address",
             "rp_loopback_id",
-            "loopback_number",
             "underlay_mcast_ip",
-            "l3_vni_multicast_group",
             "overlay_mcast_group",
-            "v4_multicast_group",
             "trm_bgw_msite",
-            "trm_on_bgw",
             "import_mvpn_rt",
-            "mvpn_route_target_import",
             "export_mvpn_rt",
-            "mvpn_route_target_export",
         }
         return any(name in config for name in fabric_field_names)
 
@@ -183,38 +165,37 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     def _transform_child_config_to_payload_model_data(self, config: dict[str, Any], fabric_name: str) -> dict[str, Any]:
         """Transform child overrides into a fabricData-only VRF payload."""
         transformed: dict[str, Any] = {
-            "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
-            "vrf_name": self._value(config, "vrf_name", "vrfName"),
+            "fabric_name": self._value(config, "fabric_name", default=fabric_name),
+            "vrf_name": self._value(config, "vrf_name"),
         }
 
         trm_kwargs = {
-            "ipv4_trm": self._value(config, "trm_enable", "ipv4_trm"),
-            "v4_rp_absent": self._value(config, "no_rp", "v4_rp_absent"),
-            "v4_rp_external": self._value(config, "rp_external", "v4_rp_external"),
-            "v4_rp_address": self._value(config, "rp_address", "v4_rp_address"),
-            "loopback_number": self._value(config, "rp_loopback_id", "loopback_number"),
-            "l3_vni_multicast_group": self._value(config, "underlay_mcast_ip", "l3_vni_multicast_group"),
-            "v4_multicast_group": self._value(config, "overlay_mcast_group", "v4_multicast_group"),
-            "trm_on_bgw": self._value(config, "trm_bgw_msite", "trm_on_bgw"),
-            "mvpn_route_target_import": self._value(config, "import_mvpn_rt", "mvpn_route_target_import"),
-            "mvpn_route_target_export": self._value(config, "export_mvpn_rt", "mvpn_route_target_export"),
+            "ipv4_trm": self._value(config, "trm_enable"),
+            "v4_rp_absent": self._value(config, "no_rp"),
+            "v4_rp_external": self._value(config, "rp_external"),
+            "v4_rp_address": self._value(config, "rp_address"),
+            "loopback_number": self._value(config, "rp_loopback_id"),
+            "l3_vni_multicast_group": self._value(config, "underlay_mcast_ip"),
+            "v4_multicast_group": self._value(config, "overlay_mcast_group"),
+            "trm_on_bgw": self._value(config, "trm_bgw_msite"),
+            "mvpn_route_target_import": self._value(config, "import_mvpn_rt"),
+            "mvpn_route_target_export": self._value(config, "export_mvpn_rt"),
         }
         trm_kwargs = {k: v for k, v in trm_kwargs.items() if v is not None}
 
         fabric_kwargs = {
-            "l3_vni_without_vlan": self._value(config, "l3vni_wo_vlan", "l3_vni_without_vlan", default=False),
-            "advertise_host_route": self._value(config, "adv_host_routes", "advertise_host_route", default=False),
-            "advertise_default_route": self._value(config, "adv_default_routes", "advertise_default_route", default=True),
+            "l3_vni_without_vlan": self._value(config, "l3vni_wo_vlan", default=False),
+            "advertise_host_route": self._value(config, "adv_host_routes", default=False),
+            "advertise_default_route": self._value(config, "adv_default_routes", default=True),
             "configure_static_default_route": self._value(
                 config,
                 "static_default_route",
-                "configure_static_default_route",
                 default=True,
             ),
-            "bgp_password": self._value(config, "bgp_password", "bgpPassword"),
-            "bgp_password_key_type": self._value(config, "bgp_passwd_encrypt", "bgp_password_key_type", default=3),
-            "netflow": self._value(config, "netflow_enable", "netflow", default=False),
-            "netflow_monitor": self._value(config, "nf_monitor", "netflow_monitor"),
+            "bgp_password": self._value(config, "bgp_password"),
+            "bgp_password_key_type": self._value(config, "bgp_passwd_encrypt", default=3),
+            "netflow": self._value(config, "netflow_enable", default=False),
+            "netflow_monitor": self._value(config, "nf_monitor"),
         }
         fabric_kwargs = {k: v for k, v in fabric_kwargs.items() if v is not None}
         if trm_kwargs:
@@ -234,48 +215,33 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         transform here prevents Ansible config fields from being silently
         dropped by VrfDataModel.extra="ignore".
         """
-        vrf_type = self._value(
-            config,
-            "vrf_type",
-            "vrfType",
-            default=self._default_vrf_type(),
-        )
+        custom_template_fields = {
+            "service_vrf_template_name": ("service_vrf_template_name",),
+            "vrf_template_name": ("vrf_template_name",),
+            "vrf_extension_template_name": ("vrf_extension_template_name",),
+            "vrf_template_config": ("vrf_template_config",),
+        }
+        explicit_vrf_type = self._value(config, "vrf_type")
+        has_custom_template_fields = any(self._value(config, *names) is not None for names in custom_template_fields.values())
+        vrf_type = explicit_vrf_type or (VrfType.USER_DEFINED.value if has_custom_template_fields else self._default_vrf_type())
         transformed: dict[str, Any] = {
-            "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
-            "vrf_name": self._value(config, "vrf_name", "vrfName"),
+            "fabric_name": self._value(config, "fabric_name", default=fabric_name),
+            "vrf_name": self._value(config, "vrf_name"),
             "vrf_type": vrf_type,
         }
 
         optional_top_level = {
-            "tenant_name": ("tenant_name", "tenantName"),
-            "vrf_id": ("vrf_id", "vrfId"),
-            "vlan_id": ("vlan_id", "vlanId"),
-            "default_security_action": (
-                "default_security_action",
-                "defaultSecurityAction",
-            ),
-            "default_security_group_tag": (
-                "default_security_group_tag",
-                "defaultSecurityGroupTag",
-            ),
+            "tenant_name": ("tenant_name",),
+            "vrf_id": ("vrf_id",),
+            "vlan_id": ("vlan_id",),
+            "default_security_action": ("default_security_action",),
+            "default_security_group_tag": ("default_security_group_tag",),
         }
         for target, names in optional_top_level.items():
             value = self._value(config, *names)
             if value is not None:
                 transformed[target] = value
 
-        custom_template_fields = {
-            "service_vrf_template_name": (
-                "service_vrf_template_name",
-                "serviceVrfTemplateName",
-            ),
-            "vrf_template_name": ("vrf_template_name", "vrfTemplateName"),
-            "vrf_extension_template_name": (
-                "vrf_extension_template_name",
-                "vrfExtensionTemplateName",
-            ),
-            "vrf_template_config": ("vrf_template_config", "vrfTemplateConfig"),
-        }
         for target, names in custom_template_fields.items():
             value = self._value(config, *names)
             if value is not None:
@@ -287,97 +253,81 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             return transformed
 
         core_data = VxlanCoreData(
-            vrf_vlan_name=self._value(config, "vrf_vlan_name", "vrfVlanName"),
+            vrf_vlan_name=self._value(config, "vrf_vlan_name"),
             vrf_interface_description=self._value(
                 config,
                 "vrf_intf_desc",
-                "vrf_interface_description",
-                "vrfIntfDesc",
-                "vrfInterfaceDescription",
             ),
-            vrf_description=self._value(config, "vrf_description", "vrfDescription"),
-            mtu=self._value(config, "vrf_int_mtu", "mtu", "vrfIntMtu", default=9216),
+            vrf_description=self._value(config, "vrf_description"),
+            mtu=self._value(config, "vrf_int_mtu", default=9216),
             routing_tag=self._value(
                 config,
                 "loopback_route_tag",
-                "routing_tag",
-                "routingTag",
                 default=12345,
             ),
             vrf_route_map=self._value(
                 config,
                 "redist_direct_rmap",
-                "vrf_route_map",
-                "vrfRouteMap",
                 default="FABRIC-RMAP-REDIST-SUBNET",
             ),
             v6_vrf_route_map=self._value(
                 config,
                 "v6_redist_direct_rmap",
-                "v6_vrf_route_map",
-                "v6VrfRouteMap",
                 default="FABRIC-RMAP-REDIST-SUBNET",
             ),
-            max_bgp_paths=self._value(config, "max_bgp_paths", "maxBgpPaths", default=1),
-            max_ibgp_paths=self._value(config, "max_ibgp_paths", "maxIbgpPaths", default=2),
+            max_bgp_paths=self._value(config, "max_bgp_paths", default=1),
+            max_ibgp_paths=self._value(config, "max_ibgp_paths", default=2),
             ipv6_link_local=self._value(
                 config,
                 "ipv6_linklocal_enable",
-                "ipv6_link_local",
-                "ipv6LinkLocal",
                 default=True,
             ),
-            disable_rt_auto=self._value(config, "disable_rt_auto", "disableRtAuto", default=False),
-            route_target_import=self._value(config, "import_vpn_rt", "route_target_import"),
-            route_target_export=self._value(config, "export_vpn_rt", "route_target_export"),
+            disable_rt_auto=self._value(config, "disable_rt_auto", default=False),
+            route_target_import=self._value(config, "import_vpn_rt"),
+            route_target_export=self._value(config, "export_vpn_rt"),
             evpn_route_target_import=self._value(
                 config,
                 "import_evpn_rt",
-                "evpn_route_target_import",
             ),
             evpn_route_target_export=self._value(
                 config,
                 "export_evpn_rt",
-                "evpn_route_target_export",
             ),
         )
 
         trm_data = TrmData(
-            ipv4_trm=self._value(config, "trm_enable", "ipv4_trm", default=False),
+            ipv4_trm=self._value(config, "trm_enable", default=False),
             ipv6_trm=self._value(config, "ipv6_trm", default=False),
-            v4_rp_absent=self._value(config, "no_rp", "v4_rp_absent", default=False),
-            v4_rp_external=self._value(config, "rp_external", "v4_rp_external", default=False),
-            v4_rp_address=self._value(config, "rp_address", "v4_rp_address"),
-            loopback_number=self._value(config, "rp_loopback_id", "loopback_number"),
-            l3_vni_multicast_group=self._value(config, "underlay_mcast_ip", "l3_vni_multicast_group"),
-            v4_multicast_group=self._value(config, "overlay_mcast_group", "v4_multicast_group"),
-            trm_on_bgw=self._value(config, "trm_bgw_msite", "trm_on_bgw", default=False),
+            v4_rp_absent=self._value(config, "no_rp", default=False),
+            v4_rp_external=self._value(config, "rp_external", default=False),
+            v4_rp_address=self._value(config, "rp_address"),
+            loopback_number=self._value(config, "rp_loopback_id"),
+            l3_vni_multicast_group=self._value(config, "underlay_mcast_ip"),
+            v4_multicast_group=self._value(config, "overlay_mcast_group"),
+            trm_on_bgw=self._value(config, "trm_bgw_msite", default=False),
             mvpn_route_target_import=self._value(
                 config,
                 "import_mvpn_rt",
-                "mvpn_route_target_import",
             ),
             mvpn_route_target_export=self._value(
                 config,
                 "export_mvpn_rt",
-                "mvpn_route_target_export",
             ),
         )
 
         fabric_data = VxlanFabricInstance(
-            l3_vni_without_vlan=self._value(config, "l3vni_wo_vlan", "l3_vni_without_vlan", default=False),
-            advertise_host_route=self._value(config, "adv_host_routes", "advertise_host_route", default=False),
-            advertise_default_route=self._value(config, "adv_default_routes", "advertise_default_route", default=True),
+            l3_vni_without_vlan=self._value(config, "l3vni_wo_vlan", default=False),
+            advertise_host_route=self._value(config, "adv_host_routes", default=False),
+            advertise_default_route=self._value(config, "adv_default_routes", default=True),
             configure_static_default_route=self._value(
                 config,
                 "static_default_route",
-                "configure_static_default_route",
                 default=True,
             ),
-            bgp_password=self._value(config, "bgp_password", "bgpPassword"),
-            bgp_password_key_type=self._value(config, "bgp_passwd_encrypt", "bgp_password_key_type", default=3),
-            netflow=self._value(config, "netflow_enable", "netflow", default=False),
-            netflow_monitor=self._value(config, "nf_monitor", "netflow_monitor"),
+            bgp_password=self._value(config, "bgp_password"),
+            bgp_password_key_type=self._value(config, "bgp_passwd_encrypt", default=3),
+            netflow=self._value(config, "netflow_enable", default=False),
+            netflow_monitor=self._value(config, "nf_monitor"),
             trm_data=trm_data,
         )
 

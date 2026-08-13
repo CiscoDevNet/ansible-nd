@@ -66,10 +66,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     scoped_query_threshold: ClassVar[int] = 5
     unfiltered_query_page_size: ClassVar[int] = 10000
     definition_intent_fields: ClassVar[set[str]] = {
-        "net_template",
         "network_template_name",
         "networkTemplateName",
-        "net_extension_template",
         "network_extension_template_name",
         "networkExtensionTemplateName",
         "service_network_template_name",
@@ -89,15 +87,10 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         "tenant_name",
         "tenantName",
         "layer",
-        "is_l2only",
-        "isL2Only",
         "vlan_name",
         "vlanName",
         "x_connect",
         "xConnect",
-        "l2_fabric_data",
-        "l2FabricData",
-        "stretch",
         "multicast_group_address",
         "multicastGroup",
         "ds_vni",
@@ -130,8 +123,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         "l3NetflowMonitor",
         "netflow_sampler",
         "netflowSampler",
-        "intfvlan_nf_monitor",
-        "vlan_nf_monitor",
         "gateway_on_border",
         "gatewayOnBorder",
         "child_fabric_config",
@@ -164,16 +155,12 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         explicit = self._value(config, "layer")
         if explicit:
             return explicit
-        is_l2only = self._value(config, "is_l2only", "isL2Only")
-        if is_l2only is True:
-            return NetworkLayer.LAYER2.value
         return NetworkLayer.LAYER3.value
 
     def _l2_data(self, config: dict[str, Any], network_type: str) -> dict[str, Any] | None:
         fabric_data_payload = None
         kwargs = {
             "vlan_name": self._value(config, "vlan_name", "vlanName"),
-            "fabric_data": self._value(config, "l2_fabric_data", "l2FabricData"),
         }
         if network_type in (
             NetworkType.ROUTED.value,
@@ -182,15 +169,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         ):
             model = ClassicOrRoutedL2DataModel(**{k: v for k, v in kwargs.items() if v is not None})
         else:
-            fabric_data_value = self._value(config, "l2_fabric_data", "l2FabricData") or {}
-            if not isinstance(fabric_data_value, dict):
-                fabric_data_value = {}
-            else:
-                fabric_data_value = dict(fabric_data_value)
-            fabric_data_value.pop("enable_ir", None)
-            fabric_data_value.pop("enableIr", None)
+            fabric_data_value: dict[str, Any] = {}
             for target, names in {
-                "stretch": ("stretch",),
                 "multicast_group": ("multicast_group_address", "multicastGroup", "multicast_group"),
                 "ds_vni": ("ds_vni", "dsVni"),
             }.items():
@@ -199,17 +179,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                     fabric_data_value[target] = value
 
             if fabric_data_value:
-                known_keys = {
-                    "stretch",
-                    "multicast_group",
-                    "multicastGroup",
-                    "ds_vni",
-                    "dsVni",
-                }
-                fabric_data_payload = {key: value for key, value in fabric_data_value.items() if key not in known_keys}
-                fabric_data_payload.update(
-                    DefaultL2FabricDataModel(**fabric_data_value).to_payload(exclude_unset=bool(self.strategy and self.strategy.is_child))
-                )
+                fabric_data_payload = DefaultL2FabricDataModel(**fabric_data_value).to_payload(exclude_unset=bool(self.strategy and self.strategy.is_child))
 
             kwargs.update(
                 {
@@ -251,8 +221,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 "netflow",
                 default=None if self.strategy and self.strategy.is_child else False,
             ),
-            l2_netflow_monitor=self._value(config, "l2_netflow_monitor", "l2NetflowMonitor", "vlan_nf_monitor"),
-            l3_netflow_monitor=self._value(config, "l3_netflow_monitor", "l3NetflowMonitor", "intfvlan_nf_monitor"),
+            l2_netflow_monitor=self._value(config, "l2_netflow_monitor", "l2NetflowMonitor"),
+            l3_netflow_monitor=self._value(config, "l3_netflow_monitor", "l3NetflowMonitor"),
             netflow_sampler=self._value(config, "netflow_sampler", "netflowSampler"),
             gateway_on_border=self._value(config, "gateway_on_border", "gatewayOnBorder"),
             ipv4_trm=self._value(config, "trm_enable", "trmEnable", "ipv4Trm"),
@@ -283,7 +253,15 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 "network_name": self._value(config, "network_name", "networkName"),
             }
 
-        network_type = self._value(config, "network_type", "networkType", default=self._default_network_type())
+        custom_template_fields = {
+            "network_template_name": ("network_template_name", "networkTemplateName"),
+            "network_extension_template_name": ("network_extension_template_name", "networkExtensionTemplateName"),
+            "service_network_template_name": ("service_network_template_name", "serviceNetworkTemplateName"),
+            "network_template_config": ("network_template_config", "networkTemplateConfig"),
+        }
+        explicit_network_type = self._value(config, "network_type", "networkType")
+        has_custom_template_fields = any(self._value(config, *names) is not None for names in custom_template_fields.values())
+        network_type = explicit_network_type or (NetworkType.USER_DEFINED.value if has_custom_template_fields else self._default_network_type())
         transformed: dict[str, Any] = {
             "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
             "network_name": self._value(config, "network_name", "networkName"),
@@ -305,12 +283,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             if value is not None:
                 transformed[target] = value
 
-        for target, names in {
-            "network_template_name": ("network_template_name", "networkTemplateName"),
-            "network_extension_template_name": ("network_extension_template_name", "networkExtensionTemplateName"),
-            "service_network_template_name": ("service_network_template_name", "serviceNetworkTemplateName"),
-            "network_template_config": ("network_template_config", "networkTemplateConfig"),
-        }.items():
+        for target, names in custom_template_fields.items():
             value = self._value(config, *names)
             if value is not None:
                 if network_type != NetworkType.USER_DEFINED.value:
@@ -673,8 +646,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             if value is not None:
                 converted[target] = value
 
-        is_l2only = self._top_down_bool(template_config.get("isLayer2Only"))
-        converted["layer"] = NetworkLayer.LAYER2.value if is_l2only else NetworkLayer.LAYER3.value
+        layer2_only = self._top_down_bool(template_config.get("isLayer2Only"))
+        converted["layer"] = NetworkLayer.LAYER2.value if layer2_only else NetworkLayer.LAYER3.value
 
         l2_fabric_data = {
             "multicastGroup": template_config.get("mcastGroup"),

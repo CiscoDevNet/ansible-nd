@@ -93,7 +93,7 @@ class NetworkAttachmentConfigModel(NDNestedModel):
     interfaces: list[NetworkInterfaceConfigModel] = Field(default=...)
     deploy: bool | None = True
     attachment_options: NetworkAttachmentOptionsConfigModel | None = Field(default=None)
-    extra_config: str | None = Field(default=None)
+    freeform_config: str | None = Field(default=None)
 
     @field_validator("ip_address", mode="before")
     @classmethod
@@ -118,8 +118,6 @@ class NetworkChildConfigModel(NDNestedModel):
     identifiers: ClassVar[list[str]] = []
 
     fabric_name: str
-    l2_fabric_data: dict[str, Any] | None = Field(default=None, alias="l2FabricData")
-    stretch: str | None = None
     multicast_group_address: str | None = Field(default=None, alias="multicastGroup")
     ds_vni: int | None = Field(default=None, alias="dsVni")
     dhcp_servers: list[dict[str, Any]] | None = Field(default=None, alias="dhcpServers")
@@ -135,22 +133,15 @@ class NetworkChildConfigModel(NDNestedModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _normalize_legacy_child_keys(cls, data):
+    def _normalize_child_keys(cls, data):
         if not isinstance(data, dict):
             return data
 
         normalized = dict(data)
-        aliases = {
-            "dhcp_loopback_id": "loopback_id",
-            "l3gw_on_border": "gateway_on_border",
-            "vlan_nf_monitor": "l2_netflow_monitor",
-            "intfvlan_nf_monitor": "l3_netflow_monitor",
-        }
-        for legacy, current in aliases.items():
-            if legacy in normalized and current not in normalized:
-                normalized[current] = normalized[legacy]
+        if "l2_fabric_data" in normalized or "l2FabricData" in normalized:
+            raise ValueError("l2_fabric_data is not supported; use explicit L2 fabric fields such as multicast_group_address and ds_vni")
 
-        normalized["dhcp_servers"] = NetworkConfigModel._normalize_legacy_dhcp_servers(normalized)
+        normalized["dhcp_servers"] = NetworkConfigModel._normalize_dhcp_servers(normalized)
         return normalized
 
     @field_validator("multicast_group_address", mode="before")
@@ -171,8 +162,6 @@ class NetworkConfigModel(NDBaseModel):
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
 
     network_name: str = Field(alias="networkName")
-    net_template: str | None = None
-    net_extension_template: str | None = None
     network_id: int | None = Field(default=None, alias="networkId")
     network_type: str | None = Field(default=None, alias="networkType")
     display_name: str | None = Field(default=None, alias="displayName")
@@ -180,11 +169,8 @@ class NetworkConfigModel(NDBaseModel):
     vlan_id: int | None = Field(default=None, alias="vlanId")
     tenant_name: str | None = Field(default=None, alias="tenantName")
     layer: str | None = None
-    is_l2only: bool | None = Field(default=None, alias="isL2Only")
     vlan_name: str | None = Field(default=None, alias="vlanName")
     x_connect: bool | None = Field(default=None, alias="xConnect")
-    l2_fabric_data: dict[str, Any] | None = Field(default=None, alias="l2FabricData")
-    stretch: str | None = None
     multicast_group_address: str | None = Field(default=None, alias="multicastGroup")
     ds_vni: int | None = Field(default=None, alias="dsVni")
     gateway_ipv4_address: str | None = Field(default=None, alias="gatewayIpv4Address")
@@ -215,64 +201,32 @@ class NetworkConfigModel(NDBaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _normalize_legacy_network_keys(cls, data):
-        """Accept legacy playbook names as aliases."""
+    def _normalize_network_keys(cls, data):
+        """Normalize canonical nested structures before model validation."""
         if not isinstance(data, dict):
             return data
 
         normalized = dict(data)
-        aliases = {
-            "net_name": "network_name",
-            "net_id": "network_id",
-            "gw_ip_subnet": "gateway_ipv4_address",
-            "gw_ipv6_subnet": "gateway_ipv6_address",
-            "int_desc": "vlan_intf_desc",
-            "dhcp_loopback_id": "loopback_id",
-            "l3gw_on_border": "gateway_on_border",
-            "vlan_nf_monitor": "l2_netflow_monitor",
-            "intfvlan_nf_monitor": "l3_netflow_monitor",
-        }
-        for legacy, current in aliases.items():
-            if legacy in normalized and current not in normalized:
-                normalized[current] = normalized[legacy]
+        if "l2_fabric_data" in normalized or "l2FabricData" in normalized:
+            raise ValueError("l2_fabric_data is not supported; use explicit L2 fabric fields such as multicast_group_address and ds_vni")
 
-        secondary = normalized.get("secondary_gateway_ipv4_collection")
-        if secondary is None:
-            secondary = normalized.get("secondaryGatewayIpv4Collection")
-        if secondary is None:
-            secondary = [normalized[key] for key in ("secondary_ip_gw1", "secondary_ip_gw2", "secondary_ip_gw3", "secondary_ip_gw4") if normalized.get(key)]
-            if secondary:
-                normalized["secondary_gateway_ipv4_collection"] = secondary
+        normalized["dhcp_servers"] = cls._normalize_dhcp_servers(normalized)
 
-        normalized["dhcp_servers"] = cls._normalize_legacy_dhcp_servers(normalized)
-
-        network_type = normalized.get("network_type") or normalized.get("networkType")
-        if network_type == NetworkType.USER_DEFINED.value:
-            if normalized.get("net_template") and not normalized.get("network_template_name"):
-                normalized["network_template_name"] = normalized["net_template"]
-            if normalized.get("net_extension_template") and not normalized.get("network_extension_template_name"):
-                normalized["network_extension_template_name"] = normalized["net_extension_template"]
+        has_custom_template_fields = any(normalized.get(field) is not None for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS)
+        if has_custom_template_fields and not (normalized.get("network_type") or normalized.get("networkType")):
+            normalized["network_type"] = NetworkType.USER_DEFINED.value
 
         return normalized
 
     @staticmethod
-    def _normalize_legacy_dhcp_servers(data: dict[str, Any]) -> list[dict[str, Any]] | None:
-        """Normalize old DHCP server keys into API serverAddress/serverVrf shape."""
+    def _normalize_dhcp_servers(data: dict[str, Any]) -> list[dict[str, Any]] | None:
+        """Normalize DHCP server keys into API serverAddress/serverVrf shape."""
         normalized_servers: list[dict[str, Any]] = []
         for server in data.get("dhcp_servers") or data.get("dhcpServers") or []:
             if not isinstance(server, dict):
                 continue
-            address = server.get("server_address") or server.get("serverAddress") or server.get("srvr_ip")
-            vrf = server.get("server_vrf") or server.get("serverVrf") or server.get("srvr_vrf")
-            if address:
-                item = {"server_address": address}
-                if vrf:
-                    item["server_vrf"] = vrf
-                normalized_servers.append(item)
-
-        for index in range(1, 4):
-            address = data.get(f"dhcp_srvr{index}_ip")
-            vrf = data.get(f"dhcp_srvr{index}_vrf")
+            address = server.get("server_address") or server.get("serverAddress")
+            vrf = server.get("server_vrf") or server.get("serverVrf")
             if address:
                 item = {"server_address": address}
                 if vrf:
@@ -344,7 +298,7 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("network template fields require network_type=userDefined: " + ", ".join(set_custom_fields))
         if self.deploy_type not in ("switch", "network"):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
-        if self.is_l2only is False and not self.vrf_name:
+        if self.layer == "layer3" and not self.vrf_name:
             raise ValueError("vrf_name is required for layer3 networks")
         return self
 

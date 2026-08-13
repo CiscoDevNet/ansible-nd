@@ -14,10 +14,10 @@
       - ansible-nd-net-msd-sanity
     target_network_delete_config:
       - network_name: ansible-nd-net-msd-sanity
-        is_l2only: true
+        layer: layer2
     nd_network_msd_sanity_config:
       - network_name: ansible-nd-net-msd-sanity
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 20 }}"
         vlan_id: "{{ nd_network_base_vlan + 20 }}"
         vlan_name: ansible_nd_net_msd_sanity

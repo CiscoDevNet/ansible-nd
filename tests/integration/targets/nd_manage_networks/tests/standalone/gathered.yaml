@@ -15,18 +15,18 @@
       - ansible-nd-net-gathered-b
     target_network_delete_config:
       - network_name: ansible-nd-net-gathered-a
-        is_l2only: true
+        layer: layer2
       - network_name: ansible-nd-net-gathered-b
-        is_l2only: true
+        layer: layer2
     nd_network_gathered_config:
       - network_name: ansible-nd-net-gathered-a
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 4 }}"
         vlan_id: "{{ nd_network_base_vlan + 4 }}"
         vlan_name: ansible_nd_net_gathered_a
         deploy: false
       - network_name: ansible-nd-net-gathered-b
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 5 }}"
         vlan_id: "{{ nd_network_base_vlan + 5 }}"
         vlan_name: ansible_nd_net_gathered_b
