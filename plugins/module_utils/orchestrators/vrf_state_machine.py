@@ -199,6 +199,7 @@ class VrfStateMachine:
                 desired=desired_attachments,
                 current_vrf_names=current_desired_vrf_names,
                 current=current_desired_attachments,
+                attachment_details=current_attachment_details,
             )
             self._trace("attachment_phase_pre_end", changed=pre_attach.get("changed"), payload_count=len(pre_attach.get("payloads", [])))
             desired_attachments = pre_attach.get("desired", desired_attachments)
@@ -217,6 +218,25 @@ class VrfStateMachine:
             if result.get("failed", False):
                 return result
 
+            post_attachment_details = list(current_attachment_details or [])
+            post_current_attachments = dict(current_attachments or {})
+            new_desired_vrf_names = [vrf_name for vrf_name in desired_vrf_names if vrf_name not in current_vrf_name_set]
+            if state in ("replaced", "overridden") and desired_attachments and new_desired_vrf_names and not self._check_mode():
+                self._trace("attachment_phase_post_new_current_query_start", vrf_names=new_desired_vrf_names)
+                new_attachment_details = self.coordinator._current_attachment_details(
+                    module_args,
+                    strategy,
+                    new_desired_vrf_names,
+                )
+                post_attachment_details.extend(new_attachment_details)
+                post_current_attachments.update(self.coordinator._attachment_map_from_details(new_attachment_details, new_desired_vrf_names))
+                self._trace(
+                    "attachment_phase_post_new_current_query_end",
+                    vrf_names=new_desired_vrf_names,
+                    attachment_count=len(new_attachment_details or []),
+                    current_count=len(post_current_attachments),
+                )
+
             self._trace("attachment_phase_post_start", state=state)
             post_attach = self.coordinator._apply_attachment_phase(
                 module_args,
@@ -224,7 +244,8 @@ class VrfStateMachine:
                 phase="post",
                 desired=desired_attachments,
                 current_vrf_names=desired_vrf_names,
-                current=current_attachments,
+                current=post_current_attachments,
+                attachment_details=post_attachment_details,
             )
             self._trace("attachment_phase_post_end", changed=post_attach.get("changed"), payload_count=len(post_attach.get("payloads", [])))
             self.coordinator._merge_api_trace(result, post_attach)

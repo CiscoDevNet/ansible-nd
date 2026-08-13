@@ -94,6 +94,7 @@ class NetworkAttachmentManager:
         desired: dict[tuple[str, str], dict[str, Any]] | None = None,
         current_network_names: list[str] | None = None,
         current: dict[tuple[str, str], dict[str, Any]] | None = None,
+        attachment_details: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         state = module_args.get("state", "merged")
         config = module_args.get("config") or []
@@ -119,9 +120,25 @@ class NetworkAttachmentManager:
         query_names = current_network_names
         if query_names is None:
             query_names = None if state == "overridden" else configured_network_names(config)
+        raw_attachment_details = attachment_details
         if current is None:
-            current = self.current_attachment_map(module_args, strategy, query_names)
-            self._trace("network_attachment_current_loaded", phase=phase, queried_network_names=query_names, current_count=len(current))
+            if raw_attachment_details is None:
+                raw_attachment_details = self.current_attachment_details(module_args, strategy, query_names)
+            current = self.attachment_map_from_details(raw_attachment_details, query_names)
+            self._trace(
+                "network_attachment_current_loaded",
+                phase=phase,
+                queried_network_names=query_names,
+                attachment_count=len(raw_attachment_details or []),
+                current_count=len(current),
+            )
+
+        if desired:
+            desired = self.expand_desired_attachments_with_vpc_peers(
+                desired,
+                raw_attachment_details if raw_attachment_details is not None else current.values(),
+            )
+            self._trace("network_attachment_desired_expanded", phase=phase, desired_count=len(desired))
 
         payloads = self.planned_detach_payloads(state, config, current, desired) if phase == "pre" else self.planned_attach_payloads(current, desired)
         if not payloads:
@@ -140,6 +157,7 @@ class NetworkAttachmentManager:
         )
         self._trace("network_attachment_phase_end", phase=phase, payload_count=len(payloads), deploy_target_count=len(deploy_targets))
         trace["current"] = current
+        trace["desired"] = desired
         trace["payloads"] = payloads
         return trace
 
@@ -368,6 +386,43 @@ class NetworkAttachmentManager:
         network_names: list[str] | None = None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         return self.attachment_map_from_details(self.current_attachment_details(module_args, strategy, network_names), network_names)
+
+    @staticmethod
+    def expand_desired_attachments_with_vpc_peers(
+        desired: dict[tuple[str, str], dict[str, Any]],
+        attachment_details: Any,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        """Add vPC peer attachments from attachment-query rows."""
+        if not desired or not attachment_details:
+            return desired
+
+        detail_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+        for attachment in attachment_details:
+            if not isinstance(attachment, dict):
+                continue
+            network_name = attachment.get("networkName")
+            switch_id = attachment.get("switchId")
+            if network_name and switch_id:
+                detail_by_key[(network_name, switch_id)] = attachment
+
+        expanded = dict(desired)
+        for key, payload in list(desired.items()):
+            detail = detail_by_key.get(key)
+            peer_switch_id = detail.get("peerSwitchId") if detail else None
+            if not peer_switch_id:
+                continue
+
+            peer_key = (key[0], peer_switch_id)
+            if peer_key in expanded:
+                continue
+
+            peer_payload = dict(payload)
+            peer_payload["switchId"] = peer_switch_id
+            if "interfaces" in peer_payload:
+                peer_payload["interfaces"] = []
+            expanded[peer_key] = peer_payload
+
+        return expanded
 
     @staticmethod
     def attachment_map_from_details(

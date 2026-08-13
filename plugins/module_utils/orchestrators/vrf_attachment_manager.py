@@ -86,6 +86,7 @@ class VrfAttachmentManager:
         desired: dict[tuple[str, str], dict[str, Any]] | None = None,
         current_vrf_names: list[str] | None = None,
         current: dict[tuple[str, str], dict[str, Any]] | None = None,
+        attachment_details: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Attach or detach VRFs according to state and phase."""
         state = module_args.get("state", "merged")
@@ -117,20 +118,23 @@ class VrfAttachmentManager:
         query_vrf_names = current_vrf_names
         if query_vrf_names is None:
             query_vrf_names = None if query_all else vrf_names
-        attachment_details = None
+        raw_attachment_details = attachment_details
         if current is None:
-            attachment_details = self.coordinator._current_attachment_details(module_args, strategy, query_vrf_names)
-            current = self.coordinator._attachment_map_from_details(attachment_details)
+            if raw_attachment_details is None:
+                raw_attachment_details = self.coordinator._current_attachment_details(module_args, strategy, query_vrf_names)
+            current = self.coordinator._attachment_map_from_details(raw_attachment_details)
             self._trace(
                 "vrf_attachment_current_loaded",
                 phase=phase,
                 queried_vrf_names=query_vrf_names,
-                attachment_count=len(attachment_details or []),
+                attachment_count=len(raw_attachment_details or []),
                 current_count=len(current),
             )
 
         if desired:
-            desired = self.coordinator._expand_desired_attachments_with_vpc_peers(desired, attachment_details or current.values())
+            desired = self.coordinator._expand_desired_attachments_with_vpc_peers(
+                desired, raw_attachment_details if raw_attachment_details is not None else current.values()
+            )
             self._trace("vrf_attachment_desired_expanded", phase=phase, desired_count=len(desired))
 
         if phase == "pre":
@@ -159,6 +163,7 @@ class VrfAttachmentManager:
         trace["current"] = current
         trace["payloads"] = payloads
         trace["desired"] = desired
+        trace["attachment_details"] = raw_attachment_details
         return trace
 
     def attachment_map_after_detach(
