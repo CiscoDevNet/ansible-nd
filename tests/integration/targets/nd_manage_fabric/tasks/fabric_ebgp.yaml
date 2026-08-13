@@ -18,7 +18,7 @@
 # CLEANUP - Ensure clean state before tests
 #############################################################################
 - name: Clean up any existing test fabrics before starting tests
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -31,7 +31,7 @@
 # TEST 1: STATE MERGED - Create fabric using merged state
 #############################################################################
 - name: "TEST 1a: Create eBGP fabric using state merged (first run)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -49,7 +49,7 @@
   tags: [test_merged, test_merged_create]
 
 - name: "TEST 1b: Create eBGP fabric using state merged (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -67,12 +67,11 @@
   tags: [test_merged, test_merged_idempotent]
 
 - name: "TEST 1c: Update eBGP fabric using state merged (modify existing)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: merged
     config:
       - fabric_name: "{{ ebgp_test_fabric_merged }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -81,7 +80,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65002"           # Changed from 65001
           bgp_asn_auto_allocation: false
           site_id: "65002"           # Changed from 65001
@@ -117,7 +115,7 @@
           fabric_mtu: 9216
           l2_host_interface_mtu: 9216
           tenant_dhcp: true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: false
           nxapi_http_port: 80
@@ -265,12 +263,11 @@
 # TEST 2: STATE REPLACED - Create and manage fabric using replaced state
 #############################################################################
 - name: "TEST 2a: Create eBGP fabric using state replaced (first run)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ ebgp_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -279,7 +276,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65004"              # Different from default ASN
           bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65100"
@@ -317,9 +313,9 @@
           fabric_mtu: 9000              # Different from default 9216
           l2_host_interface_mtu: 9000  # Different from default 9216
           tenant_dhcp: false            # Different from default true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
-          nxapi_http: true              # Different from default false
+          nxapi_http: true
           nxapi_http_port: 80
           snmp_trap: false              # Different from default true
           anycast_border_gateway_advertise_physical_ip: true  # Different from default false
@@ -366,12 +362,11 @@
   tags: [test_replaced, test_replaced_create]
 
 - name: "TEST 2b: Create eBGP fabric using state replaced (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ ebgp_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -380,7 +375,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65004"              # Different from default ASN
           bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65100"
@@ -418,7 +412,7 @@
           fabric_mtu: 9000
           l2_host_interface_mtu: 9000
           tenant_dhcp: false
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: true
           nxapi_http_port: 80
@@ -467,12 +461,11 @@
   tags: [test_replaced, test_replaced_idempotent]
 
 - name: "TEST 2c: Update eBGP fabric using state replaced (complete replacement with minimal config)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ ebgp_test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -481,12 +474,12 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65004"              # Different from default ASN
           bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65100"
           site_id: "65004"
           banner: "^ Updated via replaced state ^"
+          nxapi: false
   register: ebgp_replaced_result_3
   tags: [test_replaced, test_replaced_update]
 
@@ -897,7 +890,7 @@
 # TEST 3: Demonstrate difference between merged and replaced states
 #############################################################################
 - name: "TEST 3: Create eBGP fabric for merged vs replaced comparison"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
@@ -906,14 +899,13 @@
   tags: [test_comparison]
 
 - name: "TEST 3a: Partial update using merged state (should merge changes)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: merged
     config:
       - fabric_name: "{{ ebgp_test_fabric_deleted }}"
-        category: fabric
         management:
-          bgp_asn: "65004"              # Different from default ASN
+          bgp_asn: "65004"
           # bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65100"
           fabric_mtu: 8000       # Only updating MTU
@@ -930,14 +922,12 @@
   tags: [test_comparison, test_merged_partial]
 
 - name: "TEST 3b: Partial update using replaced state (should replace entire config)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ ebgp_test_fabric_deleted }}"
-        category: fabric
         management:
-          type: vxlanEbgp
           bgp_asn: "65100"
           bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65100"
@@ -958,7 +948,7 @@
 # TEST 4: STATE DELETED - Delete fabrics
 #############################################################################
 - name: "TEST 4a: Delete eBGP fabric using state deleted"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -976,7 +966,7 @@
   tags: [test_deleted, test_deleted_delete]
 
 - name: "TEST 4b: Delete eBGP fabric using state deleted (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -997,12 +987,11 @@
 # TEST 5: Multiple fabric operations in single task
 #############################################################################
 - name: "TEST 5: Multiple eBGP fabric operations in single task"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: merged
     config:
       - fabric_name: "multi_ebgp_fabric_1"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1011,7 +1000,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65101"
           bgp_asn_auto_allocation: false
           site_id: "65101"
@@ -1047,7 +1035,7 @@
           fabric_mtu: 9216
           l2_host_interface_mtu: 9216
           tenant_dhcp: true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: false
           nxapi_http_port: 80
@@ -1081,7 +1069,6 @@
           management_gateway: ""
           management_ipv4_prefix: 24
       - fabric_name: "multi_ebgp_fabric_2"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1090,7 +1077,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanEbgp
           bgp_asn: "65102"
           bgp_asn_auto_allocation: false
           site_id: "65102"
@@ -1126,7 +1112,7 @@
           fabric_mtu: 9216
           l2_host_interface_mtu: 9216
           tenant_dhcp: true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: false
           nxapi_http_port: 80
@@ -1172,10 +1158,101 @@
   tags: [test_multi, test_multi_create]
 
 #############################################################################
+# TEST 4: CONFIG ACTIONS VALIDATION - Invalid save/deploy combination
+#
+# Regression test for PR #256: config_actions validation must run BEFORE any
+# state mutation and must fail deterministically on every run, including
+# idempotent no-drift runs. deploy=true with save=false is invalid and must
+# fail before the fabric is modified.
+#############################################################################
+- name: "TEST 4 SETUP: Create baseline fabric with fabric_mtu 9216"
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': ebgp_test_fabric_config_actions} | combine(fabric_config_ebgp) | combine({'management': (fabric_config_ebgp.management | default({})) | combine({'fabric_mtu': 9216})}) }}"
+  register: config_actions_baseline
+  tags: [test_config_actions]
+
+- name: "TEST 4a: Invalid config_actions (save=false, deploy=true) - first run"
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': ebgp_test_fabric_config_actions} | combine(fabric_config_ebgp) | combine({'management': (fabric_config_ebgp.management | default({})) | combine({'fabric_mtu': 9000})}) }}"
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+  register: config_actions_first_run
+  ignore_errors: true
+  tags: [test_config_actions]
+
+- name: "TEST 4a: Verify first invalid run fails before any mutation"
+  assert:
+    that:
+      - config_actions_first_run is failed
+      - config_actions_first_run is not changed
+      - "'deploy=True requires save=True' in config_actions_first_run.msg"
+    fail_msg: "Invalid config_actions did not fail before mutation on the first run"
+    success_msg: "Invalid config_actions failed before mutation without changing the fabric"
+  tags: [test_config_actions]
+
+- name: "TEST 4b: Invalid config_actions (save=false, deploy=true) - identical second run"
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': ebgp_test_fabric_config_actions} | combine(fabric_config_ebgp) | combine({'management': (fabric_config_ebgp.management | default({})) | combine({'fabric_mtu': 9000})}) }}"
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+  register: config_actions_second_run
+  ignore_errors: true
+  tags: [test_config_actions]
+
+- name: "TEST 4b: Verify identical second run also fails (no-drift path is not skipped)"
+  assert:
+    that:
+      - config_actions_second_run is failed
+      - config_actions_second_run is not changed
+      - "'deploy=True requires save=True' in config_actions_second_run.msg"
+    fail_msg: "Invalid config_actions was skipped on the idempotent no-drift second run"
+    success_msg: "Invalid config_actions fails consistently regardless of drift"
+  tags: [test_config_actions]
+
+- name: "TEST 4c: Confirm fabric_mtu was never mutated (still 9216)"
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': ebgp_test_fabric_config_actions} | combine(fabric_config_ebgp) | combine({'management': (fabric_config_ebgp.management | default({})) | combine({'fabric_mtu': 9216})}) }}"
+  register: config_actions_verify_mtu
+  tags: [test_config_actions]
+
+- name: "TEST 4c: Verify fabric_mtu is unchanged at 9216"
+  assert:
+    that:
+      - config_actions_verify_mtu is not changed
+    fail_msg: "fabric_mtu was mutated by an invalid config_actions run"
+    success_msg: "fabric_mtu remained 9216 - invalid config_actions never mutated ND"
+  tags: [test_config_actions]
+
+- name: "TEST 4 CLEANUP: Delete config_actions test fabric"
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ebgp_test_fabric_config_actions }}"
+  ignore_errors: true
+  tags: [test_config_actions, cleanup, always]
+
+#############################################################################
 # FINAL CLEANUP - Clean up all test fabrics
 #############################################################################
 - name: "CLEANUP: Delete all test eBGP fabrics"
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -1194,7 +1271,7 @@
   debug:
     msg: |
       ========================================================
-      TEST SUMMARY for cisco.nd.nd_manage_fabric_ebgp module:
+      TEST SUMMARY for cisco.nd.nd_manage_fabric_ebgp_vxlan module:
       ========================================================
       ✓ TEST 1: STATE MERGED
         - Create fabric: {{ 'PASSED' if ebgp_merged_result_1 is changed else 'FAILED' }}

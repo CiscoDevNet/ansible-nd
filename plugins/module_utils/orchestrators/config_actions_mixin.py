@@ -1,0 +1,253 @@
+# -*- coding: utf-8 -*-
+
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""
+ConfigActionsMixin — composable mixin for fabric config save/deploy operations.
+
+Add this mixin to any NDBaseOrchestrator subclass that needs to save and/or deploy
+fabric configuration after CRUD operations. The mixin reuses the orchestrator's
+existing ``_request()`` method, so check-mode simulation, error handling, and
+Results tracking (API call registration) are all handled automatically.
+
+Usage::
+
+    class MyFabricOrchestrator(ConfigActionsMixin, NDBaseOrchestrator):
+        ...
+
+Then from the module or state machine::
+
+    orchestrator.config_save(fabric_name="my-fabric")
+    orchestrator.config_deploy(fabric_name="my-fabric", deploy_type="global")
+
+Or use the convenience method to process a batch::
+
+    orchestrator.execute_config_actions(
+        fabric_names=["fab1", "fab2"],
+        save=True, deploy=True, deploy_type="switch",
+    )
+"""
+
+from __future__ import annotations
+
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import (
+    EpFabricConfigSavePost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import (
+    EpFabricDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
+    EpManageFabricsSwitchesGet,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
+    EpManageFabricsSwitchActionsDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+
+
+class ConfigActionsMixin:
+    """Mixin providing fabric config save and deploy operations.
+
+    Designed to be composed with NDBaseOrchestrator (or subclasses). Relies on
+    the host class providing ``_request()`` with the standard signature.
+
+    Deploy types:
+        - ``"global"``: Deploys the entire fabric via
+          ``/fabrics/{fabricName}/actions/deploy`` (no request body).
+        - ``"switch"``: Queries switches needing deployment via
+          ``/fabrics/{fabricName}/switches``, filters by ``configSyncStatus``,
+          then deploys to those switches via
+          ``/fabrics/{fabricName}/switchActions/deploy`` with
+          ``{"switchIds": [...]}``.
+    """
+
+    def config_save(self, fabric_name: str) -> ResponseType:
+        """Save fabric configuration.
+
+        Triggers intent recalculation for the entire fabric via
+        ``/fabrics/{fabricName}/actions/configSave``. No request body.
+
+        Args:
+            fabric_name: Name of the fabric to save.
+
+        Returns:
+            API response data.
+
+        Raises:
+            Exception: If the save request fails.
+        """
+        ep = EpFabricConfigSavePost(fabric_name=fabric_name)
+        return self._request(
+            path=ep.path,
+            verb=ep.verb,
+            operation_type=OperationType.UPDATE,
+        )
+
+    def _get_fabric_switches(self, fabric_name: str) -> list[dict]:
+        """Return the fabric's switches from the controller (empty list if none).
+
+        ND rejects configSave/deploy on a switchless fabric ("Fabric ... cannot be
+        deployed without any switches"), so callers skip save/deploy when this is
+        empty. Fetched once per fabric per run and passed to the deploy path so the
+        switches endpoint is queried at most once per fabric.
+        """
+        ep = EpManageFabricsSwitchesGet(fabric_name=fabric_name)
+        result = self._request(
+            path=ep.path,
+            verb=ep.verb,
+            not_found_ok=True,
+            operation_type=OperationType.QUERY,
+        )
+        return result.get("switches", []) if result else []
+
+    def config_deploy(self, fabric_name: str, deploy_type: str = "global", switches: list[dict] | None = None) -> ResponseType:
+        """Deploy fabric configuration.
+
+        Args:
+            fabric_name: Name of the fabric to deploy.
+            deploy_type: ``"global"`` for fabric-wide deploy, ``"switch"`` for
+                switch-level deploy targeting only out-of-sync switches.
+            switches: Optional pre-fetched switch list (from
+                ``_get_fabric_switches``) reused for switch-level deploy to avoid a
+                redundant switches query. Fetched on demand when None.
+
+        Returns:
+            API response data, or None if no switches need deployment
+            (switch-level only).
+
+        Raises:
+            ValueError: If deploy_type is not "global" or "switch".
+            Exception: If the deploy request fails.
+        """
+        if deploy_type == "global":
+            return self._deploy_global(fabric_name)
+        elif deploy_type == "switch":
+            return self._deploy_switches(fabric_name, switches)
+        else:
+            raise ValueError(f"Invalid deploy_type '{deploy_type}'. Must be 'global' or 'switch'.")
+
+    def _deploy_global(self, fabric_name: str) -> ResponseType:
+        """Deploy entire fabric configuration (no request body)."""
+        ep = EpFabricDeployPost(fabric_name=fabric_name)
+        return self._request(
+            path=ep.path,
+            verb=ep.verb,
+            operation_type=OperationType.UPDATE,
+        )
+
+    def _deploy_switches(self, fabric_name: str, switches: list[dict] | None = None) -> ResponseType:
+        """Deploy to switches that need configuration deployment.
+
+        Identifies switches with a ``configSyncStatus`` that is not ``inSync`` and
+        deploys to them via the switchActions/deploy endpoint. When ``switches`` is
+        provided it is reused; otherwise the switch list is fetched.
+
+        Returns None if all switches are already in sync.
+        """
+        if switches is None:
+            switches = self._get_fabric_switches(fabric_name)
+        switch_ids = self._filter_switches_needing_deploy(switches)
+        if not switch_ids:
+            return None
+
+        ep = EpManageFabricsSwitchActionsDeployPost(fabric_name=fabric_name)
+        return self._request(
+            path=ep.path,
+            verb=ep.verb,
+            data={"switchIds": switch_ids},
+            operation_type=OperationType.UPDATE,
+        )
+
+    def _get_switches_needing_deploy(self, fabric_name: str) -> list[str]:
+        """Query fabric switches and return serial numbers needing deployment.
+
+        A switch needs deployment if its ``configSyncStatus`` is not ``inSync``.
+        """
+        return self._filter_switches_needing_deploy(self._get_fabric_switches(fabric_name))
+
+    @staticmethod
+    def _filter_switches_needing_deploy(switches: list[dict]) -> list[str]:
+        """Return serial numbers of switches whose ``configSyncStatus`` is not ``inSync``."""
+        switch_ids = []
+        for switch in switches:
+            additional_data = switch.get("additionalData", {})
+            config_status = additional_data.get("configSyncStatus", "")
+            # Treat any non-inSync value (including empty/missing) as needing
+            # deployment. An unknown status must not silently skip the switch.
+            if config_status != "inSync":
+                serial_number = switch.get("serialNumber", "")
+                if serial_number:
+                    switch_ids.append(serial_number)
+        return switch_ids
+
+    @staticmethod
+    def validate_config_actions(
+        save: bool = False,
+        deploy: bool = False,
+        deploy_type: str = "switch",
+    ) -> None:
+        """Validate config_actions input independently of execution.
+
+        This is intentionally side-effect free so callers can validate user
+        input *before* any resource mutation and regardless of whether the run
+        results in changes. This guarantees invalid input fails deterministically
+        on every run, including idempotent no-drift runs, without mutating ND.
+
+        Args:
+            save: Whether to save configuration.
+            deploy: Whether to deploy configuration (requires save=True).
+            deploy_type: ``"global"`` or ``"switch"``.
+
+        Raises:
+            ValueError: If deploy=True but save=False, or deploy_type is invalid.
+        """
+        if deploy and not save:
+            raise ValueError("config_actions: deploy=True requires save=True")
+        if deploy_type not in ("global", "switch"):
+            raise ValueError(f"config_actions: invalid type '{deploy_type}'. Must be 'global' or 'switch'.")
+
+    def execute_config_actions(
+        self,
+        fabric_names: list[str],
+        save: bool = False,
+        deploy: bool = False,
+        deploy_type: str = "global",
+    ) -> None:
+        """Execute config save and/or deploy for a list of fabrics.
+
+        Fabrics with no switches on the controller are skipped (not an error):
+        ND rejects save/deploy on a switchless fabric, so a day-0 fabric create —
+        or the fabric step on a first run, before switches are added — must not
+        fail. The skip is surfaced as a warning via ``rest_send.warn``. The
+        fabric's switch list is fetched once per fabric and reused for the
+        switch-level deploy filter.
+
+        Args:
+            fabric_names: List of fabric names to process.
+            save: Whether to save configuration.
+            deploy: Whether to deploy configuration (requires save=True).
+            deploy_type: ``"global"`` or ``"switch"`` (default: "global").
+
+        Raises:
+            ValueError: If deploy=True but save=False.
+            Exception: If any save or deploy request fails.
+        """
+        self.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+
+        if not save and not deploy:
+            return
+
+        for fabric_name in fabric_names:
+            # Fetch the switch list once per fabric and reuse it for both the
+            # switchless-skip check and the switch-level deploy filter.
+            switches = self._get_fabric_switches(fabric_name)
+            if not switches:
+                self.rest_send.warn(f"Skipping config save/deploy for '{fabric_name}': fabric has no switches.")
+                continue
+            if save:
+                self.config_save(fabric_name)
+            if deploy:
+                self.config_deploy(fabric_name, deploy_type, switches=switches)

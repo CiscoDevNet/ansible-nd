@@ -11,32 +11,37 @@ in the ND Manage API.
 
 ## Endpoints
 
-- `EpApiV1ManageFabricsGet` - Get a specific fabric by name
+- `EpManageFabricsGet` - Get a specific fabric by name
   (GET /api/v1/manage/fabrics/{fabric_name})
-- `EpApiV1ManageFabricsListGet` - List all fabrics with optional filtering
+- `EpManageFabricsListGet` - List all fabrics with optional filtering
   (GET /api/v1/manage/fabrics)
-- `EpApiV1ManageFabricsPost` - Create a new fabric
+- `EpManageFabricsPost` - Create a new fabric
   (POST /api/v1/manage/fabrics)
-- `EpApiV1ManageFabricsPut` - Update a specific fabric
+- `EpManageFabricsPut` - Update a specific fabric
   (PUT /api/v1/manage/fabrics/{fabric_name})
-- `EpApiV1ManageFabricsDelete` - Delete a specific fabric
+- `EpManageFabricsDelete` - Delete a specific fabric
   (DELETE /api/v1/manage/fabrics/{fabric_name})
-- `EpApiV1ManageFabricsSummaryGet` - Get summary for a specific fabric
+- `EpManageFabricsSummaryGet` - Get summary for a specific fabric
   (GET /api/v1/manage/fabrics/{fabric_name}/summary)
+- `EpManageFabricConfigDeployPost` - Deploy pending config for a fabric
+  (POST /api/v1/manage/fabrics/{fabric_name}/actions/configDeploy)
+- `EpManageFabricsDeploymentFreezeGet` - Get deployment freeze mode for a fabric
+  (GET /api/v1/manage/fabrics/{fabric_name}/deploymentFreeze)
 """
 
 from __future__ import annotations
 
 __metaclass__ = type
 
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
+from urllib.parse import quote
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
@@ -60,10 +65,46 @@ class FabricsEndpointParams(EndpointQueryParams):
     ```
     """
 
-    cluster_name: Optional[str] = Field(
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Name of the target Nexus Dashboard cluster to execute this API, in a multi-cluster deployment",
+    )
+
+
+class FabricConfigDeployEndpointParams(EndpointQueryParams):
+    """
+    # Summary
+
+    Endpoint-specific query parameters for the fabric config deploy endpoint.
+
+    ## Parameters
+
+    - force_show_run: Force show running config before deploy (optional)
+    - incl_all_msd_switches: Include all MSD fabric switches (optional)
+
+    ## Usage
+
+    ```python
+    params = FabricConfigDeployEndpointParams(force_show_run=True)
+    query_string = params.to_query_string()
+    # Returns: "forceShowRun=true"
+    ```
+    """
+
+    force_show_run: bool | None = Field(default=None, description="Force show running config before deploy")
+    incl_all_msd_switches: bool | None = Field(default=None, description="Include all MSD fabric switches")
+
+
+class FabricsTicketEndpointParams(FabricsEndpointParams):
+    """
+    Endpoint-specific query parameters for fabric membership mutation endpoints.
+    """
+
+    ticket_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Change control ticket ID",
     )
 
 
@@ -83,7 +124,7 @@ class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):
     """
 
     _require_fabric_name: ClassVar[bool] = True
-    _path_suffix: ClassVar[Optional[str]] = None
+    _path_suffix: ClassVar[str | None] = None
 
     endpoint_params: EndpointQueryParams = Field(default_factory=EndpointQueryParams, description="Endpoint-specific query parameters")
 
@@ -110,7 +151,7 @@ class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         segments = ["fabrics"]
         if self.fabric_name is not None:
-            segments.append(self.fabric_name)
+            segments.append(quote(self.fabric_name, safe=""))
         if self._path_suffix:
             segments.append(self._path_suffix)
         base_path = BasePath.path(*segments)
@@ -149,14 +190,14 @@ class EpManageFabricsGet(_EpManageFabricsBase):
 
     ```python
     # Get details for a specific fabric
-    request = EpApiV1ManageFabricsGet()
+    request = EpManageFabricsGet()
     request.fabric_name = "my-fabric"
     path = request.path
     verb = request.verb
     # Path will be: /api/v1/manage/fabrics/my-fabric
 
     # Get fabric details targeting a specific cluster in a multi-cluster deployment
-    request = EpApiV1ManageFabricsGet()
+    request = EpManageFabricsGet()
     request.fabric_name = "my-fabric"
     request.endpoint_params.cluster_name = "cluster1"
     path = request.path
@@ -165,7 +206,7 @@ class EpManageFabricsGet(_EpManageFabricsBase):
     ```
     """
 
-    class_name: Literal["EpApiV1ManageFabricsGet"] = Field(default="EpApiV1ManageFabricsGet", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricsGet"] = Field(default="EpManageFabricsGet", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -199,35 +240,35 @@ class FabricsListEndpointParams(EndpointQueryParams):
     ```
     """
 
-    cluster_name: Optional[str] = Field(
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Name of the target Nexus Dashboard cluster to execute this API, in a multi-cluster deployment",
     )
 
-    category: Optional[str] = Field(
+    category: str | None = Field(
         default=None,
         description="Filter by category of fabric (fabric or fabricGroup)",
     )
 
-    filter: Optional[str] = Field(
+    filter: str | None = Field(
         default=None,
         description="Lucene format filter - Filter the response based on this filter field",
     )
 
-    max: Optional[int] = Field(
+    max: int | None = Field(
         default=None,
         ge=1,
         description="Number of records to return",
     )
 
-    offset: Optional[int] = Field(
+    offset: int | None = Field(
         default=None,
         ge=0,
         description="Number of records to skip for pagination",
     )
 
-    sort: Optional[str] = Field(
+    sort: str | None = Field(
         default=None,
         description="Sort the records by the declared fields in either ascending (default) or descending (:desc) order",
     )
@@ -261,13 +302,13 @@ class EpManageFabricsListGet(_EpManageFabricsBase):
 
     ```python
     # List all fabrics
-    ep = EpApiV1ManageFabricsListGet()
+    ep = EpManageFabricsListGet()
     path = ep.path
     verb = ep.verb
     # Path: /api/v1/manage/fabrics
 
     # List fabrics with filtering and pagination
-    ep = EpApiV1ManageFabricsListGet()
+    ep = EpManageFabricsListGet()
     ep.endpoint_params.category = "fabric"
     ep.endpoint_params.max = 10
     path = ep.path
@@ -277,7 +318,7 @@ class EpManageFabricsListGet(_EpManageFabricsBase):
 
     _require_fabric_name: ClassVar[bool] = False
 
-    class_name: Literal["EpApiV1ManageFabricsListGet"] = Field(default="EpApiV1ManageFabricsListGet", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricsListGet"] = Field(default="EpManageFabricsListGet", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: FabricsListEndpointParams = Field(default_factory=FabricsListEndpointParams, description="Endpoint-specific query parameters")
 
@@ -325,7 +366,7 @@ class EpManageFabricsPost(_EpManageFabricsBase):
     ## Usage
 
     ```python
-    ep = EpApiV1ManageFabricsPost()
+    ep = EpManageFabricsPost()
     rest_send.path = ep.path
     rest_send.verb = ep.verb
     rest_send.payload = {
@@ -339,7 +380,7 @@ class EpManageFabricsPost(_EpManageFabricsBase):
 
     _require_fabric_name: ClassVar[bool] = False
 
-    class_name: Literal["EpApiV1ManageFabricsPost"] = Field(default="EpApiV1ManageFabricsPost", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricsPost"] = Field(default="EpManageFabricsPost", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -381,7 +422,7 @@ class EpManageFabricsPut(_EpManageFabricsBase):
     ## Usage
 
     ```python
-    ep = EpApiV1ManageFabricsPut()
+    ep = EpManageFabricsPut()
     ep.fabric_name = "my-fabric"
     rest_send.path = ep.path
     rest_send.verb = ep.verb
@@ -393,7 +434,7 @@ class EpManageFabricsPut(_EpManageFabricsBase):
     ```
     """
 
-    class_name: Literal["EpApiV1ManageFabricsPut"] = Field(default="EpApiV1ManageFabricsPut", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricsPut"] = Field(default="EpManageFabricsPut", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -430,14 +471,14 @@ class EpManageFabricsDelete(_EpManageFabricsBase):
     ## Usage
 
     ```python
-    ep = EpApiV1ManageFabricsDelete()
+    ep = EpManageFabricsDelete()
     ep.fabric_name = "my-fabric"
     rest_send.path = ep.path
     rest_send.verb = ep.verb
     ```
     """
 
-    class_name: Literal["EpApiV1ManageFabricsDelete"] = Field(default="EpApiV1ManageFabricsDelete", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricsDelete"] = Field(default="EpManageFabricsDelete", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -474,7 +515,7 @@ class EpManageFabricsSummaryGet(_EpManageFabricsBase):
     ## Usage
 
     ```python
-    ep = EpApiV1ManageFabricsSummaryGet()
+    ep = EpManageFabricsSummaryGet()
     ep.fabric_name = "my-fabric"
     path = ep.path
     verb = ep.verb
@@ -482,11 +523,11 @@ class EpManageFabricsSummaryGet(_EpManageFabricsBase):
     ```
     """
 
-    class_name: Literal["EpApiV1ManageFabricsSummaryGet"] = Field(
-        default="EpApiV1ManageFabricsSummaryGet", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricsSummaryGet"] = Field(
+        default="EpManageFabricsSummaryGet", frozen=True, description="Class name for backward compatibility"
     )
 
-    _path_suffix: ClassVar[Optional[str]] = "summary"
+    _path_suffix: ClassVar[str | None] = "summary"
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
@@ -494,3 +535,198 @@ class EpManageFabricsSummaryGet(_EpManageFabricsBase):
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.GET
+
+
+class EpManageFabricConfigDeployPost(_EpManageFabricsBase):
+    """
+    # Summary
+
+    Fabric Config Deploy Endpoint
+
+    ## Description
+
+    Endpoint to deploy pending configuration to all switches in a fabric.
+
+    ## Path
+
+    - /api/v1/manage/fabrics/{fabric_name}/actions/configDeploy
+    - /api/v1/manage/fabrics/{fabric_name}/actions/configDeploy?forceShowRun=true
+
+    ## Verb
+
+    - POST
+
+    ## Query Parameters
+
+    - force_show_run: Force show running config before deploy (optional)
+    - incl_all_msd_switches: Include all MSD fabric switches (optional)
+
+    ## Usage
+
+    ```python
+    ep = EpManageFabricConfigDeployPost()
+    ep.fabric_name = "MyFabric"
+    path = ep.path
+    verb = ep.verb
+
+    # With forceShowRun
+    ep.endpoint_params.force_show_run = True
+    path = ep.path
+    # Path: /api/v1/manage/fabrics/MyFabric/actions/configDeploy?forceShowRun=true
+    ```
+    """
+
+    class_name: Literal["EpManageFabricConfigDeployPost"] = Field(
+        default="EpManageFabricConfigDeployPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: FabricConfigDeployEndpointParams = Field(
+        default_factory=FabricConfigDeployEndpointParams,
+        description="Endpoint-specific query parameters",
+    )
+
+    @property
+    def path(self) -> str:
+        """Build the endpoint path with optional query string."""
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        base = BasePath.path("fabrics", quote(self.fabric_name, safe=""), "actions", "configDeploy")
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{base}?{query_string}"
+        return base
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.POST
+
+
+class EpManageFabricsDeploymentFreezeGet(_EpManageFabricsBase):
+    """
+    # Summary
+
+    ND Manage Fabrics Deployment Freeze GET Endpoint
+
+    ## Description
+
+    Endpoint to retrieve the current deployment freeze mode for a specific fabric. When deployment freeze is enabled, configuration changes
+    cannot be deployed from the controller to switches, but changes can still be made on the controller.
+
+    The fabric name is a required path parameter. The response shape is ``{"deploymentFreeze": <bool>}``.
+
+    ## Path
+
+    - ``/api/v1/manage/fabrics/{fabric_name}/deploymentFreeze``
+    - ``/api/v1/manage/fabrics/{fabric_name}/deploymentFreeze?clusterName=cluster1``
+
+    ## Verb
+
+    - GET
+
+    ## Raises
+
+    ### ValueError
+
+    - If `fabric_name` is not set when accessing `path`
+
+    ## Usage
+
+    ```python
+    ep = EpManageFabricsDeploymentFreezeGet()
+    ep.fabric_name = "my-fabric"
+    rest_send.path = ep.path
+    rest_send.verb = ep.verb
+    # Path: /api/v1/manage/fabrics/my-fabric/deploymentFreeze
+    ```
+    """
+
+    class_name: Literal["EpManageFabricsDeploymentFreezeGet"] = Field(
+        default="EpManageFabricsDeploymentFreezeGet", frozen=True, description="Class name for backward compatibility"
+    )
+
+    _path_suffix: ClassVar[str | None] = "deploymentFreeze"
+
+    endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.GET
+
+
+class EpManageFabricsMembersGet(_EpManageFabricsBase):
+    """GET /api/v1/manage/fabrics/{fabric_name}/members."""
+
+    class_name: Literal["EpManageFabricsMembersGet"] = Field(
+        default="EpManageFabricsMembersGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    _path_suffix: ClassVar[str | None] = "members"
+
+    endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.GET
+
+
+class EpManageFabricsMemberCandidatesGet(_EpManageFabricsBase):
+    """GET /api/v1/manage/fabrics/{fabric_name}/memberCandidates."""
+
+    class_name: Literal["EpManageFabricsMemberCandidatesGet"] = Field(
+        default="EpManageFabricsMemberCandidatesGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    _path_suffix: ClassVar[str | None] = "memberCandidates"
+
+    endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.GET
+
+
+class EpManageFabricsMembersAddPost(_EpManageFabricsBase):
+    """POST /api/v1/manage/fabrics/{fabric_name}/actions/addMembers."""
+
+    class_name: Literal["EpManageFabricsMembersAddPost"] = Field(
+        default="EpManageFabricsMembersAddPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    _path_suffix: ClassVar[str | None] = "actions/addMembers"
+
+    endpoint_params: FabricsTicketEndpointParams = Field(default_factory=FabricsTicketEndpointParams, description="Endpoint-specific query parameters")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.POST
+
+
+class EpManageFabricsMembersRemovePost(_EpManageFabricsBase):
+    """POST /api/v1/manage/fabrics/{fabric_name}/actions/removeMembers."""
+
+    class_name: Literal["EpManageFabricsMembersRemovePost"] = Field(
+        default="EpManageFabricsMembersRemovePost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    _path_suffix: ClassVar[str | None] = "actions/removeMembers"
+
+    endpoint_params: FabricsTicketEndpointParams = Field(default_factory=FabricsTicketEndpointParams, description="Endpoint-specific query parameters")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.POST

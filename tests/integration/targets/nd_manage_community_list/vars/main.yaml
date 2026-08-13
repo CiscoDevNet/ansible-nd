@@ -1,0 +1,51 @@
+---
+# Variables for nd_manage_community_list integration tests.
+#
+# Override nd_test_fabric_name in inventory or extra-vars to match the ND 4.2 testbed.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('SITE1') }}"
+community_list_tenant_identity_name: ANSIBLE_CL_TENANT_IDENTITY
+
+community_list_standard:
+  name: ANSIBLE_CL_STANDARD
+  type: standard
+  entries:
+    - sequence_number: 10
+      action: permit
+      community_numbers:
+        - "100:200"
+    - sequence_number: 20
+      action: deny
+      no_export: true
+
+community_list_standard_updated:
+  name: ANSIBLE_CL_STANDARD
+  type: standard
+  entries:
+    - sequence_number: 10
+      action: permit
+      community_numbers:
+        - "200:300"
+    - sequence_number: 30
+      action: permit
+      internet: true
+
+community_list_expanded:
+  name: ANSIBLE_CL_EXPANDED
+  type: expanded
+  entries:
+    - sequence_number: 10
+      action: permit
+      community_number_regex: "100:.*"
+    - sequence_number: 20
+      action: deny
+      community_number_regex: "65000:.*"
+
+community_list_overridden:
+  name: ANSIBLE_CL_OVERRIDDEN
+  type: standard
+  entries:
+    - sequence_number: 10
+      action: permit
+      community_numbers:
+        - "300:400"

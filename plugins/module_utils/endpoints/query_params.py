@@ -125,7 +125,8 @@ class EndpointQueryParams(BaseModel):
             else:
                 api_value = str(field_value)
 
-            params.append(f"{api_key}={api_value}")
+            encoded_value = quote(str(api_value), safe="")
+            params.append(f"{api_key}={encoded_value}")
         return "&".join(params)
 
     @staticmethod
@@ -209,8 +210,16 @@ class LuceneQueryParams(BaseModel):
         params = []
         for field_name, field_value in self.model_dump(exclude_none=True).items():
             if field_value is not None:
-                # URL-encode the value if requested
-                encoded_value = quote(str(field_value), safe="") if url_encode else str(field_value)
+                # URL-encode the value if requested.
+                # Lucene filter expressions require ':' and ' ' to remain unencoded
+                # so the server-side parser can recognise the field:value syntax.
+                if url_encode:
+                    # Keep ':' unencoded so Lucene field:value syntax is preserved.
+                    # Spaces are encoded as %20 so the query string is valid in URLs.
+                    safe_chars = ":" if field_name == "filter" else ""
+                    encoded_value = quote(str(field_value), safe=safe_chars)
+                else:
+                    encoded_value = str(field_value)
                 params.append(f"{field_name}={encoded_value}")
         return "&".join(params)
 

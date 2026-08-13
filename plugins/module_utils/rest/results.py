@@ -605,6 +605,10 @@ class Results:
         msg += f"changed={self.changed}, failed={self.failed}"
         self.log.debug(msg)
 
+        # Idempotent check - if final result is already built, do nothing
+        if self._final_result is not None:
+            return
+
         # Aggregate data from all tasks
         diff_list = [task.diff for task in self._tasks]
         metadata_list = [task.metadata for task in self._tasks]

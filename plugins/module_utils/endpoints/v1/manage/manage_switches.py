@@ -1,0 +1,311 @@
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+"""
+ND Manage Switches endpoint models.
+
+This module contains endpoint definitions for switch-related operations
+in the ND Manage API.
+
+## Endpoints
+
+- `EpManageSwitchesListGet` - List switches in a fabric with optional Lucene filtering
+  (GET /api/v1/manage/fabrics/{fabric_name}/switches)
+- `EpManageSwitchesGet` - Get the details of a specific switch in a fabric
+  (GET /api/v1/manage/fabrics/{fabric_name}/switches/{switch_id})
+- `EpManageSwitchActionsDeploy` - Deploy all pending switch configuration
+  (POST /api/v1/manage/fabrics/{fabric_name}/switchActions/deploy)
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+from urllib.parse import quote
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import ClusterNameMixin, FabricNameMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import CompositeQueryParams, EndpointQueryParams, LuceneQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
+
+
+class ManageSwitchesListEndpointParams(ClusterNameMixin, EndpointQueryParams):
+    """
+    Endpoint-specific query parameters for listing fabric switches.
+
+    These match the non-Lucene query parameters exposed by
+    ``/fabrics/{fabricName}/switches`` in manage.json.
+    """
+
+    hostname: str | None = Field(default=None, min_length=1, description="Filter by switch hostname")
+
+
+class _EpManageSwitchesBase(FabricNameMixin, NDEndpointBaseModel):
+    """
+    # Summary
+
+    Base class for ND Manage Switches endpoints.
+
+    Provides common functionality for all HTTP methods on the
+    `/api/v1/manage/fabrics/{fabric_name}/switches` endpoint.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `fabric_name` is not set before accessing `path`.
+    """
+
+    lucene_params: LuceneQueryParams = Field(default_factory=LuceneQueryParams, description="Lucene-style query parameters for filtering")
+
+    def set_identifiers(self, identifier: IdentifierKey = None):
+        """
+        # Summary
+
+        Set `fabric_name` from `identifier`.
+
+        ## Raises
+
+        None
+        """
+        self.fabric_name = identifier
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the endpoint path for manage switches operations.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `fabric_name` is not set before accessing `path`.
+        """
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        segments = ["fabrics", quote(self.fabric_name, safe=""), "switches"]
+        base_path = BasePath.path(*segments)
+        query_params = CompositeQueryParams()
+        endpoint_params = getattr(self, "endpoint_params", None)
+        if endpoint_params is not None:
+            query_params.add(endpoint_params)
+        query_params.add(self.lucene_params)
+        query_string = query_params.to_query_string()
+        if query_string:
+            return f"{base_path}?{query_string}"
+        return base_path
+
+
+class EpManageSwitchesListGet(_EpManageSwitchesBase):
+    """
+    # Summary
+
+    List switches in a fabric with optional Lucene filtering.
+
+    ## Description
+
+    Endpoint to list switches belonging to a specific fabric. Supports Lucene-style filter queries for narrowing results, e.g. filtering by
+    `fabricManagementIp` to resolve a switch IP to its serial number / switch ID.
+
+    ## Path
+
+    - `/api/v1/manage/fabrics/{fabric_name}/switches`
+    - `/api/v1/manage/fabrics/{fabric_name}/switches?filter=fabricManagementIp%3A192.168.12.151`
+
+    ## Verb
+
+    - GET
+
+    ## Raises
+
+    ### ValueError
+
+    - If `fabric_name` is not set when accessing `path`.
+
+    ## Usage
+
+    ```python
+    # List all switches in a fabric
+    ep = EpManageSwitchesListGet()
+    ep.fabric_name = "fabric_1"
+    path = ep.path
+    # Path: /api/v1/manage/fabrics/fabric_1/switches
+
+    # Filter switches by management IP
+    ep = EpManageSwitchesListGet()
+    ep.fabric_name = "fabric_1"
+    ep.lucene_params.filter = "fabricManagementIp:192.168.12.151"
+    path = ep.path
+    # Path: /api/v1/manage/fabrics/fabric_1/switches?filter=fabricManagementIp%3A192.168.12.151
+    ```
+    """
+
+    class_name: Literal["EpManageSwitchesListGet"] = Field(default="EpManageSwitchesListGet", frozen=True, description="Class name for backward compatibility")
+    endpoint_params: ManageSwitchesListEndpointParams = Field(
+        default_factory=ManageSwitchesListEndpointParams,
+        description="Endpoint-specific query parameters",
+    )
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.GET`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.GET
+
+
+# TODO: Remove EpManageSwitchesGet once the in-flight stacked branches have merged into develop.
+# It is currently unused here -- nd_maintenance_mode resolves per-switch intendedSystemMode from the
+# bulk EpManageSwitchesListGet snapshot, not from a per-switch GET. It is retained for now because
+# sibling branches in the current stack may still reference the per-switch endpoint; revisit after
+# the stack lands and delete it if no caller has appeared.
+class EpManageSwitchesGet(FabricNameMixin, NDEndpointBaseModel):
+    """
+    # Summary
+
+    Get the details of a specific switch in a fabric.
+
+    ## Description
+
+    Endpoint to retrieve a specific switch's details from a fabric. The fabric name and switch ID (NX-OS serial number or
+    ACI node ID) are both required. The response contains switch metadata; the `systemMode` / `intendedSystemMode` /
+    `discoveredSystemMode` fields used by `nd_maintenance_mode` are nested under `additionalData` on the live wire.
+
+    ## Path
+
+    - `/api/v1/manage/fabrics/{fabric_name}/switches/{switch_id}`
+
+    ## Verb
+
+    - GET
+
+    ## Raises
+
+    ### ValueError
+
+    - If `fabric_name` or `switch_id` is not set when accessing `path`.
+
+    ## Usage
+
+    ```python
+    ep = EpManageSwitchesGet()
+    ep.fabric_name = "SITE1"
+    ep.switch_id = "9UOJ3E8A6O9"
+    rest_send.path = ep.path
+    rest_send.verb = ep.verb
+    # Path: /api/v1/manage/fabrics/SITE1/switches/9UOJ3E8A6O9
+    ```
+    """
+
+    class_name: Literal["EpManageSwitchesGet"] = Field(default="EpManageSwitchesGet", frozen=True, description="Class name for backward compatibility")
+
+    switch_id: str | None = Field(default=None, description="Switch identifier (NX-OS serial number or ACI node ID)")
+
+    def set_identifiers(self, identifier: IdentifierKey = None):
+        """
+        # Summary
+
+        Set `switch_id` from `identifier`. `fabric_name` must be set separately.
+
+        ## Raises
+
+        None
+        """
+        self.switch_id = identifier
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the per-switch GET endpoint path.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `fabric_name` or `switch_id` is not set before accessing `path`.
+        """
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        if self.switch_id is None:
+            raise ValueError(f"{type(self).__name__}.path: switch_id must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "switches", quote(self.switch_id, safe=""))
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.GET`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.GET
+
+
+class EpManageSwitchActionsDeploy(FabricNameMixin, NDEndpointBaseModel):
+    """
+    # Summary
+
+    Deploy all pending switch configuration to one or more switches.
+
+    Deploys the full pending configuration for the given switches, including interface, policy, routing, and any other
+    staged changes. This is faster than per-interface deploy but has a broader blast radius.
+
+    - Path: `/api/v1/manage/fabrics/{fabric_name}/switchActions/deploy`
+    - Verb: POST
+    - Body: `{"switchIds": ["serial1", "serial2"]}`
+
+    ## Raises
+
+    ### ValueError
+
+    - Via `path` property if `fabric_name` is not set.
+    """
+
+    class_name: Literal["EpManageSwitchActionsDeploy"] = Field(
+        default="EpManageSwitchActionsDeploy", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the switch deploy endpoint path.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `fabric_name` is not set before accessing `path`.
+        """
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "switchActions", "deploy")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.POST`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.POST

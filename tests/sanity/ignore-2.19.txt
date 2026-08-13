@@ -1,0 +1,4 @@
+plugins/action/tests/integration/nd_vpc_pair_validate.py action-plugin-docs
+plugins/action/tests/integration/_nd_switches_validate.py action-plugin-docs
+plugins/action/tests/integration/_nd_vrf_validate.py action-plugin-docs
+plugins/action/tests/integration/_nd_network_validate.py action-plugin-docs

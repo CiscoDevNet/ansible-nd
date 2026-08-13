@@ -1,0 +1,372 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+
+- name: "GATHERED - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: gathered
+
+- block:
+
+    ##############################################
+    ##     SETUP - Create policies to gather    ##
+    ##############################################
+
+    - name: "GATHERED SETUP - Create policies for gather tests"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "Timezone CET"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "System vlan long-name"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+
+          - name: banner
+            create_additional_policy: false
+            description: "MOTD banner"
+            priority: 200
+            template_inputs:
+              BANNER: |
+                ******************************************
+                * Managed by ND                        *
+                ******************************************
+              BANNERDELIMITER: "_"
+              TYPE: "motd"
+
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+              - serial_number: "{{ switch_serial_2 }}"
+      register: setup_result
+      tags: gathered
+
+    - name: "GATHERED SETUP - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - setup_result.changed == true
+      tags: gathered
+
+    ##############################################
+    ##         GATHERED TEST CASES              ##
+    ##############################################
+
+    # TC-1: Gather all policies for a specific switch (no template filter)
+    - name: "GATHERED TC1 - Gather all policies on switch1"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC1 - Verify gathered returns policies"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length >= 3
+      tags: gathered
+
+    # TC-2: Gather filtered by template name
+    - name: "GATHERED TC2 - Gather only clock_timezone policies on switch1"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC2 - Verify filtered gathered"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length >= 1
+      tags: gathered
+
+    # TC-3: Gather policies from multiple switches
+    - name: "GATHERED TC3 - Gather policies from both switches"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+              - serial_number: "{{ switch_serial_2 }}"
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC3 - Verify gathered from both switches"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length >= 6
+      tags: gathered
+
+    # TC-4: Gather with no config (all fabric policies)
+    - name: "GATHERED TC4 - Gather all policies in fabric (no config)"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC4 - Verify fabric-wide gathered"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length >= 6
+      tags: gathered
+
+    # TC-5: Gathered output is re-usable for merged state
+    - name: "GATHERED TC5 - Verify gathered output structure"
+      ansible.builtin.assert:
+        that:
+          - result.gathered is defined
+          - result.gathered is iterable
+      tags: gathered
+
+    ##############################################
+    ## TC6-TC9: policy_id auto-promotion (gathered
+    ## -> merged round-trip). Each entry emitted by
+    ## state=gathered carries the controller-assigned
+    ## policy_id alongside the template name. When the
+    ## unmodified gathered output is replayed via
+    ## state=merged, translate_config() promotes
+    ## policy_id to name so the update targets the
+    ## existing policy by ID. These TCs reuse the
+    ## clock_timezone policy seeded at the top of this
+    ## file (description "Timezone CET" on both
+    ## switches) instead of creating a new fixture.
+    ##############################################
+
+    # TC-6: Gather one policy and assert that policy_id is populated.
+    - name: "GATHERED TC6 - Gather clock_timezone on switch1 for round-trip tests"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: gathered_tc6
+      tags: gathered
+
+    - name: "GATHERED TC6 - Filter to the Timezone CET seed entry"
+      ansible.builtin.set_fact:
+        gathered_seed_entries: >-
+          {{
+            gathered_tc6.gathered
+            | selectattr('description', 'defined')
+            | selectattr('description', 'equalto', 'Timezone CET')
+            | list
+          }}
+      tags: gathered
+
+    - name: "GATHERED TC6 - Verify gathered carries policy_id alongside template name"
+      ansible.builtin.assert:
+        that:
+          - gathered_tc6.changed == false
+          - gathered_seed_entries | length == 1
+          - gathered_seed_entries[0].name == 'clock_timezone'
+          - gathered_seed_entries[0].policy_id is defined
+          - gathered_seed_entries[0].policy_id is match('^POLICY-')
+          - gathered_seed_entries[0].switch | length == 1
+        fail_msg: >-
+          Expected exactly one gathered entry for clock_timezone with
+          description=Timezone CET and a populated policy_id. Got:
+          {{ gathered_seed_entries }}
+      tags: gathered
+
+    - name: "GATHERED TC6 - Capture controller-assigned policy_id"
+      ansible.builtin.set_fact:
+        gathered_original_policy_id: "{{ gathered_seed_entries[0].policy_id }}"
+      tags: gathered
+
+    # TC-7: Replay the unchanged gathered output via state=merged.
+    # The policy_id auto-promotion in translate_config() targets the
+    # existing policy by ID, the diff is empty, so changed=false.
+    - name: "GATHERED TC7 - Replay unchanged gathered output via state=merged"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        config: "{{ gathered_seed_entries }}"
+      register: gathered_tc7
+      tags: gathered
+
+    - name: "GATHERED TC7 - Verify unchanged round-trip is idempotent"
+      ansible.builtin.assert:
+        that:
+          - gathered_tc7.changed == false
+        fail_msg: >-
+          Expected unchanged gathered round-trip to be idempotent
+          (changed=false). The policy_id auto-promotion in
+          translate_config() should target the existing policy by ID
+          and detect no diff. Got changed={{ gathered_tc7.changed }}.
+      tags: gathered
+
+    - name: "GATHERED TC7 - Re-gather and confirm no duplicate was created"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: gathered_tc7_regather
+      tags: gathered
+
+    - name: "GATHERED TC7 - Verify only ONE Timezone CET policy on switch1"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (gathered_tc7_regather.gathered
+              | selectattr('description', 'defined')
+              | selectattr('description', 'equalto', 'Timezone CET')
+              | list | length) == 1
+        fail_msg: >-
+          After in-place round-trip there should be exactly ONE
+          Timezone CET policy on switch1. A higher count would mean
+          policy_id promotion silently dropped and a duplicate create
+          happened.
+      tags: gathered
+
+    # TC-8: Modify template_inputs in the gathered entry and replay.
+    # The promoted policy_id targets the existing policy, so the SAME
+    # policy_id is updated in place (no new policy created).
+    - name: "GATHERED TC8 - Build a modified gathered entry (timezone PST)"
+      ansible.builtin.set_fact:
+        gathered_modified_entry:
+          name: "{{ gathered_seed_entries[0].name }}"
+          policy_id: "{{ gathered_seed_entries[0].policy_id }}"
+          description: "{{ gathered_seed_entries[0].description }}"
+          priority: "{{ gathered_seed_entries[0].priority }}"
+          switch: "{{ gathered_seed_entries[0].switch }}"
+          template_inputs:
+            TIME_ZONE: PST
+            HOUR_OFFSET: "-8"
+            MINUTE_OFFSET: "0"
+      tags: gathered
+
+    - name: "GATHERED TC8 - Apply the modified entry via state=merged"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        config:
+          - "{{ gathered_modified_entry }}"
+      register: gathered_tc8
+      tags: gathered
+
+    - name: "GATHERED TC8 - Re-gather to verify in-place update on the SAME policy_id"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: gathered_tc8_regather
+      tags: gathered
+
+    - name: "GATHERED TC8 - Filter regather down to our updated entry"
+      ansible.builtin.set_fact:
+        gathered_tc8_entries: >-
+          {{
+            gathered_tc8_regather.gathered
+            | selectattr('description', 'defined')
+            | selectattr('description', 'equalto', 'Timezone CET')
+            | list
+          }}
+      tags: gathered
+
+    - name: "GATHERED TC8 - Verify SAME policy_id was updated in place (no duplicate)"
+      ansible.builtin.assert:
+        that:
+          - gathered_tc8.changed == true
+          - gathered_tc8_entries | length == 1
+          - gathered_tc8_entries[0].policy_id == gathered_original_policy_id
+          - gathered_tc8_entries[0].template_inputs.TIME_ZONE == 'PST'
+        fail_msg: >-
+          Expected in-place update of policy_id={{ gathered_original_policy_id }}.
+          Got entries={{ gathered_tc8_entries }}.
+      tags: gathered
+
+    # TC-9: Force-create by dropping policy_id from the gathered entry.
+    # The documented escape hatch when the user wants a fresh copy
+    # (new ID) instead of in-place update. Uses
+    # create_additional_policy=true to bypass the duplicate-skip
+    # check, and a fresh description so cleanup can spot it.
+    - name: "GATHERED TC9 - Build a force-create entry (drop policy_id)"
+      ansible.builtin.set_fact:
+        gathered_force_create_entry:
+          name: "{{ gathered_tc8_entries[0].name }}"
+          description: "GATHERED-TC9-force-create"
+          priority: "{{ gathered_tc8_entries[0].priority }}"
+          switch: "{{ gathered_tc8_entries[0].switch }}"
+          template_inputs: "{{ gathered_tc8_entries[0].template_inputs }}"
+          create_additional_policy: true
+      tags: gathered
+
+    - name: "GATHERED TC9 - Apply the force-create entry via state=merged"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        config:
+          - "{{ gathered_force_create_entry }}"
+      register: gathered_tc9
+      tags: gathered
+
+    - name: "GATHERED TC9 - Re-gather all clock_timezone policies on switch1"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: gathered_tc9_regather
+      tags: gathered
+
+    - name: "GATHERED TC9 - Verify a NEW policy_id was assigned alongside the existing one"
+      ansible.builtin.assert:
+        that:
+          - gathered_tc9.changed == true
+          - >-
+            (gathered_tc9_regather.gathered
+              | selectattr('description', 'defined')
+              | selectattr('description', 'equalto', 'Timezone CET')
+              | list | length) == 1
+          - >-
+            (gathered_tc9_regather.gathered
+              | selectattr('description', 'defined')
+              | selectattr('description', 'equalto', 'GATHERED-TC9-force-create')
+              | list | length) == 1
+        fail_msg: >-
+          Expected force-create (no policy_id, create_additional_policy=true)
+          to produce a SECOND policy alongside the in-place-updated
+          Timezone CET policy.
+      tags: gathered
+
+  always:
+    - name: "GATHERED - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: gathered

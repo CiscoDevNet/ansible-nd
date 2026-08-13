@@ -24,7 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.sender imp
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
 
-class RestSend:
+class RestSend:  # pylint: disable=too-many-public-methods
     """
     # Summary
 
@@ -196,6 +196,22 @@ class RestSend:
         if self.timeout is not None:
             self.saved_timeout = self.timeout
 
+    def warn(self, message: str) -> None:
+        """
+        # Summary
+
+        Emit a user-visible warning through the underlying `AnsibleModule`. Used by orchestrators to surface non-fatal
+        preflight failures (e.g. capability preflight in check mode) without converting them into module errors.
+
+        Encapsulates the `sender.ansible_module.warn(...)` reach so callers don't need to know about the sender's
+        internals; one localized `# type: ignore` here keeps the orchestrator call sites clean.
+
+        ## Raises
+
+        None
+        """
+        self.sender.ansible_module.warn(message)  # type: ignore[attr-defined]
+
     def commit(self) -> None:
         """
         # Summary
@@ -234,7 +250,7 @@ class RestSend:
         self.log.debug(msg)
 
         try:
-            if self.check_mode is True:
+            if self.check_mode is True and self.verb != HttpVerbEnum.GET:
                 self._commit_check_mode()
             else:
                 self._commit_normal_mode()
@@ -292,6 +308,7 @@ class RestSend:
             self._response.append(self.response_current)
             self._result.append(self.result_current)
             self._committed_payload = copy.deepcopy(self._payload)
+            self._payload = None
         except (TypeError, ValueError) as error:
             msg = f"{self.class_name}.{method_name}: "
             msg += "Error building response/result. "
@@ -302,7 +319,7 @@ class RestSend:
         """
         # Summary
 
-        Call sender.commit() with retries until successful response or timeout is exceeded.
+        Call sender.commit() with retries until a successful response, a terminal (non-retryable) failure, or timeout.
 
         ## Raises
 
@@ -319,8 +336,7 @@ class RestSend:
 
         self.sender.path = self.path
         self.sender.verb = self.verb
-        if self.payload is not None:
-            self.sender.payload = self.payload
+        self.sender.payload = self.payload
         success = False
         while timeout > 0 and success is False:
             msg = f"{self.class_name}.{method_name}: "
@@ -360,6 +376,12 @@ class RestSend:
 
             success = self.result_current["success"]
             if success is False:
+                if self.result_current.get("retryable", True) is False:
+                    msg = f"{self.class_name}.{method_name}: "
+                    msg += "Terminal failure (retryable=False). Not retrying. "
+                    msg += f"verb {self.verb}, path {self.path}."
+                    self.log.debug(msg)
+                    break
                 if self.unit_test is False:
                     sleep(self.send_interval)
                 timeout -= self.send_interval
@@ -372,6 +394,54 @@ class RestSend:
         self._result.append(self.result_current)
         self._committed_payload = copy.deepcopy(self._payload)
         self._payload = None
+
+    @property
+    def success(self) -> bool:
+        """
+        # Summary
+
+        Whether the most recent commit was successful.
+
+        ## Raises
+
+        None
+        """
+        return self._result_current.get("success", False)
+
+    @property
+    def return_code(self) -> int:
+        """
+        # Summary
+
+        The HTTP return code from the most recent commit.
+
+        ## Raises
+
+        None
+        """
+        return self._response_current.get("RETURN_CODE", -1)
+
+    @property
+    def error_summary(self) -> str:
+        """
+        # Summary
+
+        A short error string combining the return code and message from the most recent commit.
+        Includes the detailed error message from the response body when available.
+
+        ## Raises
+
+        None
+        """
+        code = self._response_current.get("RETURN_CODE", -1)
+        msg = self._response_current.get("MESSAGE", "Unknown error")
+        summary = f"({code}): {msg}"
+        # Include detailed error from response body if available
+        if self._response_handler is not None:
+            detail = self._response_handler.error_message
+            if detail:
+                summary = f"{summary} - {detail}"
+        return summary
 
     @property
     def check_mode(self) -> bool:

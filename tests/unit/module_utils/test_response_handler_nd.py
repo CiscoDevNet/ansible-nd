@@ -1459,6 +1459,693 @@ def test_response_handler_nd_01000():
 
 
 # =============================================================================
+# Test: Multi-Status per-item failure detection (issue #295)
+#
+# ND reports per-item outcomes for batch operations in a DATA envelope array whose
+# items carry status: "success" | "failed" | "failure" | "error". The two known
+# envelope shapes are DATA.results[] (batch interface / breakout) and
+# DATA.switchIds[] (switchActions/deploy). ND sends these bodies on HTTP 207 and,
+# for some endpoints, on plain HTTP 200 -- so any success-code response whose body
+# contains a failing item must NOT be classified as success.
+# =============================================================================
+
+
+def test_response_handler_nd_01200():
+    """
+    # Summary
+
+    Verify 207 with a failed `DATA.results[]` item is not success.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and a results[] item status "failed"
+      sets success=False, changed=False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Port-channel1.999",
+                    "status": "failed",
+                    "message": "Sub-interface can be created only on routed interfaces",
+                }
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
+
+
+def test_response_handler_nd_01210():
+    """
+    # Summary
+
+    Verify 207 with an errored `DATA.results[]` item is not success.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and a results[] item status "error"
+      (breakout-style literal) sets success=False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Ethernet1/1",
+                    "status": "error",
+                    "message": "Breakout not supported on this port",
+                }
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01220():
+    """
+    # Summary
+
+    Verify 207 with a failed `DATA.switchIds[]` item is not success.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and a switchIds[] item status "failed"
+      (switchActions/deploy shape) sets success=False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {"switchId": "FDO1234ABCD", "status": "success"},
+                {"switchId": "FDO5678WXYZ", "status": "failed", "message": "Deploy failed on peer"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01230():
+    """
+    # Summary
+
+    Verify 207 whose per-item statuses all succeed remains success.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and results[] items all status "success"
+      sets success=True, changed=True (no failing item present)
+    - retryable is False (key present on every mutation result)
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "Ethernet1/1", "status": "success"},
+                {"name": "Ethernet1/2", "status": "success"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+    assert instance.result["changed"] is True
+    assert instance.result["retryable"] is False
+
+
+def test_response_handler_nd_01240():
+    """
+    # Summary
+
+    Verify error_message aggregates failed `DATA.results[]` items.
+
+    ## Test
+
+    - A 207 with a failed results[] item exposes an error_message
+      naming the item and its per-item message
+
+    ## Classes and Methods
+
+    - NdV1Strategy.extract_error_message()
+    - ResponseHandler.error_message
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Port-channel1.999",
+                    "status": "failed",
+                    "message": "Sub-interface can be created only on routed interfaces",
+                }
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    instance.commit()
+    assert instance.error_message is not None
+    assert "Port-channel1.999" in instance.error_message
+    assert "Sub-interface can be created only on routed interfaces" in instance.error_message
+
+
+def test_response_handler_nd_01250():
+    """
+    # Summary
+
+    Verify error_message aggregates failed `DATA.switchIds[]` items.
+
+    ## Test
+
+    - A 207 with a failed switchIds[] item exposes an error_message
+      naming the switch and its per-item message
+
+    ## Classes and Methods
+
+    - NdV1Strategy.extract_error_message()
+    - ResponseHandler.error_message
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {"switchId": "FDO5678WXYZ", "status": "failed", "message": "Deploy failed on peer"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    instance.commit()
+    assert instance.error_message is not None
+    assert "FDO5678WXYZ" in instance.error_message
+    assert "Deploy failed on peer" in instance.error_message
+
+
+def test_response_handler_nd_01260():
+    """
+    # Summary
+
+    Verify a mixed 207 (one ok, one failed) fails and names only the failure.
+
+    ## Test
+
+    - A 207 with one success item and one failed item sets success=False
+    - error_message names only the failed item, not the successful one
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - NdV1Strategy.extract_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {"switchId": "FDO1111AAAA", "status": "success"},
+                {"switchId": "FDO2222BBBB", "status": "failed", "message": "peer deploy failed"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message is not None
+    assert "FDO2222BBBB" in instance.error_message
+    assert "FDO1111AAAA" not in instance.error_message
+
+
+def test_response_handler_nd_01270():
+    """
+    # Summary
+
+    Verify the `failure` per-item literal (not just `failed`) is detected.
+
+    ## Test
+
+    - A 207 with a results[] item status "failure" sets success=False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "acl-1", "status": "failure", "message": "rejected"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01280():
+    """
+    # Summary
+
+    Verify a per-item status with surrounding whitespace and mixed case still counts as a failure.
+
+    ## Test
+
+    - A 207 with a results[] item status "  Failed  " (padded, mixed case) sets success=False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "eth1/1", "status": "  Failed  ", "message": "rejected"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01290():
+    """
+    # Summary
+
+    Verify a 207 whose per-item `status` is None (or a non-failure value) remains success.
+
+    ## Test
+
+    - A 207 with a results[] item whose status is None does not flip success
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "eth1/1", "status": None, "message": "no status key"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+
+
+def test_response_handler_nd_01300():
+    """
+    # Summary
+
+    Verify an empty-string label key is skipped rather than used as the label.
+
+    ## Test
+
+    - A 207 whose failing item carries name="" falls through to the next label key (switchId)
+    - The message is labelled "FDO5678WXYZ: ...", not ": ..."
+
+    ## Classes and Methods
+
+    - NdV1Strategy._format_multistatus_failure()
+    - NdV1Strategy.extract_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "", "switchId": "FDO5678WXYZ", "status": "failed", "message": "Deploy failed"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message is not None
+    assert "FDO5678WXYZ: Deploy failed" in instance.error_message
+    assert not instance.error_message.startswith("ND Error: : ")
+
+
+def test_response_handler_nd_01310():
+    """
+    # Summary
+
+    Verify `warningMessage` is used as the per-item detail when no `message` key is present.
+
+    ## Test
+
+    - A 207 failing item carrying warningMessage (fabric update-group shape) surfaces that text
+
+    ## Classes and Methods
+
+    - NdV1Strategy._format_multistatus_failure()
+    - NdV1Strategy.extract_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "leaf_group", "status": "failed", "warningMessage": "Switch not found"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message is not None
+    assert "leaf_group: Switch not found" in instance.error_message
+
+
+def test_response_handler_nd_01320():
+    """
+    # Summary
+
+    Verify a failing item with neither a label key nor a detail key yields the generic literal.
+
+    ## Test
+
+    - A 207 failing item carrying only status="failed" surfaces "ND Error: failed"
+
+    ## Classes and Methods
+
+    - NdV1Strategy._format_multistatus_failure()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"status": "failed"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message == "ND Error: failed"
+
+
+# =============================================================================
+# Test: Null-valued DATA keys do not crash error-message extraction
+#
+# ND may send `messages` or `errors` with an explicit null value. The key is
+# present, so a bare `"messages" in data_dict and len(data_dict["messages"])`
+# raises TypeError on the very path that reports an error to the user.
+# =============================================================================
+
+
+def test_response_handler_nd_01330():
+    """
+    # Summary
+
+    Verify a null `DATA.messages` does not raise and falls back to the generic message.
+
+    ## Test
+
+    - A 500 whose DATA carries messages=None commits without raising
+    - error_message is the generic status fallback
+
+    ## Classes and Methods
+
+    - NdV1Strategy._extract_dict_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 500,
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"messages": None},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message == "ND Error: Request failed with status 500"
+
+
+def test_response_handler_nd_01340():
+    """
+    # Summary
+
+    Verify a null `DATA.errors` does not raise and falls back to the generic message.
+
+    ## Test
+
+    - A 500 whose DATA carries errors=None commits without raising
+    - error_message is the generic status fallback
+
+    ## Classes and Methods
+
+    - NdV1Strategy._extract_dict_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 500,
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"errors": None},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message == "ND Error: Request failed with status 500"
+
+
+# =============================================================================
+# Test: DATA.error text is surfaced, not dropped
+#
+# is_success() classifies a response carrying DATA.error as a failure. Without a
+# matching branch in the error-message extractor, the text ND actually sent was
+# dropped in favour of the generic "Request failed with status <code>" fallback.
+# =============================================================================
+
+
+def test_response_handler_nd_01350():
+    """
+    # Summary
+
+    Verify the scalar `DATA.error` value is surfaced in error_message.
+
+    ## Test
+
+    - A 200 whose DATA carries error="ND error occurred" sets success=False
+    - error_message carries the error text rather than the generic fallback
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - NdV1Strategy._extract_dict_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {"error": "ND error occurred"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message == "ND Error: ND error occurred"
+
+
+# =============================================================================
+# Test: links[] Multi-Status envelope (bulk link create / delete)
+#
+# POST /api/v1/manage/links and POST /api/v1/manage/linkActions/remove return
+# HTTP 207 with {"links": [{"linkId", "message", "status"}]}, status
+# success|failure. The GET /links list body rides the same `links` envelope,
+# but its link objects carry no top-level `status` key, so queries must not
+# false-positive. See PR #398 discussion.
+# =============================================================================
+
+
+def test_response_handler_nd_01360():
+    """
+    # Summary
+
+    Verify a 207 `links[]` envelope with a failing item is classified as failure and labelled by linkId.
+
+    ## Test
+
+    - A 207 links body with one success and one failure item sets success=False
+    - The failing item is labelled by its linkId in error_message
+    - The succeeding item does not appear in error_message
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - NdV1Strategy._format_multistatus_failure()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "links": [
+                {"linkId": "LINK-UUID-8540", "message": "LINK-UUID-8540 deleted successfully", "status": "success"},
+                {"linkId": "LINK-UUID-8541", "message": "Deletion of link with id:LINK-UUID-8541 failed due to invalid linkId.", "status": "failure"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message is not None
+    assert "LINK-UUID-8541: Deletion of link with id:LINK-UUID-8541 failed due to invalid linkId." in instance.error_message
+    assert "LINK-UUID-8540" not in instance.error_message
+
+
+def test_response_handler_nd_01370():
+    """
+    # Summary
+
+    Verify a 207 `links[]` envelope whose items all succeed is classified as success.
+
+    ## Test
+
+    - A 207 links body with only success items sets success=True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "links": [
+                {"linkId": "LINK-UUID-8540", "message": "LINK-UUID-8540 created successfully", "status": "success"},
+                {"linkId": "LINK-UUID-8541", "message": "LINK-UUID-8541 created successfully", "status": "success"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+
+
+def test_response_handler_nd_01380():
+    """
+    # Summary
+
+    Verify a failing links item carrying linkId="" yields an unlabelled message rather than ": <message>".
+
+    ## Test
+
+    - A 207 links failure item with an empty linkId (the bulk-create OpenAPI example: the link was
+      never created, so ND has no id to report) surfaces the message without a label prefix
+
+    ## Classes and Methods
+
+    - NdV1Strategy._format_multistatus_failure()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "links": [
+                {"linkId": "LINK-UUID-8540", "message": "LINK-UUID-8540 created successfully", "status": "success"},
+                {"linkId": "", "message": "PTI POLICY-14240 already associated for the link LINK-UUID-15010.", "status": "failure"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.error_message == "ND Error: PTI POLICY-14240 already associated for the link LINK-UUID-15010."
+
+
+def test_response_handler_nd_01390():
+    """
+    # Summary
+
+    Verify a GET-shaped `links[]` list body (link objects, no `status` key) is not a false positive.
+
+    ## Test
+
+    - A 200 GET /links body whose link objects carry linkId but no status sets success=True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {"linkId": "LINK-UUID-8540", "linkType": "lan_neighbor_link", "srcInterfaceName": "Ethernet1/2", "dstInterfaceName": "Ethernet1/9"},
+                {"linkId": "LINK-UUID-48060", "linkType": "lan_planned_link", "srcInterfaceName": "Ethernet1/16", "dstInterfaceName": "Ethernet1/16"},
+            ],
+            "meta": {"counts": {"remaining": 0, "total": 2}},
+        },
+    }
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+    assert instance.result["found"] is True
+
+
+# =============================================================================
 # Test: ResponseHandler commit() can be called multiple times
 # =============================================================================
 
@@ -1494,3 +2181,317 @@ def test_response_handler_nd_01100():
     instance.commit()
     assert instance.result["success"] is False
     assert instance.result["found"] is False
+
+
+def test_response_handler_nd_01400():
+    """
+    # Summary
+
+    Verify a mixed 207 POST (one success, one failed item) is classified as a terminal failure.
+
+    ## Test
+
+    - POST 207 with results[] holding one success and one failed item
+    - success is False and retryable is False (success-code response with embedded per-item failure cannot succeed on replay)
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "acl_new", "status": "success", "message": "created successfully"},
+                {"name": "acl_seed", "status": "failed", "message": "ACL already exists"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["retryable"] is False
+
+
+def test_response_handler_nd_01410():
+    """
+    # Summary
+
+    Verify a POST failing with a non-success HTTP code remains retryable.
+
+    ## Test
+
+    - POST returns 500
+    - success is False and retryable is True (transient transport-level failures keep today's retry behavior)
+    - changed is False (a pure transport failure changed nothing)
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 500,
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "backend unavailable"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["retryable"] is True
+    assert instance.result["changed"] is False
+
+
+def test_response_handler_nd_01420():
+    """
+    # Summary
+
+    Verify a fully successful POST carries retryable=False.
+
+    ## Test
+
+    - POST 200 with all items succeeding
+    - success is True and retryable is False (key present on every mutation result for a consistent shape)
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {"results": [{"name": "acl_new", "status": "success"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+    assert instance.result["retryable"] is False
+
+
+def test_response_handler_nd_01430():
+    """
+    # Summary
+
+    Verify DATA.error on a success code is classified as a terminal failure.
+
+    ## Test
+
+    - POST 200 with DATA.error set (pre-existing embedded-error shape)
+    - success is False and retryable is False — the application definitively rejected the request
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {"error": "VRF does not exist"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["retryable"] is False
+
+
+def test_response_handler_nd_01440():
+    """
+    # Summary
+
+    Verify GET results carry no retryable key (GET retry semantics are unchanged).
+
+    ## Test
+
+    - GET returns 500
+    - result has no "retryable" key, so RestSend's .get("retryable", True) default preserves today's GET retry behavior
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 500,
+        "MESSAGE": "Internal Server Error",
+        "DATA": {},
+    }
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert "retryable" not in instance.result
+
+
+def test_response_handler_nd_01450():
+    """
+    # Summary
+
+    Verify a mixed 207 POST reports changed=True (a member succeeded, so controller state changed).
+
+    ## Test
+
+    - POST 207 with one success and one failed item
+    - success is False, changed is True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_changed_on_failure()
+    - ResponseHandler._handle_post_put_delete_response()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "acl_new", "status": "success", "message": "created successfully"},
+                {"name": "acl_seed", "status": "failed", "message": "ACL already exists"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is True
+
+
+def test_response_handler_nd_01460():
+    """
+    # Summary
+
+    Verify an all-failed 207 POST reports changed=False.
+
+    ## Test
+
+    - POST 207 where every results[] item failed
+    - success is False, changed is False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_changed_on_failure()
+    - ResponseHandler._handle_post_put_delete_response()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "acl_new", "status": "failed", "message": "invalid entry"},
+                {"name": "acl_seed", "status": "failed", "message": "ACL already exists"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
+
+
+def test_response_handler_nd_01470():
+    """
+    # Summary
+
+    Verify the modified header overrides the per-item scan on failure (header says false).
+
+    ## Test
+
+    - Mixed 207 POST whose modified header is "false"
+    - changed is False even though one item succeeded (the header is authoritative)
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_changed_on_failure()
+    - ResponseHandler._handle_post_put_delete_response()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "modified": "false",
+        "DATA": {
+            "results": [
+                {"name": "acl_new", "status": "success"},
+                {"name": "acl_seed", "status": "failed", "message": "ACL already exists"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
+
+
+def test_response_handler_nd_01480():
+    """
+    # Summary
+
+    Verify the modified header overrides the per-item scan on failure (header says true).
+
+    ## Test
+
+    - All-failed 207 POST whose modified header is "true"
+    - changed is True even though no item succeeded (the header is authoritative)
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_changed_on_failure()
+    - ResponseHandler._handle_post_put_delete_response()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "modified": "true",
+        "DATA": {"results": [{"name": "acl_seed", "status": "failed", "message": "ACL already exists"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is True
+
+
+def test_response_handler_nd_01490():
+    """
+    # Summary
+
+    Verify a non-itemized embedded error (DATA.error on 200) keeps changed=False.
+
+    ## Test
+
+    - POST 200 with DATA.error, no modified header, no per-item envelope
+    - success is False, changed is False (conservative default preserved)
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_changed_on_failure()
+    - ResponseHandler._handle_post_put_delete_response()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {"error": "VRF does not exist"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False

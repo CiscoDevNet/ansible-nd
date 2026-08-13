@@ -1,0 +1,548 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_loopback_interface.py.",
+        "Keys follow the test_<module>_<NNNNN><a|b|c|...> convention from CLAUDE.md.",
+        "Suffix order matches the order RestSend.commit() will consume responses within each test.",
+        "Tests that resolve a switch IP consume one switches-list response first (FabricContext lazy fetch).",
+        "Tests that call validate_prerequisites consume one fabric-summary response first.",
+        "Switch A: fabricManagementIp=192.168.12.151, switchId=FDO12345ABC.",
+        "Switch B: fabricManagementIp=192.168.12.152, switchId=FDO12345ABD."
+    ],
+
+    "test_loopback_interface_00100a": {
+        "TEST_NOTES": ["create happy path: switches list (1 switch)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00100b": {
+        "TEST_NOTES": ["create happy path: POST /interfaces (200)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_loopback_interface_00110a": {
+        "TEST_NOTES": ["create _request failure: switches list (1 switch)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00110b": {
+        "TEST_NOTES": ["create _request failure: POST returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_loopback_interface_00120a": {
+        "TEST_NOTES": ["create unknown switch_ip: switches list has a DIFFERENT IP than the model's switch_ip"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "10.0.0.99", "switchId": "FDO99999XYZ"}
+            ]
+        }
+    },
+
+    "test_loopback_interface_00200a": {
+        "TEST_NOTES": ["update happy path: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00200b": {
+        "TEST_NOTES": ["update happy path: PUT /interfaces/loopback10"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/loopback10",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_loopback_interface_00210a": {
+        "TEST_NOTES": ["update _request failure: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00210b": {
+        "TEST_NOTES": ["update _request failure: PUT returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/loopback10",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_loopback_interface_00300a": {
+        "TEST_NOTES": ["delete: only switches list consumed (no API call by delete itself)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+
+    "test_loopback_interface_00310a": {
+        "TEST_NOTES": ["delete unknown switch: switches list has a DIFFERENT IP"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "10.0.0.99", "switchId": "FDO99999XYZ"}
+            ]
+        }
+    },
+
+    "test_loopback_interface_00400a": {
+        "TEST_NOTES": ["create_bulk: switches list with 2 switches"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"},
+                {"fabricManagementIp": "192.168.12.152", "switchId": "FDO12345ABD"}
+            ]
+        }
+    },
+    "test_loopback_interface_00400b": {
+        "TEST_NOTES": ["create_bulk: POST switch A (loopback10+loopback11)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+    "test_loopback_interface_00400c": {
+        "TEST_NOTES": ["create_bulk: POST switch B (loopback20)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABD/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_loopback_interface_00410a": {
+        "TEST_NOTES": ["create_bulk failure: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"},
+                {"fabricManagementIp": "192.168.12.152", "switchId": "FDO12345ABD"}
+            ]
+        }
+    },
+    "test_loopback_interface_00410b": {
+        "TEST_NOTES": ["create_bulk failure: POST switch A succeeds"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+    "test_loopback_interface_00410c": {
+        "TEST_NOTES": ["create_bulk failure: POST switch B fails"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABD/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_loopback_interface_00420a": {
+        "TEST_NOTES": ["create_bulk single: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00420b": {
+        "TEST_NOTES": ["create_bulk single: POST switch A (loopback10)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_loopback_interface_00500a": {
+        "TEST_NOTES": ["delete_bulk: only switches list consumed"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"},
+                {"fabricManagementIp": "192.168.12.152", "switchId": "FDO12345ABD"}
+            ]
+        }
+    },
+
+    "test_loopback_interface_00600a": {
+        "TEST_NOTES": ["query_one happy: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00600b": {
+        "TEST_NOTES": ["query_one happy: GET /interfaces/loopback10"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/loopback10",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaceName": "loopback10",
+            "interfaceType": "loopback",
+            "configData": {
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {
+                        "policyType": "loopback",
+                        "adminState": true,
+                        "ip": "10.1.1.1/32"
+                    }
+                }
+            }
+        }
+    },
+
+    "test_loopback_interface_00610a": {
+        "TEST_NOTES": ["query_one failure: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00610b": {
+        "TEST_NOTES": ["query_one failure: GET returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/loopback10",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_loopback_interface_00700a": {
+        "TEST_NOTES": ["query_all happy: fabric summary (local + default)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a",
+            "local": true,
+            "fabricStatus": "default"
+        }
+    },
+    "test_loopback_interface_00700b": {
+        "TEST_NOTES": ["query_all happy: switches list (2 switches)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"},
+                {"fabricManagementIp": "192.168.12.152", "switchId": "FDO12345ABD"}
+            ]
+        }
+    },
+    "test_loopback_interface_00700c": {
+        "TEST_NOTES": [
+            "query_all happy: switch A interfaces — mixed (user loopback10, system underlay Loopback0, ethernet1/1)",
+            "Only loopback10 should pass the policyType=loopback filter."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback10",
+                    "interfaceType": "loopback",
+                    "configData": {"networkOS": {"policy": {"policyType": "loopback"}}}
+                },
+                {
+                    "interfaceName": "loopback0",
+                    "interfaceType": "loopback",
+                    "configData": {"networkOS": {"policy": {"policyType": "underlayLoopback"}}}
+                },
+                {
+                    "interfaceName": "ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {"networkOS": {"policy": {"policyType": "int_access_host"}}}
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00700d": {
+        "TEST_NOTES": ["query_all happy: switch B interfaces — single user loopback20"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABD/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback20",
+                    "interfaceType": "loopback",
+                    "configData": {"networkOS": {"policy": {"policyType": "loopback"}}}
+                }
+            ]
+        }
+    },
+
+    "test_loopback_interface_00710a": {
+        "TEST_NOTES": ["filter ethernet: fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "local": true, "fabricStatus": "default"}
+    },
+    "test_loopback_interface_00710b": {
+        "TEST_NOTES": ["filter ethernet: switches list (1 switch)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00710c": {
+        "TEST_NOTES": ["filter ethernet: only ethernet interfaces (must all be filtered out)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {"networkOS": {"policy": {"policyType": "int_access_host"}}}
+                },
+                {
+                    "interfaceName": "ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {"networkOS": {"policy": {"policyType": "int_trunk_host"}}}
+                }
+            ]
+        }
+    },
+
+    "test_loopback_interface_00720a": {
+        "TEST_NOTES": ["filter underlayLoopback: fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "local": true, "fabricStatus": "default"}
+    },
+    "test_loopback_interface_00720b": {
+        "TEST_NOTES": ["filter underlayLoopback: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00720c": {
+        "TEST_NOTES": ["filter underlayLoopback: loopback type but system policy (must be filtered out)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback0",
+                    "interfaceType": "loopback",
+                    "configData": {"networkOS": {"policy": {"policyType": "underlayLoopback"}}}
+                },
+                {
+                    "interfaceName": "loopback1",
+                    "interfaceType": "loopback",
+                    "configData": {"networkOS": {"policy": {"policyType": "underlayLoopback"}}}
+                }
+            ]
+        }
+    },
+
+    "test_loopback_interface_00730a": {
+        "TEST_NOTES": ["validate_prerequisites fails: fabric summary reports fabricStatus=frozen"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "local": true,
+            "fabricStatus": "frozen"
+        }
+    },
+
+    "test_loopback_interface_00740a": {
+        "TEST_NOTES": ["empty fabric: summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "local": true, "fabricStatus": "default"}
+    },
+    "test_loopback_interface_00740b": {
+        "TEST_NOTES": ["empty fabric: switches list returns no switches"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": []}
+    },
+
+    "test_loopback_interface_00750a": {
+        "TEST_NOTES": ["query_all config-scoped: fabric summary (local + default) for validate_prerequisites"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a",
+            "local": true,
+            "fabricStatus": "default"
+        }
+    },
+    "test_loopback_interface_00750b": {
+        "TEST_NOTES": [
+            "query_all config-scoped: switches list (2 switches), but config names only 192.168.12.151.",
+            "Expect: query_all (state!=overridden) scopes to the config switch and never GETs FDO12345ABD's interfaces."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"},
+                {"fabricManagementIp": "192.168.12.152", "switchId": "FDO12345ABD"}
+            ]
+        }
+    },
+    "test_loopback_interface_00750c": {
+        "TEST_NOTES": [
+            "query_all config-scoped: interfaces for the config-named switch FDO12345ABC - one user-managed loopback.",
+            "If query_all were NOT config-scoped it would also GET FDO12345ABD and exhaust the response generator."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback10",
+                    "interfaceType": "loopback",
+                    "configData": {"networkOS": {"policy": {"policyType": "loopback"}}}
+                }
+            ]
+        }
+    },
+
+    "test_loopback_interface_00800a": {
+        "TEST_NOTES": ["deploy queue de-dup: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00800b": {
+        "TEST_NOTES": ["deploy queue de-dup: first POST"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+    "test_loopback_interface_00800c": {
+        "TEST_NOTES": ["deploy queue de-dup: second POST (same identifier — should NOT add a second queue entry)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    }
+}

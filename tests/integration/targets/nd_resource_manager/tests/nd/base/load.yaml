@@ -1,0 +1,99 @@
+---
+- name: BASE common pools - Opt-in load test
+  when: rm_load_test_enabled | default(false) | bool
+  block:
+    - name: BASE common pools - Set load defaults
+      ansible.builtin.set_fact:
+        rm_load_expected_resources: "{{ rm_load_expected_resources | default(20) | int }}"
+        rm_load_resource_start_configured: "{{ rm_load_resource_start | default(300) | int }}"
+        rm_load_resource_start_effective: "{{ 1 + (((rm_load_resource_start | default(300) | int) - 1) % 1000) }}"
+        rm_load_resource_min: 1
+        rm_load_resource_max: 1000
+        rm_load_resource_width: 1000
+        rm_load_switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+        rm_load_config: []
+
+    - name: BASE common pools - Validate load prerequisites
+      ansible.builtin.assert:
+        that:
+          - '(rm_load_expected_resources | int) > 0'
+          - '(rm_load_expected_resources | int) <= ((rm_load_resource_width | int) * (rm_load_switches | length))'
+          - '(rm_load_switches | length) == 2'
+          - '(rm_load_resource_start_configured | int) >= 0'
+        fail_msg: >-
+          Resource manager load test requires a positive resource count no
+          greater than the selected pool range across exactly two configured
+          switches, and a non-negative rm_load_resource_start.
+
+    - name: BASE common pools - Build load config
+      ansible.builtin.set_fact:
+        rm_load_config: >-
+          {{
+            rm_load_config + [
+              {
+                'entity_name': 'base_load_' ~ item,
+                'pool_type': 'ID',
+                'pool_name': 'ROUTE_MAP_SEQUENCE_NUMBER_POOL',
+                'scope_type': 'device',
+                'switches': [rm_load_switches[((item | int) - 1) % (rm_load_switches | length)]],
+                'resource': ((rm_load_resource_min | int) + ((((rm_load_resource_start_effective | int) - (rm_load_resource_min | int)) + (((item | int) - 1) // (rm_load_switches | length))) % (rm_load_resource_width | int))) | string
+              }
+            ]
+          }}
+      loop: "{{ range(1, (rm_load_expected_resources | int) + 1) | list }}"
+
+    - name: BASE common pools - Assert generated resource IDs are in range
+      ansible.builtin.assert:
+        that:
+          - '(rm_load_config | length) == (rm_load_expected_resources | int)'
+          - '(rm_load_config | map(attribute="resource") | map("int") | min) >= (rm_load_resource_min | int)'
+          - '(rm_load_config | map(attribute="resource") | map("int") | max) <= (rm_load_resource_max | int)'
+
+    - name: BASE common pools - Pre-clean load resources
+      cisco.nd.nd_manage_resource_manager: &rm_load_delete
+        state: deleted
+        fabric_name: "{{ ansible_it_fabric }}"
+        config: "{{ rm_load_config }}"
+      register: rm_load_pre_cleanup_result
+
+    - block:
+        - name: BASE common pools - Create load resources
+          cisco.nd.nd_manage_resource_manager: &rm_load_merge
+            state: merged
+            fabric_name: "{{ ansible_it_fabric }}"
+            config: "{{ rm_load_config }}"
+          register: rm_load_create_result
+
+        - name: BASE common pools - Assert load create
+          ansible.builtin.assert:
+            that:
+              - 'rm_load_create_result.changed == true'
+              - '(rm_load_create_result["diff"][0]["merged"] | length) == (rm_load_expected_resources | int)'
+              - 'rm_load_create_result.failed | default(false) == false'
+              - rm_load_create_result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+        - name: BASE common pools - Load create idempotence
+          cisco.nd.nd_manage_resource_manager: *rm_load_merge
+          register: rm_load_idempotent_result
+
+        - name: BASE common pools - Assert load idempotence
+          ansible.builtin.assert:
+            that:
+              - 'rm_load_idempotent_result.changed == false'
+              - '(rm_load_idempotent_result["diff"][0]["merged"] | length) == 0'
+              - '(rm_load_idempotent_result["diff"][0]["deleted"] | length) == 0'
+              - 'rm_load_idempotent_result.failed | default(false) == false'
+              - rm_load_idempotent_result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+      always:
+        - name: BASE common pools - Delete load resources
+          cisco.nd.nd_manage_resource_manager: *rm_load_delete
+          register: rm_load_delete_result
+
+        - name: BASE common pools - Assert load delete
+          ansible.builtin.assert:
+            that:
+              - 'rm_load_delete_result.failed | default(false) == false'
+              - rm_load_delete_result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0

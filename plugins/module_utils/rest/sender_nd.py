@@ -249,11 +249,11 @@ class Sender:
         return self._payload
 
     @payload.setter
-    def payload(self, value: dict):
+    def payload(self, value: Optional[dict]):
         method_name = "payload"
-        if not isinstance(value, dict):
+        if value is not None and not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
-            msg += f"{method_name} must be a dict. "
+            msg += f"{method_name} must be a dict or None. "
             msg += f"Got type {type(value).__name__}, "
             msg += f"value {value}."
             raise TypeError(msg)

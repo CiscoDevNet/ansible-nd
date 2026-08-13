@@ -18,10 +18,6 @@ class ResponseGenerator:
     Given a coroutine which yields dictionaries, return the yielded items
     with each call to the next property
 
-    For usage in the context of dcnm_image_policy unit tests, see:
-        test: test_image_policy_create_bulk_00037
-        file: tests/unit/modules/dcnm/dcnm_image_policy/test_image_policy_create_bulk.py
-
     Simplified usage example below.
 
     def responses():

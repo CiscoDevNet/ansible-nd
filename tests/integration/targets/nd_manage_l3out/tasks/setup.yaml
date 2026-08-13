@@ -1,0 +1,19 @@
+---
+# Pre-test cleanup for nd_manage_l3out
+# Copyright: (c) 2026, Cisco Systems, Inc.
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Called from main.yaml before the merged/replaced/deleted state blocks.
+# Ensures no test L3Outs exist on the target fabric before the state tests run.
+
+- name: "SETUP: Remove test L3Outs before state tests"
+  cisco.nd.nd_manage_l3out:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ test_l3out_bgp_name }}"
+      - name: "{{ test_l3out_static_name }}"
+      - name: "{{ test_l3out_svi_name }}"
+    state: deleted
+  tags: always

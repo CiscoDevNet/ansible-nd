@@ -1,0 +1,288 @@
+---
+# Test code for the cisco.nd.nd_manage_acl module - IPv4 ACL lifecycle
+# Copyright: (c) 2026, Slawomir Kaszlikowski
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("debug") }}'
+
+#############################################################################
+# PREFLIGHT - confirm the target fabric exists before running ACL tests
+#############################################################################
+- name: PREFLIGHT - Read current ACL list (no-op merged read)
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: merged
+    config: []
+  register: preflight_result
+
+- name: PREFLIGHT - Assert connection succeeded and fabric is reachable
+  ansible.builtin.assert:
+    that:
+      - preflight_result is not failed
+      - preflight_result is not changed
+    fail_msg: "PREFLIGHT FAILED: cannot reach ND or fabric '{{ acl_fabric }}' does not exist."
+    success_msg: "PREFLIGHT PASSED: fabric '{{ acl_fabric }}' is reachable."
+
+#############################################################################
+# CLEANUP - ensure test ACLs do not exist before starting
+#############################################################################
+- name: CLEANUP - Remove any leftover test ACLs
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: deleted
+    config:
+      - name: "{{ acl_ipv4_name }}"
+      - name: "{{ acl_ipv6_name }}"
+  tags: always
+
+#############################################################################
+# TEST 1: STATE MERGED - create a new IPv4 ACL (check mode + real + idempotent)
+#############################################################################
+- name: "TEST 1a: Create IPv4 ACL (check mode)"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: merged
+    config:
+      - name: "{{ acl_ipv4_name }}"
+        type: ipv4
+        entries: &ipv4_entries
+          - sequence_number: 10
+            action: remark
+            remark_comment: "Allow web traffic"
+          - sequence_number: 20
+            action: permit
+            protocol: tcp
+            src: any
+            dst: "{{ acl_test_network_ipv4 }}"
+            dst_port_action: equal_to
+            dst_port: 80
+          - sequence_number: 100
+            action: deny
+            protocol: ip
+            src: any
+            dst: any
+  check_mode: true
+  register: merged_cm
+
+- name: "TEST 1b: Create IPv4 ACL"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: merged
+    config:
+      - name: "{{ acl_ipv4_name }}"
+        type: ipv4
+        entries: *ipv4_entries
+  register: merged_create
+
+- name: "TEST 1c: Create IPv4 ACL again (idempotency)"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: merged
+    config:
+      - name: "{{ acl_ipv4_name }}"
+        type: ipv4
+        entries: *ipv4_entries
+  register: merged_idempotent
+
+- name: "TEST 1: Verify merged create + idempotency"
+  ansible.builtin.assert:
+    that:
+      - merged_cm is changed
+      - merged_create is changed
+      - merged_create is not failed
+      - merged_idempotent is not changed
+      - (merged_create.after | selectattr('name', 'equalto', acl_ipv4_name) | list | first).entries | length == 3
+    fail_msg: "TEST 1 FAILED: merged create/idempotency did not behave as expected"
+    success_msg: "TEST 1 PASSED: IPv4 ACL created and merged state is idempotent"
+
+#############################################################################
+# TEST 2: STATE MERGED - supplying entries REPLACES the entry list
+# (the framework merges list fields by replacement, not by key)
+#############################################################################
+- name: "TEST 2a: Merge a new entry list (replaces existing entries)"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: merged
+    config:
+      - name: "{{ acl_ipv4_name }}"
+        type: ipv4
+        entries:
+          - sequence_number: 30
+            action: permit
+            protocol: tcp
+            src: any
+            dst: "{{ acl_test_network_ipv4 }}"
+            dst_port_action: equal_to
+            dst_port: 443
+  register: merged_replace_entries
+
+- name: "TEST 2: Verify merge replaced the entry list (only seq 30 remains)"
+  ansible.builtin.assert:
+    that:
+      - merged_replace_entries is changed
+      - (merged_replace_entries.after | selectattr('name', 'equalto', acl_ipv4_name) | list | first).entries | length == 1
+      - (merged_replace_entries.after | selectattr('name', 'equalto', acl_ipv4_name) | list | first).entries[0].sequence_number == 30
+    fail_msg: "TEST 2 FAILED: merge should replace the entry list with only the new entry"
+    success_msg: "TEST 2 PASSED: merge replaced the entry list as expected"
+
+#############################################################################
+# TEST 3: STATE REPLACED - completely replace the ACL entries
+#############################################################################
+- name: "TEST 3a: Replace IPv4 ACL (check mode)"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: replaced
+    config:
+      - name: "{{ acl_ipv4_name }}"
+        type: ipv4
+        entries: &ipv4_replaced_entries
+          - sequence_number: 10
+            action: permit
+            protocol: ip
+            src: 192.168.1.0
+            dst: any
+  check_mode: true
+  register: replaced_cm
+
+- name: "TEST 3b: Replace IPv4 ACL"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: replaced
+    config:
+      - name: "{{ acl_ipv4_name }}"
+        type: ipv4
+        entries: *ipv4_replaced_entries
+  register: replaced_apply
+
+- name: "TEST 3c: Replace IPv4 ACL again (idempotency)"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: replaced
+    config:
+      - name: "{{ acl_ipv4_name }}"
+        type: ipv4
+        entries: *ipv4_replaced_entries
+  register: replaced_idempotent
+
+- name: "TEST 3: Verify replaced state behaviour"
+  ansible.builtin.assert:
+    that:
+      - replaced_cm is changed
+      - replaced_apply is changed
+      - replaced_idempotent is not changed
+      - (replaced_apply.after | selectattr('name', 'equalto', acl_ipv4_name) | list | first).entries | length == 1
+      - (replaced_apply.after | selectattr('name', 'equalto', acl_ipv4_name) | list | first).entries[0].sequence_number == 10
+    fail_msg: "TEST 3 FAILED: replaced state did not replace the entry list as expected"
+    success_msg: "TEST 3 PASSED: replaced state correctly replaced the ACL entries"
+
+#############################################################################
+# VALIDATION: query the ACL directly from ND and assert the wire (camelCase)
+# representation matches what we configured.
+#############################################################################
+- name: "VALIDATION: Authenticate with ND to get a token"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_auth_response
+  delegate_to: localhost
+
+- name: "VALIDATION: Query the IPv4 ACL configuration from ND"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ acl_fabric }}/accessControlLists/{{ acl_ipv4_name }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: ipv4_acl_query
+  delegate_to: localhost
+
+- name: "VALIDATION: Parse the ACL response"
+  ansible.builtin.set_fact:
+    ipv4_acl_wire: "{{ ipv4_acl_query.json }}"
+
+- name: "VALIDATION: Verify the persisted ACL matches the replaced config"
+  ansible.builtin.assert:
+    that:
+      - ipv4_acl_wire.name == acl_ipv4_name
+      - ipv4_acl_wire.type == "ipv4"
+      - ipv4_acl_wire.entries | length == 1
+      - ipv4_acl_wire.entries[0].sequenceNumber == 10
+      - ipv4_acl_wire.entries[0].action == "permit"
+      - ipv4_acl_wire.entries[0].protocol == "ip"
+    fail_msg: "VALIDATION FAILED: persisted ACL does not match the replaced configuration"
+    success_msg: "VALIDATION PASSED: persisted ACL matches the replaced configuration"
+
+#############################################################################
+# TEST 4: STATE DELETED - delete the IPv4 ACL (check mode + real + idempotent)
+#############################################################################
+- name: "TEST 4a: Delete IPv4 ACL (check mode)"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: deleted
+    config:
+      - name: "{{ acl_ipv4_name }}"
+  check_mode: true
+  register: deleted_cm
+
+- name: "TEST 4b: Delete IPv4 ACL"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: deleted
+    config:
+      - name: "{{ acl_ipv4_name }}"
+  register: deleted_real
+
+- name: "TEST 4c: Delete IPv4 ACL again (idempotency - already gone)"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: deleted
+    config:
+      - name: "{{ acl_ipv4_name }}"
+  register: deleted_idempotent
+
+- name: "TEST 4: Verify deleted state behaviour"
+  ansible.builtin.assert:
+    that:
+      - deleted_cm is changed
+      - deleted_real is changed
+      - acl_ipv4_name in (deleted_real.before | map(attribute='name') | list)
+      - acl_ipv4_name not in (deleted_real.after | map(attribute='name') | list)
+      - deleted_idempotent is not changed
+    fail_msg: "TEST 4 FAILED: deleted state did not remove the ACL as expected"
+    success_msg: "TEST 4 PASSED: IPv4 ACL deleted (check mode left it intact)"

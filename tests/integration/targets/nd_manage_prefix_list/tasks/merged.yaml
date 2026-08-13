@@ -1,0 +1,151 @@
+---
+# Merged state tests for nd_manage_prefix_list
+# Copyright: (c) 2026, Gaspard Micol (@gmicol)
+#
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- MERGED CREATE ---
+
+- name: "MERGED CREATE: Create IPv4 prefix list PL-IPV4-BORDERS (check mode)"
+  cisco.nd.nd_manage_prefix_list: &merge_ipv4_borders
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ prefix_list_ipv4_borders }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_ipv4
+
+- name: "MERGED CREATE: Create IPv4 prefix list PL-IPV4-BORDERS (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *merge_ipv4_borders
+  register: nm_merged_create_ipv4
+
+- name: "MERGED CREATE: Verify IPv4 prefix list creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_ipv4 is changed
+      - nm_merged_create_ipv4 is changed
+      - nm_merged_create_ipv4.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length == 1
+
+- name: "MERGED CREATE: Create IPv6 prefix list PL-IPV6-DATACENTER (check mode)"
+  cisco.nd.nd_manage_prefix_list: &merge_ipv6_datacenter
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ prefix_list_ipv6_datacenter }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_ipv6
+
+- name: "MERGED CREATE: Create IPv6 prefix list PL-IPV6-DATACENTER (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *merge_ipv6_datacenter
+  register: nm_merged_create_ipv6
+
+- name: "MERGED CREATE: Verify IPv6 prefix list creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_ipv6 is changed
+      - nm_merged_create_ipv6 is changed
+      - nm_merged_create_ipv6.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 1
+
+- name: "MERGED CREATE MULTI: Create IPv4 and IPv6 prefix lists in a single task (check mode)"
+  cisco.nd.nd_manage_prefix_list: &merge_multi
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ prefix_list_ipv4_borders }}"
+      - "{{ prefix_list_ipv6_datacenter }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_multi
+
+- name: "MERGED CREATE MULTI: Create IPv4 and IPv6 prefix lists in a single task (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *merge_multi
+  register: nm_merged_create_multi
+
+- name: "MERGED CREATE MULTI: Verify both prefix lists present (multi-task idempotent)"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_multi is not changed
+      - nm_merged_create_multi is not changed
+      - nm_merged_create_multi.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length == 1
+      - nm_merged_create_multi.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 1
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Re-apply IPv4 create (check mode)"
+  cisco.nd.nd_manage_prefix_list: *merge_ipv4_borders
+  check_mode: true
+  register: cm_merged_idem_ipv4
+
+- name: "MERGED IDEMPOTENT: Re-apply IPv4 create (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *merge_ipv4_borders
+  register: nm_merged_idem_ipv4
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_ipv4 is not changed
+      - nm_merged_idem_ipv4 is not changed
+
+# --- MERGED UPDATE ---
+
+- name: "MERGED UPDATE: Add entry to PL-IPV4-BORDERS (check mode)"
+  cisco.nd.nd_manage_prefix_list: &merge_ipv4_borders_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ prefix_list_ipv4_borders_updated }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_update_ipv4
+
+- name: "MERGED UPDATE: Add entry to PL-IPV4-BORDERS (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *merge_ipv4_borders_updated
+  register: nm_merged_update_ipv4
+
+- name: "MERGED UPDATE: Verify PL-IPV4-BORDERS was updated"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update_ipv4 is changed
+      - nm_merged_update_ipv4 is changed
+
+- name: "MERGED UPDATE: Verify updated values in after state"
+  vars:
+    ipv4_after: "{{ nm_merged_update_ipv4.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | first }}"
+  ansible.builtin.assert:
+    that:
+      - ipv4_after.description == "Ansible integration test - updated border router IPv4 prefixes"
+      - ipv4_after.entries | length == 4
+
+- name: "MERGED UPDATE: Re-apply update for idempotency"
+  cisco.nd.nd_manage_prefix_list: *merge_ipv4_borders_updated
+  register: nm_merged_update_ipv4_idem
+
+- name: "MERGED UPDATE: Verify idempotency after update"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_ipv4_idem is not changed
+
+- name: "MERGED UPDATE: Update PL-IPV6-DATACENTER with extra entry (check mode)"
+  cisco.nd.nd_manage_prefix_list: &merge_ipv6_datacenter_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ prefix_list_ipv6_datacenter_updated }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_update_ipv6
+
+- name: "MERGED UPDATE: Update PL-IPV6-DATACENTER with extra entry (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *merge_ipv6_datacenter_updated
+  register: nm_merged_update_ipv6
+
+- name: "MERGED UPDATE: Verify PL-IPV6-DATACENTER was updated"
+  vars:
+    ipv6_after: "{{ nm_merged_update_ipv6.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update_ipv6 is changed
+      - nm_merged_update_ipv6 is changed
+      - ipv6_after.entries | length == 3

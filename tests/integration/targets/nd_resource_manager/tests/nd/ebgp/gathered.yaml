@@ -1,0 +1,259 @@
+---
+- name: eBGP delta pools - Set resource config
+  ansible.builtin.set_fact:
+    rm_test_config:
+      - entity_name: "ebgp_anycast_rp_fabric"
+        pool_type: "IP"
+        pool_name: "ANYCAST_RP_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.254.254.21"
+
+      - entity_name: "ebgp_device_bgp_asn_device"
+        pool_type: "ID"
+        pool_name: "DEVICE_BGP_ASN"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "5021"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+        pool_type: "IP"
+        pool_name: "LOOPBACK1_IP_POOL"
+        scope_type: "device_interface"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.3.0.21"
+
+      - entity_name: "ebgp_mcast_fabric"
+        pool_type: "IP"
+        pool_name: "MCAST_IP_POOL"
+        scope_type: "fabric"
+        resource: "239.1.1.21"
+
+      - entity_name: "ebgp_router_id_fabric"
+        pool_type: "IP"
+        pool_name: "ROUTER_ID_POOL"
+        scope_type: "fabric"
+        resource: "192.0.2.21"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+        pool_type: "SUBNET"
+        pool_name: "SUBNET"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.4.21.0/30"
+
+      - entity_name: "ebgp_vrf_vlan_device"
+        pool_type: "ID"
+        pool_name: "vrfVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "2021"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~ebgp_vpc_peer_link_vlan_pair"
+        pool_type: "ID"
+        pool_name: "vpcPeerLinkVlan"
+        scope_type: "device_pair"
+        switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+        resource: "3600"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+        pool_type: "SUBNET"
+        pool_name: "10.4.22.0/30"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.4.22.0/30"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+        pool_type: "SUBNET"
+        pool_name: "fe:80:505::21/64"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "fe:80:505::21/64"
+    rm_test_delete_config:
+      - entity_name: "ebgp_anycast_rp_fabric"
+        pool_type: "IP"
+        pool_name: "ANYCAST_RP_IP_POOL"
+        scope_type: "fabric"
+
+      - entity_name: "ebgp_device_bgp_asn_device"
+        pool_type: "ID"
+        pool_name: "DEVICE_BGP_ASN"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+        pool_type: "IP"
+        pool_name: "LOOPBACK1_IP_POOL"
+        scope_type: "device_interface"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "ebgp_mcast_fabric"
+        pool_type: "IP"
+        pool_name: "MCAST_IP_POOL"
+        scope_type: "fabric"
+
+      - entity_name: "ebgp_router_id_fabric"
+        pool_type: "IP"
+        pool_name: "ROUTER_ID_POOL"
+        scope_type: "fabric"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+        pool_type: "SUBNET"
+        pool_name: "SUBNET"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "ebgp_vrf_vlan_device"
+        pool_type: "ID"
+        pool_name: "vrfVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~ebgp_vpc_peer_link_vlan_pair"
+        pool_type: "ID"
+        pool_name: "vpcPeerLinkVlan"
+        scope_type: "device_pair"
+        switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+        pool_type: "SUBNET"
+        pool_name: "10.4.22.0/30"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+        pool_type: "SUBNET"
+        pool_name: "fe:80:505::21/64"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+    rm_expected_resource_count: 10
+    rm_expected_entity_names:
+      - "ebgp_anycast_rp_fabric"
+      - "ebgp_device_bgp_asn_device"
+      - "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+      - "ebgp_mcast_fabric"
+      - "ebgp_router_id_fabric"
+      - "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+      - "ebgp_vrf_vlan_device"
+      - "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~ebgp_vpc_peer_link_vlan_pair"
+      - "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+      - "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+
+- name: eBGP delta pools - Pre-clean resources
+  cisco.nd.nd_manage_resource_manager: &rm_delete
+    state: deleted
+    fabric_name: "{{ ansible_it_fabric }}"
+    config: "{{ rm_test_delete_config }}"
+  register: result
+
+- name: eBGP delta pools - Assert pre-clean did not fail
+  ansible.builtin.assert:
+    that:
+      - 'result.failed | default(false) == false'
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+- block:
+    - name: eBGP delta pools - Create resources for gathered test
+      cisco.nd.nd_manage_resource_manager:
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config: "{{ rm_test_config }}"
+      register: result
+
+    - name: eBGP delta pools - Assert create setup
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+          - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+    - name: eBGP delta pools - Gather resources by entity name
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "ebgp_anycast_rp_fabric"
+
+          - entity_name: "ebgp_device_bgp_asn_device"
+
+          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+
+          - entity_name: "ebgp_mcast_fabric"
+
+          - entity_name: "ebgp_router_id_fabric"
+
+          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+
+          - entity_name: "ebgp_vrf_vlan_device"
+
+          - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~ebgp_vpc_peer_link_vlan_pair"
+
+          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+
+          - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
+      register: result
+
+    - name: eBGP delta pools - Assert gathered resources
+      ansible.builtin.assert:
+        that:
+          - '(result["gathered"] | length) == (rm_expected_entity_names | length)'
+          - >-
+            (
+              result["gathered"]
+              | map(attribute="entity_name")
+              | map('split', '~')
+              | map('sort')
+              | map('join', '~')
+              | sort
+              | list
+            )
+            ==
+            (
+              rm_expected_entity_names
+              | map('split', '~')
+              | map('sort')
+              | map('join', '~')
+              | sort
+              | list
+            )
+
+    - name: eBGP delta pools - Gather resources by first pool
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - pool_name: "ANYCAST_RP_IP_POOL"
+      register: result
+
+    - name: eBGP delta pools - Assert gathered pool filter
+      ansible.builtin.assert:
+        that:
+          - '(result["gathered"] | length) != 0'
+          - 'result["gathered"] | map(attribute="pool_name") | unique | list == ["ANYCAST_RP_IP_POOL"]'
+
+  always:
+    - name: eBGP delta pools - Cleanup resources
+      cisco.nd.nd_manage_resource_manager: *rm_delete
+      register: result
+
+    - name: eBGP delta pools - Assert cleanup did not fail
+      ansible.builtin.assert:
+        that:
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
