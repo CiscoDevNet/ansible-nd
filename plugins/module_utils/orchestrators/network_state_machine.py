@@ -170,8 +170,9 @@ class NetworkStateMachine:
         desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
         desired_network_names = self.coordinator._configured_network_names(config)
 
-        sm, original_config, original_state = self.coordinator._new_state_machine(self._crud_module_args(module_args), strategy)
+        sm, original_config, original_state = self.coordinator._new_state_machine(self._query_module_args(module_args), strategy)
         try:
+            self._prepare_crud_state(sm, state)
             current_network_names = self._network_names_from_models(sm.existing)
             current_network_name_set = set(current_network_names)
             desired_network_name_set = set(desired_network_names)
@@ -297,6 +298,22 @@ class NetworkStateMachine:
         crud_args = dict(module_args)
         crud_args["state"] = "replaced"
         return crud_args
+
+    @staticmethod
+    def _query_module_args(module_args: dict) -> dict:
+        """Return module args for the current-state query phase."""
+        if module_args.get("state") != "_staged":
+            return module_args
+        query_args = dict(module_args)
+        query_args["state"] = "overridden"
+        return query_args
+
+    @staticmethod
+    def _prepare_crud_state(sm: Any, requested_state: str) -> None:
+        """Switch private staged workflows to replacement CRUD after query."""
+        if requested_state != "_staged":
+            return
+        sm.state = "replaced"
 
     def _deploy_after_attachment_changes(
         self,

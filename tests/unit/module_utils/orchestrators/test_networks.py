@@ -95,9 +95,10 @@ class _FakeStateMachine:
     def __init__(self, calls, existing=None):
         self.calls = calls
         self.existing = existing or []
+        self.state = None
 
     def manage_state(self):
-        self.calls.append(("manage_state",))
+        self.calls.append(("manage_state", self.state))
 
 
 class _ExistingNetwork:
@@ -137,7 +138,8 @@ class _ReplacedNetworkCoordinator:
     def _deploy_enabled_by_network(_config):
         return {"BLUE_NET": True}
 
-    def _new_state_machine(self, _module_args, _strategy):
+    def _new_state_machine(self, module_args, _strategy):
+        self.state_machine.state = module_args["state"]
         self.calls.append(("new_state_machine",))
         return self.state_machine, "original-config", "original-state"
 
@@ -232,6 +234,7 @@ class _StagedNetworkCoordinator:
         return {network["network_name"]: network.get("deploy", True) for network in config}
 
     def _new_state_machine(self, module_args, _strategy):
+        self.state_machine.state = module_args["state"]
         self.calls.append(("new_state_machine", module_args["state"]))
         return self.state_machine, "original-config", "original-state"
 
@@ -357,7 +360,8 @@ def test_network_staged_detaches_omitted_networks_without_running_overridden_cru
     )
 
     assert result["changed"] is True
-    assert ("new_state_machine", "replaced") in coordinator.calls
+    assert ("new_state_machine", "overridden") in coordinator.calls
+    assert ("manage_state", "replaced") in coordinator.calls
     assert ("attachment_query", ["BLUE_NET", "OMIT_NET"]) in coordinator.calls
     assert ("dependency_check", ["OMIT_NET"]) in coordinator.calls
     assert (
@@ -397,7 +401,7 @@ def test_network_replaced_first_create_with_attachment_skips_missing_pre_query()
 
     assert result["changed"] is True
     assert ("pre", [], {}, []) in coordinator.calls
-    assert ("manage_state",) in coordinator.calls
+    assert ("manage_state", "replaced") in coordinator.calls
     assert ("post_query", ["BLUE_NET"]) in coordinator.calls
     assert ("post", ["BLUE_NET"], {}, coordinator.post_attachment_details) in coordinator.calls
 

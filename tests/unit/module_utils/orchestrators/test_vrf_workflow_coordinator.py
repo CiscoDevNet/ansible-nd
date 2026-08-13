@@ -226,9 +226,10 @@ class _FakeStateMachine:
     def __init__(self, calls, existing=None):
         self.existing = existing or []
         self.calls = calls
+        self.state = None
 
     def manage_state(self):
-        self.calls.append(("manage_state",))
+        self.calls.append(("manage_state", self.state))
 
 
 class _ReplacedVrfCoordinator:
@@ -255,7 +256,8 @@ class _ReplacedVrfCoordinator:
     def _configured_vrf_names(config):
         return [vrf["vrf_name"] for vrf in config]
 
-    def _new_state_machine(self, _module_args, _strategy):
+    def _new_state_machine(self, module_args, _strategy):
+        self.state_machine.state = module_args["state"]
         self.calls.append(("new_state_machine",))
         return self.state_machine, "original-config", "original-state"
 
@@ -347,6 +349,7 @@ class _StagedVrfCoordinator:
         return [vrf["vrf_name"] for vrf in config]
 
     def _new_state_machine(self, module_args, _strategy):
+        self.state_machine.state = module_args["state"]
         self.calls.append(("new_state_machine", module_args["state"]))
         return self.state_machine, "original-config", "original-state"
 
@@ -453,7 +456,8 @@ def test_vrf_staged_detaches_omitted_vrfs_without_running_overridden_crud_delete
     )
 
     assert result["changed"] is True
-    assert ("new_state_machine", "replaced") in coordinator.calls
+    assert ("new_state_machine", "overridden") in coordinator.calls
+    assert ("manage_state", "replaced") in coordinator.calls
     assert ("attachment_query", ["BLUE", "OMIT"]) in coordinator.calls
     assert ("dependency_check", ["OMIT"]) in coordinator.calls
     assert (
@@ -481,7 +485,7 @@ def test_vrf_replaced_first_create_with_attachment_skips_missing_pre_query():
     assert result["changed"] is True
     assert ("initial_query", []) not in coordinator.calls
     assert ("post_query", ["BLUE"]) in coordinator.calls
-    assert ("manage_state",) in coordinator.calls
+    assert ("manage_state", "replaced") in coordinator.calls
     assert coordinator.posted_payloads[-1]["payloads"] == [
         {"vrfName": "BLUE", "switchId": "SERIAL1", "attach": True},
         {"vrfName": "BLUE", "switchId": "SERIAL2", "attach": True},
