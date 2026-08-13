@@ -556,7 +556,7 @@ class VrfAttachmentManager:
 
         if state == "deleted":
             detach_keys = set(current.keys())
-        elif state == "overridden":
+        elif state in ("overridden", "staged"):
             detach_keys = set(current.keys()).difference(desired.keys())
         elif state == "replaced":
             vrf_names = set(configured_vrf_names(config))
