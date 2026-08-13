@@ -38,6 +38,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
     NetworkAttachmentValidateInterfaceModel,
     NetworkAttachmentValidateInterfacesPayloadModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_vpc_peer_expander import (
+    expand_desired_attachments_with_vpc_peers,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_config_utils import (
     configured_network_names,
     deploy_enabled_by_network,
@@ -393,36 +396,17 @@ class NetworkAttachmentManager:
         attachment_details: Any,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Add vPC peer attachments from attachment-query rows."""
-        if not desired or not attachment_details:
-            return desired
 
-        detail_by_key: dict[tuple[str, str], dict[str, Any]] = {}
-        for attachment in attachment_details:
-            if not isinstance(attachment, dict):
-                continue
-            network_name = attachment.get("networkName")
-            switch_id = attachment.get("switchId")
-            if network_name and switch_id:
-                detail_by_key[(network_name, switch_id)] = attachment
-
-        expanded = dict(desired)
-        for key, payload in list(desired.items()):
-            detail = detail_by_key.get(key)
-            peer_switch_id = detail.get("peerSwitchId") if detail else None
-            if not peer_switch_id:
-                continue
-
-            peer_key = (key[0], peer_switch_id)
-            if peer_key in expanded:
-                continue
-
-            peer_payload = dict(payload)
-            peer_payload["switchId"] = peer_switch_id
+        def clear_peer_interfaces(peer_payload: dict[str, Any]) -> None:
             if "interfaces" in peer_payload:
                 peer_payload["interfaces"] = []
-            expanded[peer_key] = peer_payload
 
-        return expanded
+        return expand_desired_attachments_with_vpc_peers(
+            desired,
+            attachment_details,
+            "networkName",
+            peer_payload_mutator=clear_peer_interfaces,
+        )
 
     @staticmethod
     def attachment_map_from_details(

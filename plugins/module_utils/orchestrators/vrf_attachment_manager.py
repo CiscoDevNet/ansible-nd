@@ -32,6 +32,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_at
     VrfAttachmentModel,
     VrfAttachmentQueryRequestModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_vpc_peer_expander import (
+    expand_desired_attachments_with_vpc_peers,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
     BaseVrfStrategy,
 )
@@ -308,35 +311,7 @@ class VrfAttachmentManager:
         attachment_details: Any,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Add vPC peer attachments from existing attachment-query rows."""
-        if not desired or not attachment_details:
-            return desired
-
-        details = list(attachment_details)
-        detail_by_key: dict[tuple[str, str], dict[str, Any]] = {}
-        for attachment in details:
-            if not isinstance(attachment, dict):
-                continue
-            vrf_name = attachment.get("vrfName")
-            switch_id = attachment.get("switchId")
-            if vrf_name and switch_id:
-                detail_by_key[(vrf_name, switch_id)] = attachment
-
-        expanded = dict(desired)
-        for key, payload in list(desired.items()):
-            detail = detail_by_key.get(key)
-            peer_switch_id = detail.get("peerSwitchId") if detail else None
-            if not peer_switch_id:
-                continue
-
-            peer_key = (key[0], peer_switch_id)
-            if peer_key in expanded:
-                continue
-
-            peer_payload = dict(payload)
-            peer_payload["switchId"] = peer_switch_id
-            expanded[peer_key] = peer_payload
-
-        return expanded
+        return expand_desired_attachments_with_vpc_peers(desired, attachment_details, "vrfName")
 
     def resolve_switch_ids(
         self,
