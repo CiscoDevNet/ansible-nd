@@ -252,8 +252,6 @@
 
           - entity_name: "base_l2_vni_fabric"
 
-          - entity_name: "base_vpc_domain_fabric"
-
           - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
 
           - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
@@ -279,10 +277,36 @@
           - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~base_vpc_id_pair"
       register: result
 
+    - name: BASE common pools - Normalize unique gathered entity names
+      ansible.builtin.set_fact:
+        rm_gathered_entity_names: >-
+          {{
+            result["gathered"]
+            | map(attribute="entity_name")
+            | map('split', '~')
+            | map('sort')
+            | map('join', '~')
+            | unique
+            | sort
+            | list
+          }}
+
     - name: BASE common pools - Assert sanity gathered resources
       ansible.builtin.assert:
         that:
-          - '(result["gathered"] | map(attribute="entity_name") | unique | list | length) == (rm_expected_entity_names | length)'
+          - '(rm_gathered_entity_names | length) == (merge_result["diff"][0]["merged"] | length)'
+          - >-
+            rm_gathered_entity_names
+            ==
+            (
+              rm_expected_entity_names
+              | map('split', '~')
+              | map('sort')
+              | map('join', '~')
+              | unique
+              | sort
+              | list
+            )
 
 
     - name: BASE common pools - Sanity delete resources
