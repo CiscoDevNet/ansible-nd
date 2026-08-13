@@ -14,12 +14,6 @@
         scope_type: "fabric"
         resource: "30051"
 
-      - entity_name: "base_vpc_domain_fabric"
-        pool_type: "ID"
-        pool_name: "VPC_DOMAIN_ID"
-        scope_type: "fabric"
-        resource: "51"
-
       - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
         pool_type: "SUBNET"
         pool_name: "DCI subnet pool"
@@ -203,7 +197,7 @@
         switches:
           - "{{ ansible_switch1 }}"
           - "{{ ansible_switch2 }}"
-    rm_expected_resource_count: 15
+    rm_expected_resource_count: 14
 
 - name: BASE common pools - Pre-clean resources
   cisco.nd.nd_manage_resource_manager: &rm_delete
