@@ -12,7 +12,7 @@ This wrapper owns the VRF-specific workflow around that CRUD phase:
   - post-attach for merged/replaced/overridden
   - deploy of pending attachment changes
 
-The private ``staged`` state follows overridden attachment handling but maps
+The private ``_staged`` state follows overridden attachment handling but maps
 the CRUD phase to replaced and suppresses deploy so omitted VRFs are detached
 without deploy or delete calls.
 
@@ -88,7 +88,7 @@ class VrfStateMachine:
         if state == "deleted":
             return self.run_deleted(module_args, active_strategy)
 
-        if state in ("replaced", "overridden", "staged"):
+        if state in ("replaced", "overridden", "_staged"):
             return self._run_state_machine_aware_with_attachments(module_args, active_strategy, defer_deploy)
 
         desired_attachments = None
@@ -153,11 +153,11 @@ class VrfStateMachine:
         defer_deploy: bool = False,
     ) -> dict[str, Any]:
         """
-        Run replaced/overridden/staged after deriving current VRF names from the state machine.
+        Run replaced/overridden/_staged after deriving current VRF names from the state machine.
 
         The pre-detach phase must only query attachments for VRFs that already
         exist. First-create ``state=replaced`` tasks can then create the VRF
-        before the post-attach phase runs. The private ``staged`` state uses
+        before the post-attach phase runs. The private ``_staged`` state uses
         overridden detach scope but runs CRUD as replaced to suppress deletes.
         """
         state = module_args.get("state", "merged")
@@ -171,7 +171,7 @@ class VrfStateMachine:
             current_vrf_name_set = set(current_vrf_names)
             desired_vrf_name_set = set(desired_vrf_names)
             current_desired_vrf_names = [vrf_name for vrf_name in desired_vrf_names if vrf_name in current_vrf_name_set]
-            attachment_query_vrf_names = current_vrf_names if state in ("overridden", "staged") else current_desired_vrf_names
+            attachment_query_vrf_names = current_vrf_names if state in ("overridden", "_staged") else current_desired_vrf_names
             current_attachment_details = (
                 self.coordinator._current_attachment_details_ignore_missing(
                     module_args,
@@ -187,7 +187,7 @@ class VrfStateMachine:
             )
 
             pre_delete_traces: list[dict[str, Any]] = []
-            if state in ("overridden", "staged"):
+            if state in ("overridden", "_staged"):
                 omitted_vrf_names = [vrf_name for vrf_name in current_vrf_names if vrf_name not in desired_vrf_name_set]
                 pre_delete_traces = self._prepare_overridden_deletions(
                     module_args,
@@ -226,7 +226,7 @@ class VrfStateMachine:
             post_attachment_details = list(current_attachment_details or [])
             post_current_attachments = dict(current_attachments or {})
             new_desired_vrf_names = [vrf_name for vrf_name in desired_vrf_names if vrf_name not in current_vrf_name_set]
-            if state in ("replaced", "overridden", "staged") and desired_attachments and new_desired_vrf_names and not self._check_mode():
+            if state in ("replaced", "overridden", "_staged") and desired_attachments and new_desired_vrf_names and not self._check_mode():
                 self._trace("attachment_phase_post_new_current_query_start", vrf_names=new_desired_vrf_names)
                 new_attachment_details = self.coordinator._current_attachment_details(
                     module_args,
@@ -255,7 +255,7 @@ class VrfStateMachine:
             self._trace("attachment_phase_post_end", changed=post_attach.get("changed"), payload_count=len(post_attach.get("payloads", [])))
             self.coordinator._merge_api_trace(result, post_attach)
 
-            if state == "staged":
+            if state == "_staged":
                 return result
 
             return self._deploy_after_attachment_changes(
@@ -287,7 +287,7 @@ class VrfStateMachine:
     @staticmethod
     def _crud_module_args(module_args: dict) -> dict:
         """Return module args for the generic CRUD state machine."""
-        if module_args.get("state") != "staged":
+        if module_args.get("state") != "_staged":
             return module_args
         crud_args = dict(module_args)
         crud_args["state"] = "replaced"
@@ -373,7 +373,7 @@ class VrfStateMachine:
             omitted_vrf_names,
             attachment_details=omitted_attachment_details,
         )
-        if module_args.get("state") == "staged":
+        if module_args.get("state") == "_staged":
             return [detach_trace] if detach_trace else []
         return self._deploy_detach_traces(
             api_args=module_args,

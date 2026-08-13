@@ -329,7 +329,7 @@ class _ReplacedVrfCoordinator:
 
 class _StagedVrfCoordinator:
     def __init__(self):
-        self.module = _Module({"state": "staged"})
+        self.module = _Module({"state": "_staged"})
         self.calls = []
         self.state_machine = _FakeStateMachine(self.calls, existing=[_ExistingVrf("BLUE"), _ExistingVrf("OMIT")])
         self.current_attachment_details = [
@@ -398,11 +398,11 @@ class _StagedVrfCoordinator:
 
     @staticmethod
     def _build_deploy_payloads(_config, *_target_maps):
-        raise AssertionError("staged must not build deploy payloads")
+        raise AssertionError("_staged must not build deploy payloads")
 
     @staticmethod
     def _build_pending_vrf_deploy_payloads(_result, _config, _module_args, _strategy):
-        raise AssertionError("staged must not build pending deploy payloads")
+        raise AssertionError("_staged must not build pending deploy payloads")
 
     def _restore_state_machine_params(self, original_config, original_state):
         self.calls.append(("restore", original_config, original_state))
@@ -438,7 +438,9 @@ def test_vrf_attachment_manager_staged_detaches_like_overridden():
     }
     desired = {("BLUE", "SERIAL1"): {"vrfName": "BLUE", "switchId": "SERIAL1", "attach": True}}
 
-    assert manager.planned_detach_payloads("staged", [{"vrf_name": "BLUE"}], current, desired) == [{"vrfName": "BLUE", "switchId": "SERIAL2", "attach": False}]
+    assert manager.planned_detach_payloads("_staged", [{"vrf_name": "BLUE"}], current, desired) == [
+        {"vrfName": "BLUE", "switchId": "SERIAL2", "attach": False}
+    ]
 
 
 def test_vrf_staged_detaches_omitted_vrfs_without_running_overridden_crud_delete():
@@ -446,7 +448,7 @@ def test_vrf_staged_detaches_omitted_vrfs_without_running_overridden_crud_delete
     state_machine = VrfStateMachine(coordinator)
 
     result = state_machine.run(
-        {"state": "staged", "config": [{"vrf_name": "BLUE", "attach": [{"switch_id": "SERIAL1"}]}]},
+        {"state": "_staged", "config": [{"vrf_name": "BLUE", "attach": [{"switch_id": "SERIAL1"}]}]},
         _StandaloneStrategy(),
     )
 

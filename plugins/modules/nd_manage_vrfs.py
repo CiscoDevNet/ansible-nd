@@ -41,8 +41,11 @@ options:
       - V(deleted) removes specified VRFs (or all if config is empty).
       - V(gathered) returns current VRF state (the only state allowed on child
         fabrics when targeted directly).
+      - V(_staged) is an internal/private workflow state. It follows
+        V(overridden) attachment handling, suppresses deployment, and does not
+        remove omitted VRF definitions.
     type: str
-    choices: [ merged, replaced, overridden, deleted, gathered ]
+    choices: [ merged, replaced, overridden, deleted, gathered, _staged ]
     default: merged
   config:
     description:
@@ -736,7 +739,7 @@ def main():
         state=dict(
             type="str",
             default="merged",
-            choices=["merged", "replaced", "overridden", "deleted", "gathered"],
+            choices=["merged", "replaced", "overridden", "deleted", "gathered", "_staged"],
         ),
         config=dict(
             type="list",

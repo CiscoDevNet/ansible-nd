@@ -454,7 +454,7 @@ class NetworkAttachmentManager:
         if state == "deleted":
             target_names = set(configured_network_names(config))
             detach_keys = {key for key in current if not target_names or key[0] in target_names}
-        elif state in ("overridden", "staged"):
+        elif state in ("overridden", "_staged"):
             detach_keys = set(current.keys()).difference(desired.keys())
         elif state == "replaced":
             target_names = set(configured_network_names(config))

@@ -24,8 +24,11 @@ options:
     description:
       - Desired state of Network resources.
       - V(query) is accepted as a compatibility alias for V(gathered).
+      - V(_staged) is an internal/private workflow state. It follows
+        V(overridden) attachment handling, suppresses deployment, and does not
+        remove omitted Network definitions.
     type: str
-    choices: [ merged, replaced, overridden, deleted, gathered, query ]
+    choices: [ merged, replaced, overridden, deleted, gathered, query, _staged ]
     default: merged
   config:
     description:
@@ -580,7 +583,7 @@ def main():
         state=dict(
             type="str",
             default="merged",
-            choices=["merged", "replaced", "overridden", "deleted", "gathered", "query"],
+            choices=["merged", "replaced", "overridden", "deleted", "gathered", "query", "_staged"],
         ),
         config=dict(
             type="list",

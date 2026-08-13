@@ -210,7 +210,7 @@ class _ReplacedNetworkCoordinator:
 
 class _StagedNetworkCoordinator:
     def __init__(self):
-        self.module = _Module({"state": "staged"})
+        self.module = _Module({"state": "_staged"})
         self.calls = []
         self.state_machine = _FakeStateMachine(self.calls, existing=[_ExistingNetwork("BLUE_NET"), _ExistingNetwork("OMIT_NET")])
         self.current_attachment_details = [
@@ -297,24 +297,24 @@ class _StagedNetworkCoordinator:
 
     @staticmethod
     def _build_delete_deploy_payloads(_config, *_target_maps):
-        raise AssertionError("staged must not build delete deploy payloads")
+        raise AssertionError("_staged must not build delete deploy payloads")
 
     @staticmethod
     def _build_deploy_payloads(_config, *_target_maps):
-        raise AssertionError("staged must not build deploy payloads")
+        raise AssertionError("_staged must not build deploy payloads")
 
     @staticmethod
     def _build_pending_network_deploy_payloads(_result, _config, _module_args, _strategy):
-        raise AssertionError("staged must not build pending deploy payloads")
+        raise AssertionError("_staged must not build pending deploy payloads")
 
     def _query_current_networks_with_trace(self, *_args):
-        raise AssertionError("staged test should not need the fallback pending Network query")
+        raise AssertionError("_staged test should not need the fallback pending Network query")
 
     def _wait_for_network_attachments_delete_ready(self, _module_args, _strategy, network_names):
-        raise AssertionError(f"staged must not wait for attachment delete readiness: {network_names}")
+        raise AssertionError(f"_staged must not wait for attachment delete readiness: {network_names}")
 
     def _wait_for_networks_delete_ready(self, _module_args, _strategy, network_names):
-        raise AssertionError(f"staged must not wait for Network delete readiness: {network_names}")
+        raise AssertionError(f"_staged must not wait for Network delete readiness: {network_names}")
 
     def _restore_state_machine_params(self, original_config, original_state):
         self.calls.append(("restore", original_config, original_state))
@@ -342,7 +342,7 @@ def test_network_attachment_manager_staged_detaches_like_overridden():
     }
     desired = {("BLUE_NET", "SERIAL1"): {"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": True}}
 
-    assert manager.planned_detach_payloads("staged", [{"network_name": "BLUE_NET"}], current, desired) == [
+    assert manager.planned_detach_payloads("_staged", [{"network_name": "BLUE_NET"}], current, desired) == [
         {"networkName": "BLUE_NET", "switchId": "SERIAL2", "attach": False}
     ]
 
@@ -352,7 +352,7 @@ def test_network_staged_detaches_omitted_networks_without_running_overridden_cru
     state_machine = NetworkStateMachine(coordinator)
 
     result = state_machine.run(
-        {"state": "staged", "config": [{"network_name": "BLUE_NET", "attach": [{"switch_id": "SERIAL1"}]}]},
+        {"state": "_staged", "config": [{"network_name": "BLUE_NET", "attach": [{"switch_id": "SERIAL1"}]}]},
         StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}),
     )
 
