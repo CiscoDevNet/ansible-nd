@@ -70,6 +70,7 @@ nd_test_interface_group_ethernet_policy: Ethernet1/21
 nd_test_interface_group_ethernet_without_policy: Ethernet1/22
 nd_test_interface_group_any_ethernet_primary: Ethernet1/23
 nd_test_interface_group_any_ethernet_secondary: Ethernet1/23
+nd_test_interface_group_create_ethernet_fixtures: true
 
 # Port-channel fixtures and their physical members.
 nd_test_interface_group_port_channel_1: Port-channel501

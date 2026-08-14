@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
@@ -20,6 +21,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsInterfaceGroupsInterfaceGroupNamePut,
     EpManageFabricsInterfaceGroupsPost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.config_models import (
     InterfaceGroupConfigModel,
     InterfaceGroupGatheredFilterModel,
@@ -33,7 +35,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_interface_group import (
     ManageInterfaceGroupOrchestrator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import (
+    MockAnsibleModule,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
+    ResponseGenerator,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 
 def _orchestrator(**params) -> ManageInterfaceGroupOrchestrator:
@@ -47,6 +59,40 @@ def _orchestrator(**params) -> ManageInterfaceGroupOrchestrator:
     return ManageInterfaceGroupOrchestrator(rest_send=RestSend(module_params))
 
 
+def _rest_send_with_responses(responses: list[dict[str, Any]]) -> RestSend:
+    """Build a real RestSend/ResponseHandler chain for central-response tests."""
+
+    def response_generator():
+        yield from responses
+
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = ResponseGenerator(response_generator())
+
+    response_handler = ResponseHandler()
+    response_handler.response = {"RETURN_CODE": 200, "MESSAGE": "OK"}
+    response_handler.verb = HttpVerbEnum.GET
+    response_handler.commit()
+
+    rest_send = RestSend({"check_mode": False, "fabric_name": "fab1", "state": "merged"})
+    rest_send.sender = sender
+    rest_send.response_handler = response_handler
+    rest_send.unit_test = True
+    rest_send.timeout = 1
+    return rest_send
+
+
+def _response_207(data: dict[str, Any]) -> dict[str, Any]:
+    """Build one HTTP 207 controller response for the RestSend test harness."""
+    return {
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/interfaceGroups",
+        "MESSAGE": "Multi-Status",
+        "DATA": data,
+    }
+
+
 def _group(
     name: str,
     *,
@@ -56,13 +102,13 @@ def _group(
     ethernet_attributes: dict | None = None,
 ) -> InterfaceGroupConfigModel:
     data = {
-        "interfaceGroupName": name,
+        "interface_group_name": name,
         "type": group_type,
-        "networkNames": networks,
-        "switchInterfaces": [{"switchId": switch_id, "interfaceNames": interface_names} for switch_id, interface_names in members or []],
-        "ethernetAttributes": ethernet_attributes,
+        "networks": networks,
+        "switch_interfaces": [{"switch_id": switch_id, "interface_names": interface_names} for switch_id, interface_names in members or []],
+        "ethernet_attributes": ethernet_attributes,
     }
-    return InterfaceGroupConfigModel.from_response(data)
+    return InterfaceGroupConfigModel.from_config(data)
 
 
 def test_manage_interface_group_00005() -> None:
@@ -141,6 +187,7 @@ def test_manage_interface_group_00020() -> None:
         {
             "interfaceGroupName": "custom",
             "type": "ethernet",
+            "description": "Custom server ports",
             "networkNames": ["network-a", "network-b"],
             "switchInterfaces": [
                 {
@@ -208,7 +255,7 @@ def test_manage_interface_group_00020() -> None:
                 {
                     "type": "ethernetWithPolicy",
                     "ethernet_attributes": {
-                        "admin_status": True,
+                        "admin_state": True,
                         "mtu": "jumbo",
                     },
                 }
@@ -216,6 +263,8 @@ def test_manage_interface_group_00020() -> None:
         ]
     ) == ["policy"]
     assert names([InterfaceGroupGatheredFilterModel.model_validate({"interface_group_name": "missing"})]) == []
+    assert names([InterfaceGroupGatheredFilterModel.model_validate({"description": "Custom server ports"})]) == ["custom"]
+    assert names([InterfaceGroupGatheredFilterModel.model_validate({"description": "missing"})]) == []
 
 
 def test_manage_interface_group_00021() -> None:
@@ -451,7 +500,7 @@ def test_manage_interface_group_00027(monkeypatch) -> None:
 
 
 def test_manage_interface_group_00028(monkeypatch) -> None:
-    """A vPC move never re-buckets retained any members onto its input peer."""
+    """Reject moving a vPC member into an any group with non-vPC members."""
     put_payloads: list[dict] = []
 
     def fake_request(self, path, verb, data=None, **kwargs):
@@ -493,16 +542,13 @@ def test_manage_interface_group_00028(monkeypatch) -> None:
         "vpc-group": vpc_existing,
     }
 
-    orchestrator.preflight([any_desired, vpc_desired])
-    orchestrator.update(any_desired)
+    with pytest.raises(
+        RuntimeError,
+        match=r"type=any cannot combine vPC members with Ethernet or port-channel members",
+    ):
+        orchestrator.preflight([any_desired, vpc_desired])
 
-    assert put_payloads[-1]["switchInterfaces"] == [
-        {"switchId": "SN1", "interfaceNames": ["Ethernet1/3"]},
-        {
-            "switchId": "SN2",
-            "interfaceNames": ["Ethernet1/3", "Port-channel504", "vPC200"],
-        },
-    ]
+    assert put_payloads == []
 
 
 def test_manage_interface_group_00030() -> None:
@@ -850,9 +896,49 @@ def test_manage_interface_group_00110(monkeypatch) -> None:
 
 
 def test_manage_interface_group_00120() -> None:
-    """Every multi-status response helper rejects failed per-item results."""
-    with pytest.raises(RuntimeError, match="member conflict"):
-        ManageInterfaceGroupOrchestrator._raise_create_failures(
+    """Accept complete, successful Interface Group response contracts."""
+    ManageInterfaceGroupOrchestrator._validate_create_response_contract({"interfaceGroups": [{"type": "vpc", "status": "success"}]})
+    ManageInterfaceGroupOrchestrator._validate_delete_response_contract({"interfaceGroups": [{"interfaceGroupName": "group-a", "status": "success"}]})
+
+
+@pytest.mark.parametrize(
+    ("helper", "operation"),
+    [
+        (
+            ManageInterfaceGroupOrchestrator._validate_create_response_contract,
+            "create",
+        ),
+        (
+            ManageInterfaceGroupOrchestrator._validate_delete_response_contract,
+            "delete",
+        ),
+    ],
+)
+def test_manage_interface_group_00122(helper, operation: str) -> None:
+    """Reject missing, empty, and incomplete multi-status result sets."""
+    with pytest.raises(RuntimeError, match=rf"{operation} returned no per-item results"):
+        helper({})
+    with pytest.raises(RuntimeError, match=rf"{operation} returned no per-item results"):
+        helper({"interfaceGroups": []})
+    with pytest.raises(RuntimeError, match=rf"1 per-item results for 2 requested groups"):
+        helper(
+            {
+                "interfaceGroups": [
+                    {
+                        "type": "portChannel",
+                        "interfaceGroupName": "group-a",
+                        "status": "success",
+                    }
+                ]
+            },
+            expected_count=2,
+        )
+
+
+def test_manage_interface_group_00124() -> None:
+    """Reject malformed or non-success results that escape central handling."""
+    with pytest.raises(RuntimeError, match="non-success.*member conflict"):
+        ManageInterfaceGroupOrchestrator._validate_create_response_contract(
             {
                 "interfaceGroups": [
                     {
@@ -863,35 +949,110 @@ def test_manage_interface_group_00120() -> None:
                 ]
             }
         )
-    with pytest.raises(RuntimeError, match="group-a: still associated"):
-        ManageInterfaceGroupOrchestrator._raise_delete_failures(
+    with pytest.raises(RuntimeError, match="invalid per-item results"):
+        ManageInterfaceGroupOrchestrator._validate_delete_response_contract(
             {
                 "interfaceGroups": [
                     {
                         "interfaceGroupName": "group-a",
-                        "status": "failed",
-                        "message": "still associated",
+                        "status": "unexpected",
+                        "message": "unknown controller status",
                     }
                 ]
             }
         )
-    with pytest.raises(RuntimeError, match="Port-channel10: deploy failed"):
-        ManageInterfaceGroupOrchestrator._raise_action_failures(
+    with pytest.raises(RuntimeError, match="non-success.*missing status"):
+        ManageInterfaceGroupOrchestrator._validate_create_response_contract(
             {
-                "results": [
+                "interfaceGroups": [
                     {
-                        "interfaceName": "Port-channel10",
-                        "status": "error",
-                        "message": "deploy failed",
+                        "type": "ethernet",
+                        "message": "missing status",
                     }
                 ]
-            },
-            "interfaceActions/deploy",
+            }
         )
 
-    ManageInterfaceGroupOrchestrator._raise_create_failures({"interfaceGroups": [{"type": "vpc", "status": "success"}]})
-    ManageInterfaceGroupOrchestrator._raise_delete_failures({"interfaceGroups": [{"interfaceGroupName": "group-a", "status": "success"}]})
-    ManageInterfaceGroupOrchestrator._raise_action_failures([], "deploy")
+
+def test_manage_interface_group_00126() -> None:
+    """Central handling stops a mixed IFG create before local state is advanced."""
+    rest_send = _rest_send_with_responses(
+        [
+            _response_207(
+                {
+                    "interfaceGroups": [
+                        {
+                            "type": "ethernet",
+                            "status": "success",
+                            "message": "Interface group 'group-a' created successfully",
+                        },
+                        {
+                            "type": "portChannel",
+                            "status": "failed",
+                            "message": "Interface group 'group-b' failed to create",
+                        },
+                    ]
+                }
+            )
+        ]
+    )
+    orchestrator = ManageInterfaceGroupOrchestrator(
+        rest_send=rest_send,
+        fabric_name="fab1",
+        config_actions={"deploy": False, "type": "switch"},
+    )
+
+    with pytest.raises(Exception, match="group-b.*failed to create"):
+        orchestrator.create_bulk(
+            [
+                _group("group-a", group_type="ethernetWithoutPolicy"),
+                _group("group-b"),
+            ]
+        )
+
+    assert rest_send.result_current == {
+        "success": False,
+        "changed": True,
+        "retryable": False,
+    }
+    assert orchestrator._existing_groups == {}
+    assert orchestrator._pending_switches == set()
+
+
+def test_manage_interface_group_00128() -> None:
+    """Central handling stops an IFG remove before cached groups are discarded."""
+    rest_send = _rest_send_with_responses(
+        [
+            _response_207(
+                {
+                    "interfaceGroups": [
+                        {
+                            "interfaceGroupName": "group-a",
+                            "status": "failed",
+                            "message": "still associated",
+                        }
+                    ]
+                }
+            )
+        ]
+    )
+    orchestrator = ManageInterfaceGroupOrchestrator(
+        rest_send=rest_send,
+        fabric_name="fab1",
+        config_actions={"deploy": False, "type": "switch"},
+    )
+    existing = _group("group-a")
+    orchestrator._existing_groups = {"group-a": existing}
+
+    with pytest.raises(Exception, match="group-a.*still associated"):
+        orchestrator.delete_bulk([existing])
+
+    assert rest_send.result_current == {
+        "success": False,
+        "changed": False,
+        "retryable": False,
+    }
+    assert orchestrator._existing_groups == {"group-a": existing}
 
 
 def test_manage_interface_group_00130(monkeypatch) -> None:
@@ -941,8 +1102,8 @@ def test_manage_interface_group_00130(monkeypatch) -> None:
     assert orchestrator._existing_groups["group-a"] == group
 
 
-def test_manage_interface_group_00132(monkeypatch) -> None:
-    """Create a mixed any group with one cumulative PUT per member kind."""
+def test_manage_interface_group_00131(monkeypatch) -> None:
+    """Mixed any PUTs retain required empty network associations."""
     calls: list[dict] = []
 
     def fake_request(self, path, verb, data=None, **kwargs):
@@ -955,49 +1116,75 @@ def test_manage_interface_group_00132(monkeypatch) -> None:
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
     orchestrator = _orchestrator(config_actions={"deploy": False, "type": "resource"})
     group = _group(
+        "mixed-without-networks",
+        group_type="any",
+        members=[
+            ("SN1", ["Ethernet1/1", "Port-channel10"]),
+        ],
+    )
+
+    orchestrator.create_bulk([group])
+
+    assert len(calls) == 3
+    assert calls[0]["data"]["interfaceGroups"][0]["networkNames"] == []
+    assert all(call["data"]["networkNames"] == [] for call in calls[1:])
+
+
+def test_manage_interface_group_00132(monkeypatch) -> None:
+    """Reject a new any group that mixes vPC with non-vPC members."""
+    calls: list[dict] = []
+
+    def fake_request(self, path, verb, data=None, **kwargs):
+        del self, verb, kwargs
+        calls.append({"path": path, "data": data})
+        return {}
+
+    monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
+    orchestrator = _orchestrator(config_actions={"deploy": False, "type": "resource"})
+    group = _group(
         "mixed",
         group_type="any",
-        networks=["network-a"],
         members=[
             ("SN1", ["Ethernet1/1", "Ethernet1/2", "Port-channel10"]),
             ("SN2", ["vPC20"]),
         ],
     )
 
-    orchestrator.create_bulk([group])
+    with pytest.raises(
+        RuntimeError,
+        match=r"type=any cannot combine vPC members with Ethernet or port-channel members",
+    ):
+        orchestrator.preflight([group])
 
-    assert len(calls) == 4
-    assert calls[0]["data"]["interfaceGroups"][0]["switchInterfaces"] == []
-    assert calls[0]["data"]["interfaceGroups"][0]["networkNames"] == ["network-a"]
-    assert calls[1]["data"]["switchInterfaces"] == [
+    assert calls == []
+
+
+def test_manage_interface_group_00132a(monkeypatch) -> None:
+    """Reject top-level descriptions before a controller write."""
+
+    def unexpected_request(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("Description preflight must not send a request")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request",
+        unexpected_request,
+    )
+    orchestrator = _orchestrator(config_actions={"deploy": False, "type": "resource"})
+    group = InterfaceGroupConfigModel.from_config(
         {
-            "switchId": "SN1",
-            "interfaceNames": ["Ethernet1/1", "Ethernet1/2"],
+            "interface_group_name": "described",
+            "type": "any",
+            "description": "Ansible Interface Group description",
         }
-    ]
-    assert calls[2]["data"]["switchInterfaces"] == [
-        {
-            "switchId": "SN1",
-            "interfaceNames": [
-                "Ethernet1/1",
-                "Ethernet1/2",
-                "Port-channel10",
-            ],
-        }
-    ]
-    assert calls[3]["data"]["switchInterfaces"] == [
-        {
-            "switchId": "SN1",
-            "interfaceNames": [
-                "Ethernet1/1",
-                "Ethernet1/2",
-                "Port-channel10",
-            ],
-        },
-        {"switchId": "SN2", "interfaceNames": ["vPC20"]},
-    ]
-    assert all(call["data"]["networkNames"] == ["network-a"] for call in calls[1:])
-    assert orchestrator._existing_groups["mixed"] == group
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"controller drops it on POST and PUT",
+    ):
+        orchestrator.preflight([group])
 
 
 def test_manage_interface_group_00133(monkeypatch) -> None:
@@ -1028,7 +1215,6 @@ def test_manage_interface_group_00133(monkeypatch) -> None:
                     "Ethernet1/2",
                     "Ethernet1/3",
                     "Port-channel10",
-                    "vPC20",
                 ],
             )
         ],
@@ -1037,7 +1223,7 @@ def test_manage_interface_group_00133(monkeypatch) -> None:
 
     orchestrator.update(effective)
 
-    assert len(calls) == 2
+    assert len(calls) == 1
     assert calls[0]["switchInterfaces"] == [
         {
             "switchId": "SN1",
@@ -1046,18 +1232,6 @@ def test_manage_interface_group_00133(monkeypatch) -> None:
                 "Ethernet1/2",
                 "Ethernet1/3",
                 "Port-channel10",
-            ],
-        }
-    ]
-    assert calls[1]["switchInterfaces"] == [
-        {
-            "switchId": "SN1",
-            "interfaceNames": [
-                "Ethernet1/1",
-                "Ethernet1/2",
-                "Ethernet1/3",
-                "Port-channel10",
-                "vPC20",
             ],
         }
     ]
@@ -1278,7 +1452,7 @@ def test_manage_interface_group_00140(monkeypatch) -> None:
         group_type="ethernetWithPolicy",
         networks=["network-a"],
         members=[("SN1", ["Ethernet1/1"])],
-        ethernet_attributes={"adminStatus": True},
+        ethernet_attributes={"admin_state": True},
     )
     orchestrator._existing_groups = {"group-a": existing}
     replacement = _group(
@@ -1495,20 +1669,11 @@ def test_manage_interface_group_00200(monkeypatch) -> None:
 
     def failed_request(self, path, verb, data=None, **kwargs):
         del self, path, verb, data, kwargs
-        return {
-            "results": [
-                {
-                    "switchId": "SN1",
-                    "interfaceName": "Port-channel10",
-                    "status": "failed",
-                    "message": "switch rejected config",
-                }
-            ]
-        }
+        raise Exception("Request failed: switch rejected config")
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", failed_request)
     enabled._pending_interfaces = {("SN1", "Port-channel10")}
-    with pytest.raises(RuntimeError, match="switch rejected config"):
+    with pytest.raises(Exception, match="switch rejected config"):
         enabled.deploy_pending()
     assert enabled._pending_interfaces == {("SN1", "Port-channel10")}
 
@@ -1938,7 +2103,7 @@ def test_manage_interface_group_00300(monkeypatch) -> None:
             _group("group-a", group_type="ethernetWithoutPolicy"),
             {
                 "interface_group_name": "group-a",
-                "ethernet_attributes": {"admin_status": True},
+                "ethernet_attributes": {"admin_state": True},
             },
             "ethernet_attributes must be empty for type=ethernetWithoutPolicy",
         ),

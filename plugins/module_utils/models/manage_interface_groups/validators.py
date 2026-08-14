@@ -19,54 +19,40 @@ _CANONICAL_PREFIXES = {
     "port_channel": ("portchannel", "Port-channel"),
     "vpc": ("vpc", "vPC"),
 }
-_ETHERNET_RESPONSE_ALIASES = {
-    "adminState": "adminStatus",
-    "allowedVlans": "trunkAllowedVlans",
-    "autoNegotiate": "autoNegotiation",
-    "duplexMode": "portDuplexMode",
-    "orphanPort": "vPCOrphanPort",
-    "portTypeEdgeTrunk": "portTypeFast",
-}
 _ETHERNET_ATTRIBUTE_KEYS = frozenset(
     {
-        "adminStatus",
-        "autoNegotiation",
+        "adminState",
+        "allowedVlans",
+        "autoNegotiate",
         "bpduGuard",
         "cdp",
         "description",
+        "duplexMode",
         "extraConfig",
-        "fex",
         "mtu",
         "nativeVlan",
         "netflow",
         "netflowMonitor",
         "netflowSampler",
-        "portDuplexMode",
-        "portTypeFast",
-        "ptp",
-        "ptpTimestampTagging",
+        "orphanPort",
+        "portTypeEdge",
+        "portTypeEdgeTrunk",
         "speed",
-        "trunkAllowedVlans",
-        "vPCOrphanPort",
     }
 )
 _ETHERNET_WITH_POLICY_DEFAULTS = {
-    "adminStatus": True,
-    "autoNegotiation": "on",
+    "adminState": True,
+    "allowedVlans": "none",
+    "autoNegotiate": True,
     "bpduGuard": "default",
     "cdp": True,
-    "description": "",
-    "extraConfig": "",
+    "duplexMode": "auto",
     "mtu": "jumbo",
-    "nativeVlan": 1,
     "netflow": False,
-    "netflowMonitor": "",
-    "netflowSampler": "",
-    "portDuplexMode": "auto",
-    "portTypeFast": True,
+    "orphanPort": False,
+    "portTypeEdge": False,
+    "portTypeEdgeTrunk": True,
     "speed": "auto",
-    "trunkAllowedVlans": "none",
-    "vPCOrphanPort": False,
 }
 
 
@@ -122,19 +108,54 @@ class InterfaceGroupValidators:
 
     @staticmethod
     def normalize_response_ethernet_attributes(value: dict | None) -> dict | None:
-        """Translate controller shared-policy aliases to module attribute aliases."""
+        """Keep shared-policy attributes defined by the Manage 1.1.411 contract."""
         if not isinstance(value, dict):
             return value
-
         normalized = {}
         for key, item in value.items():
-            alias = _ETHERNET_RESPONSE_ALIASES.get(key, key)
-            if alias not in _ETHERNET_ATTRIBUTE_KEYS:
+            if key not in _ETHERNET_ATTRIBUTE_KEYS:
                 continue
-            if alias == "autoNegotiation" and isinstance(item, bool):
-                item = "on" if item else "off"
-            normalized[alias] = item
+            # Manage 1.1.411 declares minLength=1 for input but existing
+            # controller-created policies can still echo an empty description.
+            # Treat that response-only default as unset without weakening input
+            # validation or emitting an invalid blank value on later writes.
+            if key == "description" and item == "":
+                continue
+            normalized[key] = item
         return normalized
+
+    @staticmethod
+    def normalize_allowed_vlans(value: Any) -> str | None:
+        """Normalize and validate a Manage 1.1.411 allowed-VLAN expression."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise ValueError("allowed_vlans must be 'none', 'all', or VLAN IDs/ranges")
+        if isinstance(value, int):
+            value = str(value)
+        if not isinstance(value, str):
+            raise ValueError("allowed_vlans must be a string")
+
+        normalized = value.strip()
+        if normalized in {"none", "all"}:
+            return normalized
+        if not normalized:
+            raise ValueError("allowed_vlans must not be empty")
+
+        canonical_tokens = []
+        for raw_token in normalized.split(","):
+            token = raw_token.strip()
+            parts = [part.strip() for part in token.split("-")]
+            if len(parts) not in {1, 2} or any(not part.isdigit() for part in parts):
+                raise ValueError("allowed_vlans must be 'none', 'all', or a comma-separated list of VLAN IDs/ranges")
+            start = int(parts[0])
+            end = int(parts[-1])
+            if not 1 <= start <= 4094 or not 1 <= end <= 4094:
+                raise ValueError("allowed_vlans VLAN IDs must be in the range 1 through 4094")
+            if start > end:
+                raise ValueError(f"allowed_vlans range '{token}' must start at or below its end")
+            canonical_tokens.append(str(start) if len(parts) == 1 else f"{start}-{end}")
+        return ",".join(canonical_tokens)
 
     @classmethod
     def normalize_response_group(cls, value: dict) -> dict:
@@ -147,35 +168,28 @@ class InterfaceGroupValidators:
         if not isinstance(policy_details, dict):
             policy_details = {}
 
-        ethernet_attributes = normalized.get("ethernetAttributes")
-        if ethernet_attributes is None:
-            ethernet_attributes = policy_details.get("ethernetAttributes")
-
         if normalized.get("type") == "ethernet":
             policy_type = policy_details.get("policyType")
-            if (
-                policy_type == "userDefinedSharedTrunk"
-                or "templateName" in normalized
-                or "templateConfig" in normalized
-                or "templateName" in policy_details
-                or "templateConfig" in policy_details
-            ):
-                normalized["type"] = "ethernetCustom"
-            elif policy_type == "none":
-                normalized["type"] = "ethernetWithoutPolicy"
-            elif policy_details or ethernet_attributes:
-                normalized["type"] = "ethernetWithPolicy"
-            else:
-                normalized["type"] = "ethernetWithoutPolicy"
+            module_type_by_policy_type = {
+                "sharedTrunkHost": "ethernetWithPolicy",
+                "none": "ethernetWithoutPolicy",
+                "userDefinedSharedTrunk": "ethernetCustom",
+            }
+            if policy_type not in module_type_by_policy_type:
+                raise ValueError(
+                    "Manage 1.1.411 Ethernet response requires policyDetails.policyType " "to be sharedTrunkHost, none, or userDefinedSharedTrunk"
+                )
+            normalized["type"] = module_type_by_policy_type[policy_type]
 
+        ethernet_attributes = policy_details.get("ethernetAttributes")
         if ethernet_attributes is not None:
             normalized["ethernetAttributes"] = cls.normalize_response_ethernet_attributes(ethernet_attributes)
-        if "policyId" not in normalized and policy_details.get("policyId") is not None:
+        if policy_details.get("policyId") is not None:
             normalized["policyId"] = policy_details["policyId"]
         if normalized.get("type") == "ethernetCustom":
-            if "templateName" not in normalized and policy_details.get("templateName") is not None:
+            if policy_details.get("templateName") is not None:
                 normalized["templateName"] = policy_details["templateName"]
-            if "templateConfig" not in normalized and policy_details.get("templateConfig") is not None:
+            if policy_details.get("templateConfig") is not None:
                 normalized["templateConfig"] = policy_details["templateConfig"]
             template_config = normalized.get("templateConfig")
             if isinstance(template_config, dict):
@@ -189,18 +203,10 @@ class InterfaceGroupValidators:
 
     @staticmethod
     def to_wire_ethernet_attributes(value: dict | None) -> dict:
-        """Build the live controller's nested shared-policy attribute shape."""
+        """Build the Manage 1.1.411 nested shared-policy attribute shape."""
         attributes = dict(_ETHERNET_WITH_POLICY_DEFAULTS)
         attributes.update(value or {})
-        wire = {}
-        reverse_aliases = {api_alias: wire_alias for wire_alias, api_alias in _ETHERNET_RESPONSE_ALIASES.items()}
-        for key, item in attributes.items():
-            alias = reverse_aliases.get(key, key)
-            if key == "autoNegotiation" and isinstance(item, str):
-                item = item.strip().lower() == "on"
-            wire[alias] = item
-        wire.setdefault("portTypeEdge", False)
-        return wire
+        return {key: item for key, item in attributes.items() if key in _ETHERNET_ATTRIBUTE_KEYS}
 
     @classmethod
     def to_wire_group(cls, value: dict, *, include_empty_associations: bool = False) -> dict:

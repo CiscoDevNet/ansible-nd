@@ -118,13 +118,6 @@ _GROUP_LIST_KEYS = (
     "interface_group_details",
     "interfaceGroups",
     "interface_groups",
-    "anyInterfaceGroup",
-    "ethernetCustomInterfaceGroup",
-    "ethernetWithPolicyInterfaceGroup",
-    "ethernetWithoutPolicyInterfaceGroup",
-    "ethernetWithoutPolicyInyterfaceGroup",
-    "portChannelInterfaceGroup",
-    "vpcInterfaceGroup",
 )
 _SUPPORTED_MODES = frozenset({"subset", "exact"})
 _SUPPORTED_ARGUMENTS = frozenset(
@@ -150,18 +143,18 @@ _SUPPORTED_INVARIANTS = frozenset(
     }
 )
 _ETHERNET_ATTRIBUTE_KEYS = {
-    "adminStatus": "admin_status",
-    "autoNegotiation": "auto_negotiation",
+    "adminState": "admin_state",
+    "allowedVlans": "allowed_vlans",
+    "autoNegotiate": "auto_negotiate",
     "bpduGuard": "bpdu_guard",
+    "duplexMode": "duplex_mode",
     "extraConfig": "extra_config",
     "nativeVlan": "native_vlan",
     "netflowMonitor": "netflow_monitor",
     "netflowSampler": "netflow_sampler",
-    "portDuplexMode": "port_duplex_mode",
-    "portTypeFast": "port_type_fast",
-    "ptpTimestampTagging": "ptp_timestamp_tagging",
-    "trunkAllowedVlans": "trunk_allowed_vlans",
-    "vPCOrphanPort": "vpc_orphan_port",
+    "orphanPort": "orphan_port",
+    "portTypeEdge": "port_type_edge",
+    "portTypeEdgeTrunk": "port_type_edge_trunk",
 }
 
 
@@ -244,7 +237,10 @@ def _canonicalise_vpc_member_switch_ids(members: Dict[str, List[str]], vpc_peer_
 def _normalise_ethernet_attributes(value: Any) -> Dict[str, Any]:
     if not isinstance(value, dict):
         return {}
-    return {_ETHERNET_ATTRIBUTE_KEYS.get(key, key): item for key, item in value.items()}
+    normalized = {_ETHERNET_ATTRIBUTE_KEYS.get(key, key): item for key, item in value.items()}
+    if "allowed_vlans" in normalized:
+        normalized["allowed_vlans"] = InterfaceGroupValidators.normalize_allowed_vlans(normalized["allowed_vlans"])
+    return normalized
 
 
 def _normalise_group(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -258,6 +254,7 @@ def _normalise_group(raw: Dict[str, Any]) -> Dict[str, Any]:
     aliases = {
         "interface_group_name": ("interface_group_name", "interfaceGroupName"),
         "type": ("type",),
+        "description": ("description",),
         "networks": ("networks", "networkNames"),
         "switch_interfaces": ("switch_interfaces", "switchInterfaces"),
         "template_name": ("template_name", "templateName"),

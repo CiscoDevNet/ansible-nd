@@ -1,8 +1,8 @@
 ---
-# Cleanup is restricted to the reserved Interface Groups, Networks, logical
-# interfaces, and the vPC pair formed from the two reserved test leaves. The
-# pair is removed last so association and interface cleanup can deploy while
-# the pair still exists.
+# Cleanup is restricted to the reserved Interface Groups, Networks, physical
+# and logical interfaces, and the vPC pair formed from the two reserved test
+# leaves. The pair is removed last so association and interface cleanup can
+# deploy while the pair still exists.
 
 - name: Remove reserved Interface Groups
   cisco.nd.nd_manage_interface_group:
@@ -85,6 +85,17 @@
   register: interface_group_port_channel_fixture_cleanup
   when: test_create_port_channel_fixtures | bool
 
+- name: Remove the reserved physical Ethernet trunk fixtures
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_ethernet_fixture_cleanup }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  register: interface_group_ethernet_fixture_cleanup_result
+  when: test_create_ethernet_fixtures | bool
+
 - name: Allow interface cleanup to converge
   ansible.builtin.pause:
     seconds: 10
@@ -96,6 +107,9 @@
       or
       (test_create_port_channel_fixtures | bool
        and interface_group_port_channel_fixture_cleanup is changed)
+      or
+      (test_create_ethernet_fixtures | bool
+       and interface_group_ethernet_fixture_cleanup_result is changed)
 
 - name: Remove the reserved vPC pair fixture
   cisco.nd.nd_manage_vpc_pair:

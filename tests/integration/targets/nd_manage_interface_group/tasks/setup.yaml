@@ -1,7 +1,7 @@
 ---
-# Create the vPC pair, Network, and logical interface fixtures consumed by
-# Interface Groups. The two supplied leaves and all fixture interfaces are
-# reserved for this target.
+# Create the vPC pair, Network, physical Ethernet trunk, and logical interface
+# fixtures consumed by Interface Groups. The two supplied leaves and all
+# fixture interfaces are reserved for this target.
 
 - name: Create the reserved vPC pair fixture
   cisco.nd.nd_manage_vpc_pair:
@@ -95,6 +95,67 @@
       Network IDs and VLAN IDs are unused in the test fabric.
   when: test_create_network_fixtures | bool
 
+- name: Configure the reserved physical Ethernet trunk fixtures
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_ethernet_fixtures }}"
+    config_actions:
+      deploy: true
+    state: merged
+  register: interface_group_ethernet_fixture_create
+  when: test_create_ethernet_fixtures | bool
+
+- name: Verify the physical Ethernet trunk fixtures are ready
+  ansible.builtin.assert:
+    that:
+      - interface_group_ethernet_fixture_create is not failed
+      - >-
+        (
+          interface_group_ethernet_fixture_create.after
+          | selectattr('switch_ip', 'equalto', test_switch_ip_primary)
+          | selectattr('interface_name', 'equalto', test_ethernet_custom)
+          | list
+          | length
+        ) == 1
+      - >-
+        (
+          interface_group_ethernet_fixture_create.after
+          | selectattr('switch_ip', 'equalto', test_switch_ip_primary)
+          | selectattr('interface_name', 'equalto', test_ethernet_policy)
+          | list
+          | length
+        ) == 1
+      - >-
+        (
+          interface_group_ethernet_fixture_create.after
+          | selectattr('switch_ip', 'equalto', test_switch_ip_secondary)
+          | selectattr('interface_name', 'equalto', test_ethernet_without_policy)
+          | list
+          | length
+        ) == 1
+      - >-
+        (
+          interface_group_ethernet_fixture_create.after
+          | selectattr('switch_ip', 'equalto', test_switch_ip_primary)
+          | selectattr('interface_name', 'equalto', test_any_ethernet_primary)
+          | list
+          | length
+        ) == 1
+      - >-
+        (
+          interface_group_ethernet_fixture_create.after
+          | selectattr('switch_ip', 'equalto', test_switch_ip_secondary)
+          | selectattr('interface_name', 'equalto', test_any_ethernet_secondary)
+          | list
+          | length
+        ) == 1
+    fail_msg: >-
+      The reserved physical Ethernet fixtures could not be configured as trunk
+      ports. Confirm that the selected ports exist and are not port-channel
+      members.
+  when: test_create_ethernet_fixtures | bool
+
 - name: Create the reserved port-channel trunk-host interface fixtures
   cisco.nd.nd_interface_port_channel_trunk_host:
     output_level: "{{ nd_info.output_level }}"
@@ -113,6 +174,103 @@
     fail_msg: >-
       The port-channel fixtures could not be created. Confirm that the reserved
       member ports and port-channel IDs are unused.
+  when: test_create_port_channel_fixtures | bool
+
+- name: Deploy the exact reserved port-channel fixtures
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/interfaceActions/deploy
+    method: post
+    content:
+      interfaces:
+        - interfaceName: "{{ test_port_channel_1 }}"
+          switchId: "{{ test_switch_id }}"
+        - interfaceName: "{{ test_port_channel_2 }}"
+          switchId: "{{ test_switch_id }}"
+        - interfaceName: "{{ test_port_channel_3 }}"
+          switchId: "{{ test_switch_id }}"
+        - interfaceName: "{{ test_any_port_channel }}"
+          switchId: "{{ test_switch_id_secondary }}"
+  register: interface_group_port_channel_fixture_deploy
+  when: test_create_port_channel_fixtures | bool
+
+- name: Verify the reserved port-channel fixture deployment response
+  ansible.builtin.assert:
+    that:
+      - interface_group_port_channel_fixture_deploy is not failed
+      - >-
+        interface_group_port_channel_fixture_deploy.current.results
+        | default([])
+        | list
+        | length == 4
+      - >-
+        interface_group_port_channel_fixture_deploy.current.results
+        | default([])
+        | rejectattr('status', 'equalto', 'success')
+        | list
+        | length == 0
+      - >-
+        interface_group_port_channel_fixture_deploy.current.results
+        | default([])
+        | selectattr('switchId', 'equalto', test_switch_id)
+        | selectattr('interfaceName', 'equalto', test_port_channel_1)
+        | list
+        | length == 1
+      - >-
+        interface_group_port_channel_fixture_deploy.current.results
+        | default([])
+        | selectattr('switchId', 'equalto', test_switch_id)
+        | selectattr('interfaceName', 'equalto', test_port_channel_2)
+        | list
+        | length == 1
+      - >-
+        interface_group_port_channel_fixture_deploy.current.results
+        | default([])
+        | selectattr('switchId', 'equalto', test_switch_id)
+        | selectattr('interfaceName', 'equalto', test_port_channel_3)
+        | list
+        | length == 1
+      - >-
+        interface_group_port_channel_fixture_deploy.current.results
+        | default([])
+        | selectattr('switchId', 'equalto', test_switch_id_secondary)
+        | selectattr('interfaceName', 'equalto', test_any_port_channel)
+        | list
+        | length == 1
+    fail_msg: >-
+      The controller did not successfully deploy every requested reserved
+      port-channel fixture. Inspect the per-interface outcomes before
+      continuing.
+  when: test_create_port_channel_fixtures | bool
+
+- name: Confirm the reserved port-channel fixtures have no pending intent
+  ansible.builtin.include_tasks: preview.yaml
+  vars:
+    preview_name: "PORT-CHANNEL FIXTURE BASELINE"
+    preview_convergence_delay: 30
+    preview_request_interfaces:
+      - switchId: "{{ test_switch_id }}"
+        interfaceName: "{{ test_port_channel_1 }}"
+      - switchId: "{{ test_switch_id }}"
+        interfaceName: "{{ test_port_channel_2 }}"
+      - switchId: "{{ test_switch_id }}"
+        interfaceName: "{{ test_port_channel_3 }}"
+      - switchId: "{{ test_switch_id_secondary }}"
+        interfaceName: "{{ test_any_port_channel }}"
+    preview_test_data:
+      - switch_id: "{{ test_switch_id }}"
+        interface_name: "{{ test_port_channel_1 }}"
+        pending: clean
+      - switch_id: "{{ test_switch_id }}"
+        interface_name: "{{ test_port_channel_2 }}"
+        pending: clean
+      - switch_id: "{{ test_switch_id }}"
+        interface_name: "{{ test_port_channel_3 }}"
+        pending: clean
+      - switch_id: "{{ test_switch_id_secondary }}"
+        interface_name: "{{ test_any_port_channel }}"
+        pending: clean
   when: test_create_port_channel_fixtures | bool
 
 - name: Create the reserved vPC trunk-host interface fixture

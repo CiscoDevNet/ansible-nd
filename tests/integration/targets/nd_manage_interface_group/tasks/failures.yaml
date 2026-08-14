@@ -42,7 +42,7 @@
         - interface_group_name: "ANSIBLE-IG-NO-POLICY-ATTRIBUTES"
           type: ethernetWithoutPolicy
           ethernet_attributes:
-            admin_status: true
+            admin_state: true
       message: "must be empty"
     - label: referenced custom template does not exist
       config:
@@ -75,6 +75,12 @@
               interface_names:
                 - Loopback0
       message: "not valid for interface group type"
+    - label: target controller drops top-level group descriptions
+      config:
+        - interface_group_name: "ANSIBLE-IG-DESCRIPTION-UNSUPPORTED"
+          type: any
+          description: Ansible Interface Group description
+      message: "controller drops it on POST and PUT"
     - label: Ethernet custom rejects port-channel interfaces
       config:
         - interface_group_name: "ANSIBLE-IG-CUSTOM-WRONG-KIND"
@@ -135,6 +141,30 @@
           ethernet_attributes:
             native_vlan: 4095
       message: "native_vlan"
+    - label: Ethernet allowed VLAN expression is validated
+      config:
+        - interface_group_name: >-
+            {{ interface_group_names.ethernet_with_policy }}
+          type: ethernetWithPolicy
+          ethernet_attributes:
+            allowed_vlans: 4095
+      message: "allowed_vlans"
+    - label: Ethernet BPDU Guard uses the 1.1.411 values
+      config:
+        - interface_group_name: >-
+            {{ interface_group_names.ethernet_with_policy }}
+          type: ethernetWithPolicy
+          ethernet_attributes:
+            bpdu_guard: enabled
+      message: "bpdu_guard"
+    - label: Removed 1.1.332 Ethernet names are rejected
+      config:
+        - interface_group_name: >-
+            {{ interface_group_names.ethernet_with_policy }}
+          type: ethernetWithPolicy
+          ethernet_attributes:
+            admin_status: true
+      message: "admin_status"
     - label: duplicate group names are rejected
       config:
         - interface_group_name: "ANSIBLE-IG-DUPLICATE"

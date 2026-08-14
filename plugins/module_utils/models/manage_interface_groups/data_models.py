@@ -10,7 +10,6 @@ from typing import Any, ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     field_validator,
-    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.config_models import (
@@ -18,7 +17,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_g
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.enums import (
     InterfaceGroupOperationStatus,
-    InterfaceGroupType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.validators import (
     InterfaceGroupValidators,
@@ -61,19 +59,9 @@ class InterfaceGroupsRemoveRequestModel(NDBaseModel):
 class InterfaceGroupCreateResultModel(NDNestedModel):
     """One per-item result from the Interface Groups bulk-create HTTP 207 response."""
 
-    type: InterfaceGroupType | None = Field(default=None)
+    type: Literal["any", "ethernet", "portChannel", "vpc"] | None = Field(default=None)
     status: InterfaceGroupOperationStatus | None = Field(default=None)
     message: str | None = Field(default=None)
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_live_ethernet_type(cls, data):
-        """Accept the generic Ethernet type returned by current ND create calls."""
-        if isinstance(data, dict) and data.get("type") == "ethernet":
-            normalized = dict(data)
-            normalized["type"] = InterfaceGroupType.ETHERNET_WITH_POLICY.value
-            return normalized
-        return data
 
 
 class InterfaceGroupDeleteResultModel(NDNestedModel):
@@ -120,30 +108,3 @@ class InterfaceGroupsListResponseModel(NDBaseModel):
 
     interface_group_details: list[InterfaceGroupConfigModel] = Field(default_factory=list, alias="interfaceGroupDetails")
     meta: dict[str, Any] | None = Field(default=None)
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_list_response_shape(cls, data):
-        """Accept the standard list wrapper and supported type-specific wrappers."""
-        if not isinstance(data, dict) or "interfaceGroupDetails" in data or "interface_group_details" in data:
-            return data
-        example_keys = (
-            "anyInterfaceGroup",
-            "ethernetCustomInterfaceGroup",
-            "ethernetWithPolicyInterfaceGroup",
-            "ethernetWithoutPolicyInterfaceGroup",
-            # Retain compatibility with the documented misspelled response wrapper.
-            "ethernetWithoutPolicyInyterfaceGroup",
-            "portChannelInterfaceGroup",
-            "vpcInterfaceGroup",
-        )
-        groups: list[Any] = []
-        for key in example_keys:
-            value = data.get(key)
-            if isinstance(value, list):
-                groups.extend(value)
-        if not groups:
-            return data
-        normalized = dict(data)
-        normalized["interfaceGroupDetails"] = groups
-        return normalized

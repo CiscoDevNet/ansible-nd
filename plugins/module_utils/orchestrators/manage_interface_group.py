@@ -77,7 +77,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types impor
 )
 
 _QUERY_PAGE_SIZE = 100
-_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 _CUSTOM_TEMPLATE_REQUIRED_TAG = "interface_edit_shared_policy"
 _CUSTOM_TEMPLATE_CONTENT_TYPES = frozenset({"python", "pythoncli"})
 _INTERFACE_POLICY_TYPES = frozenset(
@@ -457,6 +456,8 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             return False
         if "type" in supplied and group.type != filter_item.type:
             return False
+        if "description" in supplied and group.description != filter_item.description:
+            return False
         if "template_name" in supplied and group.template_name != (filter_item.template_name):
             return False
 
@@ -547,47 +548,58 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         )
 
     @staticmethod
-    def _raise_create_failures(response: Any) -> None:
-        parsed = InterfaceGroupsCreateResponseModel.from_response(response or {})
+    def _validate_create_response_contract(response: Any, expected_count: int | None = None) -> None:
+        """Validate the successful bulk-create response shape.
+
+        Explicit failed/error items are rejected centrally by ``NdV1Strategy``
+        before ``_request`` returns. This local guard remains responsible for
+        the Interface Groups-specific response contract: a non-empty
+        ``interfaceGroups`` array, one result per requested group, and a known
+        successful status on every item.
+        """
+        items = response.get("interfaceGroups") if isinstance(response, dict) else None
+        if not isinstance(items, list) or not items:
+            raise RuntimeError("Interface Group create returned no per-item results")
+        if expected_count is not None and len(items) != expected_count:
+            raise RuntimeError(f"Interface Group create returned {len(items)} per-item results for {expected_count} requested groups")
+        try:
+            parsed = InterfaceGroupsCreateResponseModel.from_response(response or {})
+        except ValueError as exc:
+            raise RuntimeError(f"Interface Group create returned invalid per-item results: {exc}") from exc
         if parsed.failures:
             messages = [item.message or f"type={item.type or '?'}" for item in parsed.failures]
-            raise RuntimeError(f"Interface Group create reported per-item failures: {'; '.join(messages)}")
+            raise RuntimeError("Interface Group create returned a non-success per-item status after " f"central response handling: {'; '.join(messages)}")
 
     @staticmethod
-    def _raise_delete_failures(response: Any) -> None:
-        parsed = InterfaceGroupsDeleteResponseModel.from_response(response or {})
+    def _validate_delete_response_contract(response: Any, expected_count: int | None = None) -> None:
+        """Validate the successful bulk-remove response shape.
+
+        ``NdV1Strategy`` handles explicit per-item failures. This guard keeps
+        the endpoint-specific completeness and schema checks that the generic
+        response layer cannot infer from the request payload.
+        """
+        items = response.get("interfaceGroups") if isinstance(response, dict) else None
+        if not isinstance(items, list) or not items:
+            raise RuntimeError("Interface Group delete returned no per-item results")
+        if expected_count is not None and len(items) != expected_count:
+            raise RuntimeError(f"Interface Group delete returned {len(items)} per-item results for {expected_count} requested groups")
+        try:
+            parsed = InterfaceGroupsDeleteResponseModel.from_response(response or {})
+        except ValueError as exc:
+            raise RuntimeError(f"Interface Group delete returned invalid per-item results: {exc}") from exc
         if parsed.failures:
             messages = [f"{item.interface_group_name or '?'}: {item.message or 'unknown error'}" for item in parsed.failures]
-            raise RuntimeError(f"Interface Group delete reported per-item failures: {'; '.join(messages)}")
-
-    @classmethod
-    def _raise_action_failures(cls, response: Any, action: str) -> None:
-        """Inspect common 207 per-item containers for explicit failures."""
-        if not isinstance(response, dict):
-            return
-        failures: list[str] = []
-        for key in ("results", "items", "switchIds", "interfaces"):
-            values = response.get(key)
-            if not isinstance(values, list):
-                continue
-            for item in values:
-                if not isinstance(item, dict):
-                    continue
-                status = str(item.get("status") or "").strip().lower()
-                if status not in _FAILURE_STATUSES:
-                    continue
-                identity = item.get("interfaceName") or item.get("switchId") or item.get("name") or "?"
-                failures.append(f"{identity}: {item.get('message') or status}")
-        if failures:
-            raise RuntimeError(f"{action} reported per-item failures: {'; '.join(failures)}")
+            raise RuntimeError("Interface Group delete returned a non-success per-item status after " f"central response handling: {'; '.join(messages)}")
 
     def create_bulk(self, model_instances: list[InterfaceGroupConfigModel], **kwargs) -> ResponseType:
         """Create Interface Groups and populate ``any`` membership safely.
 
         ND rejects a single request whose newly associated members contain
         multiple interface kinds. Create ``any`` groups without members, then
-        add each kind through cumulative PUTs so earlier batches are retained.
-        Other group types keep the normal one-request bulk-create path.
+        add each supported kind through cumulative PUTs so earlier batches are
+        retained. Preflight rejects combining vPC with Ethernet or port-channel
+        members before this method is reached. Other group types keep the
+        normal one-request bulk-create path.
         """
         endpoint = self._configure_endpoint(self.create_bulk_endpoint())
         create_models: list[InterfaceGroupConfigModel] = []
@@ -606,7 +618,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             data=payload,
             operation_type=OperationType.CREATE,
         )
-        self._raise_create_failures(response)
+        self._validate_create_response_contract(response, expected_count=len(create_models))
 
         for item in deferred_any_members:
             self._put_any_group_batches(None, item)
@@ -631,7 +643,14 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 payload.setdefault("ethernetAttributes", {})
             if model_instance.type == InterfaceGroupType.ETHERNET_CUSTOM.value:
                 payload.setdefault("templateConfig", {})
-        return InterfaceGroupValidators.to_wire_group(payload)
+        # The controller treats both association collections as mandatory on
+        # PUT even when the OpenAPI schema does not mark them as required.
+        # Emitting explicit empty lists also preserves authoritative update
+        # semantics for groups without networks or member interfaces.
+        return InterfaceGroupValidators.to_wire_group(
+            payload,
+            include_empty_associations=True,
+        )
 
     def _put_group(self, model_instance: InterfaceGroupConfigModel) -> ResponseType:
         endpoint = self._configure_endpoint(self.update_endpoint())
@@ -724,7 +743,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             data=payload,
             operation_type=OperationType.DELETE,
         )
-        self._raise_delete_failures(response)
+        self._validate_delete_response_contract(response, expected_count=len(model_instances))
         for item in model_instances:
             self._existing_groups.pop(item.interface_group_name, None)
         return response
@@ -751,6 +770,67 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         if model is None:
             return set()
         return {(entry.switch_id, interface_name) for entry in model.switch_interfaces or [] for interface_name in entry.interface_names}
+
+    @classmethod
+    def _has_vpc_and_non_vpc_members(
+        cls,
+        model: InterfaceGroupConfigModel | None,
+    ) -> bool:
+        """Return whether an ``any`` group combines vPC and non-vPC members."""
+        if model is None or model.type != InterfaceGroupType.ANY.value:
+            return False
+        member_kinds = {InterfaceGroupValidators.interface_kind(interface_name) for _, interface_name in cls._interface_pairs(model)}
+        return "vpc" in member_kinds and bool(member_kinds.intersection({"ethernet", "port_channel"}))
+
+    def _validate_any_vpc_member_mixing(
+        self,
+        effective: dict[str, InterfaceGroupConfigModel],
+    ) -> None:
+        """Reject newly introduced vPC/non-vPC membership before any write.
+
+        Manage 1.1.411 documents all three member kinds for ``type=any``, but
+        the target controller rejects a vPC member when the group already has
+        Ethernet or port-channel members. Preserve idempotency for a legacy
+        group if a controller ever returns that combination, while preventing
+        this module from creating it or introducing it through an update.
+        """
+        for group_name, after in effective.items():
+            if not self._has_vpc_and_non_vpc_members(after):
+                continue
+            before = self._existing_groups.get(group_name)
+            if self._has_vpc_and_non_vpc_members(before):
+                continue
+            raise RuntimeError(
+                f"Interface Group '{group_name}' with type=any cannot combine "
+                "vPC members with Ethernet or port-channel members. The "
+                "controller rejects this combination; use a separate vPC "
+                "Interface Group."
+            )
+
+    @staticmethod
+    def _validate_writable_descriptions(
+        model_instances: Sequence[InterfaceGroupConfigModel],
+    ) -> None:
+        """Reject the documented group description that ND does not persist.
+
+        Manage 1.1.411 declares top-level ``description`` on every Interface
+        Group discriminator, but the target controller silently drops it on
+        both POST and PUT and omits it from GET-one and list responses. Failing
+        before mutation prevents an apparently successful, permanently
+        non-idempotent configuration. The nested Ethernet policy description
+        is a separate field and remains supported.
+        """
+        described_groups = [item.interface_group_name for item in model_instances if "description" in item.model_fields_set and item.description is not None]
+        if not described_groups:
+            return
+        quoted = ", ".join(f"'{name}'" for name in sorted(described_groups))
+        raise RuntimeError(
+            f"Top-level description for Interface Group(s) {quoted} is "
+            "declared by Manage 1.1.411, but this controller drops it on "
+            "POST and PUT. Remove description to avoid a permanently "
+            "non-idempotent configuration. The nested "
+            "ethernet_attributes.description field remains supported."
+        )
 
     @staticmethod
     def _policy_signature(
@@ -1084,11 +1164,14 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         """Validate immutable fields, moves, and referenced networks before writes."""
         self._resolve_config_switch_identifiers(model_instances)
         self._collapse_switch_entries(model_instances)
+        self._validate_writable_descriptions(model_instances)
         self._preserve_omitted_associations(model_instances)
         self._align_vpc_member_switch_ids(model_instances)
         self._collapse_switch_entries(model_instances)
         self._validate_runtime_member_ownership(model_instances)
         effective = {item.interface_group_name: self._effective_model(item) for item in model_instances}
+
+        self._validate_any_vpc_member_mixing(effective)
 
         for item in model_instances:
             existing = self._existing_groups.get(item.interface_group_name)
@@ -1152,7 +1235,6 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 data=payload,
                 operation_type=OperationType.UPDATE,
             )
-            self._raise_action_failures(response, "interfaceActions/deploy")
             self._pending_interfaces.clear()
             return response
 
@@ -1166,6 +1248,5 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             data=payload,
             operation_type=OperationType.UPDATE,
         )
-        self._raise_action_failures(response, "switchActions/deploy")
         self._pending_switches.clear()
         return response

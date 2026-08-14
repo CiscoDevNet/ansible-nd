@@ -79,29 +79,29 @@ class InterfaceGroupEthernetAttributesModel(NDNestedModel):
         extra="forbid",
     )
 
-    admin_status: bool | None = Field(default=None, alias="adminStatus")
-    auto_negotiation: Literal["on", "off"] | None = Field(default=None, alias="autoNegotiation")
-    bpdu_guard: Literal["enabled", "disabled", "default"] | None = Field(default=None, alias="bpduGuard")
+    admin_state: bool | None = Field(default=None, alias="adminState")
+    allowed_vlans: str | None = Field(default=None, alias="allowedVlans")
+    auto_negotiate: bool | None = Field(default=None, alias="autoNegotiate")
+    bpdu_guard: Literal["enable", "disable", "default"] | None = Field(default=None, alias="bpduGuard")
     cdp: bool | None = Field(default=None)
-    description: AsciiDescription = Field(default=None, max_length=254)
+    description: AsciiDescription = Field(default=None, min_length=1, max_length=254)
+    duplex_mode: Literal["auto", "full", "half"] | None = Field(default=None, alias="duplexMode")
     extra_config: str | None = Field(default=None, alias="extraConfig")
-    fex: bool | None = Field(default=None)
     mtu: MtuEnum | None = Field(default=None)
     native_vlan: int | None = Field(default=None, alias="nativeVlan", ge=1, le=4094)
     netflow: bool | None = Field(default=None)
     netflow_monitor: str | None = Field(default=None, alias="netflowMonitor")
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
-    port_duplex_mode: Literal["auto", "full", "half"] | None = Field(default=None, alias="portDuplexMode")
-    port_type_fast: bool | None = Field(default=None, alias="portTypeFast")
-    ptp: bool | None = Field(default=None)
-    ptp_timestamp_tagging: bool | None = Field(default=None, alias="ptpTimestampTagging")
+    orphan_port: bool | None = Field(default=None, alias="orphanPort")
+    port_type_edge: bool | None = Field(default=None, alias="portTypeEdge")
+    port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk")
     speed: SpeedEnum | None = Field(default=None)
-    trunk_allowed_vlans: str | None = Field(
-        default=None,
-        alias="trunkAllowedVlans",
-        pattern=r"^all$|^none$|^((40(?:[0-8]\d|9[0-6])|[1-3]\d{2,3}|\d{2,3}|[1-9]){0,1}([,-]{1}|$))*$",
-    )
-    vpc_orphan_port: bool | None = Field(default=None, alias="vPCOrphanPort")
+
+    @field_validator("allowed_vlans", mode="before")
+    @classmethod
+    def validate_allowed_vlans(cls, value):
+        """Normalize controller integer echoes and validate VLAN expressions."""
+        return InterfaceGroupValidators.normalize_allowed_vlans(value)
 
 
 class InterfaceGroupConfigModel(NDBaseModel):
@@ -129,6 +129,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
 
     interface_group_name: str = Field(alias="interfaceGroupName", min_length=1, description="Interface group name")
     type: InterfaceGroupType | None = Field(default=None, description="Interface group type")
+    description: str | None = Field(default=None, description="Description about the Interface Group")
     networks: list[str] | None = Field(
         default=None,
         alias="networkNames",
@@ -483,6 +484,7 @@ class InterfaceGroupGatheredFilterModel(BaseModel):
         description="Exact Interface Group name",
     )
     type: InterfaceGroupType | None = Field(default=None, description="Exact normalized Interface Group type")
+    description: str | None = Field(default=None, description="Exact Interface Group description")
     networks: list[str] | None = Field(
         default=None,
         alias="networkNames",
@@ -565,6 +567,7 @@ class InterfaceGroupModuleConfigModel(BaseModel):
     _config_input_keys: ClassVar[set[str]] = {
         "interface_group_name",
         "type",
+        "description",
         "networks",
         "switch_interfaces",
         "template_name",
@@ -700,6 +703,7 @@ class InterfaceGroupModuleConfigModel(BaseModel):
                 "options": {
                     "interface_group_name": {"type": "str", "required": False},
                     "type": {"type": "str", "choices": InterfaceGroupType.choices()},
+                    "description": {"type": "str"},
                     "networks": {"type": "list", "elements": "str"},
                     "switch_interfaces": {
                         "type": "list",

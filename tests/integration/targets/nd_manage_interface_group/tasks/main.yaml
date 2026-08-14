@@ -273,7 +273,11 @@
 - name: Run Interface Group integration coverage
   block:
     - name: Remove leftovers from an interrupted prior run
-      ansible.builtin.include_tasks: cleanup.yaml
+      ansible.builtin.include_tasks:
+        file: cleanup.yaml
+        apply:
+          tags:
+            - always
       tags:
         - always
 
@@ -306,9 +310,23 @@
         - always
 
     - name: Create the reserved logical interface fixtures
-      ansible.builtin.include_tasks: setup.yaml
+      ansible.builtin.include_tasks:
+        file: setup.yaml
+        apply:
+          tags:
+            - always
       tags:
         - always
+
+    - name: Validate an any group containing all three member kinds
+      ansible.builtin.include_tasks:
+        file: any_mixed_three_types.yaml
+        apply:
+          tags:
+            - interface_groups_any_mixed_three_types
+      when: test_vpc_flow_enabled | bool
+      tags:
+        - interface_groups_any_mixed_three_types
 
     - name: Validate all Interface Group discriminator types
       ansible.builtin.include_tasks: types.yaml
@@ -345,11 +363,17 @@
       ansible.builtin.include_tasks: overridden.yaml
   always:
     - name: Remove Interface Group integration-test resources
-      ansible.builtin.include_tasks: cleanup.yaml
+      ansible.builtin.include_tasks:
+        file: cleanup.yaml
+        apply:
+          tags:
+            - always
       tags:
         - always
   module_defaults:
     cisco.nd.nd_manage_interface_group:
+      timeout: 300
+    cisco.nd.nd_interface_ethernet_trunk_host:
       timeout: 300
     cisco.nd.nd_interface_port_channel_trunk_host:
       timeout: 300

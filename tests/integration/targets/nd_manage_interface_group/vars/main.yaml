@@ -77,6 +77,46 @@ test_any_ethernet_primary: >-
   {{ nd_test_interface_group_any_ethernet_primary | default('') }}
 test_any_ethernet_secondary: >-
   {{ nd_test_interface_group_any_ethernet_secondary | default('') }}
+test_create_ethernet_fixtures: >-
+  {{
+    nd_test_interface_group_create_ethernet_fixtures
+    | default(true)
+    | bool
+  }}
+
+interface_group_ethernet_fixtures:
+  - switch_ip: "{{ test_switch_ip_primary }}"
+    interface_names:
+      - "{{ test_ethernet_custom }}"
+      - "{{ test_ethernet_policy }}"
+      - "{{ test_any_ethernet_primary }}"
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          allowed_vlans: all
+          native_vlan: 1
+  - switch_ip: "{{ test_switch_ip_secondary }}"
+    interface_names:
+      - "{{ test_ethernet_without_policy }}"
+      - "{{ test_any_ethernet_secondary }}"
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          allowed_vlans: all
+          native_vlan: 1
+
+interface_group_ethernet_fixture_cleanup:
+  - switch_ip: "{{ test_switch_ip_primary }}"
+    interface_names:
+      - "{{ test_ethernet_custom }}"
+      - "{{ test_ethernet_policy }}"
+      - "{{ test_any_ethernet_primary }}"
+  - switch_ip: "{{ test_switch_ip_secondary }}"
+    interface_names:
+      - "{{ test_ethernet_without_policy }}"
+      - "{{ test_any_ethernet_secondary }}"
 
 # Match the nd_interface_vpc_trunk_host integration convention: one numeric
 # fixture identifier defines both local peer port-channels and the logical vPC
@@ -217,6 +257,7 @@ interface_group_test_prefix: "ANSIBLE-IG-"
 
 interface_group_names:
   any: "ANSIBLE-IG-ANY"
+  any_mixed_three_types: "ANSIBLE-IG-ANY-MIXED-THREE-TYPES"
   ethernet_custom: "ANSIBLE-IG-ETH-CUSTOM"
   ethernet_with_policy: "ANSIBLE-IG-ETH-POLICY"
   ethernet_without_policy: "ANSIBLE-IG-ETH-NO-POLICY"
@@ -232,6 +273,7 @@ interface_group_names:
 
 interface_group_reserved_names:
   - "{{ interface_group_names.any }}"
+  - "{{ interface_group_names.any_mixed_three_types }}"
   - "{{ interface_group_names.ethernet_custom }}"
   - "{{ interface_group_names.ethernet_with_policy }}"
   - "{{ interface_group_names.ethernet_without_policy }}"
@@ -250,6 +292,7 @@ interface_group_reserved_names:
 
 interface_group_reserved_config:
   - interface_group_name: "{{ interface_group_names.any }}"
+  - interface_group_name: "{{ interface_group_names.any_mixed_three_types }}"
   - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
   - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
   - interface_group_name: "{{ interface_group_names.ethernet_without_policy }}"
@@ -419,10 +462,23 @@ interface_group_ethernet_with_policy_type:
   interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
   type: ethernetWithPolicy
   ethernet_attributes:
-    admin_status: true
+    admin_state: true
+    allowed_vlans: none
+    auto_negotiate: true
+    bpdu_guard: default
     cdp: true
+    description: Ansible shared Ethernet policy
+    duplex_mode: auto
+    extra_config: ''
     mtu: jumbo
-    trunk_allowed_vlans: none
+    native_vlan: 1
+    netflow: false
+    netflow_monitor: ''
+    netflow_sampler: ''
+    orphan_port: false
+    port_type_edge: false
+    port_type_edge_trunk: true
+    speed: auto
 
 interface_group_ethernet_without_policy_type:
   interface_group_name: "{{ interface_group_names.ethernet_without_policy }}"
@@ -484,6 +540,22 @@ interface_group_any_members:
     - switch_id: "{{ test_switch_id_secondary }}"
       interface_names:
         - "{{ test_any_ethernet_secondary }}"
+        - "{{ test_any_port_channel }}"
+
+# Manage 1.1.411 lists all three kinds for an ``any`` group, but the target
+# controller rejects a vPC member combined with Ethernet or port-channel
+# members. This fixture verifies that the module rejects the unsupported
+# three-way combination atomically before any write request.
+interface_group_any_mixed_three_types:
+  interface_group_name: "{{ interface_group_names.any_mixed_three_types }}"
+  type: any
+  switch_interfaces:
+    - switch_id: "{{ test_switch_id }}"
+      interface_names:
+        - "{{ test_any_ethernet_primary }}"
+        - "{{ test_vpc_interface }}"
+    - switch_id: "{{ test_switch_id_secondary }}"
+      interface_names:
         - "{{ test_any_port_channel }}"
 
 interface_group_vpc_member:

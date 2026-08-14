@@ -67,7 +67,10 @@ options:
           O(state=overridden).
         - May be omitted only when O(state=merged) additively updates an existing group
           identified by O(config.interface_group_name); the existing group supplies its type.
-        - C(any) accepts Ethernet, port-channel, or vPC member interfaces.
+        - C(any) accepts Ethernet and port-channel member interfaces together,
+          or vPC member interfaces by themselves. The controller rejects vPC
+          members combined with either of the other member kinds, so the module
+          fails that combination before making any write request.
         - C(ethernetWithoutPolicy) accepts Ethernet interfaces but does not apply shared
           Ethernet attributes to them. Membership alone does not change member interface
           configuration; associated networks can still add VLAN bindings to those members.
@@ -79,6 +82,18 @@ options:
         - ethernetWithoutPolicy
         - portChannel
         - vpc
+      description:
+        description:
+        - Description of the Interface Group.
+        - This describes the group itself. For the description applied to member
+          interfaces, use O(config.ethernet_attributes.description).
+        - Manage 1.1.411 declares this field, but the target controller silently
+          drops it on both create and update and omits it from readback. Write
+          states therefore reject it before mutation to prevent a permanently
+          non-idempotent configuration.
+        - With O(state=gathered), this remains an exact-description filter for
+          controller data that includes the field.
+        type: str
       networks:
         description:
         - Names of existing NDFC networks associated with this Interface Group.
@@ -152,37 +167,37 @@ options:
           returned shared Ethernet settings.
         type: dict
         suboptions:
-          admin_status:
+          admin_state:
             description:
             - Administrative state of member interfaces.
             type: bool
-          auto_negotiation:
+          allowed_vlans:
             description:
-            - Ethernet auto-negotiation setting.
+            - Allowed VLANs as C(all), C(none), individual VLAN IDs, ranges, or
+              comma-separated combinations. VLAN IDs must be in the range 1 through 4094.
             type: str
-            choices: [ 'on', 'off' ]
+          auto_negotiate:
+            description:
+            - Whether Ethernet speed auto-negotiation is enabled.
+            type: bool
           bpdu_guard:
             description:
             - Spanning Tree BPDU Guard setting.
             type: str
-            choices: [ enabled, disabled, default ]
+            choices: [ enable, disable, default ]
           cdp:
             description:
             - Whether Cisco Discovery Protocol is enabled.
             type: bool
           description:
             description:
-            - Interface description applied to members. The maximum length is
-              254 ASCII characters.
+            - Interface description applied to members. The value must contain
+              1 to 254 ASCII characters.
             type: str
           extra_config:
             description:
             - Additional interface configuration commands.
             type: str
-          fex:
-            description:
-            - Whether the group is used for a Fabric Extender connection.
-            type: bool
           mtu:
             description:
             - Interface maximum transmission unit profile.
@@ -204,22 +219,22 @@ options:
             description:
             - NetFlow sampler name.
             type: str
-          port_duplex_mode:
+          duplex_mode:
             description:
             - Interface duplex mode.
             type: str
             choices: [ auto, full, half ]
-          port_type_fast:
+          orphan_port:
             description:
-            - Whether Spanning Tree edge trunk behavior is enabled.
+            - Whether member interfaces are vPC orphan ports.
             type: bool
-          ptp:
+          port_type_edge:
             description:
-            - Whether Precision Time Protocol is enabled.
+            - Whether the Interface Group is used for Fabric Extender ports.
             type: bool
-          ptp_timestamp_tagging:
+          port_type_edge_trunk:
             description:
-            - Whether Precision Time Protocol timestamp tagging is enabled.
+            - Whether Spanning Tree edge-trunk behavior is enabled.
             type: bool
           speed:
             description:
@@ -240,15 +255,6 @@ options:
             - 200Gb
             - 400Gb
             - 800Gb
-          trunk_allowed_vlans:
-            description:
-            - Allowed VLANs as C(all), C(none), individual VLAN IDs, ranges, or
-              comma-separated combinations.
-            type: str
-          vpc_orphan_port:
-            description:
-            - Whether member interfaces are vPC orphan ports.
-            type: bool
       deploy:
         description:
         - Resource-level deployment decision for this Interface Group.
@@ -298,6 +304,10 @@ extends_documentation_fragment:
 notes:
 - Supported Interface Group types are C(any), C(ethernetCustom), C(ethernetWithPolicy),
   C(ethernetWithoutPolicy), C(portChannel), and C(vpc).
+- The module contract is aligned with Manage API OpenAPI version C(1.1.411).
+  The three convenient Ethernet types are translated on the wire to
+  C(type=ethernet) with C(policyDetails.policyType=userDefinedSharedTrunk),
+  C(sharedTrunkHost), or C(none), respectively.
 - A switch interface can belong to only one Interface Group. Under O(state=merged), attempting
   to add a member owned by another group fails because merged is additive. O(state=replaced) and
   O(state=overridden) can move it when the source group's desired membership removes it.
@@ -348,6 +358,35 @@ EXAMPLES = r"""
       deploy: false
       type: switch
     state: replaced
+
+- name: Create a shared-policy Ethernet Interface Group with Manage 1.1.411 attributes
+  cisco.nd.nd_manage_interface_group:
+    fabric_name: fabric-1
+    config:
+      - interface_group_name: server-ethernet-ports
+        type: ethernetWithPolicy
+        ethernet_attributes:
+          admin_state: true
+          allowed_vlans: 100-120,200
+          auto_negotiate: true
+          bpdu_guard: enable
+          cdp: true
+          description: Managed by Ansible
+          duplex_mode: auto
+          mtu: jumbo
+          native_vlan: 100
+          orphan_port: false
+          port_type_edge: false
+          port_type_edge_trunk: true
+          speed: auto
+        switch_interfaces:
+          - switch_id: FDO12345678
+            interface_names:
+              - Ethernet1/10
+    config_actions:
+      type: resource
+      deploy: true
+    state: merged
 
 - name: Delete Interface Groups
   cisco.nd.nd_manage_interface_group:

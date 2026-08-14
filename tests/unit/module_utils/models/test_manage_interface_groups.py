@@ -202,15 +202,19 @@ def test_manage_interface_groups_model_00030() -> None:
     model = InterfaceGroupConfigModel.from_response(
         {
             "interfaceGroupName": "eth-group",
-            "type": "ethernetWithPolicy",
+            "type": "ethernet",
+            "description": "Server-facing Ethernet group",
             "interfaceGroupAssociation": {
                 "networkNames": ["net2", "net1"],
                 "switchInterfaces": [{"switchId": "SN1", "interfaceNames": ["eth1/2", "Ethernet1/1"]}],
             },
-            "ethernetAttributes": {"adminStatus": True},
+            "policyDetails": {
+                "policyId": "POLICY-SHARED-1",
+                "policyType": "sharedTrunkHost",
+                "ethernetAttributes": {"adminState": True},
+            },
             "interfaceCount": 2,
             "networkCount": 2,
-            "policyId": "POLICY-SHARED-1",
         }
     )
 
@@ -220,6 +224,7 @@ def test_manage_interface_groups_model_00030() -> None:
         "Ethernet1/2",
     ]
     gathered_config = model.to_config()
+    assert gathered_config["description"] == "Server-facing Ethernet group"
     assert gathered_config["networks"] == ["net1", "net2"]
     assert "network_names" not in gathered_config
     assert "interface_count" not in gathered_config
@@ -240,7 +245,7 @@ def test_manage_interface_groups_model_00035() -> None:
 
     - Derive ethernetWithPolicy from type=ethernet and policyDetails.
     - Flatten the nested policy identifier and attributes.
-    - Translate live wire aliases and boolean auto-negotiation.
+    - Preserve the direct Manage 1.1.411 Ethernet attribute names and types.
     - Keep type=ethernet invalid for playbook input.
 
     ## Classes and Methods
@@ -271,12 +276,13 @@ def test_manage_interface_groups_model_00035() -> None:
     assert model.type == "ethernetWithPolicy"
     assert model.policy_id == "POLICY-SHARED-3215880"
     assert model.ethernet_attributes.to_payload() == {
-        "adminStatus": True,
-        "autoNegotiation": "on",
-        "portDuplexMode": "auto",
-        "portTypeFast": True,
-        "trunkAllowedVlans": "none",
-        "vPCOrphanPort": False,
+        "adminState": True,
+        "allowedVlans": "none",
+        "autoNegotiate": True,
+        "duplexMode": "auto",
+        "orphanPort": False,
+        "portTypeEdge": False,
+        "portTypeEdgeTrunk": True,
     }
 
     policyless = InterfaceGroupConfigModel.from_response(
@@ -288,8 +294,17 @@ def test_manage_interface_groups_model_00035() -> None:
     )
     assert policyless.type == "ethernetWithoutPolicy"
 
-    legacy_policyless = InterfaceGroupConfigModel.from_response({"interfaceGroupName": "legacy-no-policy", "type": "ethernet"})
-    assert legacy_policyless.type == "ethernetWithoutPolicy"
+    with pytest.raises(ValidationError, match=r"policyDetails\.policyType"):
+        InterfaceGroupConfigModel.from_response({"interfaceGroupName": "missing-policy-details", "type": "ethernet"})
+
+    with pytest.raises(ValidationError, match=r"policyDetails\.policyType"):
+        InterfaceGroupConfigModel.from_response(
+            {
+                "interfaceGroupName": "unknown-policy-type",
+                "type": "ethernet",
+                "policyDetails": {"policyType": "futurePolicyType"},
+            }
+        )
 
     with pytest.raises(ValidationError):
         InterfaceGroupConfigModel.from_config({"interface_group_name": "invalid-input", "type": "ethernet"})
@@ -394,7 +409,7 @@ def test_manage_interface_groups_model_00060() -> None:
             {
                 "interface_group_name": "group1",
                 "type": "ethernetWithoutPolicy",
-                "ethernet_attributes": {"adminStatus": True},
+                "ethernet_attributes": {"admin_state": True},
             }
         )
 
@@ -420,26 +435,26 @@ def test_manage_interface_groups_model_00070() -> None:
             "interface_group_name": "group1",
             "type": "ethernetWithPolicy",
             "ethernet_attributes": {
-                "admin_status": True,
-                "auto_negotiation": "off",
+                "admin_state": True,
+                "auto_negotiate": False,
                 "native_vlan": 200,
                 "speed": "25Gb",
-                "vpc_orphan_port": False,
+                "orphan_port": False,
             },
         }
     )
     assert model.to_payload()["ethernetAttributes"] == {
-        "adminStatus": True,
-        "autoNegotiation": "off",
+        "adminState": True,
+        "autoNegotiate": False,
         "nativeVlan": 200,
+        "orphanPort": False,
         "speed": "25Gb",
-        "vPCOrphanPort": False,
     }
 
     for attributes in (
         {"unknown_attribute": True},
         {"native_vlan": 4095},
-        {"bpdu_guard": "enable"},
+        {"bpdu_guard": "enabled"},
     ):
         with pytest.raises(ValidationError):
             InterfaceGroupConfigModel.from_config(
@@ -449,6 +464,219 @@ def test_manage_interface_groups_model_00070() -> None:
                     "ethernet_attributes": attributes,
                 }
             )
+
+
+def test_manage_interface_groups_model_00072() -> None:
+    """Round-trip every shared Ethernet property defined by Manage 1.1.411."""
+    module_attributes = {
+        "admin_state": False,
+        "allowed_vlans": "1, 10-20, 4094",
+        "auto_negotiate": False,
+        "bpdu_guard": "disable",
+        "cdp": False,
+        "description": "Server-facing Ethernet interface",
+        "duplex_mode": "full",
+        "extra_config": "logging event port link-status",
+        "mtu": "default",
+        "native_vlan": 200,
+        "netflow": True,
+        "netflow_monitor": "MONITOR-L2",
+        "netflow_sampler": "SAMPLER-1",
+        "orphan_port": True,
+        "port_type_edge": True,
+        "port_type_edge_trunk": False,
+        "speed": "100Gb",
+    }
+    wire_attributes = {
+        "adminState": False,
+        "allowedVlans": "1,10-20,4094",
+        "autoNegotiate": False,
+        "bpduGuard": "disable",
+        "cdp": False,
+        "description": "Server-facing Ethernet interface",
+        "duplexMode": "full",
+        "extraConfig": "logging event port link-status",
+        "mtu": "default",
+        "nativeVlan": 200,
+        "netflow": True,
+        "netflowMonitor": "MONITOR-L2",
+        "netflowSampler": "SAMPLER-1",
+        "orphanPort": True,
+        "portTypeEdge": True,
+        "portTypeEdgeTrunk": False,
+        "speed": "100Gb",
+    }
+    model = InterfaceGroupConfigModel.from_config(
+        {
+            "interface_group_name": "ethernet-all-fields",
+            "type": "ethernetWithPolicy",
+            "description": "All 1.1.411 attributes",
+            "ethernet_attributes": module_attributes,
+        }
+    )
+
+    wire = InterfaceGroupsCreateRequestModel(interface_groups=[model]).to_payload()["interfaceGroups"][0]
+    assert wire == {
+        "interfaceGroupName": "ethernet-all-fields",
+        "type": "ethernet",
+        "description": "All 1.1.411 attributes",
+        "networkNames": [],
+        "switchInterfaces": [],
+        "policyDetails": {
+            "policyType": "sharedTrunkHost",
+            "ethernetAttributes": wire_attributes,
+        },
+    }
+
+    response = InterfaceGroupConfigModel.from_response(wire)
+    assert response.type == "ethernetWithPolicy"
+    assert response.description == "All 1.1.411 attributes"
+    assert response.to_config()["ethernet_attributes"] == {
+        **module_attributes,
+        "allowed_vlans": "1,10-20,4094",
+    }
+
+
+def test_manage_interface_groups_model_00074() -> None:
+    """Emit only the defaults explicitly documented by Manage 1.1.411."""
+    model = InterfaceGroupConfigModel.from_config(
+        {
+            "interface_group_name": "ethernet-defaults",
+            "type": "ethernetWithPolicy",
+        }
+    )
+
+    attributes = InterfaceGroupsCreateRequestModel(interface_groups=[model]).to_payload()["interfaceGroups"][0]["policyDetails"]["ethernetAttributes"]
+    assert attributes == {
+        "adminState": True,
+        "allowedVlans": "none",
+        "autoNegotiate": True,
+        "bpduGuard": "default",
+        "cdp": True,
+        "duplexMode": "auto",
+        "mtu": "jumbo",
+        "netflow": False,
+        "orphanPort": False,
+        "portTypeEdge": False,
+        "portTypeEdgeTrunk": True,
+        "speed": "auto",
+    }
+    assert not {
+        "adminStatus",
+        "autoNegotiation",
+        "fex",
+        "portDuplexMode",
+        "portTypeFast",
+        "ptp",
+        "ptpTimestampTagging",
+        "trunkAllowedVlans",
+        "vPCOrphanPort",
+    }.intersection(attributes)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (1, "1"),
+        ("none", "none"),
+        ("all", "all"),
+        ("1, 20-30, 4094", "1,20-30,4094"),
+        ("001-010", "1-10"),
+    ],
+)
+def test_manage_interface_groups_model_00076(value, expected: str) -> None:
+    """Normalize valid allowed-VLAN values, including integer controller echoes."""
+    response = InterfaceGroupConfigModel.from_response(
+        {
+            "interfaceGroupName": "allowed-vlans",
+            "type": "ethernet",
+            "policyDetails": {
+                "policyType": "sharedTrunkHost",
+                "ethernetAttributes": {"allowedVlans": value},
+            },
+        }
+    )
+    assert response.ethernet_attributes.allowed_vlans == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [True, "", 0, 4095, "200-100", "1,,2", "1-2-3", "one", "1;2"],
+)
+def test_manage_interface_groups_model_00077(value) -> None:
+    """Reject malformed or out-of-range allowed-VLAN expressions."""
+    with pytest.raises(ValidationError, match="allowed_vlans"):
+        InterfaceGroupConfigModel.from_config(
+            {
+                "interface_group_name": "invalid-vlans",
+                "type": "ethernetWithPolicy",
+                "ethernet_attributes": {"allowed_vlans": value},
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "removed_field",
+    [
+        "admin_status",
+        "auto_negotiation",
+        "fex",
+        "port_duplex_mode",
+        "port_type_fast",
+        "ptp",
+        "ptp_timestamp_tagging",
+        "trunk_allowed_vlans",
+        "vpc_orphan_port",
+    ],
+)
+def test_manage_interface_groups_model_00078(removed_field: str) -> None:
+    """Reject 1.1.332 Ethernet names that are not part of the target contract."""
+    with pytest.raises(ValidationError, match=removed_field):
+        InterfaceGroupConfigModel.from_config(
+            {
+                "interface_group_name": "old-schema-field",
+                "type": "ethernetWithPolicy",
+                "ethernet_attributes": {removed_field: True},
+            }
+        )
+
+
+def test_manage_interface_groups_model_00079() -> None:
+    """Enforce the Manage 1.1.411 nested Ethernet description bounds."""
+    for description in ("", "x" * 255, "interface description ☃"):
+        with pytest.raises(ValidationError):
+            InterfaceGroupConfigModel.from_config(
+                {
+                    "interface_group_name": "invalid-description",
+                    "type": "ethernetWithPolicy",
+                    "ethernet_attributes": {"description": description},
+                }
+            )
+
+
+def test_manage_interface_groups_model_00080() -> None:
+    """Treat a controller-echoed blank Ethernet description as unset."""
+    response = InterfaceGroupConfigModel.from_response(
+        {
+            "interfaceGroupName": "controller-default-description",
+            "type": "ethernet",
+            "policyDetails": {
+                "policyType": "sharedTrunkHost",
+                "ethernetAttributes": {
+                    "description": "",
+                    "extraConfig": "",
+                    "netflowMonitor": "",
+                    "netflowSampler": "",
+                },
+            },
+        }
+    )
+
+    assert response.ethernet_attributes.description is None
+    assert response.ethernet_attributes.extra_config == ""
+    assert response.ethernet_attributes.netflow_monitor == ""
+    assert response.ethernet_attributes.netflow_sampler == ""
+    assert "description" not in response.to_config()["ethernet_attributes"]
 
 
 def test_manage_interface_groups_model_00100() -> None:
@@ -481,7 +709,7 @@ def test_manage_interface_groups_model_00100() -> None:
     assert config_options["deploy"] == {"type": "bool"}
     assert config_options["networks"] == {"type": "list", "elements": "str"}
     assert "network_names" not in config_options
-    assert "description" not in config_options
+    assert config_options["description"] == {"type": "str"}
     assert "ticket_id" not in spec
     assert "cluster_name" not in spec
 
@@ -683,15 +911,18 @@ def test_manage_interface_groups_model_00150() -> None:
     existing = InterfaceGroupConfigModel.from_response(
         {
             "interfaceGroupName": "group1",
-            "type": "ethernetWithPolicy",
+            "type": "ethernet",
             "networkNames": ["net-a"],
             "switchInterfaces": [
                 {"switchId": "SN1", "interfaceNames": ["Ethernet1/1"]},
                 {"switchId": "SN2", "interfaceNames": ["Ethernet1/2"]},
             ],
-            "ethernetAttributes": {
-                "adminStatus": True,
-                "cdp": False,
+            "policyDetails": {
+                "policyType": "sharedTrunkHost",
+                "ethernetAttributes": {
+                    "adminState": True,
+                    "cdp": False,
+                },
             },
         }
     )
@@ -718,7 +949,7 @@ def test_manage_interface_groups_model_00150() -> None:
         ("SN3", ["Ethernet1/4"]),
     ]
     assert merged.ethernet_attributes.to_payload() == {
-        "adminStatus": True,
+        "adminState": True,
         "cdp": False,
         "netflow": True,
     }
@@ -785,21 +1016,23 @@ def test_manage_interface_groups_model_00155() -> None:
 
 
 def test_manage_interface_groups_model_00157() -> None:
-    """Reject the unreadable top-level description from module input."""
-    with pytest.raises(ValidationError, match="unsupported option.*description"):
-        InterfaceGroupModuleConfigModel.model_validate(
-            {
-                "fabric_name": "fabric1",
-                "state": "merged",
-                "config": [
-                    {
-                        "interface_group_name": "group1",
-                        "type": "portChannel",
-                        "description": "not part of the readable contract",
-                    }
-                ],
-            }
-        )
+    """Accept and serialize the top-level Interface Group description."""
+    module_config = InterfaceGroupModuleConfigModel.model_validate(
+        {
+            "fabric_name": "fabric1",
+            "state": "merged",
+            "config": [
+                {
+                    "interface_group_name": "group1",
+                    "type": "portChannel",
+                    "description": "Server-facing port channels",
+                }
+            ],
+        }
+    )
+
+    assert module_config.config[0].description == "Server-facing port channels"
+    assert module_config.config[0].to_payload()["description"] == "Server-facing port channels"
 
 
 def test_manage_interface_groups_model_00160() -> None:
@@ -875,9 +1108,9 @@ def test_manage_interface_groups_model_00205() -> None:
                     "interface_group_name": "ethernet-policy",
                     "type": "ethernetWithPolicy",
                     "ethernet_attributes": {
-                        "admin_status": False,
-                        "auto_negotiation": "off",
-                        "trunk_allowed_vlans": "100-200",
+                        "admin_state": False,
+                        "auto_negotiate": False,
+                        "allowed_vlans": "100-200",
                     },
                 }
             )
@@ -1111,6 +1344,7 @@ def test_manage_interface_groups_model_00210() -> None:
         {
             "interfaceGroups": [
                 {"type": "portChannel", "status": "success", "message": "created"},
+                {"type": "ethernet", "status": "success", "message": "created"},
                 {"type": "vpc", "status": "failed", "message": "member conflict"},
             ]
         }
@@ -1133,6 +1367,11 @@ def test_manage_interface_groups_model_00210() -> None:
     )
 
     assert [item.message for item in create.failures] == ["member conflict"]
+    assert [item.type for item in create.interface_groups] == [
+        "portChannel",
+        "ethernet",
+        "vpc",
+    ]
     assert [item.interface_group_name for item in delete.failures] == ["group2"]
 
 
@@ -1140,19 +1379,29 @@ def test_manage_interface_groups_model_00220() -> None:
     """
     # Summary
 
-    Verify list responses accept both documented controller response shapes.
+    Verify list responses accept the Manage 1.1.411 response wrapper.
 
     ## Test
 
-    - Parse interfaceGroupDetails.
-    - Flatten the type-specific example wrapper.
+    - Parse all entries under interfaceGroupDetails.
 
     ## Classes and Methods
 
     - InterfaceGroupsListResponseModel.from_response()
     """
-    documented = InterfaceGroupsListResponseModel.from_response({"interfaceGroupDetails": [{"interfaceGroupName": "group1", "type": "portChannel"}]})
-    example = InterfaceGroupsListResponseModel.from_response({"vpcInterfaceGroup": [{"interfaceGroupName": "group2", "type": "vpc"}]})
+    documented = InterfaceGroupsListResponseModel.from_response(
+        {
+            "interfaceGroupDetails": [
+                {"interfaceGroupName": "group1", "type": "portChannel"},
+                {
+                    "interfaceGroupName": "group2",
+                    "type": "ethernet",
+                    "policyDetails": {"policyType": "none"},
+                },
+            ],
+            "meta": {"counts": {"remaining": 0, "total": 2}},
+        }
+    )
 
-    assert [item.interface_group_name for item in documented.interface_group_details] == ["group1"]
-    assert [item.interface_group_name for item in example.interface_group_details] == ["group2"]
+    assert [item.interface_group_name for item in documented.interface_group_details] == ["group1", "group2"]
+    assert documented.interface_group_details[1].type == "ethernetWithoutPolicy"

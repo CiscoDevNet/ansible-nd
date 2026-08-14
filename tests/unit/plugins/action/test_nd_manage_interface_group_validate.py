@@ -77,17 +77,17 @@ def test_normalises_ethernet_attribute_aliases():
         {
             "interfaceGroupName": "ANSIBLE-IG-ETH-POLICY",
             "ethernetAttributes": {
-                "adminStatus": True,
+                "adminState": True,
                 "nativeVlan": 10,
-                "vPCOrphanPort": False,
+                "orphanPort": False,
             },
         }
     )
 
     assert model["ethernet_attributes"] == {
-        "admin_status": True,
+        "admin_state": True,
         "native_vlan": 10,
-        "vpc_orphan_port": False,
+        "orphan_port": False,
     }
 
 
@@ -136,7 +136,7 @@ def test_normalises_live_generic_ethernet_policy_shape():
                 "policyType": "sharedTrunkHost",
                 "ethernetAttributes": {
                     "adminState": True,
-                    "allowedVlans": "100-200",
+                    "allowedVlans": "100, 200-300",
                     "autoNegotiate": False,
                     "portTypeEdgeTrunk": True,
                 },
@@ -146,10 +146,10 @@ def test_normalises_live_generic_ethernet_policy_shape():
 
     assert model["type"] == "ethernetWithPolicy"
     assert model["ethernet_attributes"] == {
-        "admin_status": True,
-        "auto_negotiation": "off",
-        "port_type_fast": True,
-        "trunk_allowed_vlans": "100-200",
+        "admin_state": True,
+        "auto_negotiate": False,
+        "port_type_edge_trunk": True,
+        "allowed_vlans": "100,200-300",
     }
 
 
@@ -509,9 +509,9 @@ def test_subset_dictionary_comparison_detects_nested_mismatch(action_plugin):
     assert result["report"]["mismatches"][0]["field"] == "template_config"
 
 
-def test_unreadable_top_level_description_is_not_projected(action_plugin):
+def test_top_level_description_is_projected(action_plugin):
     actual = _group()
-    actual["description"] = "Controller write-only value"
+    actual["description"] = "Server-facing port channels"
     result = _run(
         action_plugin,
         nd_data={"current": actual},
@@ -523,7 +523,7 @@ def test_unreadable_top_level_description_is_not_projected(action_plugin):
     )
 
     assert result.get("failed", False) is False
-    assert "description" not in result["groups"][0]
+    assert result["groups"][0]["description"] == "Server-facing port channels"
 
 
 def test_consistent_count_invariant_validates_members_and_networks(action_plugin):

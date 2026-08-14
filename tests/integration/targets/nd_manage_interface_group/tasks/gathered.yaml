@@ -94,10 +94,10 @@
     config:
       - type: ethernetWithPolicy
         ethernet_attributes:
-          admin_status: true
+          admin_state: true
           cdp: true
           mtu: jumbo
-          trunk_allowed_vlans: none
+          allowed_vlans: none
     check_mode: false
     idempotency: false
     expected:
@@ -113,10 +113,10 @@
       - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
         type: ethernetWithPolicy
         ethernet_attributes:
-          admin_status: true
+          admin_state: true
           cdp: true
           mtu: jumbo
-          trunk_allowed_vlans: none
+          allowed_vlans: none
     mode: subset
     scope_prefix: "{{ interface_group_test_prefix }}"
   when: not ansible_check_mode
