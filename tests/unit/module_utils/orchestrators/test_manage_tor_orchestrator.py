@@ -48,7 +48,6 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator imp
 )
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
-
 # =============================================================================
 # Test harness
 # =============================================================================

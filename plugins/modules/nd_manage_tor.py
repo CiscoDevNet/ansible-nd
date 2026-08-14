@@ -9,7 +9,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_manage_tor
-version_added: "1.7.0"
+version_added: "2.0.0"
 short_description: Manage access or ToR switch associations on Cisco Nexus Dashboard
 description:
 - Manage access or ToR (Top of Rack) switch associations with aggregation or leaf switches on Cisco Nexus Dashboard (ND).
@@ -184,6 +184,77 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed, or in check mode would change, the ToR association configuration.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The existing ToR association configuration before the module ran.
+  - Switch identifiers are reported as serial numbers, regardless of whether a serial or a management IP was supplied.
+  - An empty list when no matching ToR association existed.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - fabric_name: nac-tme-fabric
+    access_or_tor_switch_id: 9WU9XPHL9SW
+    aggregation_or_leaf_switch_id: 98AFDSD8V0
+    access_or_tor_switch_name: tor-101
+after:
+  description:
+  - The ToR association configuration after the module ran.
+  - In check mode, the configuration that would result had the module run outside of check mode.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - fabric_name: nac-tme-fabric
+    access_or_tor_switch_id: 9WU9XPHL9SW
+    aggregation_or_leaf_switch_id: 98AFDSD8V0
+    access_or_tor_switch_name: tor-101
+    access_or_tor_port_channel_id: 501
+    aggregation_or_leaf_port_channel_id: 501
+diff:
+  description: The per-association difference between C(before) and C(after).
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - fabric_name: nac-tme-fabric
+    access_or_tor_switch_id: 9WU9XPHL9SW
+    aggregation_or_leaf_switch_id: 98AFDSD8V0
+    access_or_tor_port_channel_id: 501
+    aggregation_or_leaf_port_channel_id: 501
+proposed:
+  description:
+  - The configuration the module proposed to apply, before reconciliation with the controller.
+  - Any management IP address supplied for a switch is resolved to its serial number before this collection is built.
+  returned: when O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+  - fabric_name: nac-tme-fabric
+    access_or_tor_switch_id: 9WU9XPHL9SW
+    aggregation_or_leaf_switch_id: 98AFDSD8V0
+logs:
+  description: Internal diagnostic log messages collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample:
+  - "Querying existing ToR association configuration"
+msg:
+  description: A human-readable error message, present only when the module fails.
+  returned: on failure
+  type: str
+  sample: "Switch resolution failed: Could not resolve management IP 192.0.2.10 in fabric nac-tme-fabric"
 """
 
 from ansible.module_utils.basic import AnsibleModule
