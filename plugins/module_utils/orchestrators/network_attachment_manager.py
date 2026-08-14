@@ -237,12 +237,14 @@ class NetworkAttachmentManager:
         payloads = []
         for interface in interfaces:
             mapping_type = interface.get("mapping_type")
+            mode = interface.get("mode") or NetworkAttachmentMode.ACCESS.value
             payload = {
-                "mode": interface.get("mode") or NetworkAttachmentMode.ACCESS.value,
+                "mode": mode,
                 "interfaceRange": interface.get("interface_range"),
                 "interfaceGroupName": interface.get("interface_group_name"),
-                "nativeVlan": interface.get("native_vlan"),
             }
+            if mode == NetworkAttachmentMode.TRUNK.value:
+                payload["nativeVlan"] = interface.get("native_vlan")
             if mapping_type:
                 mapping = {"mappingType": mapping_type}
                 customer_vlan = interface.get("customer_vlan")

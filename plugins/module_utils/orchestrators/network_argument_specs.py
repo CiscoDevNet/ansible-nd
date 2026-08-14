@@ -10,6 +10,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
     NetworkLayer,
 )
 
+_VLAN_NETWORK_TYPE_CHOICES = [
+    "normal",
+    "private_primary",
+    "private_secondary_community",
+    "private_secondary_isolated",
+    "child",
+]
+
 
 def _dhcp_server_spec():
     return dict(
@@ -56,6 +64,8 @@ def _shared_network_fields(defaults=True):
     return dict(
         network_id=dict(type="int"),
         vlan_id=dict(type="int"),
+        vlan_network_type=dict(type="str", choices=_VLAN_NETWORK_TYPE_CHOICES),
+        primary_network_id=dict(type="int"),
         vlan_name=dict(type="str"),
         gateway_ipv4_address=dict(type="str"),
         gateway_ipv6_address=dict(type="str"),

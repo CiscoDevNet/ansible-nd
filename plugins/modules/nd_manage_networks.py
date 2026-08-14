@@ -100,7 +100,11 @@ options:
             elements: dict
             suboptions:
               mode:
-                description: Interface mode.
+                description:
+                  - Interface mode.
+                  - C(normal) and C(child) Networks allow C(access), C(dot1qTunnel), and C(trunk).
+                  - C(private_primary) Networks allow C(promiscuous) and C(trunkPromiscuous).
+                  - C(private_secondary_community) and C(private_secondary_isolated) Networks allow C(host) and C(trunkSecondary).
                 type: str
                 required: true
                 choices: [ access, dot1qTunnel, trunk, promiscuous, trunkPromiscuous, host, trunkSecondary ]
@@ -109,18 +113,28 @@ options:
                 type: str
                 required: true
               interface_group_name:
-                description: Interface group name.
+                description:
+                  - Interface group name.
+                  - Supported only with C(mode=access) or C(mode=trunk).
                 type: str
               native_vlan:
-                description: Whether this is a native VLAN attachment.
+                description:
+                  - Whether this is a native VLAN attachment.
+                  - Supported only with C(mode=trunk).
+                  - Cannot be combined with C(mapping_type=single).
                 type: bool
                 default: false
               mapping_type:
-                description: VLAN mapping type.
+                description:
+                  - VLAN mapping type.
+                  - Supported only with C(mode=trunk).
+                  - C(single) requires C(customer_vlan) and cannot be combined with C(native_vlan=true).
                 type: str
                 choices: [ none, single ]
               customer_vlan:
-                description: Customer VLAN.
+                description:
+                  - Customer VLAN.
+                  - Supported only with C(mapping_type=single).
                 type: int
           deploy:
             description: Per-attachment deploy flag.
@@ -160,6 +174,17 @@ options:
         type: int
       vlan_id:
         description: VLAN ID.
+        type: int
+      vlan_network_type:
+        description:
+          - VLAN network type.
+          - C(normal) and C(child) Networks allow C(access), C(dot1qTunnel), and C(trunk) attachment interface modes.
+          - C(private_primary) Networks allow C(promiscuous) and C(trunkPromiscuous) attachment interface modes.
+          - C(private_secondary_community) and C(private_secondary_isolated) Networks allow C(host) and C(trunkSecondary) attachment interface modes.
+        type: str
+        choices: [ normal, private_primary, private_secondary_community, private_secondary_isolated, child ]
+      primary_network_id:
+        description: Primary Network ID used by private secondary Networks.
         type: int
       vlan_name:
         description: VLAN name.

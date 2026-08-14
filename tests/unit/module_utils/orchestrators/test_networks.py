@@ -2570,7 +2570,6 @@ def test_planned_attach_payloads_ignore_api_empty_defaults():
                 {
                     "mode": "access",
                     "interfaceRange": "Ethernet1/10",
-                    "nativeVlan": False,
                 }
             ],
         }
@@ -2603,7 +2602,6 @@ def test_planned_attach_payloads_detect_real_interface_change():
             {
                 "mode": "access",
                 "interfaceRange": "Ethernet1/11",
-                "nativeVlan": False,
             }
         ],
     }
