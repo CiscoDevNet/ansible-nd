@@ -106,19 +106,6 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         "extra_config",
     }
 
-    @staticmethod
-    def gathered_transform(item: dict) -> dict:
-        """
-        Recombine interface_name back into interface_names for gathered output.
-
-        This is the inverse of expand_config which splits interface_names into
-        interface_name on the way in. Lives on the shared ethernet base so both
-        ethernet_access and ethernet_trunk_host get it automatically.
-        """
-        if "interface_name" in item:
-            item["interface_names"] = [item.pop("interface_name")]
-        return item
-
     # Policy types a create/update may OVERWRITE on an existing interface: the host-facing ethernet policy types a user can create
     # through the ND 4.2.1 create-side OpenAPI discriminators (`createInterfaceEthernet{Trunk,Access,Routed,Pvlan,Dot1qTunnel,
     # Unmanaged}{Nexus,Xe}Type`, `policyType` mappings), minus `userDefined` and minus the fabric-provisioned types those mappings also
@@ -953,30 +940,6 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def _switches_to_query(self) -> dict[str, str]:
-        """
-        # Summary
-
-        Return the `{switch_ip: switch_id}` subset that `query_all` should scan.
-
-        For `state: overridden` the scope is fabric-wide, so the full switch map is returned. For every other state
-        the state machine only consults existing interfaces identified by `switch_ip` values present in the user
-        config, so only those switches are returned. This keeps the interface-list request count proportional to
-        config size rather than fabric size.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - Via `FabricContext.switch_map` if the switches API query fails.
-        """
-        switch_map = self.fabric_context.switch_map
-        if self.rest_send.params.get("state") in ("overridden", "gathered"):
-            return switch_map
-        config_items = self.rest_send.params.get("config") or []
-        config_ips = {item.get("switch_ip") for item in config_items if item.get("switch_ip")}
-        return {ip: sid for ip, sid in switch_map.items() if ip in config_ips}
-
     def query_all(self, model_instance: ModelType | None = None, gathered_filters: list[dict] | None = None, **kwargs) -> ResponseType:
         """
         # Summary
@@ -984,8 +947,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         Validate the fabric context and query interfaces, filtering for ethernet interfaces with policy types
         managed by this orchestrator (as defined by `_managed_policy_types()`).
 
-        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
-        and limited to switches named in the user config for all other states.
+        For management states, switches are determined by `_switches_to_query`: fabric-wide for
+        `state: overridden`, config-scoped for others. For `state: gathered`, the query plan is
+        built from gathered filters via `_build_gathered_query_plan`.
 
         Port-channel member interfaces are included in the results (they exist on the switch and need to be visible
         for port-channel restriction checks in `create` / `update`). `delete_bulk` skips PC members when invoked

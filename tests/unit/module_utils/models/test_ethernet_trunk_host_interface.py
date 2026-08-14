@@ -2158,3 +2158,14 @@ def test_ethernet_trunk_host_interface_01280():
     assert ("interfaceType", "ethernet") in spec.base_terms
     assert ("policyType", "trunkHost") in spec.base_terms
     assert spec.field_map == {("interface_name",): "interfaceName"}
+
+
+def test_ethernet_trunk_host_interface_01290():
+    """Verify gathered output uses the module's plural interface_names field."""
+    instance = EthernetTrunkHostInterfaceModel(switch_ip="192.168.1.1", interface_name="Ethernet1/1")
+
+    gathered = instance.to_gathered_config()
+
+    assert gathered["switch_ip"] == "192.168.1.1"
+    assert gathered["interface_names"] == ["Ethernet1/1"]
+    assert "interface_name" not in gathered

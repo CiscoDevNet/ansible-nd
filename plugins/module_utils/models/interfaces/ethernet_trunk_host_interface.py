@@ -536,6 +536,14 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
 
         return normalized
 
+    def to_gathered_config(self, **kwargs: Any) -> dict[str, Any]:
+        """Return gathered output in the module's grouped input shape."""
+        config = super().to_gathered_config(**kwargs)
+        interface_name = config.pop("interface_name", None)
+        if interface_name is not None:
+            config["interface_names"] = [interface_name]
+        return config
+
     # --- Argument Spec ---
 
     @classmethod

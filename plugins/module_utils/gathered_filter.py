@@ -71,6 +71,7 @@ def build_lucene_expressions(
     can union and deduplicate their responses to preserve gathered-state OR
     semantics without relying on endpoint-specific Lucene OR support.
     """
+    # TODO(4.2.1) interface-lucene-or-silently-empty
     filter_items = filters or [{}]
     expressions: list[str] = []
 

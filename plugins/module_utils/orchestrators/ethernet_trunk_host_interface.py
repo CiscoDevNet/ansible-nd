@@ -129,6 +129,4 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         result = super().query_all(model_instance=model_instance, gathered_filters=gathered_filters, **kwargs)
         if not isinstance(result, list):
             return result
-        if self.rest_send.params.get("state") == "gathered":
-            return result
         return [iface for iface in result if not self._is_unconfigured_default(iface)]
