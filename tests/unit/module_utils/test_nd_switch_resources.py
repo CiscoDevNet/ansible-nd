@@ -47,6 +47,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch
     _request_with_retry_policy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.fabric_switch_capabilities import (
+    CAPABILITY_BY_FABRIC_TYPE,
+    SUPPORTED_SWITCH_ONBOARDING_FABRIC_TYPES,
     SwitchFabricCapabilityError,
     validate_switch_configs_for_fabric_type,
 )
@@ -560,28 +562,12 @@ def test_switch_config_rejects_explicit_null_role():
         _cfg(role=None)
 
 
-def test_fabric_capability_validation_rejects_external_without_preserve_config():
-    """External fabrics require brownfield preserve_config=true."""
-    with pytest.raises(SwitchFabricCapabilityError, match="preserve_config 'false' is not supported for External"):
-        validate_switch_configs_for_fabric_type(
-            "EXT1",
-            "externalConnectivity",
-            [_cfg(preserve_config=False)],
-        )
-
-
 @pytest.mark.parametrize(
     ("fabric_type", "expected"),
     [
-        ("routed", False),
         ("vxlanCampus", False),
         ("vxlanIbgp", True),
         ("vxlanEbgp", False),
-        ("aimlVxlanIbgp", True),
-        ("aimlVxlanEbgp", False),
-        ("aimlRouted", False),
-        ("externalConnectivity", True),
-        ("enhancedClassicLan", True),
     ],
 )
 def test_fabric_capability_validation_derives_omitted_preserve_config(fabric_type, expected):
@@ -596,12 +582,11 @@ def test_fabric_capability_validation_derives_omitted_preserve_config(fabric_typ
 @pytest.mark.parametrize(
     ("fabric_type", "family"),
     [
-        ("vxlanEbgp", "DataCenter VXLAN eBGP"),
-        ("aimlVxlanEbgp", "AI VXLAN eBGP"),
+        ("vxlanEbgp", "Data Center VXLAN eBGP"),
     ],
 )
 def test_fabric_capability_validation_rejects_ebgp_preserve_config_true(fabric_type, family):
-    """DataCenter and AI VXLAN eBGP fabrics reject brownfield preserve_config=true."""
+    """Data Center VXLAN eBGP fabrics reject brownfield preserve_config=true."""
     with pytest.raises(SwitchFabricCapabilityError, match=f"preserve_config 'true' is not supported for {family}"):
         validate_switch_configs_for_fabric_type(
             "FAB1",
@@ -610,24 +595,33 @@ def test_fabric_capability_validation_rejects_ebgp_preserve_config_true(fabric_t
         )
 
 
-@pytest.mark.parametrize("fabric_type", ["vxlan", "aimlVxlan"])
-def test_fabric_capability_validation_rejects_non_concrete_vxlan_fabric_types(fabric_type):
-    """Generic VXLAN aliases are not concrete standalone fabric types for switch onboarding."""
-    with pytest.raises(SwitchFabricCapabilityError, match=f"does not support fabric type '{fabric_type}'"):
+def test_fabric_capability_validation_rejects_matrix_entries_outside_exposure_gate():
+    """Matrix entries outside the explicit exposure gate are blocked."""
+    gated_fabric_types = sorted(set(CAPABILITY_BY_FABRIC_TYPE).difference(SUPPORTED_SWITCH_ONBOARDING_FABRIC_TYPES))
+
+    assert gated_fabric_types
+    for fabric_type in gated_fabric_types:
+        with pytest.raises(
+            SwitchFabricCapabilityError,
+            match="currently supports switch onboarding only for these fabric families: Campus VXLAN, Data Center VXLAN eBGP, Data Center VXLAN iBGP",
+        ):
+            validate_switch_configs_for_fabric_type(
+                "FAB1",
+                fabric_type,
+                [_cfg_without_role()],
+            )
+
+
+def test_fabric_capability_validation_rejects_unknown_fabric_type():
+    """Fabric types outside the matrix and exposure gate are blocked."""
+    with pytest.raises(
+        SwitchFabricCapabilityError,
+        match="currently supports switch onboarding only for these fabric families: Campus VXLAN, Data Center VXLAN eBGP, Data Center VXLAN iBGP",
+    ):
         validate_switch_configs_for_fabric_type(
             "FAB1",
-            fabric_type,
+            "futureFabricType",
             [_cfg_without_role()],
-        )
-
-
-def test_fabric_capability_validation_rejects_routed_non_nxos():
-    """Routed fabrics reject non-NX-OS platform types."""
-    with pytest.raises(SwitchFabricCapabilityError, match="platform_type 'ios-xe' is not supported for Routed"):
-        validate_switch_configs_for_fabric_type(
-            "ROUTED1",
-            "routed",
-            [_cfg(platform_type="ios-xe")],
         )
 
 

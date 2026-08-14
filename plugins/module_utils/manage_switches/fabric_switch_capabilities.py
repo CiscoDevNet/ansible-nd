@@ -92,7 +92,7 @@ AI_VXLAN_ROLES = frozenset(
 
 IPFM_ROLES = frozenset({SwitchRole.LEAF, SwitchRole.SPINE, SwitchRole.TIER2_LEAF})
 
-CAPABILITIES = (
+FABRIC_SWITCH_CAPABILITY_MATRIX = (
     FabricSwitchCapability(
         family="Routed",
         fabric_types=frozenset({"routed"}),
@@ -110,7 +110,7 @@ CAPABILITIES = (
         default_preserve_config=True,
     ),
     FabricSwitchCapability(
-        family="DataCenter VXLAN iBGP",
+        family="Data Center VXLAN iBGP",
         fabric_types=frozenset({"vxlanibgp"}),
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=BROAD_FABRIC_ROLES,
@@ -118,7 +118,7 @@ CAPABILITIES = (
         default_preserve_config=True,
     ),
     FabricSwitchCapability(
-        family="DataCenter VXLAN eBGP",
+        family="Data Center VXLAN eBGP",
         fabric_types=frozenset({"vxlanebgp"}),
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=BROAD_FABRIC_ROLES,
@@ -179,7 +179,20 @@ CAPABILITIES = (
     ),
 )
 
-CAPABILITY_BY_FABRIC_TYPE = {fabric_type.lower(): capability for capability in CAPABILITIES for fabric_type in capability.fabric_types}
+CAPABILITY_BY_FABRIC_TYPE = {fabric_type.lower(): capability for capability in FABRIC_SWITCH_CAPABILITY_MATRIX for fabric_type in capability.fabric_types}
+
+# This set is the exposure gate for nd_manage_switches switch onboarding.
+# The matrix above may know about future fabric families, but they must not
+# become module-supported just because their constraints are recorded. Add a
+# fabric type here only when that family is intentionally documented, tested,
+# and supported end-to-end.
+SUPPORTED_SWITCH_ONBOARDING_FABRIC_TYPES = frozenset(
+    {
+        "vxlanibgp",
+        "vxlanebgp",
+        "vxlancampus",
+    }
+)
 
 
 def _enum_values(values: frozenset[PlatformType] | frozenset[SwitchRole]) -> str:
@@ -232,10 +245,18 @@ def capability_for_fabric_type(fabric_type: str) -> FabricSwitchCapability:
     """
     normalized = _normalize_fabric_type(fabric_type)
     capability = CAPABILITY_BY_FABRIC_TYPE.get(normalized)
-    if capability is None:
-        supported = ", ".join(sorted(capability.family for capability in CAPABILITIES))
+    supported_capabilities = [item for item in FABRIC_SWITCH_CAPABILITY_MATRIX if item.fabric_types & SUPPORTED_SWITCH_ONBOARDING_FABRIC_TYPES]
+    if normalized not in SUPPORTED_SWITCH_ONBOARDING_FABRIC_TYPES:
+        supported = ", ".join(sorted(capability.family for capability in supported_capabilities))
         raise SwitchFabricCapabilityError(
-            f"Switch capability validation does not support fabric type '{fabric_type}'. Supported fabric families: {supported}."
+            f"nd_manage_switches currently supports switch onboarding only for these fabric families: {supported}. "
+            f"Fabric type '{fabric_type}' is not supported."
+        )
+    if capability is None:
+        supported_types = ", ".join(sorted(SUPPORTED_SWITCH_ONBOARDING_FABRIC_TYPES))
+        raise SwitchFabricCapabilityError(
+            f"Switch capability validation does not have a matrix entry for supported fabric type '{fabric_type}'. "
+            f"Supported fabric type values: {supported_types}."
         )
     return capability
 

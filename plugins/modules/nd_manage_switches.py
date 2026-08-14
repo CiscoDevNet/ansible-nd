@@ -288,19 +288,16 @@ notes:
   default applies on add.
 - The module validates switch platform, provided C(role), and C(preserve_config)
   against the resolved fabric type before discovery or write operations.
-- NX-OS only fabrics - Routed, DataCenter VXLAN iBGP/eBGP, Enhanced Classic LAN,
-  AI VXLAN iBGP/eBGP, AI Routed.
-- NX-OS and IOS-XE fabrics - Campus VXLAN.
-- NX-OS, IOS-XE, IOS-XR, and other platform fabrics - External.
-- C(preserve_config) must be C(false) for Routed, Campus VXLAN, DataCenter
-  VXLAN eBGP, AI VXLAN eBGP, and AI Routed fabrics.
-- C(preserve_config) must be C(true) for External fabrics.
-- C(preserve_config) can be C(true) or C(false) for DataCenter VXLAN iBGP,
-  AI VXLAN iBGP, and Enhanced Classic LAN fabrics.
-- When C(preserve_config) is omitted, the module derives C(false) for Routed,
-  Campus VXLAN, DataCenter VXLAN eBGP, AI VXLAN eBGP, and AI Routed fabrics.
-  It derives C(true) for External, DataCenter VXLAN iBGP, AI VXLAN iBGP, and
-  Enhanced Classic LAN fabrics.
+- Supported fabric families are Data Center VXLAN iBGP/eBGP and Campus VXLAN.
+- Data Center VXLAN iBGP/eBGP supports NX-OS switches.
+- Campus VXLAN supports NX-OS and IOS-XE switches.
+- C(preserve_config) must be C(false) for Campus VXLAN and Data Center VXLAN
+  eBGP fabrics.
+- C(preserve_config) can be C(true) or C(false) for Data Center VXLAN iBGP
+  fabrics.
+- When C(preserve_config) is omitted, the module derives C(false) for Campus
+  VXLAN and Data Center VXLAN eBGP fabrics. It derives C(true) for Data Center
+  VXLAN iBGP fabrics.
 - Campus VXLAN supports C(leaf) and C(spine) roles for IOS-XE switches.
 - Campus VXLAN supports C(border_gateway), C(border_gateway_spine), and
   C(border_gateway_super_spine) roles for NX-OS switches.
