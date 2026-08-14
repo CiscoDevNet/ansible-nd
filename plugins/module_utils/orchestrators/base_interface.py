@@ -64,18 +64,15 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     interface_mode: ClassVar[str] = ""
 
     # Subclasses opt in to server-side gathered filtering by setting gathered_lucene_spec.
-    # _MAX_EXPRESSIONS_PER_SWITCH caps fan-out: beyond this threshold a single broad query
-    # is cheaper than N targeted ones; the local post-filter guarantees correctness.
+    # _MAX_EXPRESSIONS_PER_SWITCH caps per-switch fan-out and _MAX_TOTAL_REQUESTS caps fabric-wide
+    # fan-out: beyond these thresholds a single broad query is cheaper than N targeted ones;
+    # the local post-filter guarantees correctness.
     gathered_lucene_spec: ClassVar[Any] = None
     _MAX_EXPRESSIONS_PER_SWITCH: ClassVar[int] = 3
+    _MAX_TOTAL_REQUESTS: ClassVar[int] = 300
 
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
-
-    # Maximum Lucene expressions per switch before collapsing to the base query
-    # Beyond this threshold, a single broad query is cheaper than N targeted ones.
-    _MAX_EXPRESSIONS_PER_SWITCH: ClassVar[int] = 3
-    _MAX_TOTAL_REQUESTS: ClassVar[int] = 300
 
     def model_post_init(self, __context) -> None:
         """
@@ -354,8 +351,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         otherwise all switches in the fabric are queried.
 
         Per-switch fan-out capping: if more than ``_MAX_EXPRESSIONS_PER_SWITCH`` expressions accumulate
-        for one switch, they collapse to the base expression. The local post-filter guarantees correctness;
-        the server filter only reduces candidate volume.
+        for one switch, they collapse to the base expression. Fabric-wide filters are additionally budgeted
+        against ``_MAX_TOTAL_REQUESTS`` before being expanded across switches. The local post-filter
+        guarantees correctness; the server filter only reduces candidate volume.
 
         ## Raises
 
@@ -363,11 +361,15 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         - If a filter references a ``switch_ip`` that does not exist in the fabric.
         """
+        # TODO(4.2.1) interface-lucene-or-silently-empty
         switch_map = self.fabric_context.switch_map
         query_plan: dict[str, tuple[str, set[str]]] = {}
         base_expression = build_lucene_expressions(filters=[], spec=self.gathered_lucene_spec)[0]
 
         filter_items = gathered_filters or [{}]
+
+        fabric_wide_filters: list[dict] = []
+        switch_scoped_filters: list[tuple[str, str, dict]] = []
 
         for filter_item in filter_items:
             requested_switch_ip = filter_item.get("switch_ip")
@@ -377,32 +379,53 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                     raise ValueError(
                         f"Gathered filter references switch_ip '{requested_switch_ip}' " f"which does not exist in fabric '{self.fabric_context.fabric_name}'."
                     )
-                target_switches = {requested_switch_ip: switch_id}
+                switch_scoped_filters.append((requested_switch_ip, switch_id, filter_item))
             else:
-                target_switches = switch_map
+                fabric_wide_filters.append(filter_item)
 
-            expressions = build_lucene_expressions(
-                filters=[filter_item],
-                spec=self.gathered_lucene_spec,
-            )
+        if fabric_wide_filters:
+            fabric_wide_expressions: set[str] | None = set()
+            for expression in build_lucene_expressions(fabric_wide_filters, self.gathered_lucene_spec):
+                if expression == base_expression:
+                    fabric_wide_expressions = {base_expression}
+                    break
+                fabric_wide_expressions.add(expression)
 
-            for switch_ip, switch_id in target_switches.items():
-                if switch_ip not in query_plan:
-                    query_plan[switch_ip] = (switch_id, set())
+            # Budget the fabric-wide fan-out before expanding it across every switch.
+            if len(switch_map) * len(fabric_wide_expressions) > self._MAX_TOTAL_REQUESTS:
+                fabric_wide_expressions = {base_expression}
+        else:
+            fabric_wide_expressions = None
 
-                planned_expressions = query_plan[switch_ip][1]
-                for expression in expressions:
-                    if expression == base_expression:
-                        planned_expressions.clear()
-                        planned_expressions.add(base_expression)
-                    elif base_expression not in planned_expressions:
-                        planned_expressions.add(expression)
+        if fabric_wide_expressions is not None:
+            for switch_ip, switch_id in switch_map.items():
+                query_plan[switch_ip] = (switch_id, set(fabric_wide_expressions))
+
+        for switch_ip, switch_id, filter_item in switch_scoped_filters:
+            if switch_ip not in query_plan:
+                query_plan[switch_ip] = (switch_id, set())
+            planned_expressions = query_plan[switch_ip][1]
+            for expression in build_lucene_expressions([filter_item], self.gathered_lucene_spec):
+                if expression == base_expression:
+                    planned_expressions.clear()
+                    planned_expressions.add(base_expression)
+                elif base_expression not in planned_expressions:
+                    planned_expressions.add(expression)
 
         for switch_ip, (switch_id, expressions) in query_plan.items():
             if len(expressions) > self._MAX_EXPRESSIONS_PER_SWITCH:
                 expressions.clear()
                 expressions.add(base_expression)
         return query_plan
+
+    def _configure_lucene_endpoint(self, api_endpoint) -> None:
+        """
+        Hook for subclasses to set endpoint-specific params before a Lucene query.
+
+        The default implementation is a no-op. Loopback overrides this to set
+        ``config_only = False`` because the full config is needed for local filtering.
+        """
+        pass
 
     def _query_interfaces_with_lucene(self, switch_id: str, expression: str) -> list[dict]:
         """
@@ -429,6 +452,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                 self.query_all_endpoint(),
                 switch_sn=switch_id,
             )
+            self._configure_lucene_endpoint(api_endpoint)
             api_endpoint.lucene_params.filter = expression
             api_endpoint.lucene_params.max = page_size
             api_endpoint.lucene_params.offset = offset

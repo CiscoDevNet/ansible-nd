@@ -8,9 +8,7 @@
 Unit tests for module_utils/utils.py helpers.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 from ansible_collections.cisco.nd.plugins.module_utils.utils import prune_to_spec
 
