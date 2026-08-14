@@ -12,17 +12,17 @@ and output/diff stripping, while the value is kept in the controller payload.
 
 from __future__ import annotations
 
-from typing import ClassVar, List, Optional
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
 
 class _DemoModel(NDBaseModel):
-    identifiers: ClassVar[Optional[List[str]]] = ["name"]
+    identifiers: ClassVar[list[str] | None] = ["name"]
     identifier_strategy: ClassVar[str] = "single"
-    name: Optional[str] = None
-    password: Optional[str] = Field(default=None, json_schema_extra={"secret": True}, alias="pwd")
+    name: str | None = None
+    password: str | None = Field(default=None, json_schema_extra={"secret": True}, alias="pwd")
 
 
 class TestBaseSecretHandling:

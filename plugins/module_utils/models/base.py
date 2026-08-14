@@ -169,7 +169,7 @@ class NDBaseModel(BaseModel, ABC):
         return result
 
     @classmethod
-    def secret_field_keys(cls, by_alias: bool = False) -> Set[str]:
+    def secret_field_keys(cls, by_alias: bool = False) -> set[str]:
         """Names of fields tagged ``json_schema_extra={"secret": True}``.
 
         Aliases when ``by_alias`` is True (payload shape), else Python field
@@ -177,7 +177,7 @@ class NDBaseModel(BaseModel, ABC):
         are secret, used both to keep them out of output and to register their
         values for ``no_log`` masking.
         """
-        keys: Set[str] = set()
+        keys: set[str] = set()
         for field_name, field_info in cls.model_fields.items():
             extra = field_info.json_schema_extra
             if isinstance(extra, dict) and extra.get("secret"):
@@ -185,7 +185,7 @@ class NDBaseModel(BaseModel, ABC):
         return keys
 
     @classmethod
-    def collect_secret_values(cls, config_item: Dict[str, Any]) -> Set[str]:
+    def collect_secret_values(cls, config_item: dict[str, Any]) -> set[str]:
         """Secret string values in a raw Ansible config item, for no_log masking.
 
         Ansible auto-masks ``no_log`` argument-spec params, but not values in
@@ -196,7 +196,7 @@ class NDBaseModel(BaseModel, ABC):
         Default: top-level fields tagged secret. Models with secrets nested in a
         free-form dict (e.g. links ``template_inputs``) override to add those.
         """
-        values: Set[str] = set()
+        values: set[str] = set()
         if not isinstance(config_item, dict):
             return values
         for key in cls.secret_field_keys(by_alias=False):
