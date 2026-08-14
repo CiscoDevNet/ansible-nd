@@ -16,12 +16,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDE
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
 class _EpOneManageFabricsFabricNameBase(FabricNameMixin, NDEndpointBaseModel):
     """Base class for OneManage fabric endpoints."""
 
     proxy_path: str = Field(default="", description="Optional ND proxy prefix")
+
+    def set_identifiers(self, identifier: IdentifierKey = None):
+        self.fabric_name = identifier
 
     @property
     def _base_path(self) -> str:
@@ -172,3 +176,89 @@ class EpOneManageFabricsSwitchActionsDeployPost(_EpOneManageFabricsFabricNameBas
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.POST
+
+
+class EpOneManageFabricsPut(_EpOneManageFabricsFabricNameBase):
+    """PUT /api/v1/oneManage/manage/fabrics/{fabricName}."""
+
+    class_name: Literal["EpOneManageFabricsPut"] = Field(
+        default="EpOneManageFabricsPut",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        return self._base_path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.PUT
+
+
+class EpOneManageFabricsDelete(_EpOneManageFabricsFabricNameBase):
+    """DELETE /api/v1/oneManage/manage/fabrics/{fabricName}."""
+
+    class_name: Literal["EpOneManageFabricsDelete"] = Field(
+        default="EpOneManageFabricsDelete",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        return self._base_path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.DELETE
+
+
+class _EpOneManageFabricsCollectionBase(NDEndpointBaseModel):
+    """Base class for OneManage collection-level fabric endpoints (no fabric name)."""
+
+    proxy_path: str = Field(default="", description="Optional ND proxy prefix")
+
+    @property
+    def _collection_path(self) -> str:
+        return BasePath.manage_fabrics(proxy_path=self.proxy_path)
+
+
+class EpOneManageFabricsPost(_EpOneManageFabricsCollectionBase):
+    """POST /api/v1/oneManage/manage/fabrics."""
+
+    class_name: Literal["EpOneManageFabricsPost"] = Field(
+        default="EpOneManageFabricsPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        return self._collection_path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpOneManageFabricsListGet(_EpOneManageFabricsCollectionBase):
+    """GET /api/v1/oneManage/manage/fabrics with optional category filter."""
+
+    class_name: Literal["EpOneManageFabricsListGet"] = Field(
+        default="EpOneManageFabricsListGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    category: str | None = Field(default=None, description="Filter by fabric category")
+
+    @property
+    def path(self) -> str:
+        if self.category:
+            return f"{self._collection_path}?category={self.category}"
+        return self._collection_path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.GET
