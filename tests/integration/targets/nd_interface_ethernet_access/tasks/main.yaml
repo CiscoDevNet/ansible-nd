@@ -8,7 +8,7 @@
 # --- Usage ---
 #
 # Run the test suite with ansible-test:
-#   ansible-test integration nd_interface_ethernet_access
+#   ansible-test network-integration nd_interface_ethernet_access
 #
 # --- Optional test variables ---
 #
@@ -57,6 +57,33 @@
     - name: Run nd_interface_ethernet_access deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
 
+    - name: Run ND 4.x Ethernet-access harness preflight
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_preflight.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_merged
+            - nd4x_demo_merged_fanout
+            - nd4x_demo_merged_split
+            - nd4x_demo_replaced
+            - nd4x_demo_deleted
+            - nd4x_demo_negative
+            - nd4x_demo_overridden
+            - nd4x_demo_destructive
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+        - nd4x_demo_merged_fanout
+        - nd4x_demo_merged_split
+        - nd4x_demo_replaced
+        - nd4x_demo_deleted
+        - nd4x_demo_negative
+        - nd4x_demo_overridden
+        - nd4x_demo_destructive
+
     - name: Run merged state test using ND 4.x demo harness
       ansible.builtin.include_tasks:
         file: nd4x_demo_merged.yaml
@@ -69,7 +96,23 @@
         - never
         - nd4x_demo
         - nd4x_demo_merged
-    
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run merged split-config test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged_split.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_merged
+            - nd4x_demo_merged_split
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+        - nd4x_demo_merged_split
+      when: nd4x_supported | default(false) | bool
 
     - name: Run merged fan-out test using ND 4.x demo harness
       ansible.builtin.include_tasks:
@@ -85,6 +128,7 @@
         - nd4x_demo
         - nd4x_demo_merged
         - nd4x_demo_merged_fanout
+      when: nd4x_supported | default(false) | bool
 
     - name: Run replaced state test using ND 4.x demo harness
       ansible.builtin.include_tasks:
@@ -98,6 +142,7 @@
         - never
         - nd4x_demo
         - nd4x_demo_replaced
+      when: nd4x_supported | default(false) | bool
 
     - name: Run deleted state test using ND 4.x demo harness
       ansible.builtin.include_tasks:
@@ -111,18 +156,37 @@
         - never
         - nd4x_demo
         - nd4x_demo_deleted
-    
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run negative validation test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_negative.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_negative
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_negative
+      when: nd4x_supported | default(false) | bool
+
     - name: Run overridden state test using ND 4.x demo harness
       ansible.builtin.include_tasks:
         file: nd4x_demo_overridden.yaml
         apply:
           tags:
             - never
-            - nd4x_demo
             - nd4x_demo_overridden
+            - nd4x_demo_destructive
       tags:
         - never
-        - nd4x_demo
         - nd4x_demo_overridden
+        - nd4x_demo_destructive
+      when: nd4x_supported | default(false) | bool
+  module_defaults:
+    cisco.nd.nd_interface_ethernet_access:
+      timeout: 300
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"

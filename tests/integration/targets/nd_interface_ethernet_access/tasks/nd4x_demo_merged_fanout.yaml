@@ -1,7 +1,7 @@
 ---
-- name: Run standardized nd_interface_ethernet_access merged fan-out test
+- name: Run nd_interface_ethernet_access merged fan-out harness tests
   block:
-    - name: "MERGED FAN-OUT SETUP: Reset Ethernet1/42 and Ethernet1/43"
+    - name: "MERGED FAN-OUT SETUP: Normalize reserved fan-out ports"
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
@@ -11,21 +11,21 @@
             interface_names:
               - Ethernet1/42
               - Ethernet1/43
+              - Ethernet1/45
+              - Ethernet1/46
+              - Ethernet1/47
         state: deleted
 
     - name: "MERGED FAN-OUT: Configure Ethernet1/42 and Ethernet1/43"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_interface_ethernet_access
         state: merged
-
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
           timeout: 300
-
         config:
           - "{{ ethernet_42_43 }}"
-
         expected:
           check_mode:
             changed: true
@@ -36,20 +36,13 @@
           idempotency:
             changed: false
             failed: false
-
-        check_mode_queries:
-          - name: Snapshot all managed interfaces on test switch
-            path: >-
-              /api/v1/manage/fabrics/{{ test_fabric_name
-              }}/switches/{{ test_switch_id }}/interfaces
-            expected_status: 200
-            unordered: true
-            ignore_keys:
-              - operData
-
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
         nd_queries:
           - name: Validate Ethernet1/42
-            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F42"
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F42
             method: get
             expected_status: 200
             expect:
@@ -60,10 +53,12 @@
               - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
                 equals: 200
               - jsonpath: "$.current.configData.networkOS.policy.description"
-                equals: "Ansible integration test access ports"
-
+                equals: Ansible integration test access ports
           - name: Validate Ethernet1/43
-            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F43"
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F43
             method: get
             expected_status: 200
             expect:
@@ -74,23 +69,10 @@
               - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
                 equals: 200
               - jsonpath: "$.current.configData.networkOS.policy.description"
-                equals: "Ansible integration test access ports"
-
+                equals: Ansible integration test access ports
       register: merged_fanout
 
-    - name: "MERGED FAN-OUT VERIFY: Verify both interfaces exist"
-      ansible.builtin.assert:
-        that:
-          - merged_fanout.first_run_result.after
-            | selectattr('interface_name', 'equalto', 'Ethernet1/42')
-            | list
-            | length == 1
-          - merged_fanout.first_run_result.after
-            | selectattr('interface_name', 'equalto', 'Ethernet1/43')
-            | list
-            | length == 1
-
-    - name: "MERGED FAN-OUT VERIFY: Verify both interface configurations"
+    - name: "MERGED FAN-OUT: Verify both interfaces"
       vars:
         ethernet_42_after: >-
           {{
@@ -107,38 +89,211 @@
       ansible.builtin.assert:
         that:
           - ethernet_42_after.config_data.network_os.policy.access_vlan == 200
+          - ethernet_43_after.config_data.network_os.policy.access_vlan == 200
           - ethernet_42_after.config_data.network_os.policy.description
             == "Ansible integration test access ports"
-          - ethernet_43_after.config_data.network_os.policy.access_vlan == 200
           - ethernet_43_after.config_data.network_os.policy.description
             == "Ansible integration test access ports"
-
-    - name: "MERGED FAN-OUT VERIFY: Verify harness idempotency"
-      ansible.builtin.assert:
-        that:
           - merged_fanout.idempotency_attempts == 1
-          - merged_fanout.second_run_result is defined
-          - merged_fanout.second_run_result.changed == false
-          - merged_fanout.second_run_result.failed
-            | default(false)
-            | bool == false
+          - not merged_fanout.second_run_result.changed | bool
+          - merged_fanout.nd_query_results | length == 2
 
-    - name: "MERGED FAN-OUT VERIFY: Verify both REST queries"
+    - name: "MERGED FAN-OUT UPDATE: Update Ethernet1/42 and Ethernet1/43"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          timeout: 300
+        config:
+          - "{{ ethernet_42_43_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated Ethernet1/42
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F42
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 250
+              - jsonpath: "$.current.configData.networkOS.policy.adminState"
+                equals: false
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Updated access ports description
+          - name: Validate updated Ethernet1/43
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F43
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 250
+              - jsonpath: "$.current.configData.networkOS.policy.adminState"
+                equals: false
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Updated access ports description
+      register: merged_update_fanout
+
+    - name: "MERGED FAN-OUT UPDATE: Verify both interfaces"
       vars:
-        ethernet_42_query: "{{ merged_fanout.nd_query_results[0] }}"
-        ethernet_43_query: "{{ merged_fanout.nd_query_results[1] }}"
+        ethernet_42_after: >-
+          {{
+            merged_update_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/42')
+            | first
+          }}
+        ethernet_43_after: >-
+          {{
+            merged_update_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/43')
+            | first
+          }}
       ansible.builtin.assert:
         that:
-          - merged_fanout.nd_query_results | length == 2
-          - ethernet_42_query.status | int == 200
-          - ethernet_42_query.failed == false
-          - ethernet_42_query.result.current.interfaceName == "Ethernet1/42"
-          - ethernet_43_query.status | int == 200
-          - ethernet_43_query.failed == false
-          - ethernet_43_query.result.current.interfaceName == "Ethernet1/43"
+          - ethernet_42_after.config_data.network_os.policy.access_vlan == 250
+          - ethernet_43_after.config_data.network_os.policy.access_vlan == 250
+          - ethernet_42_after.config_data.network_os.policy.admin_state == false
+          - ethernet_43_after.config_data.network_os.policy.admin_state == false
+          - ethernet_42_after.config_data.network_os.policy.description
+            == "Updated access ports description"
+          - ethernet_43_after.config_data.network_os.policy.description
+            == "Updated access ports description"
+          - not merged_update_fanout.second_run_result.changed | bool
+
+    - name: "MERGED LARGE FAN-OUT: Configure Ethernet1/45 through Ethernet1/47"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          timeout: 300
+        config:
+          - "{{ ethernet_45_46_47 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate Ethernet1/45
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F45
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.policyType"
+                equals: accessHost
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 400
+              - jsonpath: "$.current.configData.networkOS.policy.mtu"
+                equals: jumbo
+          - name: Validate Ethernet1/46
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F46
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.policyType"
+                equals: accessHost
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 400
+              - jsonpath: "$.current.configData.networkOS.policy.mtu"
+                equals: jumbo
+          - name: Validate Ethernet1/47
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F47
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.policyType"
+                equals: accessHost
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 400
+              - jsonpath: "$.current.configData.networkOS.policy.mtu"
+                equals: jumbo
+      register: merged_large_fanout
+
+    - name: "MERGED LARGE FAN-OUT: Verify all interfaces"
+      vars:
+        ethernet_45_after: >-
+          {{
+            merged_large_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/45')
+            | first
+          }}
+        ethernet_46_after: >-
+          {{
+            merged_large_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/46')
+            | first
+          }}
+        ethernet_47_after: >-
+          {{
+            merged_large_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/47')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - merged_large_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/45')
+            | list
+            | length == 1
+          - merged_large_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/46')
+            | list
+            | length == 1
+          - merged_large_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/47')
+            | list
+            | length == 1
+          - ethernet_45_after.config_data.network_os.policy.access_vlan == 400
+          - ethernet_46_after.config_data.network_os.policy.access_vlan == 400
+          - ethernet_47_after.config_data.network_os.policy.access_vlan == 400
+          - ethernet_45_after.config_data.network_os.policy.description
+            == "Fan-out test access ports"
+          - ethernet_46_after.config_data.network_os.policy.description
+            == "Fan-out test access ports"
+          - ethernet_47_after.config_data.network_os.policy.description
+            == "Fan-out test access ports"
+          - ethernet_45_after.config_data.network_os.policy.mtu == "jumbo"
+          - ethernet_46_after.config_data.network_os.policy.mtu == "jumbo"
+          - ethernet_47_after.config_data.network_os.policy.mtu == "jumbo"
+          - merged_large_fanout.idempotency_attempts == 1
+          - not merged_large_fanout.second_run_result.changed | bool
+          - merged_large_fanout.nd_query_results | length == 3
 
   always:
-    - name: "MERGED FAN-OUT CLEANUP: Reset Ethernet1/42 and Ethernet1/43"
+    - name: "MERGED FAN-OUT CLEANUP: Normalize reserved fan-out ports"
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
@@ -148,4 +303,7 @@
             interface_names:
               - Ethernet1/42
               - Ethernet1/43
+              - Ethernet1/45
+              - Ethernet1/46
+              - Ethernet1/47
         state: deleted

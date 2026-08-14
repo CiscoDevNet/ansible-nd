@@ -1,7 +1,7 @@
 ---
-- name: Run standardized nd_interface_ethernet_access merged test
+- name: Run nd_interface_ethernet_access merged harness tests
   block:
-    - name: "MERGED SETUP: Reset Ethernet1/41"
+    - name: "MERGED SETUP: Normalize single-interface test ports"
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
@@ -10,21 +10,40 @@
           - switch_ip: "{{ test_switch_ip }}"
             interface_names:
               - Ethernet1/41
+              - Ethernet1/44
+              - Ethernet1/48
         state: deleted
+      register: merged_single_setup
 
-    - name: "MERGED: Configure Ethernet1/41 using standard runner"
+    - name: "MERGED SETUP: Verify ports are outside accessHost scope"
+      ansible.builtin.assert:
+        that:
+          - merged_single_setup.after
+            | default([])
+            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | list
+            | length == 0
+          - merged_single_setup.after
+            | default([])
+            | selectattr('interface_name', 'equalto', 'Ethernet1/44')
+            | list
+            | length == 0
+          - merged_single_setup.after
+            | default([])
+            | selectattr('interface_name', 'equalto', 'Ethernet1/48')
+            | list
+            | length == 0
+
+    - name: "MERGED CREATE: Configure Ethernet1/41"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_interface_ethernet_access
         state: merged
-
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
           timeout: 300
-
         config:
           - "{{ ethernet_41 }}"
-
         expected:
           check_mode:
             changed: true
@@ -35,20 +54,13 @@
           idempotency:
             changed: false
             failed: false
-
-        check_mode_queries:
-          - name: Snapshot all managed interfaces on test switch
-            path: >-
-              /api/v1/manage/fabrics/{{ test_fabric_name
-              }}/switches/{{ test_switch_id }}/interfaces
-            expected_status: 200
-            unordered: true
-            ignore_keys:
-              - operData
-
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
         nd_queries:
           - name: Validate Ethernet1/41 from ND API
-            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F41"
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F41
             method: get
             expected_status: 200
             expect:
@@ -59,34 +71,249 @@
               - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
                 equals: 100
               - jsonpath: "$.current.configData.networkOS.policy.description"
-                equals: "Ansible integration test Ethernet1/41"
+                equals: Ansible integration test Ethernet1/41
+              - jsonpath: "$.current.configData.networkOS.policy.bpduGuard"
+                equals: enable
+              - jsonpath: "$.current.configData.networkOS.policy.cdp"
+                equals: true
+      register: merged_create_41
 
-      register: merged_ethernet_41
-
-    - name: "MERGED VERIFY: Verify Ethernet1/41 exists"
-      ansible.builtin.assert:
-        that:
-          - merged_ethernet_41.first_run_result.after
+    - name: "MERGED CREATE: Verify Ethernet1/41 phases and returned data"
+      vars:
+        ethernet_41_matches: >-
+          {{
+            merged_create_41.first_run_result.after
+            | default([])
             | selectattr('interface_name', 'equalto', 'Ethernet1/41')
             | list
-            | length == 1
+          }}
+      ansible.builtin.assert:
+        that:
+          - merged_create_41.check_mode_result.changed | bool
+          - merged_create_41.first_run_result.changed | bool
+          - merged_create_41.idempotency_attempts == 1
+          - not merged_create_41.second_run_result.changed | bool
+          - merged_create_41.check_mode_query_results | length
+            == nd4x_fabric_check_mode_queries | length
+          - merged_create_41.nd_query_results | length == 1
+          - ethernet_41_matches | length == 1
+          - ethernet_41_matches[0].config_data.network_os.policy.access_vlan
+            == 100
+          - ethernet_41_matches[0].config_data.network_os.policy.description
+            == "Ansible integration test Ethernet1/41"
+          - ethernet_41_matches[0].config_data.network_os.policy.bpdu_guard
+            == "enable"
+          - ethernet_41_matches[0].config_data.network_os.policy.cdp == true
 
-    - name: "MERGED VERIFY: Verify Ethernet1/41 configuration"
+    - name: "MERGED CREATE: Configure Ethernet1/44"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          timeout: 300
+        config:
+          - "{{ ethernet_44 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate Ethernet1/44 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F44
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: Ethernet1/44
+              - jsonpath: "$.current.configData.networkOS.policy.policyType"
+                equals: accessHost
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 300
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Ansible integration test Ethernet1/44
+      register: merged_create_44
+
+    - name: "MERGED CREATE: Verify Ethernet1/44"
+      vars:
+        ethernet_44_matches: >-
+          {{
+            merged_create_44.first_run_result.after
+            | default([])
+            | selectattr('interface_name', 'equalto', 'Ethernet1/44')
+            | list
+          }}
+      ansible.builtin.assert:
+        that:
+          - ethernet_44_matches | length == 1
+          - ethernet_44_matches[0].config_data.network_os.policy.access_vlan
+            == 300
+          - merged_create_44.idempotency_attempts == 1
+          - not merged_create_44.second_run_result.changed | bool
+
+    - name: "MERGED IDEMPOTENT: Re-run converged Ethernet1/41"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          timeout: 300
+        config:
+          - "{{ ethernet_41 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Revalidate converged Ethernet1/41
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F41
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 100
+      register: merged_idempotent_41
+
+    - name: "MERGED IDEMPOTENT: Verify every phase is unchanged"
+      ansible.builtin.assert:
+        that:
+          - not merged_idempotent_41.check_mode_result.changed | bool
+          - not merged_idempotent_41.first_run_result.changed | bool
+          - not merged_idempotent_41.second_run_result.changed | bool
+          - merged_idempotent_41.idempotency_attempts == 1
+
+    - name: "MERGED UPDATE: Update Ethernet1/41"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          timeout: 300
+        config:
+          - "{{ ethernet_41_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated Ethernet1/41
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F41
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 150
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Updated Ethernet1/41 description
+              - jsonpath: "$.current.configData.networkOS.policy.bpduGuard"
+                equals: disable
+              - jsonpath: "$.current.configData.networkOS.policy.cdp"
+                equals: false
+      register: merged_update_41
+
+    - name: "MERGED UPDATE: Verify returned Ethernet1/41 data"
       vars:
         ethernet_41_after: >-
           {{
-            merged_ethernet_41.first_run_result.after
+            merged_update_41.first_run_result.after
             | selectattr('interface_name', 'equalto', 'Ethernet1/41')
             | first
           }}
       ansible.builtin.assert:
         that:
-          - ethernet_41_after.config_data.network_os.policy.access_vlan == 100
+          - ethernet_41_after.config_data.network_os.policy.access_vlan == 150
           - ethernet_41_after.config_data.network_os.policy.description
-            == "Ansible integration test Ethernet1/41"
+            == "Updated Ethernet1/41 description"
+          - ethernet_41_after.config_data.network_os.policy.bpdu_guard
+            == "disable"
+          - ethernet_41_after.config_data.network_os.policy.cdp == false
+          - not merged_update_41.second_run_result.changed | bool
+
+    - name: "MERGED NO-DEPLOY: Stage Ethernet1/48"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          timeout: 300
+        module_args:
+          deploy: false
+        config:
+          - "{{ ethernet_48_no_deploy }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate staged Ethernet1/48
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F48
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.policyType"
+                equals: accessHost
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 999
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: No-deploy test Ethernet1/48
+      register: merged_no_deploy_48
+
+    - name: "MERGED NO-DEPLOY: Verify staged configuration"
+      ansible.builtin.assert:
+        that:
+          - merged_no_deploy_48.first_run_result.changed | bool
+          - merged_no_deploy_48.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/48')
+            | list
+            | length == 1
+          - not merged_no_deploy_48.second_run_result.changed | bool
 
   always:
-    - name: "MERGED CLEANUP: Reset Ethernet1/41"
+    - name: "MERGED CLEANUP: Normalize single-interface test ports"
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
@@ -95,4 +322,6 @@
           - switch_ip: "{{ test_switch_ip }}"
             interface_names:
               - Ethernet1/41
+              - Ethernet1/44
+              - Ethernet1/48
         state: deleted

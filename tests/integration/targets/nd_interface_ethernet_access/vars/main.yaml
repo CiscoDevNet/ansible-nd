@@ -6,7 +6,7 @@
 
 test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
-test_switch_id: "{{ nd_test_switch_id }}"
+
 
 # Ethernet interfaces used across tests.
 # Ethernet1/41 through Ethernet1/50 are reserved for these integration tests.
@@ -19,6 +19,27 @@ nd4x_ethernet_single_interface: Ethernet1/41
 nd4x_ethernet_fanout_interfaces:
   - Ethernet1/42
   - Ethernet1/43
+
+nd4x_ethernet_reserved_interfaces: &nd4x_ethernet_reserved_interfaces
+  - Ethernet1/41
+  - Ethernet1/42
+  - Ethernet1/43
+  - Ethernet1/44
+  - Ethernet1/45
+  - Ethernet1/46
+  - Ethernet1/47
+  - Ethernet1/48
+  - Ethernet1/49
+  - Ethernet1/50
+
+nd4x_ethernet_overridden_allowed_interfaces: *nd4x_ethernet_reserved_interfaces
+
+nd4x_ethernet_reserved_ports_confirmed: >-
+  {{
+    nd_ethernet_reserved_ports_confirmed
+    | default(false)
+    | bool
+  }}
 
 nd4x_ethernet_destructive_tests_enabled: >-
   {{
@@ -107,6 +128,64 @@ ethernet_41_overridden:
         description: "Overridden Ethernet1/41"
         speed: auto
 
+ethernet_42_overridden:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/42
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 901
+        description: "Overridden Ethernet1/42"
+
+# --- Replaced-state payloads ---
+
+ethernet_41_replaced:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/41
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 500
+        description: "Replaced Ethernet1/41"
+
+ethernet_42_43_replaced:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/42
+    - Ethernet1/43
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 600
+        description: "Replaced fan-out access ports"
+
+ethernet_41_replaced_multi:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/41
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 700
+        description: "Replaced again Ethernet1/41"
+
+ethernet_44_replaced:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/44
+  config_data:
+    network_os:
+      policy:
+        admin_state: false
+        access_vlan: 800
+        description: "Replaced Ethernet1/44"
+
 # --- Fan-out test: multiple interfaces sharing one config ---
 
 ethernet_45_46_47:
@@ -150,16 +229,17 @@ ethernet_split_50:
         access_vlan: 600
         description: "Split config item B"
 
+ethernet_48_no_deploy:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/48
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 999
+        description: No-deploy test Ethernet1/48
+
 # --- Cleanup helper: all test interfaces ---
 
-cleanup_interface_names:
-  - Ethernet1/41
-  - Ethernet1/42
-  - Ethernet1/43
-  - Ethernet1/44
-  - Ethernet1/45
-  - Ethernet1/46
-  - Ethernet1/47
-  - Ethernet1/48
-  - Ethernet1/49
-  - Ethernet1/50
+cleanup_interface_names: *nd4x_ethernet_reserved_interfaces

@@ -9,32 +9,91 @@
       dedicated test fabric and set
       nd_ethernet_destructive_tests_enabled=true.
 
-- name: "OVERRIDDEN PREFLIGHT: Inspect fabric-wide accessHost scope"
-  cisco.nd.nd_interface_ethernet_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    timeout: 300
-    config:
-      - "{{ ethernet_41_overridden }}"
-    state: overridden
-  check_mode: true
-  changed_when: false
-  register: overridden_scope_probe
+- name: "OVERRIDDEN PREFLIGHT: Require management IP for every switch"
+  ansible.builtin.assert:
+    that:
+      - item.fabricManagementIp is defined
+      - item.fabricManagementIp | string | length > 0
+    fail_msg: >-
+      A switch returned by fabric {{ test_fabric_name }} does not have a
+      usable fabricManagementIp, so overridden safety scope cannot be
+      evaluated.
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: "{{ item.switchId | default('unknown-switch-id') }}"
 
-- name: "OVERRIDDEN PREFLIGHT: Reject accessHost interfaces outside reserved ports"
+- name: "OVERRIDDEN PREFLIGHT: Query interfaces on every fabric switch"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ item.switchId }}/interfaces
+    method: get
+    timeout: 300
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: >-
+      {{
+        item.fabricManagementIp
+        | default(item.switchId)
+      }}
+  register: nd4x_ethernet_fabric_interface_inventory
+  changed_when: false
+
+- name: "OVERRIDDEN PREFLIGHT: Initialize managed accessHost scope"
+  ansible.builtin.set_fact:
+    nd4x_existing_access_host_interfaces: []
+
+- name: "OVERRIDDEN PREFLIGHT: Collect managed accessHost interfaces"
+  ansible.builtin.set_fact:
+    nd4x_existing_access_host_interfaces: >-
+      {{
+        nd4x_existing_access_host_interfaces
+        + [
+            {
+              'switch_ip':
+                fabric_interface.0.item.fabricManagementIp,
+              'interface_name':
+                fabric_interface.1.interfaceName
+            }
+          ]
+      }}
+  loop: >-
+    {{
+      query(
+        'ansible.builtin.subelements',
+        nd4x_ethernet_fabric_interface_inventory.results,
+        'current.interfaces',
+        {'skip_missing': True}
+      )
+    }}
+  loop_control:
+    loop_var: fabric_interface
+    label: >-
+      {{
+        fabric_interface.0.item.fabricManagementIp
+        | default(fabric_interface.0.item.switchId)
+      }}
+      {{ fabric_interface.1.interfaceName | default('unknown') }}
+  when:
+    - fabric_interface.1.interfaceType | default('') == 'ethernet'
+    - >-
+      fabric_interface.1.get('configData', {})
+      .get('networkOS', {})
+      .get('policy', {})
+      .get('policyType', '') == 'accessHost'
+
+- name: "OVERRIDDEN PREFLIGHT: Reject accessHost resources outside test scope"
   vars:
     existing_switch_ips: >-
       {{
-        overridden_scope_probe.before
-        | default([])
+        nd4x_existing_access_host_interfaces
         | map(attribute='switch_ip')
         | unique
         | list
       }}
     existing_test_switch_interfaces: >-
       {{
-        overridden_scope_probe.before
-        | default([])
+        nd4x_existing_access_host_interfaces
         | selectattr('switch_ip', 'equalto', test_switch_ip)
         | map(attribute='interface_name')
         | list
@@ -43,69 +102,138 @@
     that:
       - existing_switch_ips | difference([test_switch_ip]) | length == 0
       - existing_test_switch_interfaces
-        | difference(cleanup_interface_names)
+        | difference(nd4x_ethernet_overridden_allowed_interfaces)
         | length == 0
     fail_msg: >-
       Unsafe overridden testbed. Existing accessHost configuration was found
       on another switch or outside the reserved Ethernet1/41-Ethernet1/50
       test range. No override was applied.
 
-- name: Run standardized nd_interface_ethernet_access overridden test
+- name: Run nd_interface_ethernet_access overridden harness tests
   block:
-    - name: "OVERRIDDEN SETUP: Reset Ethernet1/41 through Ethernet1/43"
+    - name: "OVERRIDDEN SETUP: Normalize all reserved Ethernet ports"
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
         timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
-            interface_names:
-              - Ethernet1/41
-              - Ethernet1/42
-              - Ethernet1/43
+            interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
         state: deleted
 
-    - name: "OVERRIDDEN SETUP: Create three accessHost interfaces"
+    - name: "OVERRIDDEN SETUP: Recreate post-merged state"
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
         timeout: 300
         config:
-          - "{{ ethernet_41 }}"
-          - "{{ ethernet_42_43 }}"
+          - "{{ ethernet_41_updated }}"
+          - "{{ ethernet_42_43_updated }}"
+          - "{{ ethernet_44 }}"
+          - "{{ ethernet_45_46_47 }}"
+          - "{{ ethernet_split_49 }}"
+          - "{{ ethernet_split_50 }}"
         state: merged
+
+    - name: "OVERRIDDEN SETUP: Recreate single replaced state"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        timeout: 300
+        config:
+          - "{{ ethernet_41_replaced }}"
+        state: replaced
+
+    - name: "OVERRIDDEN SETUP: Recreate fan-out replaced state"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        timeout: 300
+        config:
+          - "{{ ethernet_42_43_replaced }}"
+        state: replaced
+
+    - name: "OVERRIDDEN SETUP: Recreate multi-replaced state"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        timeout: 300
+        config:
+          - "{{ ethernet_41_replaced_multi }}"
+          - "{{ ethernet_44_replaced }}"
+        state: replaced
       register: overridden_setup
 
-    - name: "OVERRIDDEN SETUP VERIFY: Verify prerequisite interfaces"
+    - name: "OVERRIDDEN SETUP: Verify exact pre-override state"
+      vars:
+        ethernet_41_before: >-
+          {{
+            overridden_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | first
+          }}
+        ethernet_42_before: >-
+          {{
+            overridden_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/42')
+            | first
+          }}
+        ethernet_44_before: >-
+          {{
+            overridden_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/44')
+            | first
+          }}
       ansible.builtin.assert:
         that:
-          - overridden_setup is changed
+          - overridden_setup.after | length == 9
+          - ethernet_41_before.config_data.network_os.policy.access_vlan == 700
+          - ethernet_42_before.config_data.network_os.policy.access_vlan == 600
+          - ethernet_44_before.config_data.network_os.policy.access_vlan == 800
+          - ethernet_44_before.config_data.network_os.policy.admin_state == false
           - overridden_setup.after
-            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | selectattr('interface_name', 'equalto', 'Ethernet1/45')
             | list
             | length == 1
           - overridden_setup.after
-            | selectattr('interface_name', 'equalto', 'Ethernet1/42')
+            | selectattr('interface_name', 'equalto', 'Ethernet1/49')
             | list
             | length == 1
           - overridden_setup.after
-            | selectattr('interface_name', 'equalto', 'Ethernet1/43')
+            | selectattr('interface_name', 'equalto', 'Ethernet1/50')
             | list
             | length == 1
 
-    - name: "OVERRIDDEN: Retain only Ethernet1/41 using standard runner"
+    - name: "OVERRIDDEN SETUP: Capture non-accessHost Ethernet1/48"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id
+          }}/interfaces/Ethernet1%2F48
+        method: get
+        timeout: 300
+      register: overridden_sentinel_before
+      changed_when: false
+
+    - name: "OVERRIDDEN SETUP: Verify sentinel is outside managed scope"
+      ansible.builtin.assert:
+        that:
+          - overridden_sentinel_before.current.interfaceName == "Ethernet1/48"
+          - >-
+            overridden_sentinel_before.current.configData
+            .networkOS.policy.policyType != "accessHost"
+
+    - name: "OVERRIDDEN REDUCE: Retain Ethernet1/41 and Ethernet1/42"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_interface_ethernet_access
         state: overridden
-
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
           timeout: 300
-
         config:
           - "{{ ethernet_41_overridden }}"
-
+          - "{{ ethernet_42_overridden }}"
         expected:
           check_mode:
             changed: true
@@ -116,97 +244,399 @@
           idempotency:
             changed: false
             failed: false
-
-        check_mode_queries:
-          - name: Snapshot all managed interfaces on test switch
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate retained Ethernet1/41
             path: >-
               /api/v1/manage/fabrics/{{ test_fabric_name
-              }}/switches/{{ test_switch_id }}/interfaces
-            expected_status: 200
-            unordered: true
-            ignore_keys:
-              - operData
-
-        nd_queries:
-          - name: Validate overridden Ethernet1/41
-            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F41"
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F41
             method: get
             expected_status: 200
             expect:
-              - jsonpath: "$.current.interfaceName"
-                equals: Ethernet1/41
-              - jsonpath: "$.current.configData.networkOS.policy.policyType"
-                equals: accessHost
               - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
                 equals: 900
               - jsonpath: "$.current.configData.networkOS.policy.description"
-                equals: "Overridden Ethernet1/41"
+                equals: Overridden Ethernet1/41
+          - name: Validate retained Ethernet1/42
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F42
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 901
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Overridden Ethernet1/42
+          - name: Validate omitted interfaces left accessHost scope
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/43' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/44' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/45' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/46' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/47' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/49' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/50' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+      register: overridden_reduce
 
-      register: overridden_ethernet
-
-    - name: "OVERRIDDEN VERIFY: Verify only Ethernet1/41 remains"
+    - name: "OVERRIDDEN REDUCE: Verify returned state"
       ansible.builtin.assert:
         that:
-          - overridden_ethernet.first_run_result.after
+          - overridden_reduce.first_run_result.after | length == 2
+          - overridden_reduce.first_run_result.after
             | selectattr('interface_name', 'equalto', 'Ethernet1/41')
             | list
             | length == 1
-          - overridden_ethernet.first_run_result.after
+          - overridden_reduce.first_run_result.after
             | selectattr('interface_name', 'equalto', 'Ethernet1/42')
             | list
-            | length == 0
-          - overridden_ethernet.first_run_result.after
-            | selectattr('interface_name', 'equalto', 'Ethernet1/43')
+            | length == 1
+          - overridden_reduce.idempotency_attempts == 1
+          - not overridden_reduce.second_run_result.changed | bool
+          - overridden_reduce.nd_query_results | length == 3
+
+    - name: "OVERRIDDEN REDUCE: Re-query non-accessHost sentinel"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id
+          }}/interfaces/Ethernet1%2F48
+        method: get
+        timeout: 300
+      register: overridden_sentinel_after_reduce
+      changed_when: false
+
+    - name: "OVERRIDDEN REDUCE: Verify non-accessHost sentinel is unchanged"
+      ansible.builtin.assert:
+        that:
+          - >-
+            overridden_sentinel_after_reduce.current.configData
+            == overridden_sentinel_before.current.configData
+
+    - name: "OVERRIDDEN FILTER: Re-run identical override"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          timeout: 300
+        config:
+          - "{{ ethernet_41_overridden }}"
+          - "{{ ethernet_42_overridden }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Revalidate retained Ethernet1/41
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F41
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 900
+          - name: Revalidate retained Ethernet1/42
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F42
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 901
+      register: overridden_filter
+
+    - name: "OVERRIDDEN FILTER: Verify managed filtering and idempotency"
+      ansible.builtin.assert:
+        that:
+          - not overridden_filter.check_mode_result.changed | bool
+          - not overridden_filter.first_run_result.changed | bool
+          - not overridden_filter.second_run_result.changed | bool
+          - overridden_filter.first_run_result.before
+            | selectattr('interface_name', 'equalto', 'Ethernet1/48')
             | list
             | length == 0
 
-    - name: "OVERRIDDEN VERIFY: Verify Ethernet1/41 configuration"
-      vars:
-        ethernet_41_after: >-
-          {{
-            overridden_ethernet.first_run_result.after
-            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
-            | first
-          }}
-      ansible.builtin.assert:
-        that:
-          - ethernet_41_after.config_data.network_os.policy.access_vlan == 900
-          - ethernet_41_after.config_data.network_os.policy.description
-            == "Overridden Ethernet1/41"
+    - name: "OVERRIDDEN FILTER: Re-query non-accessHost sentinel"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id
+          }}/interfaces/Ethernet1%2F48
+        method: get
+        timeout: 300
+      register: overridden_sentinel_after_filter
+      changed_when: false
 
-    - name: "OVERRIDDEN VERIFY: Verify harness idempotency"
+    - name: "OVERRIDDEN FILTER: Verify non-accessHost sentinel is unchanged"
       ansible.builtin.assert:
         that:
-          - overridden_ethernet.idempotency_attempts == 1
-          - overridden_ethernet.second_run_result is defined
-          - overridden_ethernet.second_run_result.changed == false
-          - overridden_ethernet.second_run_result.failed
-            | default(false)
-            | bool == false
+          - >-
+            overridden_sentinel_after_filter.current.configData
+            == overridden_sentinel_before.current.configData
 
-    - name: "OVERRIDDEN VERIFY: Verify REST result"
-      vars:
-        overridden_query: >-
-          {{ overridden_ethernet.nd_query_results[0] }}
+    - name: "OVERRIDDEN SWAP: Retain Ethernet1/42 through Ethernet1/44"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          timeout: 300
+        config:
+          - "{{ ethernet_42_43 }}"
+          - "{{ ethernet_44 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate Ethernet1/41 left accessHost scope
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/41' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+          - name: Validate swapped-in Ethernet1/42
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F42
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 200
+          - name: Validate swapped-in Ethernet1/43
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F43
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 200
+          - name: Validate swapped-in Ethernet1/44
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F44
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 300
+      register: overridden_swap
+
+    - name: "OVERRIDDEN SWAP: Verify returned state"
       ansible.builtin.assert:
         that:
-          - overridden_ethernet.nd_query_results | length == 1
-          - overridden_query.status | int == 200
-          - overridden_query.failed == false
-          - overridden_query.result.current.interfaceName == "Ethernet1/41"
-          - overridden_query.result.current.configData.networkOS.policy.accessVlan
-            | int == 900
+          - overridden_swap.first_run_result.after | length == 3
+          - overridden_swap.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/42')
+            | list
+            | length == 1
+          - overridden_swap.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/43')
+            | list
+            | length == 1
+          - overridden_swap.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/44')
+            | list
+            | length == 1
+          - not overridden_swap.second_run_result.changed | bool
+
+    - name: "OVERRIDDEN FAN-OUT: Retain Ethernet1/45 through Ethernet1/47"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          timeout: 300
+        config:
+          - "{{ ethernet_45_46_47 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate prior desired set left accessHost scope
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/42' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/43' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/44' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+          - name: Validate fan-out Ethernet1/45
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F45
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 400
+          - name: Validate fan-out Ethernet1/46
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F46
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 400
+          - name: Validate fan-out Ethernet1/47
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F47
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 400
+      register: overridden_fanout
+
+    - name: "OVERRIDDEN FAN-OUT: Verify returned state"
+      ansible.builtin.assert:
+        that:
+          - overridden_fanout.first_run_result.after | length == 3
+          - overridden_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/45')
+            | list
+            | length == 1
+          - overridden_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/46')
+            | list
+            | length == 1
+          - overridden_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/47')
+            | list
+            | length == 1
+          - not overridden_fanout.second_run_result.changed | bool
+
+    - name: "OVERRIDDEN FINAL: Re-query non-accessHost sentinel"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id
+          }}/interfaces/Ethernet1%2F48
+        method: get
+        timeout: 300
+      register: overridden_sentinel_final
+      changed_when: false
+
+    - name: "OVERRIDDEN FINAL: Verify non-accessHost sentinel is unchanged"
+      ansible.builtin.assert:
+        that:
+          - >-
+            overridden_sentinel_final.current.configData
+            == overridden_sentinel_before.current.configData
 
   always:
-    - name: "OVERRIDDEN CLEANUP: Reset Ethernet1/41 through Ethernet1/43"
+    - name: "OVERRIDDEN CLEANUP: Normalize all reserved Ethernet ports"
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
         timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
-            interface_names:
-              - Ethernet1/41
-              - Ethernet1/42
-              - Ethernet1/43
+            interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
         state: deleted
