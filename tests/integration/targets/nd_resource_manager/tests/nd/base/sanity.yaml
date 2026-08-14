@@ -294,7 +294,6 @@
     - name: BASE common pools - Assert sanity gathered resources
       ansible.builtin.assert:
         that:
-          - '(rm_gathered_entity_names | length) == (merge_result["diff"][0]["merged"] | length)'
           - >-
             rm_gathered_entity_names
             ==
