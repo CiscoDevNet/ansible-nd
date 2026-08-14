@@ -772,9 +772,10 @@ class NetworkWorkflowCoordinator:
         desired: dict[tuple[str, str], dict[str, Any]] | None = None,
         current_network_names: list[str] | None = None,
         current: dict[tuple[str, str], dict[str, Any]] | None = None,
+        attachment_details: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Attach or detach Networks according to state and phase."""
-        return self.attachments.apply_phase(module_args, strategy, phase, desired, current_network_names, current)
+        return self.attachments.apply_phase(module_args, strategy, phase, desired, current_network_names, current, attachment_details)
 
     def _attachment_map_after_detach(
         self,
@@ -945,6 +946,14 @@ class NetworkWorkflowCoordinator:
     ) -> list[dict[str, Any]]:
         """Compute attach payloads for missing or changed desired attachments."""
         return self.attachments.planned_attach_payloads(current, desired)
+
+    def _expand_desired_attachments_with_vpc_peers(
+        self,
+        desired: dict[tuple[str, str], dict[str, Any]],
+        attachment_details: Any,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        """Add vPC peer attachments using existing attachment-query rows."""
+        return self.attachments.expand_desired_attachments_with_vpc_peers(desired, attachment_details)
 
     def _attachment_matches(
         self,

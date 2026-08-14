@@ -229,5 +229,42 @@
         "DATA": {
             "status": "success"
         }
+    },
+    "test_rest_send_01100a": {
+        "TEST_NOTES": ["Mixed 207: one success + one failed item. Terminal - RestSend must submit exactly once."],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/multistatus",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "acl_new", "status": "success", "message": "created successfully"},
+                {"name": "acl_seed", "status": "failed", "message": "ACL already exists"}
+            ]
+        }
+    },
+    "test_rest_send_01100b": {
+        "TEST_NOTES": ["Sentinel success. Must NOT be consumed - if the retry loop replays the terminal 207, this turns the result green and fails the test."],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/multistatus",
+        "MESSAGE": "OK",
+        "DATA": {"results": [{"name": "acl_seed", "status": "success"}]}
+    },
+    "test_rest_send_01110a": {
+        "TEST_NOTES": ["Transient 500. Retryable - the loop must consume the follow-up 200 in 01110b."],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/transient",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "backend unavailable"}
+    },
+    "test_rest_send_01110b": {
+        "TEST_NOTES": ["Recovery response consumed by the retry of 01110a."],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/transient",
+        "MESSAGE": "OK",
+        "DATA": {"results": [{"name": "acl_new", "status": "success"}]}
     }
 }

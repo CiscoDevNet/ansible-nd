@@ -1,0 +1,32 @@
+---
+# Cleanup for nd_manage_community_list integration tests.
+
+- name: "SETUP: Remove test community lists"
+  cisco.nd.nd_manage_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ community_list_standard.name }}"
+      - name: "{{ community_list_expanded.name }}"
+      - name: "{{ community_list_overridden.name }}"
+    state: deleted
+
+- name: "SETUP: Remove tenant-scoped test community list from tenant A"
+  cisco.nd.nd_manage_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ community_list_tenant_identity_name }}"
+        tenant_name: "{{ nd_test_tenant_name_a }}"
+    state: deleted
+  when: nd_test_tenant_name_a is defined
+
+- name: "SETUP: Remove tenant-scoped test community list from tenant B"
+  cisco.nd.nd_manage_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ community_list_tenant_identity_name }}"
+        tenant_name: "{{ nd_test_tenant_name_b }}"
+    state: deleted
+  when: nd_test_tenant_name_b is defined

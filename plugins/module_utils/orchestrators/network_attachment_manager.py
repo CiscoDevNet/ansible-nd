@@ -39,6 +39,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
     NetworkAttachmentValidateInterfaceModel,
     NetworkAttachmentValidateInterfacesPayloadModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_vpc_peer_expander import (
+    expand_desired_attachments_with_vpc_peers,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_config_utils import (
     configured_network_names,
     deploy_enabled_by_network,
@@ -95,6 +98,7 @@ class NetworkAttachmentManager:
         desired: dict[tuple[str, str], dict[str, Any]] | None = None,
         current_network_names: list[str] | None = None,
         current: dict[tuple[str, str], dict[str, Any]] | None = None,
+        attachment_details: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         state = module_args.get("state", "merged")
         config = module_args.get("config") or []
@@ -120,9 +124,25 @@ class NetworkAttachmentManager:
         query_names = current_network_names
         if query_names is None:
             query_names = None if state == "overridden" else configured_network_names(config)
+        raw_attachment_details = attachment_details
         if current is None:
-            current = self.current_attachment_map(module_args, strategy, query_names)
-            self._trace("network_attachment_current_loaded", phase=phase, queried_network_names=query_names, current_count=len(current))
+            if raw_attachment_details is None:
+                raw_attachment_details = self.current_attachment_details(module_args, strategy, query_names)
+            current = self.attachment_map_from_details(raw_attachment_details, query_names)
+            self._trace(
+                "network_attachment_current_loaded",
+                phase=phase,
+                queried_network_names=query_names,
+                attachment_count=len(raw_attachment_details or []),
+                current_count=len(current),
+            )
+
+        if desired:
+            desired = self.expand_desired_attachments_with_vpc_peers(
+                desired,
+                raw_attachment_details if raw_attachment_details is not None else current.values(),
+            )
+            self._trace("network_attachment_desired_expanded", phase=phase, desired_count=len(desired))
 
         payloads = self.planned_detach_payloads(state, config, current, desired) if phase == "pre" else self.planned_attach_payloads(current, desired)
         if not payloads:
@@ -141,6 +161,7 @@ class NetworkAttachmentManager:
         )
         self._trace("network_attachment_phase_end", phase=phase, payload_count=len(payloads), deploy_target_count=len(deploy_targets))
         trace["current"] = current
+        trace["desired"] = desired
         trace["payloads"] = payloads
         return trace
 
@@ -366,6 +387,24 @@ class NetworkAttachmentManager:
         network_names: list[str] | None = None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         return self.attachment_map_from_details(self.current_attachment_details(module_args, strategy, network_names), network_names)
+
+    @staticmethod
+    def expand_desired_attachments_with_vpc_peers(
+        desired: dict[tuple[str, str], dict[str, Any]],
+        attachment_details: Any,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        """Add vPC peer attachments from attachment-query rows."""
+
+        def clear_peer_interfaces(peer_payload: dict[str, Any]) -> None:
+            if "interfaces" in peer_payload:
+                peer_payload["interfaces"] = []
+
+        return expand_desired_attachments_with_vpc_peers(
+            desired,
+            attachment_details,
+            "networkName",
+            peer_payload_mutator=clear_peer_interfaces,
+        )
 
     @staticmethod
     def attachment_map_from_details(
