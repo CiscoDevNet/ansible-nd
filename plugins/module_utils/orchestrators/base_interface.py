@@ -358,6 +358,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         - If a filter references a ``switch_ip`` that does not exist in the fabric.
         """
+        # TODO(4.2.1) interface-lucene-or-silently-empty
         switch_map = self.fabric_context.switch_map
         query_plan: dict[str, tuple[str, set[str]]] = {}
         base_expression = build_lucene_expressions(filters=[], spec=self.gathered_lucene_spec)[0]
@@ -399,6 +400,15 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                 expressions.add(base_expression)
         return query_plan
 
+    def _configure_lucene_endpoint(self, api_endpoint) -> None:
+        """
+        Hook for subclasses to set endpoint-specific params before a Lucene query.
+
+        The default implementation is a no-op. Loopback overrides this to set
+        ``config_only = False`` because the full config is needed for local filtering.
+        """
+        pass
+
     def _query_interfaces_with_lucene(self, switch_id: str, expression: str) -> list[dict]:
         """
         # Summary
@@ -424,6 +434,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                 self.query_all_endpoint(),
                 switch_sn=switch_id,
             )
+            self._configure_lucene_endpoint(api_endpoint)
             api_endpoint.lucene_params.filter = expression
             api_endpoint.lucene_params.max = page_size
             api_endpoint.lucene_params.offset = offset

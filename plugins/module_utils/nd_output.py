@@ -2,7 +2,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Union
 
@@ -26,7 +26,7 @@ class NDOutput:
         self._extra: Dict[str, Any] = {}
         # Argument-spec ``config.options`` mapping used to prune gathered output
         # down to valid module arguments so it round-trips as ``config``.
-        self._gathered_spec: Dict[str, Any] = {}
+        self._gathered_spec: dict[str, Any] = {}
         # Optional callable that reshapes each gathered item before pruning.
         # Used by modules whose input format differs from the model's internal
         # representation (e.g. interface_names plural vs interface_name singular).
@@ -133,7 +133,7 @@ class NDOutput:
         diff: Optional[NDConfigCollection] = None,
         proposed: Optional[NDConfigCollection] = None,
         logs: Optional[List] = None,
-        gathered_spec: Optional[Dict[str, Any]] = None,
+        gathered_spec: dict[str, Any] | None = None,
         gathered_transform=None,
         **kwargs,
     ) -> None:

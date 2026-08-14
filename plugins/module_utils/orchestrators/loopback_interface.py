@@ -35,7 +35,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
     GatheredLuceneSpec,
-    build_lucene_expressions,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
@@ -98,9 +97,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             ("interface_name",): "interfaceName",
         },
     )
-    # Maximum Lucene expressions per switch before collapsing to the base query
-    # Beyond this threshold, a single broad query is cheaper than N targeted ones.
-    _MAX_EXPRESSIONS_PER_SWITCH: ClassVar[int] = 3
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -264,124 +260,11 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
         return policy_type == "loopback"
 
-    def _build_gathered_query_plan(self, gathered_filters: list[dict]) -> dict[str, tuple[str, set[str]]]:
+    def _configure_lucene_endpoint(self, api_endpoint) -> None:
         """
-        Build one or more Lucene expressions for each target switch.
-
-        Multiple filter items remain separate expressions because the
-        interface endpoint does not reliably support Lucene OR.
+        Include the complete config in Lucene results for local filtering.
         """
-        switch_map = self.fabric_context.switch_map
-        query_plan: dict[str, tuple[str, set[str]]] = {}
-        base_expression = build_lucene_expressions(
-            filters=[],
-            spec=self.gathered_lucene_spec,
-        )[0]
-
-        filter_items = gathered_filters or [{}]
-
-        for filter_item in filter_items:
-            requested_switch_ip = filter_item.get("switch_ip")
-            if requested_switch_ip:
-                switch_id = switch_map.get(requested_switch_ip)
-                if switch_id is None:
-                    raise ValueError(
-                        f"Gathered filter references switch_ip '{requested_switch_ip}' " f"which does not exist in fabric '{self.fabric_context.fabric_name}'."
-                    )
-                target_switches = {
-                    requested_switch_ip: switch_id,
-                }
-            else:
-                target_switches = switch_map
-            expressions = build_lucene_expressions(
-                filters=[filter_item],
-                spec=self.gathered_lucene_spec,
-            )
-            for switch_ip, switch_id in target_switches.items():
-                if switch_ip not in query_plan:
-                    query_plan[switch_ip] = (switch_id, set())
-
-                planned_expressions = query_plan[switch_ip][1]
-                for expression in expressions:
-                    # The base query already returns every managed loopback on
-                    # this switch, so any narrower interface-name query would
-                    # only duplicate candidates and REST calls.
-                    if expression == base_expression:
-                        planned_expressions.clear()
-                        planned_expressions.add(base_expression)
-                    elif base_expression not in planned_expressions:
-                        planned_expressions.add(expression)
-
-        # Cap fan-out: if a switch accumulated more expressions than the threshold,
-        # collapse to the base expression. The local filter guarantees correctness;
-        # the server filter only reduces candidate volume.
-        for switch_ip, (switch_id, expressions) in query_plan.items():
-            if len(expressions) > self._MAX_EXPRESSIONS_PER_SWITCH:
-                expressions.clear()
-                expressions.add(base_expression)
-        return query_plan
-
-    def _query_interfaces_with_lucene(
-        self,
-        switch_id: str,
-        expression: str,
-    ) -> list[dict]:
-        """Query every page for one Lucene expression."""
-        page_size = 500
-        max_pages = 100
-        offset = 0
-        candidates: list[dict] = []
-
-        for _page_number in range(max_pages):
-            api_endpoint = self._configure_endpoint(
-                self.query_all_endpoint(),
-                switch_sn=switch_id,
-            )
-
-            # The complete config is needed for final local filtering.
-            api_endpoint.endpoint_params.config_only = False
-
-            api_endpoint.lucene_params.filter = expression
-            api_endpoint.lucene_params.max = page_size
-            api_endpoint.lucene_params.offset = offset
-
-            result = self._request(
-                path=api_endpoint.path,
-                verb=api_endpoint.verb,
-                not_found_ok=True,
-            )
-
-            if not isinstance(result, dict):
-                break
-
-            page = result.get("interfaces", []) or []
-            candidates.extend(page)
-
-            if not page:
-                break
-
-            meta = result.get("meta") or {}
-            counts = meta.get("counts") or {}
-            remaining_raw = counts.get("remaining")
-
-            if remaining_raw is not None:
-                try:
-                    remaining = int(remaining_raw)
-                except (TypeError, ValueError):
-                    remaining = None
-            else:
-                remaining = None
-            if remaining is not None and remaining <= 0:
-                break
-            if remaining is None and len(page) < page_size:
-                break
-            offset += len(page)
-        else:
-            raise RuntimeError(
-                f"Pagination limit reached ({max_pages} pages, {len(candidates)} candidates collected) "
-                f"for switch '{switch_id}'. Results may be incomplete."
-            )
-        return candidates
+        api_endpoint.endpoint_params.config_only = False
 
     def query_all(
         self,
