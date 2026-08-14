@@ -55,11 +55,13 @@ options:
             type:
                 description:
                 - Deploy scope for configuration actions.
-                - C(switch) deploys only the switches left out-of-sync by the vPC pair changes using the per-switch deploy action.
+                - C(resource) deploys only the switches that make up the managed vPC pair(s) and are left out-of-sync, using the per-switch deploy action.
+                - Nexus Dashboard has no vPC-pair-level deploy primitive, so a vPC pair resource maps to its two peer switches.
+                - C(switch) deploys every switch in the fabric left out-of-sync by the vPC pair changes using the per-switch deploy action.
                 - C(global) deploys the entire fabric.
-                - Configuration is saved at the fabric level before deploying for both scopes.
+                - Configuration is saved at the fabric level before deploying for all scopes.
                 type: str
-                choices: [switch, global]
+                choices: [resource, switch, global]
                 default: switch
     force:
         description:

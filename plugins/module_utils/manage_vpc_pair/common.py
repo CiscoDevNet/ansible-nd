@@ -15,7 +15,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
 DEFAULT_VERIFY_TIMEOUT = 10
 DEFAULT_VERIFY_RETRIES = 5
 DEFAULT_CONFIG_ACTION_TYPE = "switch"
-CONFIG_ACTION_TYPE_CHOICES = ("switch", "global")
+CONFIG_ACTION_TYPE_CHOICES = ("resource", "switch", "global")
 
 
 def _collection_to_list_flex(collection: Any) -> list[dict[str, Any]]:
@@ -199,7 +199,7 @@ def get_config_actions(module: Any) -> dict[str, Any]:
         config_actions:
           save: bool
           deploy: bool
-          type: "switch" | "global"
+          type: "resource" | "switch" | "global"
     """
     raw_actions = module.params.get("config_actions")
     if isinstance(raw_actions, dict):
