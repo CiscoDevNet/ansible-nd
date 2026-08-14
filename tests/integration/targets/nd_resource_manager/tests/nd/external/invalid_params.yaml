@@ -1,0 +1,68 @@
+---
+- name: External delta pools - Invalid parameter tests
+  block:
+    - name: External delta pools - Invalid pool type
+      cisco.nd.nd_manage_resource_manager:
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "external_invalid_pool_type"
+            pool_type: "IDLE"
+            pool_name: "INSTANCE_ID"
+            scope_type: "fabric"
+            resource: "101"
+      register: invalid_pool_type
+      ignore_errors: true
+
+    - name: External delta pools - Assert invalid pool type failed
+      ansible.builtin.assert:
+        that:
+          - invalid_pool_type is failed
+          - invalid_pool_type.msg is defined
+          - invalid_pool_type.msg is search("pool_type")
+          - invalid_pool_type.msg is search("IDLE")
+
+    - name: External delta pools - Unsupported pool for fabric type
+      cisco.nd.nd_manage_resource_manager:
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "external_unsupported_pool"
+            pool_type: "IP"
+            pool_name: "LOOPBACK1_IP_POOL"
+            scope_type: "fabric"
+            resource: "10.3.99.1"
+      register: invalid_pool_name
+      ignore_errors: true
+
+    - name: External delta pools - Assert unsupported pool failed
+      ansible.builtin.assert:
+        that:
+          - invalid_pool_name is failed
+          - invalid_pool_name.msg is defined
+          - invalid_pool_name.msg is search("Unsupported pool_name")
+          - invalid_pool_name.msg is search("LOOPBACK1_IP_POOL")
+
+
+    - name: External delta pools - Dynamic CIDR pool name is unsupported outside eBGP
+      cisco.nd.nd_manage_resource_manager:
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "external_invalid_dynamic_{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+            pool_type: "SUBNET"
+            pool_name: "10.4.99.0/30"
+            scope_type: "link"
+            switches:
+              - "{{ ansible_switch1 }}"
+            resource: "10.4.99.0/30"
+      register: invalid_dynamic_pool_name
+      ignore_errors: true
+
+    - name: External delta pools - Assert dynamic CIDR pool name failed
+      ansible.builtin.assert:
+        that:
+          - invalid_dynamic_pool_name is failed
+          - invalid_dynamic_pool_name.msg is defined
+          - invalid_dynamic_pool_name.msg is search("Unsupported pool_name")
+          - invalid_dynamic_pool_name.msg is search("10.4.99.0/30")

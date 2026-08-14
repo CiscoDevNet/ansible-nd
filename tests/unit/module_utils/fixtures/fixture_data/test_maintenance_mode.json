@@ -1,0 +1,227 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_maintenance_mode.py (orchestrator tests).",
+        "Keys follow the test_<module>_<NNNNN><a|b|c|...> convention from CLAUDE.md.",
+        "Suffix order matches the order RestSend.commit() will consume responses within each test.",
+        "Each query_all() call sequence is: GET fabric summary, then ONE bulk GET of /switches whose",
+        "rows carry additionalData.intendedSystemMode and discoveredSystemMode per switch. The bulk",
+        "GET shape is captured verbatim from ND 4.2.1 lab against fabric SITE1 on 2026-05-28.",
+        "Each update() call after query_all() adds: POST changeSystemMode (the snapshot is cached).",
+        "Switch A: ip=192.168.12.131, switchId=9UOJ3E8A6O9 (S1_BG1).",
+        "Switch B: ip=192.168.12.151, switchId=9ASNKH8T9DJ (S1_LE1)."
+    ],
+
+    "summary_ok": {
+        "TEST_NOTES": ["Reusable fabric-summary response: fabric exists, local, not frozen"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "SITE1",
+            "ownerCluster": "nd-4-2-1-10",
+            "local": true,
+            "fabricStatus": "default"
+        }
+    },
+
+    "test_maintenance_mode_00100a": {
+        "TEST_NOTES": ["query_all happy path: fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00100b": {
+        "TEST_NOTES": ["query_all happy path: bulk /switches with additionalData per row"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.131",
+                    "switchId": "9UOJ3E8A6O9",
+                    "additionalData": {"intendedSystemMode": "normal", "discoveredSystemMode": "normal"}
+                },
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "9ASNKH8T9DJ",
+                    "additionalData": {"intendedSystemMode": "maintenance", "discoveredSystemMode": "maintenance"}
+                }
+            ]
+        }
+    },
+
+    "test_maintenance_mode_00110a": {
+        "TEST_NOTES": ["query_all migration: fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00110b": {
+        "TEST_NOTES": ["query_all migration: bulk /switches with switch A in migration"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.131",
+                    "switchId": "9UOJ3E8A6O9",
+                    "additionalData": {"intendedSystemMode": "maintenance", "discoveredSystemMode": "migration"}
+                }
+            ]
+        }
+    },
+
+    "test_maintenance_mode_00120a": {
+        "TEST_NOTES": ["query_all unknown switch_ip: fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00120b": {
+        "TEST_NOTES": ["query_all unknown switch_ip: bulk /switches contains a different IP"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.999",
+                    "switchId": "OTHER",
+                    "additionalData": {"intendedSystemMode": "normal", "discoveredSystemMode": "normal"}
+                }
+            ]
+        }
+    },
+
+    "test_maintenance_mode_00140a": {
+        "TEST_NOTES": ["query_all malformed /switches: fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00140b": {
+        "TEST_NOTES": [
+            "query_all malformed: `switches` is a non-iterable scalar (int) — without the orchestrator's list-type",
+            "guard, `_parse_switch_rows` would TypeError on `for row in 0`. With the guard, the value collapses to",
+            "[] and the user gets the standard 'No switch found' message instead."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": 0}
+    },
+
+    "test_maintenance_mode_00200a": {
+        "TEST_NOTES": ["update changes one switch: fabric summary (validate_prerequisites)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00200b": {
+        "TEST_NOTES": ["update: bulk /switches (switch A currently normal)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.131",
+                    "switchId": "9UOJ3E8A6O9",
+                    "additionalData": {"intendedSystemMode": "normal", "discoveredSystemMode": "normal"}
+                }
+            ]
+        }
+    },
+    "test_maintenance_mode_00200c": {
+        "TEST_NOTES": ["update: POST changeSystemMode response (207 success)"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switchActions/changeSystemMode",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "items": [
+                {"status": "success", "message": "switch 9UOJ3E8A6O9 success to set mode to maintenance", "switchId": "9UOJ3E8A6O9"}
+            ]
+        }
+    },
+
+    "test_maintenance_mode_00210a": {
+        "TEST_NOTES": ["update no-op (snapshot matches desired): fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00210b": {
+        "TEST_NOTES": ["update no-op: bulk /switches (switch A already in maintenance)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.131",
+                    "switchId": "9UOJ3E8A6O9",
+                    "additionalData": {"intendedSystemMode": "maintenance", "discoveredSystemMode": "maintenance"}
+                }
+            ]
+        }
+    },
+
+    "test_maintenance_mode_00220a": {
+        "TEST_NOTES": ["update 207 failure: fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00220b": {
+        "TEST_NOTES": ["update 207 failure: bulk /switches (switch A normal)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.131",
+                    "switchId": "9UOJ3E8A6O9",
+                    "additionalData": {"intendedSystemMode": "normal", "discoveredSystemMode": "normal"}
+                }
+            ]
+        }
+    },
+    "test_maintenance_mode_00220c": {
+        "TEST_NOTES": ["update 207 failure: POST returns one failed item"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switchActions/changeSystemMode",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "items": [
+                {"status": "failed", "message": "deploy aborted", "switchId": "9UOJ3E8A6O9"}
+            ]
+        }
+    }
+}

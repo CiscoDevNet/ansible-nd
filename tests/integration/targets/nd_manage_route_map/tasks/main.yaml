@@ -1,0 +1,41 @@
+---
+# Test code for the nd_manage_route_map module.
+#
+# --- Usage ---
+#
+#   ansible-test integration nd_manage_route_map
+#
+# The overridden-state test is skipped by default because route-map override is fabric-wide and
+# deletes route maps not present in the supplied config. Enable only on a disposable fabric:
+#
+#   ansible-test integration nd_manage_route_map -e nd_test_route_map_enable_overridden=true
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("debug") }}'
+
+- name: Run nd_manage_route_map state tests
+  block:
+    - name: Pre-test cleanup
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: Run merged state tests
+      ansible.builtin.include_tasks: merged.yaml
+
+    - name: Run replaced state tests
+      ansible.builtin.include_tasks: replaced.yaml
+
+    - name: Run overridden state tests
+      ansible.builtin.include_tasks: overridden.yaml
+      when: nd_test_route_map_enable_overridden | default(false) | bool
+
+    - name: Run deleted state tests
+      ansible.builtin.include_tasks: deleted.yaml
+  vars:
+    ansible_command_timeout: 300

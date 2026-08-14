@@ -1,0 +1,335 @@
+---
+##################################################################
+##  nd_policy — TEMPLATE INPUT VALIDATION integration           ##
+##################################################################
+#
+# Exercises the pre-flight template-input schema validation
+# attached to ``NDPolicyModule`` (the three instance methods
+# ``_fetch_template_params``, ``_validate_template_inputs``,
+# ``_clean_template_inputs`` on
+# ``plugins/module_utils/nd_policy_resources.py``).  These methods
+# delegate to the shared helper at
+# ``plugins/module_utils/common/template_validation.py``; the test
+# below is the regression gate that confirms the delegation
+# preserved every observable behaviour.
+#
+# Every policy here uses description prefix ``IT-TIV-`` so the
+# end-of-file cleanup can target only this test's writes and leave
+# pre-existing fabric state untouched.
+#
+# What is covered:
+#   TC1  Happy path -- valid template_inputs succeed
+#   TC2  Unknown key -- pre-flight fail_json with clear message
+#   TC3  Wrong type -- integer parameter given non-integer value
+#   TC4  Round-trip safety -- gathered output (with SYSTEM_INJECTED
+#        keys such as POLICY_ID / FABRIC_ID) replayed via state=merged
+#        does NOT raise "unknown key" errors
+#   TC5  Multi-entry same-template -- cache hit smoke test
+#   TC6  Check-mode still validates -- check_mode=true surfaces the
+#        same unknown-key error before any API write
+#
+# Run with:
+#   ansible-playbook ... run_tests.yaml -e testcase=template_input_validation
+
+- name: "TIV - Pre-flight purge of leftover IT-TIV policies"
+  block:
+
+    - name: "TIV - GET existing policies"
+      cisco.nd.nd_rest:
+        method: GET
+        path: "/api/v1/manage/fabrics/{{ fabric_name }}/policies?max=10000"
+      register: tiv_pre_live
+      tags: template_input_validation
+
+    - name: "TIV - Build leftover IT-TIV id list"
+      ansible.builtin.set_fact:
+        tiv_leftover_ids: >-
+          {{
+            (tiv_pre_live.current.policies | default([]))
+            | selectattr('description', 'defined')
+            | selectattr('description', 'match', '^IT-TIV-')
+            | map(attribute='policyId')
+            | list
+          }}
+      tags: template_input_validation
+
+    - name: "TIV - Delete each leftover IT-TIV policy"
+      cisco.nd.nd_rest:
+        method: DELETE
+        path: "/api/v1/manage/fabrics/{{ fabric_name }}/policies/{{ item }}"
+      loop: "{{ tiv_leftover_ids }}"
+      when: tiv_leftover_ids | length > 0
+      ignore_errors: true
+      tags: template_input_validation
+
+- block:
+
+    ##############################################################
+    ##  TC1 - Happy path: valid template_inputs succeed         ##
+    ##############################################################
+
+    - name: "TIV-TC1 - Create clock_timezone with valid inputs"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "IT-TIV-happy clock_timezone"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tiv_tc1
+      tags: template_input_validation
+
+    - name: "TIV-TC1 - Assert success (no validation error)"
+      ansible.builtin.assert:
+        that:
+          - tiv_tc1.failed | default(false) == false
+          - tiv_tc1.changed == true
+      tags: template_input_validation
+
+    ##############################################################
+    ##  TC2 - Unknown key -> pre-flight fail_json               ##
+    ##############################################################
+
+    - name: "TIV-TC2 - Submit clock_timezone with unknown key"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        output_level: info
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "IT-TIV-unknown-key reject"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              BOGUS_TEMPLATE_KEY: "this should not exist"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tiv_tc2
+      ignore_errors: true
+      tags: template_input_validation
+
+    - name: "TIV-TC2 - Assert pre-flight validation rejected the unknown key"
+      ansible.builtin.assert:
+        that:
+          - tiv_tc2.failed == true
+          - tiv_tc2.changed == false
+          - (tiv_tc2.after | default([])) | length == 0
+          # `proposed` is exposed at output_level=info; confirms validation ran
+          # on the right want (template + offending key) and never executed it.
+          - (tiv_tc2.proposed | default([]) | selectattr('templateName', 'equalto', 'clock_timezone') | list) | length >= 1
+          - (tiv_tc2.proposed | default([]) | map(attribute='templateInputs') | map('default', {}) | list | to_json) is search('BOGUS_TEMPLATE_KEY')
+      tags: template_input_validation
+
+    ##############################################################
+    ##  TC3 - Wrong type: integer parameter given non-integer   ##
+    ##############################################################
+
+    - name: "TIV-TC3 - clock_timezone with non-integer HOUR_OFFSET"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        output_level: info
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "IT-TIV-bad-type HOUR_OFFSET"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: "not-a-number"
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tiv_tc3
+      ignore_errors: true
+      tags: template_input_validation
+
+    - name: "TIV-TC3 - Assert type error surfaced before API call"
+      ansible.builtin.assert:
+        that:
+          - tiv_tc3.failed == true
+          - tiv_tc3.changed == false
+          - (tiv_tc3.after | default([])) | length == 0
+          # Proposed entry should be the clock_timezone want we tried to push.
+          - (tiv_tc3.proposed | default([]) | selectattr('templateName', 'equalto', 'clock_timezone') | list) | length >= 1
+      tags: template_input_validation
+
+    ##############################################################
+    ##  TC4 - Round-trip safety: gathered -> merged             ##
+    ##                                                          ##
+    ##  Gathered output carries SYSTEM_INJECTED keys            ##
+    ##  (``POLICY_ID``, ``FABRIC_ID``, ...) embedded in         ##
+    ##  ``templateInputs``.  These must be stripped before      ##
+    ##  validation; otherwise replaying gathered output as      ##
+    ##  state=merged would trip "unknown key" errors.           ##
+    ##############################################################
+
+    - name: "TIV-TC4 - Gather policies on the test switch"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tiv_tc4_gathered
+      tags: template_input_validation
+
+    - name: "TIV-TC4 - Isolate the IT-TIV happy entry from TC1"
+      ansible.builtin.set_fact:
+        tiv_tc4_rt_entry: >-
+          {{
+            (tiv_tc4_gathered.gathered | default([]))
+            | selectattr('description', 'equalto', 'IT-TIV-happy clock_timezone')
+            | list
+            | first
+          }}
+      tags: template_input_validation
+
+    - name: "TIV-TC4 - Replay gathered entry via state=merged"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        config:
+          - "{{ tiv_tc4_rt_entry }}"
+      register: tiv_tc4_replay
+      ignore_errors: true
+      tags: template_input_validation
+
+    - name: "TIV-TC4 - Assert round-trip succeeded (no unknown-key error)"
+      ansible.builtin.assert:
+        that:
+          - tiv_tc4_replay.failed | default(false) == false
+          # The replay must not surface a validation error anywhere; the
+          # SYSTEM_INJECTED keys (POLICY_ID, FABRIC_ID, ...) in the gathered
+          # output must have been stripped before validation.
+          - "'Unknown templateInput key' not in (tiv_tc4_replay | to_json)"
+          - "'Template input validation failed' not in (tiv_tc4_replay | to_json)"
+      tags: template_input_validation
+
+    ##############################################################
+    ##  TC5 - Multi-entry same template (cache hit smoke test)  ##
+    ##############################################################
+
+    - name: "TIV-TC5 - Three feature_enable entries, same template"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "IT-TIV-cache LACP"
+            priority: 110
+            template_inputs:
+              featureName: lacp
+          - name: feature_enable
+            create_additional_policy: false
+            description: "IT-TIV-cache LLDP"
+            priority: 111
+            template_inputs:
+              featureName: lldp
+          - name: feature_enable
+            create_additional_policy: false
+            description: "IT-TIV-cache BFD"
+            priority: 112
+            template_inputs:
+              featureName: bfd
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tiv_tc5
+      tags: template_input_validation
+
+    - name: "TIV-TC5 - Assert all three created without per-entry validation issue"
+      ansible.builtin.assert:
+        that:
+          - tiv_tc5.failed | default(false) == false
+          - tiv_tc5.changed == true
+      tags: template_input_validation
+
+    ##############################################################
+    ##  TC6 - Check-mode still validates                        ##
+    ##                                                          ##
+    ##  Validation runs BEFORE any orchestrator write, so the   ##
+    ##  unknown-key error must surface even when check_mode is  ##
+    ##  on and no real API call would be issued.                ##
+    ##############################################################
+
+    - name: "TIV-TC6 - Unknown key with check_mode=true"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        output_level: info
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "IT-TIV-check-mode unknown"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              ANOTHER_BOGUS_KEY: "x"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tiv_tc6
+      check_mode: true
+      ignore_errors: true
+      tags: template_input_validation
+
+    - name: "TIV-TC6 - Assert check-mode also rejects unknown key"
+      ansible.builtin.assert:
+        that:
+          - tiv_tc6.failed == true
+          - tiv_tc6.changed == false
+          - (tiv_tc6.after | default([])) | length == 0
+          - (tiv_tc6.proposed | default([]) | map(attribute='templateInputs') | map('default', {}) | list | to_json) is search('ANOTHER_BOGUS_KEY')
+      tags: template_input_validation
+
+  always:
+
+    ##############################################################
+    ##  CLEANUP - Targeted purge of every IT-TIV policy         ##
+    ##############################################################
+
+    - name: "TIV-CLEANUP - GET current policies"
+      cisco.nd.nd_rest:
+        method: GET
+        path: "/api/v1/manage/fabrics/{{ fabric_name }}/policies?max=10000"
+      register: tiv_post_live
+      ignore_errors: true
+      tags: template_input_validation
+
+    - name: "TIV-CLEANUP - Build IT-TIV id list"
+      ansible.builtin.set_fact:
+        tiv_post_ids: >-
+          {{
+            (tiv_post_live.current.policies | default([]))
+            | selectattr('description', 'defined')
+            | selectattr('description', 'match', '^IT-TIV-')
+            | map(attribute='policyId')
+            | list
+          }}
+      ignore_errors: true
+      tags: template_input_validation
+
+    - name: "TIV-CLEANUP - Delete each IT-TIV policy"
+      cisco.nd.nd_rest:
+        method: DELETE
+        path: "/api/v1/manage/fabrics/{{ fabric_name }}/policies/{{ item }}"
+      loop: "{{ tiv_post_ids | default([]) }}"
+      when: tiv_post_ids | default([]) | length > 0
+      ignore_errors: true
+      tags: template_input_validation

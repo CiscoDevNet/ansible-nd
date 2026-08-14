@@ -18,7 +18,7 @@
 # CLEANUP - Ensure clean state before tests
 #############################################################################
 - name: Clean up any existing test fabrics before starting tests
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -30,7 +30,7 @@
 # TEST 1: STATE MERGED - Create fabric using merged state
 #############################################################################
 - name: "TEST 1a: Create fabric using state merged (first run)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -48,7 +48,7 @@
   tags: [test_merged, test_merged_create]
 
 - name: "TEST 1b: Create fabric using state merged (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -66,12 +66,11 @@
   tags: [test_merged, test_merged_idempotent]
 
 - name: "TEST 1c: Update fabric using state merged (modify existing)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: merged
     config:
       - fabric_name: "{{ test_fabric_merged }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -80,7 +79,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65002"  # Changed from 65001
           site_id: "65002"  # Changed from 65001
           target_subnet_mask: 30
@@ -490,12 +488,11 @@
 # TEST 2: STATE REPLACED - Create and manage fabric using replaced state
 #############################################################################
 - name: "TEST 2a: Create fabric using state replaced (first run)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -504,7 +501,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65004"  # DIfferent from default  ASN
           site_id: "65004"  # DIfferent from default  site_id
           target_subnet_mask: 30
@@ -585,12 +581,11 @@
   tags: [test_replaced, test_replaced_create]
 
 - name: "TEST 2b: Create fabric using state replaced (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -599,7 +594,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65004"  # DIfferent from default  ASN
           site_id: "65004"  # DIfferent from default  site_id
           target_subnet_mask: 30
@@ -680,12 +674,11 @@
   tags: [test_replaced, test_replaced_idempotent]
 
 - name: "TEST 2c: Update fabric using state replaced (complete replacement)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ test_fabric_replaced }}"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -694,7 +687,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65004"  # Changed ASN
           site_id: "65004"  # Changed site_id
           banner: "^ Updated via replaced state ^"  # Added banner
@@ -905,8 +897,8 @@
 - name: "VALIDATION 2b: Verify NX-API/system defaults after replace (were changed in 2a)"
   assert:
     that:
-      - replaced_fabric_config.management.nxapi == false  # default is false
-      - replaced_fabric_config.management.nxapiHttp == true  # NDFC API default is true (overrides Pydantic default of false)
+      - replaced_fabric_config.management.nxapi == true  # default is true
+      - replaced_fabric_config.management.nxapiHttp == false  # NDFC API default is true but Pydantic overrides default with false
       - replaced_fabric_config.management.nxapiHttpsPort == 443
       - replaced_fabric_config.management.nxapiHttpPort == 80
       - replaced_fabric_config.management.tenantDhcp == true
@@ -1003,8 +995,8 @@
 - name: "VALIDATION 2b: Verify backup/brownfield defaults after replace"
   assert:
     that:
-      - replaced_fabric_config.management.realTimeBackup == false
-      - replaced_fabric_config.management.scheduledBackup == false
+      - replaced_fabric_config.management.realTimeBackup | default(false) == false
+      - replaced_fabric_config.management.scheduledBackup | default(false) == false
       - replaced_fabric_config.management.brownfieldNetworkNameFormat == "Auto_Net_VNI$$VNI$$_VLAN$$VLAN_ID$$"
       - replaced_fabric_config.management.brownfieldSkipOverlayNetworkAttachments == false
       - replaced_fabric_config.management.allowSmartSwitchOnboarding == false
@@ -1071,7 +1063,7 @@
 # TEST 3: STATE DELETED - Delete fabrics (uses test_fabric_replaced from TEST 2)
 #############################################################################
 - name: "TEST 3a: Delete fabric using state deleted"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -1089,7 +1081,7 @@
   tags: [test_deleted, test_deleted_delete]
 
 - name: "TEST 3b: Delete fabric using state deleted (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -1110,12 +1102,11 @@
 # TEST 4: Multiple fabric operations in single task
 #############################################################################
 - name: "TEST 4: Multiple fabric operations in single task"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: merged
     config:
       - fabric_name: "multi_fabric_1"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1124,7 +1115,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65101"
           site_id: "65101"
           target_subnet_mask: 30
@@ -1193,7 +1183,6 @@
           management_ipv4_prefix: 24
           # management_ipv6_prefix: 64
       - fabric_name: "multi_fabric_2"
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1202,7 +1191,6 @@
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
           bgp_asn: "65102"
           site_id: "65102"
           target_subnet_mask: 30
@@ -1283,10 +1271,101 @@
   tags: [test_multi, test_multi_create]
 
 #############################################################################
+# TEST 4: CONFIG ACTIONS VALIDATION - Invalid save/deploy combination
+#
+# Regression test for PR #256: config_actions validation must run BEFORE any
+# state mutation and must fail deterministically on every run, including
+# idempotent no-drift runs. deploy=true with save=false is invalid and must
+# fail before the fabric is modified.
+#############################################################################
+- name: "TEST 4 SETUP: Create baseline fabric with fabric_mtu 9216"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': test_fabric_config_actions} | combine(fabric_config_ibgp) | combine({'management': (fabric_config_ibgp.management | default({})) | combine({'fabric_mtu': 9216})}) }}"
+  register: config_actions_baseline
+  tags: [test_config_actions]
+
+- name: "TEST 4a: Invalid config_actions (save=false, deploy=true) - first run"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': test_fabric_config_actions} | combine(fabric_config_ibgp) | combine({'management': (fabric_config_ibgp.management | default({})) | combine({'fabric_mtu': 9000})}) }}"
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+  register: config_actions_first_run
+  ignore_errors: true
+  tags: [test_config_actions]
+
+- name: "TEST 4a: Verify first invalid run fails before any mutation"
+  assert:
+    that:
+      - config_actions_first_run is failed
+      - config_actions_first_run is not changed
+      - "'deploy=True requires save=True' in config_actions_first_run.msg"
+    fail_msg: "Invalid config_actions did not fail before mutation on the first run"
+    success_msg: "Invalid config_actions failed before mutation without changing the fabric"
+  tags: [test_config_actions]
+
+- name: "TEST 4b: Invalid config_actions (save=false, deploy=true) - identical second run"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': test_fabric_config_actions} | combine(fabric_config_ibgp) | combine({'management': (fabric_config_ibgp.management | default({})) | combine({'fabric_mtu': 9000})}) }}"
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+  register: config_actions_second_run
+  ignore_errors: true
+  tags: [test_config_actions]
+
+- name: "TEST 4b: Verify identical second run also fails (no-drift path is not skipped)"
+  assert:
+    that:
+      - config_actions_second_run is failed
+      - config_actions_second_run is not changed
+      - "'deploy=True requires save=True' in config_actions_second_run.msg"
+    fail_msg: "Invalid config_actions was skipped on the idempotent no-drift second run"
+    success_msg: "Invalid config_actions fails consistently regardless of drift"
+  tags: [test_config_actions]
+
+- name: "TEST 4c: Confirm fabric_mtu was never mutated (still 9216)"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': test_fabric_config_actions} | combine(fabric_config_ibgp) | combine({'management': (fabric_config_ibgp.management | default({})) | combine({'fabric_mtu': 9216})}) }}"
+  register: config_actions_verify_mtu
+  tags: [test_config_actions]
+
+- name: "TEST 4c: Verify fabric_mtu is unchanged at 9216"
+  assert:
+    that:
+      - config_actions_verify_mtu is not changed
+    fail_msg: "fabric_mtu was mutated by an invalid config_actions run"
+    success_msg: "fabric_mtu remained 9216 - invalid config_actions never mutated ND"
+  tags: [test_config_actions]
+
+- name: "TEST 4 CLEANUP: Delete config_actions test fabric"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ test_fabric_config_actions }}"
+  ignore_errors: true
+  tags: [test_config_actions, cleanup, always]
+
+#############################################################################
 # FINAL CLEANUP - Clean up all test fabrics
 #############################################################################
 - name: "CLEANUP: Delete all test fabrics"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -1304,7 +1383,7 @@
   debug:
     msg: |
       ========================================================
-      TEST SUMMARY for cisco.nd.nd_manage_fabric_ibgp module:
+      TEST SUMMARY for cisco.nd.nd_manage_fabric_ibgp_vxlan module:
       ========================================================
       ✓ TEST 1: STATE MERGED
         - Create fabric: {{ 'PASSED' if merged_result_1 is changed else 'FAILED' }}

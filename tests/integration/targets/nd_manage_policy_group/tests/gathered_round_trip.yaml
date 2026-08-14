@@ -1,0 +1,667 @@
+---
+##############################################
+##  nd_policy_group — gathered round-trip   ##
+##############################################
+#
+# Tests that gathered output can be fed directly into state=merged
+# and state=deleted for full round-trip workflows.
+#
+# All test policy groups use description prefix "IT-RT-" to
+# isolate from any pre-existing fabric state.
+
+##############################################
+##               CLEANUP                    ##
+##############################################
+
+- name: "RT - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup_gathered.yaml
+  tags: gathered_round_trip
+
+- block:
+
+    ##############################################
+    ##     SETUP — Create known policy groups   ##
+    ##############################################
+
+    - name: "RT SETUP - Create test policy groups"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "IT-RT-Enable LACP"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lacp
+
+          - name: feature_enable
+            description: "IT-RT-Enable LLDP"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lldp
+
+          - name: switch_freeform
+            description: "IT-RT-System vlan long-name"
+            priority: 110
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "system vlan long-name"
+
+          - name: clock_timezone
+            description: "IT-RT-Timezone CET"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+      register: setup_result
+      tags: gathered_round_trip
+
+    - name: "RT SETUP - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - setup_result.changed == true
+      tags: gathered_round_trip
+
+    # Gather all our test groups for use in subsequent TCs
+    - name: "RT SETUP - Gather all IT-RT test groups"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+      register: baseline_gathered
+      tags: gathered_round_trip
+
+    - name: "RT SETUP - Extract our test groups"
+      ansible.builtin.set_fact:
+        our_gathered: "{{ baseline_gathered.gathered | selectattr('description', 'match', '^IT-RT-') | list }}"
+      tags: gathered_round_trip
+
+    - name: "RT SETUP - Verify we got all 4 test groups"
+      ansible.builtin.assert:
+        that:
+          - our_gathered | length == 4
+        fail_msg: "Expected 4 IT-RT groups but got {{ our_gathered | length }}: {{ our_gathered | map(attribute='description') | list }}"
+      tags: gathered_round_trip
+
+    ##############################################
+    ##         TEST CASES                       ##
+    ##############################################
+
+    # ==========================================
+    # TC-1: Gathered → Merged (idempotent re-apply)
+    # ==========================================
+    - name: "RT TC1 - Re-apply gathered output via state=merged"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config: "{{ our_gathered }}"
+      register: result
+      tags: gathered_round_trip
+
+    - name: "RT TC1 - Verify idempotent (no change)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+        fail_msg: "Expected no change when re-applying gathered output, but got changed=true"
+      tags: gathered_round_trip
+
+    # ==========================================
+    # TC-2: Gathered → Merged (update switch_ids)
+    # ==========================================
+    - name: "RT TC2a - Extract LACP group from gathered"
+      ansible.builtin.set_fact:
+        lacp_gathered: "{{ our_gathered | selectattr('description', 'equalto', 'IT-RT-Enable LACP') | first }}"
+      tags: gathered_round_trip
+
+    - name: "RT TC2b - Modify switch_ids and apply"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: "{{ lacp_gathered.name }}"
+            description: "{{ lacp_gathered.description }}"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+              - "{{ switch_serial_2 }}"
+            template_inputs: "{{ lacp_gathered.template_inputs }}"
+      register: result
+      tags: gathered_round_trip
+
+    - name: "RT TC2c - Verify update detected (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: gathered_round_trip
+
+    - name: "RT TC2e - Re-gather and verify switch_ids updated"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: feature_enable
+            description: "IT-RT-Enable LACP"
+      register: re_gathered
+      tags: gathered_round_trip
+
+    - name: "RT TC2f - Verify new switch_ids"
+      ansible.builtin.assert:
+        that:
+          - re_gathered.gathered | length == 1
+          - re_gathered.gathered[0].switch_ids | sort == [switch_serial_1, switch_serial_2] | sort
+      tags: gathered_round_trip
+
+    # ==========================================
+    # TC-3: Gathered → Merged (update priority)
+    # ========================================== 
+    - name: "RT TC3a - Extract switch_freeform group from gathered"
+      ansible.builtin.set_fact:
+        freeform_gathered: "{{ our_gathered | selectattr('description', 'equalto', 'IT-RT-System vlan long-name') | first }}"
+      tags: gathered_round_trip
+
+    - name: "RT TC3b - Update priority via gathered output"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: "{{ freeform_gathered.name }}"
+            description: "{{ freeform_gathered.description }}"
+            switch_ids: "{{ freeform_gathered.switch_ids }}"
+            priority: 999
+            template_inputs: "{{ freeform_gathered.template_inputs }}"
+      register: result
+      tags: gathered_round_trip
+
+    - name: "RT TC3c - Verify priority update (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: gathered_round_trip
+
+    - name: "RT TC3d - Re-gather and verify new priority"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "IT-RT-System vlan long-name"
+      register: re_gathered
+      tags: gathered_round_trip
+
+    - name: "RT TC3e - Verify priority is 999"
+      ansible.builtin.assert:
+        that:
+          - re_gathered.gathered[0].priority == 999
+      tags: gathered_round_trip
+
+    # ==========================================
+    # TC-4: Gathered → Merged (update template_inputs)
+    # ==========================================
+    - name: "RT TC4a - Extract switch_freeform group"
+      ansible.builtin.set_fact:
+        freeform_gathered: "{{ our_gathered | selectattr('description', 'equalto', 'IT-RT-System vlan long-name') | first }}"
+      tags: gathered_round_trip
+
+    - name: "RT TC4b - Update template_inputs CONF"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: "{{ freeform_gathered.name }}"
+            description: "{{ freeform_gathered.description }}"
+            switch_ids: "{{ freeform_gathered.switch_ids }}"
+            template_inputs:
+              CONF: "no system vlan long-name"
+      register: result
+      tags: gathered_round_trip
+
+    - name: "RT TC4c - Verify template_inputs update (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: gathered_round_trip
+
+    - name: "RT TC4e - Re-gather and verify new template_inputs"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "IT-RT-System vlan long-name"
+      register: re_gathered
+      tags: gathered_round_trip
+
+    - name: "RT TC4f - Verify CONF changed"
+      ansible.builtin.assert:
+        that:
+          - re_gathered.gathered[0].template_inputs.CONF == 'no system vlan long-name'
+      tags: gathered_round_trip
+
+    # ==========================================
+    # TC-5: Gathered → Deleted (specific entry)
+    # ==========================================
+    - name: "RT TC5a - Delete clock_timezone via gathered output"
+      vars:
+        clock_gathered: "{{ our_gathered | selectattr('description', 'equalto', 'IT-RT-Timezone CET') | first }}"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ clock_gathered.name }}"
+            description: "{{ clock_gathered.description }}"
+      register: result
+      tags: gathered_round_trip
+
+    - name: "RT TC5b - Verify deletion (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: gathered_round_trip
+
+    - name: "RT TC5d - Re-gather clock_timezone and verify gone"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+            description: "IT-RT-Timezone CET"
+      register: re_gathered
+      tags: gathered_round_trip
+
+    - name: "RT TC5e - Verify clock_timezone no longer in gathered"
+      ansible.builtin.assert:
+        that:
+          - re_gathered.gathered is not defined or re_gathered.gathered | default([]) | length == 0
+      tags: gathered_round_trip
+
+    # ==========================================
+    # TC-6: Gathered → Deleted (delete all remaining)
+    # ==========================================
+    - name: "RT TC6a - Gather remaining IT-RT groups"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+      register: remaining
+      tags: gathered_round_trip
+
+    - name: "RT TC6b - Extract remaining IT-RT groups"
+      ansible.builtin.set_fact:
+        remaining_rt: "{{ remaining.gathered | default([]) | selectattr('description', 'match', '^IT-RT-') | list }}"
+      tags: gathered_round_trip
+
+    - name: "RT TC6c - Delete all remaining IT-RT groups using gathered"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config: "{{ remaining_rt }}"
+      register: result
+      when: remaining_rt | length > 0
+      tags: gathered_round_trip
+
+    - name: "RT TC6d - Verify deletion (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      when: remaining_rt | length > 0
+      tags: gathered_round_trip
+
+    - name: "RT TC6f - Re-gather and verify no IT-RT groups remain"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+      register: post_delete
+      tags: gathered_round_trip
+
+    - name: "RT TC6g - Verify zero IT-RT groups"
+      vars:
+        rt_groups: "{{ post_delete.gathered | default([]) | selectattr('description', 'match', '^IT-RT-') | list }}"
+      ansible.builtin.assert:
+        that:
+          - rt_groups | length == 0
+        fail_msg: "Expected 0 IT-RT groups but found: {{ rt_groups | map(attribute='description') | list }}"
+      tags: gathered_round_trip
+
+    # ==========================================
+    # TC-7: Gathered → Deleted (already deleted = idempotent)
+    # ==========================================
+    - name: "RT TC7 - Delete same groups again (should be no-op)"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "IT-RT-Enable LACP"
+          - name: feature_enable
+            description: "IT-RT-Enable LLDP"
+          - name: switch_freeform
+            description: "IT-RT-System vlan long-name"
+          - name: clock_timezone
+            description: "IT-RT-Timezone CET"
+      register: result
+      tags: gathered_round_trip
+
+    - name: "RT TC7 - Verify idempotent delete (no change)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: gathered_round_trip
+
+    # ==========================================
+    # TC-8: Gathered → Merged with policy_id as name
+    # ==========================================
+    # Re-create groups first since we deleted everything in TC6
+    - name: "RT TC8a - Re-create test groups"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "IT-RT-Enable LACP"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lacp
+      register: recreate_result
+      tags: gathered_round_trip
+
+    - name: "RT TC8c - Gather to get policy_id"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: feature_enable
+            description: "IT-RT-Enable LACP"
+      register: id_gather
+      tags: gathered_round_trip
+
+    - name: "RT TC8d - Extract policy_id"
+      ansible.builtin.set_fact:
+        lacp_id: "{{ id_gather.gathered[0].policy_id }}"
+      tags: gathered_round_trip
+
+    - name: "RT TC8e - Update via policy_id as name"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: "{{ lacp_id }}"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+              - "{{ switch_serial_2 }}"
+            template_inputs:
+              featureName: lacp
+      register: result
+      tags: gathered_round_trip
+
+    - name: "RT TC8f - Verify update via policy_id (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: gathered_round_trip
+
+    - name: "RT TC8h - Re-gather and verify switch_ids updated via ID"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: "{{ lacp_id }}"
+      register: re_gathered
+      tags: gathered_round_trip
+
+    - name: "RT TC8i - Verify switch_ids via ID-based gather"
+      ansible.builtin.assert:
+        that:
+          - re_gathered.gathered | length == 1
+          - re_gathered.gathered[0].switch_ids | sort == [switch_serial_1, switch_serial_2] | sort
+      tags: gathered_round_trip
+
+    # ==========================================
+    # TC-9: Gathered → Deleted with policy_id
+    # ==========================================
+    - name: "RT TC9a - Delete via policy_id"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ lacp_id }}"
+      register: result
+      tags: gathered_round_trip
+
+    - name: "RT TC9b - Verify deletion via ID (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: gathered_round_trip
+
+    - name: "RT TC9d - Verify group gone via gather"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: feature_enable
+            description: "IT-RT-Enable LACP"
+      register: re_gathered
+      tags: gathered_round_trip
+
+    - name: "RT TC9e - Verify deleted"
+      ansible.builtin.assert:
+        that:
+          - re_gathered.gathered is not defined or re_gathered.gathered | default([]) | length == 0
+      tags: gathered_round_trip
+
+    # ==========================================
+    # TC-10: Full round-trip: Create → Gather → Delete → Re-create from gathered
+    # ==========================================
+    - name: "RT TC10a - Create 2 groups"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "IT-RT-Enable LACP"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lacp
+          - name: clock_timezone
+            description: "IT-RT-Timezone CET"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+      tags: gathered_round_trip
+
+    - name: "RT TC10c - Gather the 2 groups"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+      register: snapshot
+      tags: gathered_round_trip
+
+    - name: "RT TC10d - Save our groups"
+      ansible.builtin.set_fact:
+        snapshot_groups: "{{ snapshot.gathered | selectattr('description', 'match', '^IT-RT-') | list }}"
+      tags: gathered_round_trip
+
+    - name: "RT TC10e - Delete all IT-RT groups"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config: "{{ snapshot_groups }}"
+      tags: gathered_round_trip
+
+    - name: "RT TC10g - Verify deleted"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+      register: post_delete
+      tags: gathered_round_trip
+
+    - name: "RT TC10h - Verify zero IT-RT groups"
+      vars:
+        rt_groups: "{{ post_delete.gathered | default([]) | selectattr('description', 'match', '^IT-RT-') | list }}"
+      ansible.builtin.assert:
+        that:
+          - rt_groups | length == 0
+      tags: gathered_round_trip
+
+    # Strip the (now-stale) policy_id from each snapshot entry before
+    # re-creating. ``policy_id`` is server-generated; passing a stale value
+    # would attempt ID-based update against a deleted group and fail at the
+    # API (the correct, surfaced behavior).  For re-create from a snapshot we
+    # rely on the composite key (template name + description).
+    - name: "RT TC10i - Re-create from gathered snapshot (strip stale policy_id)"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config: >-
+          {{
+            snapshot_groups
+            | map('dict2items')
+            | map('rejectattr', 'key', 'equalto', 'policy_id')
+            | map('items2dict')
+            | list
+          }}
+      register: result
+      tags: gathered_round_trip
+
+    - name: "RT TC10j - Verify re-creation (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: gathered_round_trip
+
+    - name: "RT TC10l - Re-gather and compare"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+      register: final_gather
+      tags: gathered_round_trip
+
+    - name: "RT TC10m - Verify re-created groups match snapshot"
+      vars:
+        final_rt: "{{ final_gather.gathered | selectattr('description', 'match', '^IT-RT-') | list }}"
+      ansible.builtin.assert:
+        that:
+          - final_rt | length == snapshot_groups | length
+          - final_rt | map(attribute='description') | sort == snapshot_groups | map(attribute='description') | sort
+          - final_rt | map(attribute='name') | sort == snapshot_groups | map(attribute='name') | sort
+      tags: gathered_round_trip
+
+    # ==========================================
+    # TC-11: Round-trip with switch_freeform (markDelete fallback)
+    # ==========================================
+    - name: "RT TC11a - Create switch_freeform group"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "IT-RT-System vlan long-name"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "system vlan long-name"
+      tags: gathered_round_trip
+
+    - name: "RT TC11c - Gather the freeform group"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "IT-RT-System vlan long-name"
+      register: freeform_gather
+      tags: gathered_round_trip
+
+    - name: "RT TC11d - Verify gathered the freeform group"
+      ansible.builtin.assert:
+        that:
+          - freeform_gather.gathered | length == 1
+          - freeform_gather.gathered[0].name == 'switch_freeform'
+      tags: gathered_round_trip
+
+    - name: "RT TC11e - Save freeform gathered"
+      ansible.builtin.set_fact:
+        freeform_snapshot: "{{ freeform_gather.gathered }}"
+      tags: gathered_round_trip
+
+    - name: "RT TC11f - Delete switch_freeform (triggers markDelete fallback + direct DELETE)"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config: "{{ freeform_snapshot }}"
+      register: result
+      tags: gathered_round_trip
+
+    - name: "RT TC11g - Verify deletion (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: gathered_round_trip
+
+    - name: "RT TC11i - Re-create from freeform snapshot (strip stale policy_id)"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config: >-
+          {{
+            freeform_snapshot
+            | map('dict2items')
+            | map('rejectattr', 'key', 'equalto', 'policy_id')
+            | map('items2dict')
+            | list
+          }}
+      register: result
+      tags: gathered_round_trip
+
+    - name: "RT TC11j - Verify re-creation (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: gathered_round_trip
+
+    - name: "RT TC11l - Verify re-created freeform via gather"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "IT-RT-System vlan long-name"
+      register: final_freeform
+      tags: gathered_round_trip
+
+    - name: "RT TC11m - Verify freeform group is back"
+      ansible.builtin.assert:
+        that:
+          - final_freeform.gathered | length == 1
+          - final_freeform.gathered[0].name == 'switch_freeform'
+          - final_freeform.gathered[0].description == 'IT-RT-System vlan long-name'
+      tags: gathered_round_trip
+
+  always:
+    - name: "RT - Final cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup_gathered.yaml
+      tags: gathered_round_trip

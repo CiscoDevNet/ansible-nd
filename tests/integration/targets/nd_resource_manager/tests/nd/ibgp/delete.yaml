@@ -1,0 +1,217 @@
+---
+- name: iBGP delta pools - Set resource config
+  ansible.builtin.set_fact:
+    rm_test_config:
+      - entity_name: "ibgp_anycast_rp_fabric"
+        pool_type: "IP"
+        pool_name: "ANYCAST_RP_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.254.254.11"
+
+      - entity_name: "ibgp_bgp_asn_fabric"
+        pool_type: "ID"
+        pool_name: "BGP_ASN_ID"
+        scope_type: "fabric"
+        resource: "1001"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+        pool_type: "IP"
+        pool_name: "LOOPBACK1_IP_POOL"
+        scope_type: "device_interface"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.3.0.11"
+
+      - entity_name: "ibgp_mcast_fabric"
+        pool_type: "IP"
+        pool_name: "MCAST_IP_POOL"
+        scope_type: "fabric"
+        resource: "239.1.1.11"
+
+      - entity_name: "ibgp_mpls_loopback_fabric"
+        pool_type: "IP"
+        pool_name: "MPLS_LOOPBACK_IP_POOL"
+        scope_type: "fabric"
+        resource: "10.255.0.11"
+
+      - entity_name: "ibgp_object_tracking_device"
+        pool_type: "ID"
+        pool_name: "OBJECT_TRACKING_NUMBER_POOL"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "111"
+
+      - entity_name: "ibgp_service_network_vlan_device"
+        pool_type: "ID"
+        pool_name: "serviceNetworkVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "3011"
+
+      - entity_name: "ibgp_sla_device"
+        pool_type: "ID"
+        pool_name: "SLA_ID"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10011"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+        pool_type: "SUBNET"
+        pool_name: "SUBNET"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "10.4.11.0/30"
+
+      - entity_name: "ibgp_vrf_vlan_device"
+        pool_type: "ID"
+        pool_name: "vrfVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "2011"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~ibgp_vpc_peer_link_vlan_pair"
+        pool_type: "ID"
+        pool_name: "vpcPeerLinkVlan"
+        scope_type: "device_pair"
+        switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+        resource: "3600"
+    rm_test_delete_config:
+      - entity_name: "ibgp_anycast_rp_fabric"
+        pool_type: "IP"
+        pool_name: "ANYCAST_RP_IP_POOL"
+        scope_type: "fabric"
+
+      - entity_name: "ibgp_bgp_asn_fabric"
+        pool_type: "ID"
+        pool_name: "BGP_ASN_ID"
+        scope_type: "fabric"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_10 }}"
+        pool_type: "IP"
+        pool_name: "LOOPBACK1_IP_POOL"
+        scope_type: "device_interface"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "ibgp_mcast_fabric"
+        pool_type: "IP"
+        pool_name: "MCAST_IP_POOL"
+        scope_type: "fabric"
+
+      - entity_name: "ibgp_mpls_loopback_fabric"
+        pool_type: "IP"
+        pool_name: "MPLS_LOOPBACK_IP_POOL"
+        scope_type: "fabric"
+
+      - entity_name: "ibgp_object_tracking_device"
+        pool_type: "ID"
+        pool_name: "OBJECT_TRACKING_NUMBER_POOL"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "ibgp_service_network_vlan_device"
+        pool_type: "ID"
+        pool_name: "serviceNetworkVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "ibgp_sla_device"
+        pool_type: "ID"
+        pool_name: "SLA_ID"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
+        pool_type: "SUBNET"
+        pool_name: "SUBNET"
+        scope_type: "link"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "ibgp_vrf_vlan_device"
+        pool_type: "ID"
+        pool_name: "vrfVlan"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~ibgp_vpc_peer_link_vlan_pair"
+        pool_type: "ID"
+        pool_name: "vpcPeerLinkVlan"
+        scope_type: "device_pair"
+        switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+    rm_expected_resource_count: 11
+
+- name: iBGP delta pools - Pre-clean resources
+  cisco.nd.nd_manage_resource_manager: &rm_delete
+    state: deleted
+    fabric_name: "{{ ansible_it_fabric }}"
+    config: "{{ rm_test_delete_config }}"
+  register: result
+
+- name: iBGP delta pools - Assert pre-clean did not fail
+  ansible.builtin.assert:
+    that:
+      - 'result.failed | default(false) == false'
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+- block:
+    - name: iBGP delta pools - Create resources for delete test
+      cisco.nd.nd_manage_resource_manager:
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config: "{{ rm_test_config }}"
+      register: result
+
+    - name: iBGP delta pools - Assert create setup
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+          - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+    - name: iBGP delta pools - Delete resources
+      cisco.nd.nd_manage_resource_manager: *rm_delete
+      register: result
+
+    - name: iBGP delta pools - Assert delete result
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+          - '(result["diff"][0]["merged"] | length) == 0'
+          - '(result["diff"][0]["deleted"] | length) == rm_expected_resource_count'
+          - 'result.failed | default(false) == false'
+
+    - name: iBGP delta pools - Assert delete API details
+      ansible.builtin.assert:
+        that:
+          - '(result["api_response"] | length) == 1'
+          - 'result["api_result"][0]["success"] == true'
+          - '(result["api_diff"][0]["deleted"] | length) == (result["diff"][0]["deleted"] | length)'
+          - '(result["api_payload"][0]["resourceIds"] | length) == (result["diff"][0]["deleted"] | length)'
+          - result.api_response | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+      when: result.api_response is defined
+
+  always:
+    - name: iBGP delta pools - Final cleanup resources
+      cisco.nd.nd_manage_resource_manager: *rm_delete
+      register: result
+
+    - name: iBGP delta pools - Assert final cleanup did not fail
+      ansible.builtin.assert:
+        that:
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0

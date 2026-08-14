@@ -191,3 +191,23 @@ ND_REST_KEYS_TO_SANITIZE = ["metadata"]
 ND_SETUP_NODE_DEPLOYMENT_TYPE = {"physical": "cimc", "virtual": "vnode"}
 
 BACKUP_TYPE = {"config_only": "config-only", None: "config-only", "": "config-only", "full": "full"}
+
+# ND system-injected keys present in templateInputs that are NOT real
+# template parameters.  Shared by policy and policy-group resources so
+# that gathered/merged flows can strip them consistently.
+SYSTEM_INJECTED_TEMPLATE_KEYS: frozenset = frozenset(
+    {
+        "FABRIC_ID",
+        "FABRIC_NAME",
+        "MARK_DELETED",
+        "POLICY_DESC",
+        "POLICY_GROUP_ID",
+        "POLICY_ID",
+        "PRIORITY",
+        "SECENTITY",
+        "SECENTTYPE",
+        "SERIAL_NUMBER",
+        "SOURCE",
+        "SWITCH_DB_ID",
+    }
+)

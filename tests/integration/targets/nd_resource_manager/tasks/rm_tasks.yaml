@@ -1,0 +1,148 @@
+---
+- name: Normalize requested fabric types and test cases
+  ansible.builtin.set_fact:
+    rm_requested_testcase_raw: "{{ testcase | default('*') | string | trim }}"
+    rm_fabric_type_is_defined: "{{ fabric_type is defined and (fabric_type | string | trim | length > 0) }}"
+    rm_requested_fabric_types_raw: "{{ (fabric_type | string | split(',') | map('trim') | reject('equalto', '') | list) if (fabric_type is defined and (fabric_type | string | trim | length > 0)) else [] }}"
+  tags: sanity
+
+- name: Expand requested test cases
+  ansible.builtin.set_fact:
+    rm_requested_testcases: >-
+      {{
+        []
+        if rm_requested_testcase_raw == '*'
+        else rm_requested_testcase_raw
+          | split(',')
+          | map('trim')
+          | reject('equalto', '')
+          | map('regex_replace', '\.yaml$', '')
+          | unique
+          | list
+      }}
+  tags: sanity
+
+- name: Validate requested test cases
+  ansible.builtin.assert:
+    that:
+      - rm_requested_testcase_raw == '*' or rm_requested_testcases | length > 0
+      - rm_requested_testcase_raw == '*' or rm_requested_testcases | reject('match', '^[A-Za-z0-9_][A-Za-z0-9_-]*$') | list | length == 0
+    fail_msg: >-
+      Invalid testcase value. Use "*" or a comma-separated list of YAML file
+      names without directory paths, with or without the .yaml extension.
+  tags: sanity
+
+- name: Validate requested fabric types
+  ansible.builtin.assert:
+    that:
+      - rm_requested_fabric_types_raw | difference(['base', 'ibgp', 'ebgp', 'external', 'all']) | length == 0
+    fail_msg: >-
+      Unsupported fabric_type value. Supported values are base, ibgp, ebgp,
+      external, all, or a comma-separated subset.
+  when: rm_fabric_type_is_defined | bool
+  tags: sanity
+
+- name: Initialize requested fabric selector
+  ansible.builtin.set_fact:
+    rm_requested_fabric_types: "{{ [] if rm_fabric_type_is_defined | bool else ['legacy'] }}"
+  tags: sanity
+
+- name: Expand requested fabric selector
+  ansible.builtin.set_fact:
+    rm_requested_fabric_types: >-
+      {{
+        (
+          rm_requested_fabric_types
+          +
+          (
+            ['base', 'ibgp', 'ebgp', 'external']
+            if item == 'all'
+            else ['base']
+            if item == 'base'
+            else ['base', item]
+          )
+        )
+        | unique
+        | list
+      }}
+  loop: "{{ rm_requested_fabric_types_raw }}"
+  when: rm_fabric_type_is_defined | bool
+  tags: sanity
+
+- name: Prepare fabric name lookup
+  ansible.builtin.set_fact:
+    rm_fabric_name_by_type:
+      legacy: "{{ ansible_it_fabric }}"
+      base: "{{ ansible_it_fabric_base | default(ansible_it_fabric) }}"
+      ibgp: "{{ ansible_it_fabric_ibgp | default(ansible_it_fabric) }}"
+      ebgp: "{{ ansible_it_fabric_ebgp | default(ansible_it_fabric) }}"
+      external: "{{ ansible_it_fabric_external | default(ansible_it_fabric) }}"
+    test_items: []
+  tags: sanity
+
+- name: Discover nd_resource_manager test files
+  ansible.builtin.find:
+    paths: "{{ role_path }}/tests/nd{{ '' if item == 'legacy' else '/' ~ item }}"
+    patterns: "*.yaml"
+    file_type: file
+    recurse: false
+  connection: local
+  loop: "{{ rm_requested_fabric_types }}"
+  register: rm_discovered_test_files
+  tags: sanity
+
+- name: Build selected nd_resource_manager test file list
+  ansible.builtin.set_fact:
+    test_items: >-
+      {{
+        test_items
+        + [
+          {
+            'fabric_type': item.0.item,
+            'testcase': item.1.path | basename | regex_replace('\.yaml$', ''),
+            'path': item.1.path
+          }
+        ]
+      }}
+  loop: "{{ query('subelements', rm_discovered_test_files.results, 'files') }}"
+  when:
+    - rm_requested_testcase_raw == '*' or (item.1.path | basename | regex_replace('\.yaml$', '')) in rm_requested_testcases
+  tags: sanity
+
+- name: Collect matched nd_resource_manager test case names
+  ansible.builtin.set_fact:
+    rm_matched_testcases: "{{ test_items | map(attribute='testcase') | unique | list }}"
+  tags: sanity
+
+- name: Assert requested nd_resource_manager test files were found
+  ansible.builtin.assert:
+    that:
+      - test_items | length > 0
+      - rm_requested_testcase_raw == '*' or rm_requested_testcases | difference(rm_matched_testcases) | length == 0
+    fail_msg: >-
+      No matching nd_resource_manager test file was found for one or more
+      requested testcases. Missing testcases: {{ rm_requested_testcases |
+      difference(rm_matched_testcases) | join(', ') }}. Selected fabric suites:
+      {{ rm_requested_fabric_types | join(', ') }}.
+  tags: sanity
+
+- name: Ensure vPC pair exists once for nd_resource_manager tests
+  ansible.builtin.include_tasks: vpc_pair_once.yaml
+  loop: "{{ test_items | map(attribute='fabric_type') | unique | reject('equalto', 'external') | list }}"
+  loop_control:
+    loop_var: rm_vpc_fabric_type
+  vars:
+    ansible_it_fabric: "{{ rm_fabric_name_by_type[rm_vpc_fabric_type] }}"
+  run_once: true
+  tags: sanity
+
+- name: Run test cases (connection=httpapi)
+  ansible.builtin.include_tasks: "{{ test_case_to_run.path }}"
+  with_items: "{{ test_items }}"
+  loop_control:
+    loop_var: test_case_to_run
+    label: "{{ test_case_to_run.testcase if test_case_to_run.fabric_type == 'legacy' else test_case_to_run.fabric_type ~ '/' ~ test_case_to_run.testcase }}"
+  vars:
+    rm_active_fabric_type: "{{ test_case_to_run.fabric_type }}"
+    ansible_it_fabric: "{{ rm_fabric_name_by_type[test_case_to_run.fabric_type] }}"
+  tags: sanity

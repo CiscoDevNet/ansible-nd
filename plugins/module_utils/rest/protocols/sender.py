@@ -84,7 +84,7 @@ class SenderProtocol(Protocol):
         ...
 
     @payload.setter
-    def payload(self, value: dict) -> None:
+    def payload(self, value: Optional[dict]) -> None:
         """Set the optional payload for the REST request."""
         ...
 

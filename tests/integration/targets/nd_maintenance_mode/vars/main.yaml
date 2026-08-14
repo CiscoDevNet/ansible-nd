@@ -1,0 +1,11 @@
+---
+# Variables for nd_maintenance_mode integration tests.
+#
+# Override these in your inventory or with -e to match a real ND 4.2 testbed.
+
+test_fabric_name: "{{ nd_test_maintenance_mode_fabric_name | default('SITE1') }}"
+test_switch_ip_a: "{{ nd_test_maintenance_mode_switch_ip_a | default('192.168.12.131') }}"
+test_switch_ip_b: "{{ nd_test_maintenance_mode_switch_ip_b | default('192.168.12.141') }}"
+
+# An IP that is intentionally NOT in the fabric, used for negative tests.
+bogus_switch_ip: 10.99.99.99

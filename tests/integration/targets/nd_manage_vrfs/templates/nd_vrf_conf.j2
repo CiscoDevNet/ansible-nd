@@ -1,0 +1,139 @@
+---
+# This ND VRF test data structure is auto-generated.
+# DO NOT EDIT MANUALLY.
+#
+
+{% if vrf_conf is iterable %}
+{% set vrf_list = [] %}
+{% set vrf_fields = [
+  'vrf_name',
+  'vrf_id',
+  'vrf_type',
+  'vrf_template_name',
+  'vrf_extension_template_name',
+  'service_vrf_template_name',
+  'vrf_template_config',
+  'default_security_action',
+  'default_security_group_tag',
+  'vlan_id',
+  'vrf_vlan_name',
+  'vrf_intf_desc',
+  'vrf_int_mtu',
+  'l3vni_wo_vlan',
+  'vrf_description',
+  'loopback_route_tag',
+  'redist_direct_rmap',
+  'v6_redist_direct_rmap',
+  'max_bgp_paths',
+  'max_ibgp_paths',
+  'ipv6_linklocal_enable',
+  'disable_rt_auto',
+  'import_vpn_rt',
+  'export_vpn_rt',
+  'import_evpn_rt',
+  'export_evpn_rt',
+  'trm_enable',
+  'no_rp',
+  'rp_external',
+  'rp_address',
+  'rp_loopback_id',
+  'underlay_mcast_ip',
+  'overlay_mcast_group',
+  'trm_bgw_msite',
+  'import_mvpn_rt',
+  'export_mvpn_rt',
+  'adv_host_routes',
+  'adv_default_routes',
+  'static_default_route',
+  'bgp_password',
+  'bgp_passwd_encrypt',
+  'netflow_enable',
+  'nf_monitor',
+  'deploy',
+  'deploy_type'
+] %}
+{% set attach_fields = [
+  'ip_address',
+  'freeform_config'
+] %}
+{% set attachment_option_fields = [
+  'dpu_secure',
+  'dpu_affinity',
+  'loopback_id',
+  'loopback_ipv4_address',
+  'loopback_ipv6_address',
+  'import_vpn_rt',
+  'export_vpn_rt',
+  'import_evpn_rt',
+  'export_evpn_rt'
+] %}
+{% set child_fields = [
+  'fabric_name',
+  'l3vni_wo_vlan',
+  'trm_enable',
+  'no_rp',
+  'rp_external',
+  'rp_address',
+  'rp_loopback_id',
+  'underlay_mcast_ip',
+  'overlay_mcast_group',
+  'trm_bgw_msite',
+  'import_mvpn_rt',
+  'export_mvpn_rt',
+  'adv_host_routes',
+  'adv_default_routes',
+  'static_default_route',
+  'bgp_password',
+  'bgp_passwd_encrypt',
+  'netflow_enable',
+  'nf_monitor'
+] %}
+{% for vrf in vrf_conf %}
+{% set vrf_item = {} %}
+{% for field in vrf_fields %}
+{% if vrf[field] is defined %}
+{% set _ = vrf_item.update({field: vrf[field]}) %}
+{% endif %}
+{% endfor %}
+{% if vrf.attach is defined %}
+{% set attach_list = [] %}
+{% for attach in vrf.attach %}
+{% set attach_item = {} %}
+{% for field in attach_fields %}
+{% if attach[field] is defined %}
+{% set _ = attach_item.update({field: attach[field]}) %}
+{% endif %}
+{% endfor %}
+{% set attachment_options = {} %}
+{% for field in attachment_option_fields %}
+{% if attach[field] is defined %}
+{% set _ = attachment_options.update({field: attach[field]}) %}
+{% endif %}
+{% endfor %}
+{% if attach.attachment_options is defined %}
+{% set _ = attachment_options.update(attach.attachment_options) %}
+{% endif %}
+{% if attachment_options %}
+{% set _ = attach_item.update({'attachment_options': attachment_options}) %}
+{% endif %}
+{% set _ = attach_list.append(attach_item) %}
+{% endfor %}
+{% set _ = vrf_item.update({'attach': attach_list}) %}
+{% endif %}
+{% if vrf.child_fabric_config is defined %}
+{% set child_list = [] %}
+{% for child in vrf.child_fabric_config %}
+{% set child_item = {} %}
+{% for field in child_fields %}
+{% if child[field] is defined %}
+{% set _ = child_item.update({field: child[field]}) %}
+{% endif %}
+{% endfor %}
+{% set _ = child_list.append(child_item) %}
+{% endfor %}
+{% set _ = vrf_item.update({'child_fabric_config': child_list}) %}
+{% endif %}
+{% set _ = vrf_list.append(vrf_item) %}
+{% endfor %}
+{{ vrf_list | to_nice_yaml(indent=2) }}
+{% endif %}

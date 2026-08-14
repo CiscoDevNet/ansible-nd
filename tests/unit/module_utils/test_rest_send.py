@@ -503,30 +503,32 @@ def test_rest_send_00300():
     """
     # Summary
 
-    Verify commit() in check_mode for GET request
+    Verify commit() in check_mode for GET request bypasses simulation.
 
     ## Test
 
-    - GET requests in check_mode return simulated success response
-    - response_current contains check mode indicator
+    - GET requests in check_mode go through normal mode (real controller call)
+    - response_current contains actual controller data, not simulated data
     - result_current shows success
 
     ## Classes and Methods
 
     - RestSend.commit()
-    - RestSend._commit_check_mode()
+    - RestSend._commit_normal_mode()
     """
+    method_name = inspect.stack()[0][3]
+    key = f"{method_name}a"
+
     params = {"check_mode": True}
 
     def responses():
-        yield {}
+        yield responses_rest_send(key)
+        yield responses_rest_send(key)
 
     gen_responses = ResponseGenerator(responses())
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
     sender.gen = gen_responses
-    sender.path = "/api/v1/test"
-    sender.verb = HttpVerbEnum.GET
 
     with does_not_raise():
         instance = RestSend(params)
@@ -541,11 +543,11 @@ def test_rest_send_00300():
         instance.verb = HttpVerbEnum.GET
         instance.commit()
 
-    # Verify check mode response
+    # Verify real response (not simulated check_mode response)
     assert instance.response_current["RETURN_CODE"] == 200
-    assert instance.response_current["METHOD"] == HttpVerbEnum.GET
-    assert instance.response_current["REQUEST_PATH"] == "/api/v1/test/checkmode"
-    assert instance.response_current["CHECK_MODE"] is True
+    assert instance.response_current["METHOD"] == "GET"
+    assert instance.response_current["DATA"]["status"] == "success"
+    assert instance.response_current.get("CHECK_MODE") is None
     assert instance.result_current["success"] is True
     assert instance.result_current["found"] is True
 
@@ -1443,6 +1445,109 @@ def test_rest_send_01000():
     match = r"Simulated sender error"
     with pytest.raises(ValueError, match=match):
         instance.commit()
+
+
+def test_rest_send_01100():
+    """
+    # Summary
+
+    Verify a terminal per-item failure on a success code is submitted exactly once.
+
+    ## Test
+
+    - POST returns 207 with a mixed success/failed results[] body (retryable=False from ResponseHandler)
+    - timeout (10) exceeds send_interval (1), so the loop COULD retry ~10 times
+    - The loop breaks after one submission: the sentinel success response in fixture 01100b is never consumed
+    - Final result is the 207 terminal failure, not the sentinel 200
+
+    ## Classes and Methods
+
+    - RestSend.commit()
+    - RestSend._commit_normal_mode()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_rest_send(f"{method_name}a")
+        yield responses_rest_send(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+
+    params = {"check_mode": False}
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = gen_responses
+
+    with does_not_raise():
+        instance = RestSend(params)
+        instance.sender = sender
+        response_handler = ResponseHandler()
+        response_handler.response = {"RETURN_CODE": 200, "MESSAGE": "OK"}
+        response_handler.verb = HttpVerbEnum.GET
+        response_handler.commit()
+        instance.response_handler = response_handler
+        instance.unit_test = True
+        instance.timeout = 10
+        instance.send_interval = 1
+        instance.path = "/api/v1/test/multistatus"
+        instance.verb = HttpVerbEnum.POST
+        instance.payload = {"acls": ["acl_new", "acl_seed"]}
+        instance.commit()
+
+    # One submission: the terminal 207 is the final response; the sentinel 200 was never consumed.
+    assert instance.response_current["RETURN_CODE"] == 207
+    assert instance.result_current["success"] is False
+    assert instance.result_current["retryable"] is False
+
+
+def test_rest_send_01110():
+    """
+    # Summary
+
+    Verify a transient non-success failure still retries (guards against over-suppressing retries).
+
+    ## Test
+
+    - POST returns 500 (retryable=True), then 200 on the retry
+    - timeout (10) and send_interval (5) allow exactly two submissions
+    - The loop consumes both responses and the final result is the successful 200
+
+    ## Classes and Methods
+
+    - RestSend.commit()
+    - RestSend._commit_normal_mode()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_rest_send(f"{method_name}a")
+        yield responses_rest_send(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+
+    params = {"check_mode": False}
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = gen_responses
+
+    with does_not_raise():
+        instance = RestSend(params)
+        instance.sender = sender
+        response_handler = ResponseHandler()
+        response_handler.response = {"RETURN_CODE": 200, "MESSAGE": "OK"}
+        response_handler.verb = HttpVerbEnum.GET
+        response_handler.commit()
+        instance.response_handler = response_handler
+        instance.unit_test = True
+        instance.timeout = 10
+        instance.send_interval = 5
+        instance.path = "/api/v1/test/transient"
+        instance.verb = HttpVerbEnum.POST
+        instance.payload = {"acls": ["acl_new"]}
+        instance.commit()
+
+    assert instance.response_current["RETURN_CODE"] == 200
+    assert instance.result_current["success"] is True
 
 
 # =============================================================================

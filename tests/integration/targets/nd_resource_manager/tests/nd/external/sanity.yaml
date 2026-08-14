@@ -1,0 +1,118 @@
+---
+- name: External delta pools - Set sanity resource config
+  ansible.builtin.set_fact:
+    rm_test_config:
+      - entity_name: "external_instance_device"
+        pool_type: "ID"
+        pool_name: "INSTANCE_ID"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "201"
+
+      - entity_name: "external_loopback_ipv6_fabric"
+        pool_type: "IP"
+        pool_name: "LOOPBACK_IPV6_POOL"
+        scope_type: "fabric"
+        resource: "fe80::31"
+
+      - entity_name: "external_tunnel_ios_xe_device"
+        pool_type: "ID"
+        pool_name: "TUNNEL_ID_IOS_XE"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "31"
+    rm_test_delete_config:
+      - entity_name: "external_instance_device"
+        pool_type: "ID"
+        pool_name: "INSTANCE_ID"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "external_loopback_ipv6_fabric"
+        pool_type: "IP"
+        pool_name: "LOOPBACK_IPV6_POOL"
+        scope_type: "fabric"
+
+      - entity_name: "external_tunnel_ios_xe_device"
+        pool_type: "ID"
+        pool_name: "TUNNEL_ID_IOS_XE"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+    rm_expected_resource_count: 3
+    rm_expected_entity_names:
+      - "external_instance_device"
+      - "external_loopback_ipv6_fabric"
+      - "external_tunnel_ios_xe_device"
+
+- block:
+    - name: External delta pools - Sanity pre-clean
+      cisco.nd.nd_manage_resource_manager: &rm_delete
+        state: deleted
+        fabric_name: "{{ ansible_it_fabric }}"
+        config: "{{ rm_test_delete_config }}"
+      register: result
+
+    - name: External delta pools - Assert sanity pre-clean
+      ansible.builtin.assert:
+        that:
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+    - name: External delta pools - Sanity create resources
+      cisco.nd.nd_manage_resource_manager:
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config: "{{ rm_test_config }}"
+      register: result
+
+    - name: External delta pools - Assert sanity create
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+          - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+    - name: External delta pools - Sanity gather by entity names
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "external_instance_device"
+
+          - entity_name: "external_loopback_ipv6_fabric"
+
+          - entity_name: "external_tunnel_ios_xe_device"
+      register: result
+
+    - name: External delta pools - Assert sanity gathered resources
+      ansible.builtin.assert:
+        that:
+          - '(result["gathered"] | length) == (rm_expected_entity_names | length)'
+
+    - name: External delta pools - Sanity delete resources
+      cisco.nd.nd_manage_resource_manager: *rm_delete
+      register: result
+
+    - name: External delta pools - Assert sanity delete
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+          - '(result["diff"][0]["deleted"] | length) == rm_expected_resource_count'
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+  always:
+    - name: External delta pools - Sanity final cleanup
+      cisco.nd.nd_manage_resource_manager: *rm_delete
+      register: result
+
+    - name: External delta pools - Assert sanity final cleanup
+      ansible.builtin.assert:
+        that:
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
