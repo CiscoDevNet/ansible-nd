@@ -171,6 +171,6 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         if not isinstance(result, list):
             return result
         if self.rest_send.params.get("state") == "gathered":
-            return result
+            return [iface for iface in result if not self._is_unconfigured_default(iface)]
         named = self._named_interfaces() if self.rest_send.params.get("state") != "deleted" else set()
         return [iface for iface in result if (iface.get("switchIp"), iface.get("interfaceName")) in named or not self._is_unconfigured_default(iface)]
