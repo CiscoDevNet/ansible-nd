@@ -6,6 +6,8 @@ from __future__ import absolute_import, division, print_function
 
 from typing import Type, ClassVar, List
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions_mixin import ConfigActionsMixin
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_tor.manage_tor import ManageTorModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -17,7 +19,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 
 
-class ManageTorOrchestrator(NDBaseOrchestrator[ManageTorModel]):
+class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorModel]):
     """
     Orchestrator for access/ToR switch associations.
 
@@ -28,6 +30,10 @@ class ManageTorOrchestrator(NDBaseOrchestrator[ManageTorModel]):
 
     There is no individual GET, PUT, or DELETE. All write operations
     accept arrays and return 207 Multi-Status.
+
+    ``ConfigActionsMixin`` adds fabric config save/deploy so that
+    associate/disassociate changes can be pushed to the switches after the
+    intent is written.
     """
 
     model_class: ClassVar[Type[NDBaseModel]] = ManageTorModel
@@ -47,17 +53,13 @@ class ManageTorOrchestrator(NDBaseOrchestrator[ManageTorModel]):
     create_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageTorAssociatePost
     delete_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageTorDisassociatePost
 
-    def _get_fabric_name(self) -> str:
-        """Extract fabric_name from module parameters."""
-        return self.sender.params.get("fabric_name", "")
-
     def create_bulk(self, model_instances: List[ManageTorModel], **kwargs) -> ResponseType:
         """Associate multiple access/ToR switch pairs in a single API call."""
         try:
             api_endpoint = self.create_bulk_endpoint()
             api_endpoint.fabric_name = model_instances[0].fabric_name
             data = [instance.to_payload() for instance in model_instances]
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=data)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=data, operation_type=OperationType.CREATE)
         except Exception as e:
             raise Exception(f"Bulk associate failed: {e}") from e
 
@@ -67,7 +69,7 @@ class ManageTorOrchestrator(NDBaseOrchestrator[ManageTorModel]):
             api_endpoint = self.update_endpoint()
             api_endpoint.fabric_name = model_instance.fabric_name
             data = [model_instance.to_payload()]
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=data)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=data, operation_type=OperationType.UPDATE)
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -87,59 +89,37 @@ class ManageTorOrchestrator(NDBaseOrchestrator[ManageTorModel]):
                 if instance.aggregation_or_leaf_peer_switch_id is not None:
                     disassociate_payload["aggregationOrLeafPeerSwitchId"] = instance.aggregation_or_leaf_peer_switch_id
                 data.append(disassociate_payload)
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=data)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=data, operation_type=OperationType.DELETE)
         except Exception as e:
             raise Exception(f"Bulk disassociate failed: {e}") from e
 
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
         """
-        List all access/ToR associations for the fabric.
+        List every configured access/ToR association in the fabric in one call.
 
-        The ND API requires aggregationOrLeafSwitchId as a query parameter
-        despite the spec marking it optional — omitting it returns HTTP 400.
-        In practice ND returns ALL associations for the fabric regardless of
-        which leaf ID is supplied, so a single request with the first leaf ID
-        from the module config is sufficient.
+        A single fabric-wide GET with ``includeCandidates=false`` and no
+        ``aggregationOrLeafSwitchId`` returns all existing associations across
+        every leaf. ``includeCandidates`` must be sent explicitly -- the ND API
+        returns HTTP 400 when the query string is omitted entirely.
 
-        fabric_name is injected into each returned association so the model
-        can be constructed properly.
+        Each vPC pairing is returned once as a self-contained entry carrying
+        both member switch IDs inline (``accessOrTorPeerSwitchId`` /
+        ``aggregationOrLeafPeerSwitchId``), so no per-leaf sweep or client-side
+        de-duplication is needed. ``fabricName`` is injected into each
+        association so the model can be constructed from the response.
         """
         try:
-            fabric_name = self._get_fabric_name()
+            fabric_name = self.rest_send.params.get("fabric_name", "")
+
             api_endpoint = self.query_all_endpoint()
             api_endpoint.fabric_name = fabric_name
+            api_endpoint.endpoint_params.aggregation_or_leaf_switch_id = None
+            api_endpoint.endpoint_params.include_candidates = False
 
-            # Pick the first leaf switch ID from config to satisfy the API's
-            # required-in-practice query parameter.
-            config = self.sender.params.get("config") or []
-            leaf_switch_id = None
-            for item in config:
-                leaf_switch_id = item.get("aggregation_or_leaf_switch_id") or item.get("aggregation_or_leaf_peer_switch_id")
-                if leaf_switch_id:
-                    break
-
-            if not leaf_switch_id:
-                raise Exception(
-                    "aggregation_or_leaf_switch_id is required in config to query ToR associations."
-                )
-
-            result = self.sender.request(
-                path=api_endpoint.path,
-                method="GET",
-                qs={"aggregationOrLeafSwitchId": leaf_switch_id},
-            )
-            associations = (result or {}).get("associations", []) or []
-
-            # The API returns all ToR switches for the leaf — both paired
-            # and unpaired candidates.  Only associations marked as
-            # isRecommended=true are actually configured with this leaf.
-            # Entries with isRecommended=false may have populated resources
-            # from a pairing with a different leaf switch.
-            configured = []
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            associations: List[dict] = (result or {}).get("associations", []) or []
             for assoc in associations:
-                if assoc.get("isRecommended") is True:
-                    assoc["fabricName"] = fabric_name
-                    configured.append(assoc)
-            return configured
+                assoc["fabricName"] = fabric_name
+            return associations
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e

@@ -217,13 +217,15 @@ def test_endpoints_api_v1_manage_tor_00210():
 
     ## Test
 
-    - path returns correct associations endpoint when fabric_name is set
+    - path returns the associations endpoint with an explicit
+      includeCandidates=false query string (required by the ND API) when only
+      fabric_name is set.
     """
     with does_not_raise():
         instance = EpManageTorAssociationsGet()
         instance.fabric_name = "my-fabric"
         result = instance.path
-    assert result == "/api/v1/manage/fabrics/my-fabric/accessAssociations"
+    assert result == "/api/v1/manage/fabrics/my-fabric/accessAssociations?includeCandidates=false"
 
 
 def test_endpoints_api_v1_manage_tor_00220():
@@ -255,4 +257,42 @@ def test_endpoints_api_v1_manage_tor_00230():
         instance = EpManageTorAssociationsGet()
         instance.set_identifiers(("query-fabric", "SN1", "SN2"))
     assert instance.fabric_name == "query-fabric"
-    assert instance.path == "/api/v1/manage/fabrics/query-fabric/accessAssociations"
+    assert instance.path == "/api/v1/manage/fabrics/query-fabric/accessAssociations?includeCandidates=false"
+
+
+def test_endpoints_api_v1_manage_tor_00240():
+    """
+    # Summary
+
+    Verify EpManageTorAssociationsGet path with a targeted leaf switch
+
+    ## Test
+
+    - Setting aggregation_or_leaf_switch_id appends both the leaf ID and the
+      includeCandidates=false query parameters.
+    """
+    with does_not_raise():
+        instance = EpManageTorAssociationsGet()
+        instance.fabric_name = "my-fabric"
+        instance.endpoint_params.aggregation_or_leaf_switch_id = "SN-LEAF"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/my-fabric/accessAssociations?aggregationOrLeafSwitchId=SN-LEAF&includeCandidates=false"
+
+
+def test_endpoints_api_v1_manage_tor_00250():
+    """
+    # Summary
+
+    Verify EpManageTorAssociationsGet path honors includeCandidates=true
+
+    ## Test
+
+    - Setting include_candidates=True renders includeCandidates=true.
+    """
+    with does_not_raise():
+        instance = EpManageTorAssociationsGet()
+        instance.fabric_name = "my-fabric"
+        instance.endpoint_params.aggregation_or_leaf_switch_id = "SN-LEAF"
+        instance.endpoint_params.include_candidates = True
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/my-fabric/accessAssociations?aggregationOrLeafSwitchId=SN-LEAF&includeCandidates=true"

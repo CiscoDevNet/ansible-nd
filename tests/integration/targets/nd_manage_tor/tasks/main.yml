@@ -27,10 +27,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
-        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
-      - access_or_tor_switch_id: "{{ test_tor_peer_switch_id }}"
-        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+      - access_or_tor_switch: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
+      - access_or_tor_switch: "{{ test_tor_peer_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
     state: deleted
   ignore_errors: true
 
@@ -43,7 +43,7 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+      - aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
     state: gathered
   register: gathered_tor_associations
 
@@ -64,8 +64,8 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
-        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+      - access_or_tor_switch: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
         access_or_tor_port_channel_id: 501
         aggregation_or_leaf_port_channel_id: 502
     state: merged
@@ -101,10 +101,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - access_or_tor_switch_id: "{{ test_tor_peer_switch_id }}"
-        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
-        access_or_tor_peer_switch_id: "{{ test_tor_switch_id }}"
-        aggregation_or_leaf_peer_switch_id: "{{ test_leaf_peer_switch_id }}"
+      - access_or_tor_switch: "{{ test_tor_peer_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
+        access_or_tor_peer_switch: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_peer_switch: "{{ test_leaf_peer_switch_id }}"
         access_or_tor_port_channel_id: 601
         aggregation_or_leaf_port_channel_id: 602
         access_or_tor_peer_port_channel_id: 603
@@ -136,6 +136,56 @@
       - nm_merged_create_vpc_tor_again is not changed
 
 # =============================================================================
+# NEGATIVE TESTS: vPC peer requires resources
+# =============================================================================
+
+- name: Associate a vPC leaf pair without required resources (must fail)
+  cisco.nd.nd_manage_tor:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - access_or_tor_switch: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
+        aggregation_or_leaf_peer_switch: "{{ test_leaf_peer_switch_id }}"
+    state: merged
+  check_mode: true
+  register: nm_vpc_missing_resources
+  ignore_errors: true
+
+- name: Asserts vPC-without-resources is rejected
+  ansible.builtin.assert:
+    that:
+      - nm_vpc_missing_resources is failed
+      - "'required when a peer switch is specified' in (nm_vpc_missing_resources.msg | default(''))"
+
+# =============================================================================
+# CONFIG_ACTIONS TESTS: validation
+# =============================================================================
+
+- name: config_actions deploy without save (must fail)
+  cisco.nd.nd_manage_tor:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - access_or_tor_switch: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
+        access_or_tor_port_channel_id: 501
+        aggregation_or_leaf_port_channel_id: 502
+    state: merged
+    config_actions:
+      save: false
+      deploy: true
+  check_mode: true
+  register: nm_config_actions_bad
+  ignore_errors: true
+
+- name: Asserts deploy-without-save is rejected
+  ansible.builtin.assert:
+    that:
+      - nm_config_actions_bad is failed
+      - "'deploy=True requires save=True' in (nm_config_actions_bad.msg | default(''))"
+
+# =============================================================================
 # GATHERED STATE TESTS: After associations created
 # =============================================================================
 
@@ -144,7 +194,7 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+      - aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
     state: gathered
   register: gathered_after_create
 
@@ -163,8 +213,8 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
-        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+      - access_or_tor_switch: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
         access_or_tor_port_channel_id: 511
         aggregation_or_leaf_port_channel_id: 512
     state: merged
@@ -200,8 +250,8 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
-        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+      - access_or_tor_switch: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
     state: deleted
   check_mode: true
   register: cm_deleted_single_tor
@@ -231,8 +281,8 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - access_or_tor_switch_id: "{{ test_tor_peer_switch_id }}"
-        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+      - access_or_tor_switch: "{{ test_tor_peer_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
     state: deleted
   register: nm_deleted_vpc_tor
 
@@ -250,7 +300,7 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+      - aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
     state: gathered
   register: gathered_after_delete
 

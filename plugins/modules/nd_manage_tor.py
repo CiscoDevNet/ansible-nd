@@ -27,29 +27,32 @@ options:
     description:
     - The list of access or ToR switch associations to configure.
     - Required when O(state=merged) or O(state=deleted).
+    - Ignored when O(state=gathered); all associations in the fabric are returned.
     type: list
     elements: dict
     suboptions:
-      access_or_tor_switch_id:
+      access_or_tor_switch:
         description:
-        - The serial number of the access or ToR switch.
+        - The serial number or management IP address of the access or ToR switch.
+        - When a management IP address is provided it is resolved to the switch serial number.
         - Required when O(state=merged) or O(state=deleted).
-        - Optional when O(state=gathered); if omitted, all associations for the
-          specified O(config[].aggregation_or_leaf_switch_id) are returned.
         type: str
-      aggregation_or_leaf_switch_id:
+      aggregation_or_leaf_switch:
         description:
-        - The serial number of the aggregation or leaf switch.
+        - The serial number or management IP address of the aggregation or leaf switch.
+        - When a management IP address is provided it is resolved to the switch serial number.
         type: str
         required: true
-      access_or_tor_peer_switch_id:
+      access_or_tor_peer_switch:
         description:
-        - The serial number of the access or ToR VPC peer switch.
+        - The serial number or management IP address of the access or ToR VPC peer switch.
+        - When a management IP address is provided it is resolved to the switch serial number.
         - Required for back-to-back VPC topologies.
         type: str
-      aggregation_or_leaf_peer_switch_id:
+      aggregation_or_leaf_peer_switch:
         description:
-        - The serial number of the aggregation or leaf VPC peer switch.
+        - The serial number or management IP address of the aggregation or leaf VPC peer switch.
+        - When a management IP address is provided it is resolved to the switch serial number.
         - Required for aggregation VPC and back-to-back VPC topologies.
         type: str
       access_or_tor_port_channel_id:
@@ -91,10 +94,36 @@ options:
       Existing associations not specified in the configuration will be left unchanged.
     - Use O(state=deleted) to disassociate the access or ToR switches specified in the configuration.
     - Use O(state=gathered) to retrieve current access or ToR switch associations from the fabric without making changes.
-      O(config) is required with at least one O(config[].aggregation_or_leaf_switch_id) to satisfy the ND API.
+      O(config) is not required and is ignored; every association in the fabric is returned in a single query.
     type: str
     default: merged
     choices: [ merged, deleted, gathered ]
+  config_actions:
+    description:
+    - Controls saving and deploying the fabric configuration after ToR associations are
+      staged. Associate and disassociate only stage pending intent; a save and deploy are
+      required to realize (or remove) the configuration on the switches.
+    - Applied for O(state=merged) and O(state=deleted), only when a real change is made.
+    - Not used when O(state=gathered).
+    type: dict
+    suboptions:
+      save:
+        description:
+        - Save the fabric configuration (recalculate intent) after staging changes.
+        type: bool
+        default: false
+      deploy:
+        description:
+        - Deploy the fabric configuration to the switches after saving. Requires O(config_actions.save=true).
+        type: bool
+        default: false
+      type:
+        description:
+        - The deploy scope. V(switch) deploys only the out-of-sync switches in the fabric
+          via the switch-level deploy endpoint. V(global) deploys the entire fabric.
+        type: str
+        default: switch
+        choices: [ switch, global ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -108,8 +137,18 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
     config:
-      - access_or_tor_switch_id: "98AFDSD8V0"
-        aggregation_or_leaf_switch_id: "98AM4FFFFV0"
+      - access_or_tor_switch: "98AFDSD8V0"
+        aggregation_or_leaf_switch: "98AM4FFFFV0"
+        access_or_tor_port_channel_id: 501
+        aggregation_or_leaf_port_channel_id: 502
+    state: merged
+
+- name: Associate a ToR switch with a leaf switch using management IP addresses
+  cisco.nd.nd_manage_tor:
+    fabric_name: my-fabric
+    config:
+      - access_or_tor_switch: "192.0.2.10"
+        aggregation_or_leaf_switch: "192.0.2.20"
         access_or_tor_port_channel_id: 501
         aggregation_or_leaf_port_channel_id: 502
     state: merged
@@ -118,10 +157,10 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
     config:
-      - access_or_tor_switch_id: "98AFDSD8V0"
-        aggregation_or_leaf_switch_id: "98AM4FFFFV0"
-        access_or_tor_peer_switch_id: "98AWSETG8V0"
-        aggregation_or_leaf_peer_switch_id: "98AMDDDD8V0"
+      - access_or_tor_switch: "98AFDSD8V0"
+        aggregation_or_leaf_switch: "98AM4FFFFV0"
+        access_or_tor_peer_switch: "98AWSETG8V0"
+        aggregation_or_leaf_peer_switch: "98AMDDDD8V0"
         access_or_tor_port_channel_id: 501
         aggregation_or_leaf_port_channel_id: 502
         access_or_tor_peer_port_channel_id: 503
@@ -134,15 +173,13 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
     config:
-      - access_or_tor_switch_id: "98AFDSD8V0"
-        aggregation_or_leaf_switch_id: "98AM4FFFFV0"
+      - access_or_tor_switch: "98AFDSD8V0"
+        aggregation_or_leaf_switch: "98AM4FFFFV0"
     state: deleted
 
 - name: Gather all ToR associations for a fabric
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
-    config:
-      - aggregation_or_leaf_switch_id: "98AM4FFFFV0"
     state: gathered
 """
 
@@ -154,10 +191,105 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spe
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_tor.manage_tor import ManageTorModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_tor import ManageTorOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory_helpers import inventory_for_fabric, resolve
+
+import ipaddress
+import logging
+
+_LOGGER = logging.getLogger("nd.nd_manage_tor")
+
+# Maps each user-facing switch suboption (serial or management IP) to the
+# ``*_switch_id`` serial field the model and API expect.
+_SWITCH_FIELD_MAP = {
+    "access_or_tor_switch": "access_or_tor_switch_id",
+    "aggregation_or_leaf_switch": "aggregation_or_leaf_switch_id",
+    "access_or_tor_peer_switch": "access_or_tor_peer_switch_id",
+    "aggregation_or_leaf_peer_switch": "aggregation_or_leaf_peer_switch_id",
+}
+
+
+def _looks_like_ip(value):
+    """Return True when value parses as an IPv4/IPv6 address (vs a serial number)."""
+    try:
+        ipaddress.ip_address(str(value))
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_switch_config(config, fabric_name, get_inventory):
+    """Remap each user switch key to its ``*_switch_id`` serial field, resolving IPs.
+
+    A value that parses as an IP address is looked up in the fabric switch
+    inventory and replaced with that switch's serial number; a serial is used
+    as-is. ``get_inventory`` is a zero-argument callable returning a
+    ``FabricSwitchInventory``; it is invoked lazily and only once, so a config
+    made up entirely of serials performs no inventory query.
+    """
+    inventory_cache = {}
+
+    def _inventory():
+        if "value" not in inventory_cache:
+            inventory_cache["value"] = get_inventory()
+        return inventory_cache["value"]
+
+    for entry in config:
+        for user_key, serial_key in _SWITCH_FIELD_MAP.items():
+            value = entry.pop(user_key, None)
+            if value is None:
+                continue
+            if _looks_like_ip(value):
+                value = resolve(_inventory(), switch_ip=value, fabric_name=fabric_name, side=serial_key)
+            entry[serial_key] = value
+
+
+def _build_rest_send(module):
+    """Build a RestSend wired to this module, matching the state machine's setup."""
+    sender = Sender()
+    sender.ansible_module = module
+    rest_send_params = dict(module.params)
+    rest_send_params["check_mode"] = module.check_mode
+    rest_send = RestSend(rest_send_params)
+    rest_send.sender = sender
+    rest_send.response_handler = ResponseHandler()
+    return rest_send
+
+
+def _verbosity_of(module):
+    return module._verbosity if hasattr(module, "_verbosity") else 0
+
+
+def _run_gathered(module, fabric_name):
+    """Query current ToR associations without mutating ND.
+
+    ``NDStateMachine`` cannot be used for ``gathered`` because it always builds
+    the proposed collection from ``config`` (which for gathered may be absent)
+    and its ``manage_state`` rejects the state. So the REST stack is built here
+    the same way the state machine does, then ``query_all`` -- a single
+    fabric-wide GET returning every association -- is run directly and returned
+    as both ``before`` and ``after``.
+    """
+    rest_send = _build_rest_send(module)
+
+    results = Results()
+    results.state = module.params.get("state", "")
+    results.check_mode = module.check_mode
+
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=results)
+    response_data = orchestrator.query_all()
+    gathered = NDConfigCollection.from_api_response(response_data=response_data, model_class=ManageTorModel)
+
+    output = NDOutput(output_level=module.params.get("output_level", "normal"))
+    output.assign(before=gathered, after=gathered)
+    module.exit_json(**output.format_with_verbosity(_verbosity_of(module), results))
 
 
 def main():
@@ -170,7 +302,6 @@ def main():
         required_if=[
             ["state", "merged", ["config"]],
             ["state", "deleted", ["config"]],
-            ["state", "gathered", ["config"]],
         ],
     )
     require_pydantic(module)
@@ -178,38 +309,75 @@ def main():
     state = module.params["state"]
     fabric_name = module.params["fabric_name"]
 
-    # Inject fabric_name into each config item for model construction
+    # Resolve serial-or-IP switch inputs to serials and remap the user-facing
+    # *_switch keys onto the *_switch_id model fields. This runs before the
+    # state machine builds the proposed collection so the composite identity is
+    # serial-based and matches the existing associations read from ND.
     config = module.params.get("config") or []
+    if state in ("merged", "deleted"):
+        for item in config:
+            if not item.get("access_or_tor_switch"):
+                module.fail_json(msg="config[].access_or_tor_switch is required when state is '{0}'.".format(state))
+        if config:
+            try:
+                rest_send = _build_rest_send(module)
+                _resolve_switch_config(config, fabric_name, lambda: inventory_for_fabric(rest_send, fabric_name, _LOGGER))
+            except Exception as e:
+                module.fail_json(msg="Switch resolution failed: {0}".format(str(e)))
+
+    # Inject fabric_name into each config item for model construction (it is a
+    # path parameter, not a config suboption).
     for item in config:
         item["fabric_name"] = fabric_name
-        if state in ("merged", "deleted") and not item.get("access_or_tor_switch_id"):
-            module.fail_json(msg="config[].access_or_tor_switch_id is required when state is '{0}'.".format(state))
+
+    if state == "gathered":
+        try:
+            _run_gathered(module, fabric_name)
+        except Exception as e:
+            module.fail_json(msg="Module execution failed: {0}".format(str(e)))
+        return
+
+    # Parse and validate config_actions BEFORE any state mutation so invalid
+    # input fails deterministically on every run, including idempotent no-drift
+    # runs, and never mutates ND before failing.
+    config_actions = module.params.get("config_actions") or {}
+    save = config_actions.get("save", False)
+    deploy = config_actions.get("deploy", False)
+    deploy_type = config_actions.get("type", "switch")
 
     try:
-        if state == "gathered":
-            # Handle gathered state: query and return without changes
-            nd_module = NDModule(module)
-            orchestrator = ManageTorOrchestrator(sender=nd_module)
-            response_data = orchestrator.query_all()
-            gathered = NDConfigCollection.from_api_response(
-                response_data=response_data,
-                model_class=ManageTorModel,
-            )
-            output = NDOutput(output_level=module.params.get("output_level", "normal"))
-            output.assign(before=gathered, after=gathered)
-            module.exit_json(**output.format())
-        else:
-            # Handle merged/deleted states via the state machine
-            nd_state_machine = NDStateMachine(
-                module=module,
-                model_orchestrator=ManageTorOrchestrator,
-            )
-            nd_state_machine.manage_state()
-            module.exit_json(**nd_state_machine.output.format())
+        ManageTorOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+    except ValueError as e:
+        module.fail_json(msg=str(e))
 
+    nd_state_machine = None
+    try:
+        nd_state_machine = NDStateMachine(
+            module=module,
+            model_orchestrator=ManageTorOrchestrator,
+        )
+        nd_state_machine.manage_state()
+
+        # Execute config save/deploy only on real changes. Unlike the fabric
+        # modules, ToR gates on len(sent) for BOTH merged AND deleted: an
+        # associate stages pending config that a disassociate must also push
+        # (save+deploy) to remove from the switches.
+        if len(nd_state_machine.sent) > 0:
+            nd_state_machine.model_orchestrator.execute_config_actions(
+                fabric_names=[fabric_name],
+                save=save,
+                deploy=deploy,
+                deploy_type=deploy_type,
+            )
+
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(_verbosity_of(module), nd_state_machine.results))
+
+    except NDStateMachineError as e:
+        output = nd_state_machine.output.format_with_verbosity(_verbosity_of(module), nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=str(e), **output)
     except Exception as e:
-        import traceback
-        module.fail_json(msg="Module execution failed: {0}".format(str(e)), exception=traceback.format_exc())
+        output = nd_state_machine.output.format_with_verbosity(_verbosity_of(module), nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg="Module execution failed: {0}".format(str(e)), **output)
 
 
 if __name__ == "__main__":
