@@ -54,9 +54,7 @@ def test_fabric_group_member_identifier() -> None:
 
 def test_fabric_group_member_identifier_multicluster() -> None:
     """A multi-cluster member is identified by the (cluster_name, member_name) pair."""
-    model = FabricGroupMemberModel.from_response(
-        {"clusterName": "cluster-a", "name": "member-1", "type": "vxlanIbgp"}
-    )
+    model = FabricGroupMemberModel.from_response({"clusterName": "cluster-a", "name": "member-1", "type": "vxlanIbgp"})
     assert model.cluster_name == "cluster-a"
     assert model.get_identifier_value() == ("cluster-a", "member-1")
 
