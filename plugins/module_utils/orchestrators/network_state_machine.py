@@ -84,8 +84,8 @@ class NetworkStateMachine:
         if state == "deleted":
             return self.run_deleted(module_args, active_strategy)
 
-        if state == "overridden":
-            return self.run_overridden(module_args, active_strategy, defer_deploy)
+        if state in ("replaced", "overridden"):
+            return self._run_state_machine_aware_with_attachments(module_args, active_strategy, defer_deploy)
 
         desired_attachments = None
         desired_network_names = None
@@ -144,6 +144,22 @@ class NetworkStateMachine:
         """
         Run overridden using the state machine's initial current-state query.
         """
+        return self._run_state_machine_aware_with_attachments(module_args, strategy, defer_deploy)
+
+    def _run_state_machine_aware_with_attachments(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        defer_deploy: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Run replaced/overridden after deriving current Network names from the state machine.
+
+        The pre-detach phase must only query attachments for Networks that
+        already exist. First-create ``state=replaced`` tasks can then create
+        the Network before the post-attach phase runs.
+        """
+        state = module_args.get("state", "merged")
         config = [dict(network) for network in module_args.get("config") or []]
         desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
         desired_network_names = self.coordinator._configured_network_names(config)
@@ -153,15 +169,15 @@ class NetworkStateMachine:
             current_network_names = self._network_names_from_models(sm.existing)
             current_network_name_set = set(current_network_names)
             desired_network_name_set = set(desired_network_names)
-            omitted_network_names = [network_name for network_name in current_network_names if network_name not in desired_network_name_set]
             current_desired_network_names = [network_name for network_name in desired_network_names if network_name in current_network_name_set]
+            attachment_query_network_names = current_network_names if state == "overridden" else current_desired_network_names
             current_attachment_details = (
                 self.coordinator._current_attachment_details_ignore_missing(
                     module_args,
                     strategy,
-                    current_network_names,
+                    attachment_query_network_names,
                 )
-                if current_network_names
+                if attachment_query_network_names
                 else []
             )
             current_desired_attachments = self.coordinator._attachment_map_from_details(
@@ -169,12 +185,17 @@ class NetworkStateMachine:
                 current_desired_network_names,
             )
 
-            pre_delete_traces = self._prepare_overridden_deletions(
-                module_args,
-                strategy,
-                omitted_network_names,
-                current_attachment_details,
-            )
+            pre_delete_traces: list[dict[str, Any]] = []
+            if state == "overridden":
+                omitted_network_names = [network_name for network_name in current_network_names if network_name not in desired_network_name_set]
+                pre_delete_traces = self._prepare_overridden_deletions(
+                    module_args,
+                    strategy,
+                    omitted_network_names,
+                    current_attachment_details,
+                )
+
+            self._trace("attachment_phase_pre_start", state=state)
             pre_attach = self.coordinator._apply_attachment_phase(
                 module_args,
                 strategy,
@@ -182,13 +203,18 @@ class NetworkStateMachine:
                 desired=desired_attachments,
                 current_network_names=current_desired_network_names,
                 current=current_desired_attachments,
+                attachment_details=current_attachment_details,
             )
+            self._trace("attachment_phase_pre_end", changed=pre_attach.get("changed"), payload_count=len(pre_attach.get("payloads", [])))
+            desired_attachments = pre_attach.get("desired", desired_attachments)
             current_attachments = self._current_after_pre_detach(
                 pre_attach,
                 empty_when_absent=current_desired_network_names == [],
             )
 
+            self._trace("manage_state_start", state=state)
             sm.manage_state()
+            self._trace("manage_state_end", state=state)
             result = self.coordinator._format_state_machine_output(sm)
 
             self._prepend_traces(result, pre_delete_traces + [pre_attach])
@@ -196,14 +222,36 @@ class NetworkStateMachine:
             if result.get("failed", False):
                 return result
 
+            post_attachment_details = list(current_attachment_details or [])
+            post_current_attachments = dict(current_attachments or {})
+            new_desired_network_names = [network_name for network_name in desired_network_names if network_name not in current_network_name_set]
+            if state in ("replaced", "overridden") and desired_attachments and new_desired_network_names and not self._check_mode():
+                self._trace("attachment_phase_post_new_current_query_start", network_names=new_desired_network_names)
+                new_attachment_details = self.coordinator._current_attachment_details(
+                    module_args,
+                    strategy,
+                    new_desired_network_names,
+                )
+                post_attachment_details.extend(new_attachment_details)
+                post_current_attachments.update(self.coordinator._attachment_map_from_details(new_attachment_details, new_desired_network_names))
+                self._trace(
+                    "attachment_phase_post_new_current_query_end",
+                    network_names=new_desired_network_names,
+                    attachment_count=len(new_attachment_details or []),
+                    current_count=len(post_current_attachments),
+                )
+
+            self._trace("attachment_phase_post_start", state=state)
             post_attach = self.coordinator._apply_attachment_phase(
                 module_args,
                 strategy,
                 phase="post",
                 desired=desired_attachments,
                 current_network_names=desired_network_names,
-                current=current_attachments,
+                current=post_current_attachments,
+                attachment_details=post_attachment_details,
             )
+            self._trace("attachment_phase_post_end", changed=post_attach.get("changed"), payload_count=len(post_attach.get("payloads", [])))
             self.coordinator._merge_api_trace(result, post_attach)
 
             return self._deploy_after_attachment_changes(

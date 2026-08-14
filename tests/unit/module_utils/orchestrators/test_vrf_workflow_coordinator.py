@@ -22,6 +22,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflo
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachment_manager import (
     VrfAttachmentManager,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_state_machine import (
+    VrfStateMachine,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_dependency_checker import (
     VrfDependencyChecker,
 )
@@ -212,6 +215,254 @@ class _AttachmentQueryOrchestrator:
     def _request(self, **kwargs):
         self.requests.append(kwargs)
         return self.responses.pop(0)
+
+
+class _ExistingVrf:
+    def __init__(self, vrf_name):
+        self.vrf_name = vrf_name
+
+
+class _FakeStateMachine:
+    def __init__(self, calls, existing=None):
+        self.existing = existing or []
+        self.calls = calls
+
+    def manage_state(self):
+        self.calls.append(("manage_state",))
+
+
+class _ReplacedVrfCoordinator:
+    def __init__(self, existing=None, initial_attachment_details=None, post_attachment_details=None, check_mode=False):
+        self.module = _Module({"state": "replaced"}, check_mode=check_mode)
+        self.calls = []
+        self.attachments = VrfAttachmentManager(self)
+        self.initial_attachment_details = initial_attachment_details or []
+        self.post_attachment_details = post_attachment_details or []
+        self.state_machine = _FakeStateMachine(self.calls, existing=existing)
+        self.posted_payloads = []
+
+    @staticmethod
+    def _desired_attachment_map(module_args, _strategy):
+        desired = {}
+        for vrf in module_args.get("config") or []:
+            vrf_name = vrf.get("vrf_name")
+            for attachment in vrf.get("attach") or []:
+                switch_id = attachment.get("switch_id")
+                desired[(vrf_name, switch_id)] = {"vrfName": vrf_name, "switchId": switch_id, "attach": True}
+        return desired
+
+    @staticmethod
+    def _configured_vrf_names(config):
+        return [vrf["vrf_name"] for vrf in config]
+
+    def _new_state_machine(self, _module_args, _strategy):
+        self.calls.append(("new_state_machine",))
+        return self.state_machine, "original-config", "original-state"
+
+    def _current_attachment_details_ignore_missing(self, _module_args, _strategy, vrf_names):
+        self.calls.append(("initial_query", vrf_names))
+        return list(self.initial_attachment_details)
+
+    @staticmethod
+    def _attachment_map_from_details(attachments, vrf_names=None):
+        return VrfAttachmentManager.attachment_map_from_details(attachments, vrf_names)
+
+    def _current_attachment_details(self, _module_args, _strategy, vrf_names):
+        self.calls.append(("post_query", vrf_names))
+        return list(self.post_attachment_details)
+
+    def _apply_attachment_phase(self, module_args, strategy, phase, desired=None, current_vrf_names=None, current=None, attachment_details=None):
+        trace = self.attachments.apply_phase(module_args, strategy, phase, desired, current_vrf_names, current, attachment_details)
+        self.calls.append((phase, current_vrf_names, trace.get("current"), trace.get("desired")))
+        return trace
+
+    @staticmethod
+    def _expand_desired_attachments_with_vpc_peers(desired, attachment_details):
+        return VrfAttachmentManager.expand_desired_attachments_with_vpc_peers(desired, attachment_details)
+
+    def _planned_detach_payloads(self, state, config, current, desired):
+        return self.attachments.planned_detach_payloads(state, config, current, desired)
+
+    def _planned_attach_payloads(self, current, desired):
+        return self.attachments.planned_attach_payloads(current, desired)
+
+    def _attachment_map_after_detach(self, current, payloads):
+        return self.attachments.attachment_map_after_detach(current, payloads)
+
+    @staticmethod
+    def _attachment_matches(existing, desired):
+        return VrfAttachmentManager.attachment_matches(existing, desired)
+
+    @staticmethod
+    def _record_deploy_target(deploy_targets, vrf_name, switch_id):
+        VrfAttachmentManager.record_deploy_target(deploy_targets, vrf_name, switch_id)
+
+    def _post_vrf_attachments(self, _module_args, _strategy, payloads, deploy_targets, operation_type):
+        self.posted_payloads.append({"payloads": payloads, "deploy_targets": deploy_targets, "operation_type": operation_type})
+        return {"changed": bool(payloads), "failed": False, "payloads": payloads, "deploy_targets": deploy_targets}
+
+    @staticmethod
+    def _format_state_machine_output(_state_machine):
+        return {"changed": True, "failed": False, "after": [{"vrf_name": "BLUE"}]}
+
+    @staticmethod
+    def _merge_api_trace(result, trace, prepend=False):
+        if prepend:
+            result.setdefault("prepended", []).append(trace)
+        if trace.get("changed"):
+            result["changed"] = True
+
+    @staticmethod
+    def _build_deploy_payloads(_config, *_target_maps):
+        return []
+
+    @staticmethod
+    def _build_pending_vrf_deploy_payloads(_result, _config, _module_args, _strategy):
+        return []
+
+    def _restore_state_machine_params(self, original_config, original_state):
+        self.calls.append(("restore", original_config, original_state))
+
+    def _trace(self, event, **_details):
+        self.calls.append(("trace", event))
+
+
+def _unattached_vpc_attachment_rows(vrf_name="BLUE", switch_id="SERIAL1", peer_switch_id="SERIAL2"):
+    return [
+        {
+            "vrfName": vrf_name,
+            "switchId": switch_id,
+            "peerSwitchId": peer_switch_id,
+            "attach": False,
+            "status": "notApplicable",
+        },
+        {
+            "vrfName": vrf_name,
+            "switchId": peer_switch_id,
+            "peerSwitchId": switch_id,
+            "attach": False,
+            "status": "notApplicable",
+        },
+    ]
+
+
+def test_vrf_replaced_first_create_with_attachment_skips_missing_pre_query():
+    """
+    # Summary
+
+    Verify first-create state=replaced does not query attachments for a VRF
+    that is absent before CRUD creation.
+    """
+    coordinator = _ReplacedVrfCoordinator(post_attachment_details=_unattached_vpc_attachment_rows())
+    state_machine = VrfStateMachine(coordinator)
+
+    result = state_machine.run(
+        {"state": "replaced", "config": [{"vrf_name": "BLUE", "attach": [{"switch_id": "SERIAL1"}]}]},
+        _StandaloneStrategy(),
+    )
+
+    assert result["changed"] is True
+    assert ("initial_query", []) not in coordinator.calls
+    assert ("post_query", ["BLUE"]) in coordinator.calls
+    assert ("manage_state",) in coordinator.calls
+    assert coordinator.posted_payloads[-1]["payloads"] == [
+        {"vrfName": "BLUE", "switchId": "SERIAL1", "attach": True},
+        {"vrfName": "BLUE", "switchId": "SERIAL2", "attach": True},
+    ]
+
+
+def test_vrf_replaced_existing_unattached_vpc_expands_peer_from_raw_rows():
+    """
+    # Summary
+
+    Verify state=replaced preserves attach=false vPC query rows for existing
+    VRFs so one selected vPC member expands to both peers.
+    """
+    coordinator = _ReplacedVrfCoordinator(
+        existing=[_ExistingVrf("BLUE")],
+        initial_attachment_details=_unattached_vpc_attachment_rows(),
+    )
+    state_machine = VrfStateMachine(coordinator)
+
+    result = state_machine.run(
+        {"state": "replaced", "config": [{"vrf_name": "BLUE", "attach": [{"switch_id": "SERIAL1"}]}]},
+        _StandaloneStrategy(),
+    )
+
+    assert result["changed"] is True
+    assert ("initial_query", ["BLUE"]) in coordinator.calls
+    assert ("post_query", ["BLUE"]) not in coordinator.calls
+    assert coordinator.posted_payloads[-1]["payloads"] == [
+        {"vrfName": "BLUE", "switchId": "SERIAL1", "attach": True},
+        {"vrfName": "BLUE", "switchId": "SERIAL2", "attach": True},
+    ]
+
+
+def test_vrf_replaced_mixed_existing_and_new_vpc_expands_all_peers():
+    """
+    # Summary
+
+    Verify mixed replaced input combines pre-CRUD raw rows for existing VRFs
+    with post-CRUD raw rows for newly-created VRFs.
+    """
+    coordinator = _ReplacedVrfCoordinator(
+        existing=[_ExistingVrf("BLUE")],
+        initial_attachment_details=_unattached_vpc_attachment_rows(),
+        post_attachment_details=_unattached_vpc_attachment_rows("GREEN", "SERIAL3", "SERIAL4"),
+    )
+    state_machine = VrfStateMachine(coordinator)
+
+    result = state_machine.run(
+        {
+            "state": "replaced",
+            "config": [
+                {"vrf_name": "BLUE", "attach": [{"switch_id": "SERIAL1"}]},
+                {"vrf_name": "GREEN", "attach": [{"switch_id": "SERIAL3"}]},
+            ],
+        },
+        _StandaloneStrategy(),
+    )
+
+    assert result["changed"] is True
+    assert ("initial_query", ["BLUE"]) in coordinator.calls
+    assert ("post_query", ["GREEN"]) in coordinator.calls
+    assert coordinator.posted_payloads[-1]["payloads"] == [
+        {"vrfName": "BLUE", "switchId": "SERIAL1", "attach": True},
+        {"vrfName": "BLUE", "switchId": "SERIAL2", "attach": True},
+        {"vrfName": "GREEN", "switchId": "SERIAL3", "attach": True},
+        {"vrfName": "GREEN", "switchId": "SERIAL4", "attach": True},
+    ]
+    assert coordinator.posted_payloads[-1]["deploy_targets"] == {
+        "BLUE": {"SERIAL1", "SERIAL2"},
+        "GREEN": {"SERIAL3", "SERIAL4"},
+    }
+
+
+def test_vrf_replaced_check_mode_existing_unattached_vpc_expands_peer_from_raw_rows():
+    """
+    # Summary
+
+    Verify check mode keeps existing vPC peer expansion when current attachment
+    rows are attach=false.
+    """
+    coordinator = _ReplacedVrfCoordinator(
+        existing=[_ExistingVrf("BLUE")],
+        initial_attachment_details=_unattached_vpc_attachment_rows(),
+        check_mode=True,
+    )
+    state_machine = VrfStateMachine(coordinator)
+
+    result = state_machine.run(
+        {"state": "replaced", "config": [{"vrf_name": "BLUE", "attach": [{"switch_id": "SERIAL1"}]}]},
+        _StandaloneStrategy(),
+    )
+
+    assert result["changed"] is True
+    assert ("post_query", ["BLUE"]) not in coordinator.calls
+    assert coordinator.posted_payloads[-1]["payloads"] == [
+        {"vrfName": "BLUE", "switchId": "SERIAL1", "attach": True},
+        {"vrfName": "BLUE", "switchId": "SERIAL2", "attach": True},
+    ]
 
 
 def test_vrf_attachment_query_chunks_large_vrf_name_sets():
@@ -2063,12 +2314,13 @@ def test_vrf_workflow_coordinator_attachment_207_failure_fails_fast():
         manager._raise_on_attachment_failures(response)
 
 
-def test_vrf_workflow_coordinator_00085_overridden_new_vrf_does_not_query_missing_attachments():
+def test_vrf_workflow_coordinator_00085_overridden_new_vrf_queries_attachments_after_create():
     """
     # Summary
 
     Verify overridden can replace old VRFs with a brand-new attached VRF
-    without querying attachments for the new VRF before it exists on ND.
+    without querying attachments for the new VRF before it exists on ND, then
+    query after CRUD to preserve vPC peer expansion metadata.
     """
     module_args = {
         "fabric_name": "msd_p",
@@ -2108,6 +2360,11 @@ def test_vrf_workflow_coordinator_00085_overridden_new_vrf_does_not_query_missin
         assert vrf_names == ["ansible-old-vrf"]
         return []
 
+    def new_attachment_details(_args, _strategy, vrf_names=None):
+        call_order.append("query_new_attachments")
+        assert vrf_names == ["ansible-new-vrf"]
+        return _unattached_vpc_attachment_rows("ansible-new-vrf", "SERIAL1", "SERIAL2")
+
     def detach(_args, _strategy, vrf_names=None, attachment_details=None):
         call_order.append("detach")
         assert vrf_names == ["ansible-old-vrf"]
@@ -2145,6 +2402,7 @@ def test_vrf_workflow_coordinator_00085_overridden_new_vrf_does_not_query_missin
     )
     object.__setattr__(coordinator, "_new_state_machine", new_state_machine)
     object.__setattr__(coordinator, "_current_attachment_details_ignore_missing", attachment_details)
+    object.__setattr__(coordinator, "_current_attachment_details", new_attachment_details)
     object.__setattr__(coordinator, "_apply_deleted_attachment_phase", detach)
     object.__setattr__(coordinator, "_current_attachment_map", fail_current_attachment_query)
     object.__setattr__(
@@ -2166,13 +2424,18 @@ def test_vrf_workflow_coordinator_00085_overridden_new_vrf_does_not_query_missin
 
     result = coordinator._run_state_machine_with_attachments(dict(module_args))
 
-    assert call_order == ["query_attachments", "detach", "state_machine", "post_attach"]
+    assert call_order == ["query_attachments", "detach", "state_machine", "query_new_attachments", "post_attach"]
     assert posted["payloads"] == [
         {
             "vrfName": "ansible-new-vrf",
             "switchId": "SERIAL1",
             "attach": True,
-        }
+        },
+        {
+            "vrfName": "ansible-new-vrf",
+            "switchId": "SERIAL2",
+            "attach": True,
+        },
     ]
     assert posted["deploy_targets"] == {}
     assert result["changed"] is True
