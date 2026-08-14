@@ -275,21 +275,21 @@ def test_manage_vpc_pair_deploy_00110_resource_scope_deploys_only_managed_pair_s
     assert fake_nd.payloads_for(SWITCH_DEPLOY_PATH) == [{"switchIds": ["FOX111AAA", "FOX222AAA"]}]
 
 
-def test_manage_vpc_pair_deploy_00120_resource_scope_resolves_management_ips_to_serials():
-    # Peers given as management IPs resolve to serials via fabric inventory; only
-    # the out-of-sync peer is deployed.
-    nrm = _make_resource_nrm(config=[{"switch_id": "10.10.10.11", "peer_switch_id": "10.10.10.12"}])
+def test_manage_vpc_pair_deploy_00120_resource_scope_warns_when_peer_not_in_inventory():
+    # Peers absent from fabric inventory (typo/wrong fabric) must warn instead of
+    # silently no-opping, and no switchActions/deploy is posted.
+    nrm = _make_resource_nrm(config=[{"switch_id": "FOXABSENT1", "peer_switch_id": "FOXABSENT2"}])
     switches_response = {
         "switches": [
-            {"serialNumber": "FOX111AAA", "ipAddress": "10.10.10.11", "configSyncStatus": "Out-of-Sync"},
-            {"serialNumber": "FOX222AAA", "ipAddress": "10.10.10.12", "configSyncStatus": "In-Sync"},
+            {"serialNumber": "FOX111AAA", "configSyncStatus": "Out-of-Sync"},  # unrelated
         ]
     }
     fake_nd = _FakeNDModuleV2(nrm.module, switches_response=switches_response)
 
     _run_deploy(nrm, fake_nd)
 
-    assert fake_nd.payloads_for(SWITCH_DEPLOY_PATH) == [{"switchIds": ["FOX111AAA"]}]
+    assert SWITCH_DEPLOY_PATH not in fake_nd.paths()
+    assert any("not found in fabric" in warning for warning in nrm.module.warnings)
 
 
 def test_manage_vpc_pair_deploy_00130_resource_scope_noop_when_pair_in_sync():
@@ -328,20 +328,23 @@ def test_manage_vpc_pair_deploy_00140_check_mode_resource_scope_previews_switch_
     assert all(GLOBAL_DEPLOY_PATH not in action for action in planned)
 
 
-def test_manage_vpc_pair_deploy_00150_get_managed_pair_switches_scopes_and_resolves():
-    # Direct helper check: managed peers (serial + IP) resolve to serials and are
-    # filtered to out-of-sync; unrelated out-of-sync switches are excluded.
+def test_manage_vpc_pair_deploy_00150_get_managed_pair_switches_scopes_and_filters_sync():
+    # Direct helper check: managed pair serials are matched to inventory and
+    # filtered to out-of-sync; unrelated out-of-sync switches are excluded and no
+    # spurious warning is emitted when every peer resolves.
     switches_response = {
         "switches": [
-            {"serialNumber": "FOXAAA", "ipAddress": "10.0.0.1", "configSyncStatus": "Out-of-Sync"},
-            {"serialNumber": "FOXBBB", "ipAddress": "10.0.0.2", "configSyncStatus": "In-Sync"},
+            {"serialNumber": "FOXAAA", "configSyncStatus": "Out-of-Sync"},
+            {"serialNumber": "FOXBBB", "configSyncStatus": "In-Sync"},
             {"serialNumber": "FOXCCC", "configSyncStatus": "Out-of-Sync"},  # unrelated
         ]
     }
-    fake_nd = _FakeNDModuleV2(_FakeModule({}), switches_response=switches_response)
-    config_entries = [{"switch_id": "FOXAAA", "peer_switch_id": "10.0.0.2"}]  # one serial, one IP
+    module = _FakeModule({})
+    fake_nd = _FakeNDModuleV2(module, switches_response=switches_response)
+    config_entries = [{"switch_id": "FOXAAA", "peer_switch_id": "FOXBBB"}]
 
     result = deploy._get_managed_pair_switches_needing_deploy(fake_nd, "fab1", config_entries)
 
     # FOXAAA out-of-sync -> included; FOXBBB in-sync -> excluded; FOXCCC unrelated -> excluded
     assert result == ["FOXAAA"]
+    assert module.warnings == []

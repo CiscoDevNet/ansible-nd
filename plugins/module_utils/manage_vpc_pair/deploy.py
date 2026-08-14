@@ -18,9 +18,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.query imp
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.validation import (
     _validate_fabric_switches,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
-    VpcFieldNames,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule as NDModuleV2,
     NDModuleError,
@@ -141,33 +138,15 @@ def _get_switches_needing_deploy(nd_v2: Any, fabric_name: str) -> list[str]:
 
 def _pair_identifiers(config_entry: dict[str, Any]) -> list[str]:
     """
-    Return the peer identifiers (serial or management IP) for one managed pair.
+    Return the peer serial numbers for one managed vPC pair config entry.
 
-    Reads runtime-normalized config keys first and falls back to raw playbook
-    keys so the caller works before or after key normalization.
+    Deploy runs after custom_vpc_query_all -> normalize_vpc_playbook_switch_identifiers
+    has rewritten module.params["config"], so entries carry runtime keys
+    (switch_id/peer_switch_id) with any management IPs already resolved to serials.
     """
-    peer1 = config_entry.get("switch_id") or config_entry.get(VpcFieldNames.SWITCH_ID) or config_entry.get("peer1_switch_id")
-    peer2 = config_entry.get("peer_switch_id") or config_entry.get(VpcFieldNames.PEER_SWITCH_ID) or config_entry.get("peer2_switch_id")
+    peer1 = config_entry.get("switch_id")
+    peer2 = config_entry.get("peer_switch_id")
     return [identifier for identifier in (peer1, peer2) if identifier]
-
-
-def _build_switch_identifier_index(switches: dict[str, dict[str, Any]]) -> dict[str, str]:
-    """
-    Map every known switch identifier (serial, management IP) to its serial.
-
-    Lets resource-scoped deploy resolve pair peers supplied as either serial
-    numbers or management IP addresses against the fabric inventory.
-    """
-    index: dict[str, str] = {}
-    for serial_number, switch_data in switches.items():
-        index[serial_number] = serial_number
-        if not isinstance(switch_data, dict):
-            continue
-        for field in (VpcFieldNames.SERIAL_NUMBER, VpcFieldNames.IP_ADDRESS, VpcFieldNames.FABRIC_MGMT_IP):
-            value = switch_data.get(field)
-            if isinstance(value, str) and value:
-                index.setdefault(value, serial_number)
-    return index
 
 
 def _get_managed_pair_switches_needing_deploy(nd_v2: Any, fabric_name: str, config_entries: Any) -> list[str]:
@@ -177,10 +156,15 @@ def _get_managed_pair_switches_needing_deploy(nd_v2: Any, fabric_name: str, conf
     Scopes the switch-level deploy to only the switches that form the vPC pairs
     named in the playbook config (config_actions.type == "resource"), rather than
     every out-of-sync switch in the fabric. Nexus Dashboard has no vPC-pair-level
-    deploy primitive, so a vPC pair resource maps to its two peer switches. Peer
-    IDs may be serial numbers or management IPs; both are resolved against fabric
-    inventory. Only switches not confirmed in-sync are returned so an already
-    deployed pair is a no-op.
+    deploy primitive, so a vPC pair resource maps to its two peer switches.
+
+    Peer identifiers are already serial numbers at deploy time (management IPs are
+    resolved upstream in custom_vpc_query_all -> normalize_vpc_playbook_switch_identifiers),
+    so they are matched directly against fabric inventory. A peer absent from
+    inventory (mistyped serial, wrong fabric) is reported via module.warn rather
+    than silently skipped, so a resource deploy never becomes a silent no-op.
+    Only switches not confirmed in-sync are returned so an already deployed pair
+    is a no-op.
 
     Args:
         nd_v2: NDModuleV2 instance for RestSend
@@ -193,15 +177,18 @@ def _get_managed_pair_switches_needing_deploy(nd_v2: Any, fabric_name: str, conf
     switches = _validate_fabric_switches(nd_v2, fabric_name)
     if not switches:
         return []
-    identifier_to_serial = _build_switch_identifier_index(switches)
     managed_serials: set[str] = set()
     for config_entry in config_entries or []:
         if not isinstance(config_entry, dict):
             continue
-        for identifier in _pair_identifiers(config_entry):
-            serial_number = identifier_to_serial.get(identifier)
-            if serial_number is not None:
-                managed_serials.add(serial_number)
+        identifiers = _pair_identifiers(config_entry)
+        unresolved = [identifier for identifier in identifiers if identifier not in switches]
+        if unresolved:
+            nd_v2.module.warn(
+                f"config_actions.type=resource: vPC pair peer(s) {unresolved} not found in fabric "
+                f"'{fabric_name}' inventory; skipping switch-scoped deploy for those switches."
+            )
+        managed_serials.update(identifier for identifier in identifiers if identifier in switches)
     needing = [serial_number for serial_number in managed_serials if _is_switch_config_in_sync(switches.get(serial_number)) is not True]
     return sorted(needing)
 
@@ -389,14 +376,14 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                         changed=True,
                     )
                 else:
-                    # Switch scope requested but nothing is out-of-sync; record a
-                    # successful no-op instead of posting an empty switch list.
+                    # Switch/resource scope requested but nothing is out-of-sync;
+                    # record a successful no-op instead of posting an empty list.
                     register_action_api_call(
                         results=results,
                         request_path=deploy_path,
                         payload=deploy_payload,
                         return_code=None,
-                        message="No switches required switch-scoped deployment",
+                        message=f"No switches required {action_type}-scoped deployment",
                         success=True,
                         changed=False,
                     )
