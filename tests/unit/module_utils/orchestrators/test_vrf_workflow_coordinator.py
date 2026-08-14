@@ -441,9 +441,7 @@ def test_vrf_attachment_manager_staged_detaches_like_overridden():
     }
     desired = {("BLUE", "SERIAL1"): {"vrfName": "BLUE", "switchId": "SERIAL1", "attach": True}}
 
-    assert manager.planned_detach_payloads("staged", [{"vrf_name": "BLUE"}], current, desired) == [
-        {"vrfName": "BLUE", "switchId": "SERIAL2", "attach": False}
-    ]
+    assert manager.planned_detach_payloads("staged", [{"vrf_name": "BLUE"}], current, desired) == [{"vrfName": "BLUE", "switchId": "SERIAL2", "attach": False}]
 
 
 def test_vrf_staged_detaches_omitted_vrfs_without_running_overridden_crud_delete():
