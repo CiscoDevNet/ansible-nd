@@ -2,7 +2,7 @@
 
 """Unit tests for the Interface Group live-state validation action plugin."""
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import patch

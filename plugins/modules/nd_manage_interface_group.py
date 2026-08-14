@@ -4,6 +4,8 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+from __future__ import annotations
+
 ANSIBLE_METADATA = {
     "metadata_version": "1.1",
     "status": ["preview"],
@@ -500,7 +502,6 @@ msg:
 
 import logging
 import traceback
-from typing import Optional
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
@@ -551,7 +552,7 @@ def _module_verbosity(module: AnsibleModule) -> int:
 
 def _format_output(
     module: AnsibleModule,
-    nd_state_machine: Optional[NDStateMachine],
+    nd_state_machine: NDStateMachine | None,
     **kwargs,
 ) -> dict:
     """Format the generic state machine's NDOutput and attach IG warnings."""

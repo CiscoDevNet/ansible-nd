@@ -5,9 +5,7 @@
 
 """Validate read-only Interface configuration previews in integration tests."""
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 DOCUMENTATION = r"""
 ---
@@ -69,7 +67,7 @@ report:
   type: dict
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from ansible.plugins.action import ActionBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.validators import (
@@ -89,7 +87,7 @@ def _unwrap(value: Any) -> Any:
     return node
 
 
-def _extract_diffs(value: Any) -> List[Dict[str, Any]]:
+def _extract_diffs(value: Any) -> list[dict[str, Any]]:
     """Extract preview entries from documented and direct response shapes."""
     node = _unwrap(value)
     if isinstance(node, list):
@@ -105,14 +103,14 @@ def _extract_diffs(value: Any) -> List[Dict[str, Any]]:
     return []
 
 
-def _first(value: Dict[str, Any], *names: str) -> Any:
+def _first(value: dict[str, Any], *names: str) -> Any:
     for name in names:
         if name in value:
             return value[name]
     return None
 
 
-def _identity(value: Dict[str, Any]) -> Tuple[str, str]:
+def _identity(value: dict[str, Any]) -> tuple[str, str]:
     switch_id = str(_first(value, "switch_id", "switchId") or "")
     interface_name = _first(value, "interface_name", "interfaceName")
     return (
@@ -121,11 +119,11 @@ def _identity(value: Dict[str, Any]) -> Tuple[str, str]:
     )
 
 
-def _combined_configs(value: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def _combined_configs(value: dict[str, Any]) -> dict[str, dict[str, Any]]:
     configs = _first(value, "combinedConfigs", "combined_configs")
     if not isinstance(configs, list):
         return {}
-    result: Dict[str, Dict[str, Any]] = {}
+    result: dict[str, dict[str, Any]] = {}
     for item in configs:
         if not isinstance(item, dict):
             continue
@@ -135,7 +133,7 @@ def _combined_configs(value: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return result
 
 
-def _pending_lines(value: Dict[str, Any]) -> int:
+def _pending_lines(value: dict[str, Any]) -> int:
     pending = _combined_configs(value).get("pending", {})
     lines = pending.get("lines", 0)
     try:
@@ -144,7 +142,7 @@ def _pending_lines(value: Dict[str, Any]) -> int:
         return -1
 
 
-def _normalise_fragments(value: Any) -> List[str]:
+def _normalise_fragments(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, str):
@@ -182,8 +180,8 @@ class ActionModule(ActionBase):
             return self._fail(result, "test_data must be a non-empty list or dictionary")
 
         entries = _extract_diffs(args["nd_data"])
-        by_identity: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        duplicate_identities: List[str] = []
+        by_identity: dict[tuple[str, str], dict[str, Any]] = {}
+        duplicate_identities: list[str] = []
         for entry in entries:
             identity = _identity(entry)
             if identity in by_identity:
@@ -279,6 +277,6 @@ class ActionModule(ActionBase):
         return result
 
     @staticmethod
-    def _fail(result: Dict[str, Any], message: str) -> Dict[str, Any]:
+    def _fail(result: dict[str, Any], message: str) -> dict[str, Any]:
         result.update(changed=False, failed=True, msg=message)
         return result

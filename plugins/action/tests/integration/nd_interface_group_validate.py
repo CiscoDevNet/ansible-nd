@@ -11,9 +11,7 @@ flattened, and ``interfaceGroupAssociation`` response shapes, and compares the
 result with playbook-facing module input.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 DOCUMENTATION = r"""
 ---
@@ -106,7 +104,8 @@ report:
   type: dict
 """
 
-from typing import Any, Dict, Iterable, List, Set, Tuple
+from collections.abc import Iterable
+from typing import Any
 
 from ansible.plugins.action import ActionBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.validators import (
@@ -158,7 +157,7 @@ _ETHERNET_ATTRIBUTE_KEYS = {
 }
 
 
-def _first(data: Dict[str, Any], *names: str) -> Tuple[Any, bool]:
+def _first(data: dict[str, Any], *names: str) -> tuple[Any, bool]:
     """Return the first present alias and whether an alias was present."""
     for name in names:
         if name in data:
@@ -166,7 +165,7 @@ def _first(data: Dict[str, Any], *names: str) -> Tuple[Any, bool]:
     return None, False
 
 
-def _normalise_string_list(value: Any) -> List[str]:
+def _normalise_string_list(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, str):
@@ -176,9 +175,9 @@ def _normalise_string_list(value: Any) -> List[str]:
     return sorted({str(item) for item in value})
 
 
-def _normalise_members(value: Any) -> Dict[str, List[str]]:
+def _normalise_members(value: Any) -> dict[str, list[str]]:
     """Normalize switch/interface associations as an order-insensitive map."""
-    members: Dict[str, Set[str]] = {}
+    members: dict[str, set[str]] = {}
     if not isinstance(value, list):
         return {}
     for item in value:
@@ -194,14 +193,14 @@ def _normalise_members(value: Any) -> Dict[str, List[str]]:
     return {switch_id: sorted(interface_names) for switch_id, interface_names in sorted(members.items())}
 
 
-def _normalise_vpc_peer_switch_ids(value: Any) -> Dict[str, str]:
+def _normalise_vpc_peer_switch_ids(value: Any) -> dict[str, str]:
     """Validate and symmetrize the optional vPC peer switch-ID mapping."""
     if value is None:
         return {}
     if not isinstance(value, dict):
         raise ValueError("vpc_peer_switch_ids must be a dictionary")
 
-    peers: Dict[str, str] = {}
+    peers: dict[str, str] = {}
     for raw_switch_id, raw_peer_id in value.items():
         if not isinstance(raw_switch_id, str) or not raw_switch_id.strip():
             raise ValueError("vpc_peer_switch_ids keys must be non-empty strings")
@@ -220,9 +219,9 @@ def _normalise_vpc_peer_switch_ids(value: Any) -> Dict[str, str]:
     return peers
 
 
-def _canonicalise_vpc_member_switch_ids(members: Dict[str, List[str]], vpc_peer_switch_ids: Dict[str, str]) -> Dict[str, List[str]]:
+def _canonicalise_vpc_member_switch_ids(members: dict[str, list[str]], vpc_peer_switch_ids: dict[str, str]) -> dict[str, list[str]]:
     """Canonicalize only vPC member switch IDs across a confirmed peer pair."""
-    canonical: Dict[str, Set[str]] = {}
+    canonical: dict[str, set[str]] = {}
     for switch_id, interface_names in members.items():
         for interface_name in interface_names:
             canonical_switch_id = switch_id
@@ -234,7 +233,7 @@ def _canonicalise_vpc_member_switch_ids(members: Dict[str, List[str]], vpc_peer_
     return {switch_id: sorted(interface_names) for switch_id, interface_names in sorted(canonical.items())}
 
 
-def _normalise_ethernet_attributes(value: Any) -> Dict[str, Any]:
+def _normalise_ethernet_attributes(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
     normalized = {_ETHERNET_ATTRIBUTE_KEYS.get(key, key): item for key, item in value.items()}
@@ -243,14 +242,14 @@ def _normalise_ethernet_attributes(value: Any) -> Dict[str, Any]:
     return normalized
 
 
-def _normalise_group(raw: Dict[str, Any]) -> Dict[str, Any]:
+def _normalise_group(raw: dict[str, Any]) -> dict[str, Any]:
     """Project API or module-shaped input into a stable comparison shape."""
     raw = InterfaceGroupValidators.normalize_response_group(raw)
     association, _present = _first(raw, "interfaceGroupAssociation", "interface_group_association")
     if not isinstance(association, dict):
         association = {}
 
-    canonical: Dict[str, Any] = {"_fields": set()}
+    canonical: dict[str, Any] = {"_fields": set()}
     aliases = {
         "interface_group_name": ("interface_group_name", "interfaceGroupName"),
         "type": ("type",),
@@ -291,7 +290,7 @@ def _normalise_group(raw: Dict[str, Any]) -> Dict[str, Any]:
     return canonical
 
 
-def _extract_groups(nd_data: Any) -> List[Dict[str, Any]]:
+def _extract_groups(nd_data: Any) -> list[dict[str, Any]]:
     """Extract gathered, GET-one, or list Interface Group objects."""
     node = nd_data
     if isinstance(node, dict) and "first_run_result" in node:
@@ -309,7 +308,7 @@ def _extract_groups(nd_data: Any) -> List[Dict[str, Any]]:
     if "interfaceGroupName" in node or "interface_group_name" in node:
         return [node]
 
-    groups: List[Dict[str, Any]] = []
+    groups: list[dict[str, Any]] = []
     for key in _GROUP_LIST_KEYS:
         value = node.get(key)
         if isinstance(value, list):
@@ -317,7 +316,7 @@ def _extract_groups(nd_data: Any) -> List[Dict[str, Any]]:
     return groups
 
 
-def _dict_is_subset(want: Dict[str, Any], have: Dict[str, Any]) -> bool:
+def _dict_is_subset(want: dict[str, Any], have: dict[str, Any]) -> bool:
     """Recursively compare explicitly expected dictionary values."""
     for key, value in want.items():
         if key not in have:
@@ -331,13 +330,13 @@ def _dict_is_subset(want: Dict[str, Any], have: Dict[str, Any]) -> bool:
 
 
 def _compare_group(
-    want: Dict[str, Any],
-    have: Dict[str, Any],
+    want: dict[str, Any],
+    have: dict[str, Any],
     mode: str,
-    vpc_peer_switch_ids: Dict[str, str],
-) -> List[Dict[str, Any]]:
+    vpc_peer_switch_ids: dict[str, str],
+) -> list[dict[str, Any]]:
     """Return field-level mismatches for one expected group."""
-    mismatches: List[Dict[str, Any]] = []
+    mismatches: list[dict[str, Any]] = []
     for field_name in sorted(want["_fields"] - {"interface_group_name"}):
         expected = want.get(field_name)
         actual = have.get(field_name)
@@ -369,12 +368,12 @@ def _compare_group(
     return mismatches
 
 
-def _normalise_absent(absent: Any) -> List[str]:
+def _normalise_absent(absent: Any) -> list[str]:
     if absent is None:
         return []
     if isinstance(absent, (str, dict)):
         absent = [absent]
-    names: List[str] = []
+    names: list[str] = []
     for item in absent:
         if isinstance(item, str):
             names.append(item)
@@ -385,12 +384,12 @@ def _normalise_absent(absent: Any) -> List[str]:
     return sorted(set(names))
 
 
-def _check_invariants(groups: List[Dict[str, Any]], invariants: Dict[str, Any]) -> List[str]:
+def _check_invariants(groups: list[dict[str, Any]], invariants: dict[str, Any]) -> list[str]:
     unknown = sorted(set(invariants) - _SUPPORTED_INVARIANTS)
     if unknown:
         return ["unsupported invariant(s): {0}".format(", ".join(unknown))]
 
-    failures: List[str] = []
+    failures: list[str] = []
     count = len(groups)
     if "total_count" in invariants and count != int(invariants["total_count"]):
         failures.append("expected total_count={0}, got {1}".format(invariants["total_count"], count))
@@ -412,7 +411,7 @@ def _check_invariants(groups: List[Dict[str, Any]], invariants: Dict[str, Any]) 
             failures.append("duplicate interface group name(s): {0}".format(", ".join(duplicates)))
 
     if invariants.get("unique_members", False):
-        owners: Dict[Tuple[str, str], List[str]] = {}
+        owners: dict[tuple[str, str], list[str]] = {}
         for group in groups:
             for switch_id, interface_names in group.get("switch_interfaces", {}).items():
                 for interface_name in interface_names:
@@ -534,7 +533,7 @@ class ActionModule(ActionBase):
         return result
 
     @staticmethod
-    def _serialise_groups(groups: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _serialise_groups(groups: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         serialised = []
         for group in groups:
             item = dict(group)
@@ -543,6 +542,6 @@ class ActionModule(ActionBase):
         return serialised
 
     @staticmethod
-    def _fail(result: Dict[str, Any], message: str) -> Dict[str, Any]:
+    def _fail(result: dict[str, Any], message: str) -> dict[str, Any]:
         result.update(changed=False, failed=True, msg=message)
         return result
