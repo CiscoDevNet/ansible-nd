@@ -779,7 +779,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         """Return whether an ``any`` group combines vPC and non-vPC members."""
         if model is None or model.type != InterfaceGroupType.ANY.value:
             return False
-        member_kinds = {InterfaceGroupValidators.interface_kind(interface_name) for _, interface_name in cls._interface_pairs(model)}
+        member_kinds = {InterfaceGroupValidators.interface_kind(interface_name) for _switch_id, interface_name in cls._interface_pairs(model)}
         return "vpc" in member_kinds and bool(member_kinds.intersection({"ethernet", "port_channel"}))
 
     def _validate_any_vpc_member_mixing(

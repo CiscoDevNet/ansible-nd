@@ -570,7 +570,7 @@ def _format_output(
 def main():
     """Entry point for the nd_manage_interface_group module."""
     argument_spec = nd_argument_spec()
-    argument_spec["timeout"]["default"] = 300
+    argument_spec.setdefault("timeout", {"type": "int"})["default"] = 300
     argument_spec.update(InterfaceGroupModuleConfigModel.get_argument_spec())
 
     module = AnsibleModule(

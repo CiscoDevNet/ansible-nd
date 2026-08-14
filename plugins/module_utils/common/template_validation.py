@@ -230,7 +230,7 @@ def fetch_template_params(
         data = request_fn(ep.path, ep.verb)
     except Exception as exc:  # noqa: BLE001
         if logger is not None:
-            logger.warning(f"Failed to fetch template '{template_name}' parameters: {exc}. " "Skipping template input validation.")
+            logger.warning(f"Failed to fetch template '{template_name}' parameters: {exc}. Skipping template input validation.")
         cache[template_name] = []
         return []
 
@@ -364,10 +364,7 @@ def validate_template_inputs(
     user_facing_names = set(param_map.keys())
     for user_key in template_inputs:
         if user_key not in valid_names:
-            errors.append(
-                f"Unknown {input_label} key '{user_key}' for template "
-                f"'{template_name}'. Valid keys: {sorted(user_facing_names)}"
-            )
+            errors.append(f"Unknown {input_label} key '{user_key}' for template " f"'{template_name}'. Valid keys: {sorted(user_facing_names)}")
 
     # ------------------------------------------------------------------
     # Check 2: Missing required parameters
@@ -380,10 +377,7 @@ def validate_template_inputs(
         has_supplied_value = pname in template_inputs and not _value_is_unset(supplied_value)
 
         if is_required and not has_default and not has_supplied_value:
-            errors.append(
-                f"Required {input_label} '{pname}' (type={pdef.get('parameterType', '?')}) "
-                f"is missing for template '{template_name}'"
-            )
+            errors.append(f"Required {input_label} '{pname}' (type={pdef.get('parameterType', '?')}) " f"is missing for template '{template_name}'")
 
     # ------------------------------------------------------------------
     # Check 3: Basic type validation (soft checks)
@@ -407,60 +401,41 @@ def validate_template_inputs(
 
         if ptype == "boolean":
             if val_str.lower() not in ("true", "false"):
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects boolean (true/false), got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects boolean (true/false), got '{val_str}'")
 
         elif ptype == "integer":
             try:
                 int(val_str)
             except ValueError:
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects integer, got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects integer, got '{val_str}'")
 
         elif ptype == "long":
             try:
                 int(val_str)
             except ValueError:
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects long integer, got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects long integer, got '{val_str}'")
 
         elif ptype == "float":
             try:
                 float(val_str)
             except ValueError:
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects float, got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects float, got '{val_str}'")
 
         elif ptype in ("ipv4address", "ipaddress"):
             # Basic IPv4 shape check (per-octet 0-255 enforcement is the
             # controller's job)
             if not _IPV4_RE.match(val_str):
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects IPv4 address (e.g., 192.168.1.1), got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects IPv4 address (e.g., 192.168.1.1), got '{val_str}'")
 
         elif ptype == "ipv4addresswithsubnet":
             if not _IPV4_SUBNET_RE.match(val_str):
                 errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects IPv4 address with subnet (e.g., 192.168.1.1/24), got '{val_str}'"
+                    f"{input_label} '{user_key}' for template '{template_name}' " f"expects IPv4 address with subnet (e.g., 192.168.1.1/24), got '{val_str}'"
                 )
 
         elif ptype == "macaddress":
             if not _MAC_RE.match(val_str):
-                errors.append(
-                    f"{input_label} '{user_key}' for template '{template_name}' "
-                    f"expects MAC address, got '{val_str}'"
-                )
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects MAC address, got '{val_str}'")
 
         elif ptype == "enum":
             # If metaProperties contains 'validValues', check against them
@@ -470,10 +445,7 @@ def validate_template_inputs(
                 # validValues format is typically "val1,val2,val3"
                 valid_values = [v.strip() for v in valid_values_str.split(",")]
                 if val_str not in valid_values:
-                    errors.append(
-                        f"{input_label} '{user_key}' for template '{template_name}' "
-                        f"expects one of {valid_values}, got '{val_str}'"
-                    )
+                    errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects one of {valid_values}, got '{val_str}'")
 
     if logger is not None:
         if errors:

@@ -176,9 +176,7 @@ class InterfaceGroupValidators:
                 "userDefinedSharedTrunk": "ethernetCustom",
             }
             if policy_type not in module_type_by_policy_type:
-                raise ValueError(
-                    "Manage 1.1.411 Ethernet response requires policyDetails.policyType " "to be sharedTrunkHost, none, or userDefinedSharedTrunk"
-                )
+                raise ValueError("Manage 1.1.411 Ethernet response requires policyDetails.policyType to be sharedTrunkHost, none, or userDefinedSharedTrunk")
             normalized["type"] = module_type_by_policy_type[policy_type]
 
         ethernet_attributes = policy_details.get("ethernetAttributes")

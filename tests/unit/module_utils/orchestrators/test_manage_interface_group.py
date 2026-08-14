@@ -920,7 +920,7 @@ def test_manage_interface_group_00122(helper, operation: str) -> None:
         helper({})
     with pytest.raises(RuntimeError, match=rf"{operation} returned no per-item results"):
         helper({"interfaceGroups": []})
-    with pytest.raises(RuntimeError, match=rf"1 per-item results for 2 requested groups"):
+    with pytest.raises(RuntimeError, match=r"1 per-item results for 2 requested groups"):
         helper(
             {
                 "interfaceGroups": [
