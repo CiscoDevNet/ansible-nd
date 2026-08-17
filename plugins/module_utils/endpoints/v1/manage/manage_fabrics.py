@@ -36,12 +36,12 @@ __metaclass__ = type
 from typing import ClassVar, Literal
 from urllib.parse import quote
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 

@@ -67,61 +67,6 @@ def _build_rest_send(
 
 
 # =============================================================================
-# Test: _raise_on_multi_status_failures
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "payload, expected_raise",
-    [
-        ({"results": [{"name": "Ethernet1/3.20", "status": "success", "message": "ok"}]}, False),
-        ({"results": [{"name": "Ethernet1/3.20", "status": "failed", "message": "parent not routed"}]}, True),
-        ({"results": [{"name": "Ethernet1/3.20", "status": "error", "message": "validation"}]}, True),
-        ({"results": [{"name": "Ethernet1/3.20", "status": "Failed", "message": "parent not routed"}]}, True),
-        ({"results": [{"name": "Ethernet1/3.20", "status": " ERROR ", "message": "validation"}]}, True),
-        ({"results": [{"name": "Ethernet1/3.20", "status": None, "message": "no status key"}]}, False),
-        ({"results": []}, False),
-        ({}, False),
-        (None, False),
-        ("not a dict", False),
-    ],
-    ids=[
-        "success",
-        "failed-raises",
-        "error-raises",
-        "failed-mixed-case-raises",
-        "error-padded-uppercase-raises",
-        "none-status-no-raise",
-        "empty-results",
-        "missing-results",
-        "none-input",
-        "non-dict-input",
-    ],
-)
-def test_subinterface_unmanaged_interface_00010(payload, expected_raise) -> None:
-    """
-    # Summary
-
-    Verify `_raise_on_multi_status_failures` behavior across the matrix.
-
-    ## Test
-
-    - Various 207-body shapes are passed
-    - `RuntimeError` is raised iff any item carries `status` of `"failed"`/`"error"` (case-insensitive, whitespace-tolerant)
-
-    ## Classes and Methods
-
-    - SubinterfaceUnmanagedInterfaceOrchestrator._raise_on_multi_status_failures()
-    """
-    if expected_raise:
-        with pytest.raises(RuntimeError, match=r"ND rejected"):
-            SubinterfaceUnmanagedInterfaceOrchestrator._raise_on_multi_status_failures(payload)
-    else:
-        with does_not_raise():
-            SubinterfaceUnmanagedInterfaceOrchestrator._raise_on_multi_status_failures(payload)
-
-
-# =============================================================================
 # Test: create
 # =============================================================================
 
@@ -185,11 +130,13 @@ def test_subinterface_unmanaged_interface_00101(monkeypatch) -> None:
     ## Test
 
     - POST returns 207 with `results[0].status = "failed"`
-    - `_raise_on_multi_status_failures` raises; `create` wraps it in a `RuntimeError` matching `Create failed.*ND rejected`
+    - `_request` raises via the centralized `NdV1Strategy` 207 handling; `create` wraps it in a `RuntimeError` that
+      surfaces the per-item failure message
 
     ## Classes and Methods
 
     - SubinterfaceUnmanagedInterfaceOrchestrator.create()
+    - NdV1Strategy.is_success()
     """
     method_name = inspect.stack()[0][3]
 
@@ -203,7 +150,7 @@ def test_subinterface_unmanaged_interface_00101(monkeypatch) -> None:
     orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
     model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
 
-    with pytest.raises(RuntimeError, match=r"Create failed.*ND rejected"):
+    with pytest.raises(RuntimeError, match=r"Create failed.*Parent interface Ethernet1/3 is not in routed mode"):
         orchestrator.create(model)
 
     assert orchestrator._pending_deploys == []

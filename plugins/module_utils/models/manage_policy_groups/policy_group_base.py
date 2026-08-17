@@ -269,7 +269,7 @@ class PolicyGroupCreate(NDBaseModel):
         """
         return dict(
             fabric_name=dict(type="str", required=True, aliases=["fabric"]),
-            deploy=dict(type="bool", default=True),
+            deploy=dict(type="bool", default=False),
             config=dict(
                 type="list",
                 elements="dict",

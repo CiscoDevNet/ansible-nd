@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_acl import (
@@ -21,11 +21,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.acl.acl import Acl
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-
-# Per-item ``status`` values in a 207 Multi-Status body that count as a failure. Anything else --
-# ``success``, missing, empty, or future progress tokens -- is tolerated so informational rows do
-# not surface as spurious errors. Mirrors the prefix-list orchestrator's denylist approach.
-_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 
 # camelCase wrapper keys used in ACL request/response bodies.
 _LIST_KEY = "accessControlLists"
@@ -47,11 +42,10 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
     - bulk delete: ``POST /fabrics/{fabricName}/accessControlListActions/remove``
       with ``{"accessControlListNames": [...]}``.
 
-    Because the controller answers these bulk calls with 207 (which
-    ``ResponseHandler`` treats as transport success), every bulk response body is
-    inspected per item; any entry whose ``status`` is in ``_FAILURE_STATUSES``
-    raises with the offending ACL names, so partial failures are not silently
-    reported as success.
+    The controller answers these bulk calls with 207 Multi-Status even when some
+    items fail; ``NdV1Strategy`` inspects the per-item ``results`` array and marks
+    the request failed on any failing item, so partial failures surface as errors
+    from ``_request`` rather than being silently reported as success.
 
     The ``fabric_name`` field is read from ``rest_send.params`` (populated by
     ``NDStateMachine`` from the validated module params).
@@ -84,31 +78,6 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
         mirroring ``ManagePrefixListOrchestrator.fabric_name``.
         """
         return self.rest_send.params.get("fabric_name")
-
-    @staticmethod
-    def _raise_on_207_failures(result: Any, operation: str) -> None:
-        """
-        Inspect a 207 Multi-Status bulk response body. If any per-item ``status``
-        is in ``_FAILURE_STATUSES``, raise with the offending ACL names and
-        messages so partial failures are not silently swallowed.
-        """
-        if not isinstance(result, dict):
-            return
-        items = result.get("results")
-        if not isinstance(items, list) or not items:
-            return
-        failures: list[str] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            status = str(item.get("status") or "").lower()
-            if status not in _FAILURE_STATUSES:
-                continue
-            name = item.get("name") or "?"
-            message = item.get("message") or "unknown error"
-            failures.append(f"{name}: {message}")
-        if failures:
-            raise Exception(f"ACL {operation} reported per-item failures: {'; '.join(failures)}")
 
     def create(self, model_instance: AclModel, **kwargs) -> ResponseType:
         """Create a single ACL via the bulk endpoint."""
@@ -191,25 +160,21 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
             raise Exception(f"Query all failed: {e}") from e
 
     def create_bulk(self, model_instances: list[AclModel], **kwargs) -> ResponseType:
-        """Bulk-create ACLs in a single request and check the 207 body."""
+        """Bulk-create ACLs in a single request."""
         try:
             api_endpoint = self.create_bulk_endpoint()
             api_endpoint.fabric_name = self.fabric_name
             payload = {_LIST_KEY: [item.to_payload() for item in model_instances]}
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
-            self._raise_on_207_failures(result, "create")
-            return result
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
         except Exception as e:
             raise Exception(f"Bulk create failed: {e}") from e
 
     def delete_bulk(self, model_instances: list[AclModel], **kwargs) -> ResponseType:
-        """Bulk-delete ACLs in a single request and check the 207 body."""
+        """Bulk-delete ACLs in a single request."""
         try:
             api_endpoint = self.delete_bulk_endpoint()
             api_endpoint.fabric_name = self.fabric_name
             payload = {_NAMES_KEY: [item.name for item in model_instances]}
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
-            self._raise_on_207_failures(result, "delete")
-            return result
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
         except Exception as e:
             raise Exception(f"Bulk delete failed: {e}") from e

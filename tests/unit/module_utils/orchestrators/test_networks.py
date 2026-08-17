@@ -89,6 +89,119 @@ class _ParentStrategy:
         }
 
 
+class _FakeStateMachine:
+    existing = []
+
+    def __init__(self, calls):
+        self.calls = calls
+
+    def manage_state(self):
+        self.calls.append(("manage_state",))
+
+
+class _ReplacedNetworkCoordinator:
+    def __init__(self):
+        self.module = _Module({"state": "replaced"})
+        self.calls = []
+        self.state_machine = _FakeStateMachine(self.calls)
+        self.post_attachment_details = [
+            {
+                "networkName": "BLUE_NET",
+                "switchId": "SW1",
+                "peerSwitchId": "SW2",
+                "attach": False,
+            },
+            {
+                "networkName": "BLUE_NET",
+                "switchId": "SW2",
+                "peerSwitchId": "SW1",
+                "attach": False,
+            },
+        ]
+
+    @staticmethod
+    def _desired_attachment_map(_module_args, _strategy):
+        return {("BLUE_NET", "SW1"): {"networkName": "BLUE_NET", "switchId": "SW1", "attach": True}}
+
+    @staticmethod
+    def _configured_network_names(_config):
+        return ["BLUE_NET"]
+
+    @staticmethod
+    def _deploy_enabled_by_network(_config):
+        return {"BLUE_NET": True}
+
+    def _new_state_machine(self, _module_args, _strategy):
+        self.calls.append(("new_state_machine",))
+        return self.state_machine, "original-config", "original-state"
+
+    def _current_attachment_details_ignore_missing(self, *_args, **_kwargs):
+        raise AssertionError("first-create replaced must not query missing Network attachments")
+
+    @staticmethod
+    def _attachment_map_from_details(attachments, network_names=None):
+        return NetworkAttachmentManager.attachment_map_from_details(attachments, network_names)
+
+    def _current_attachment_details(self, _module_args, _strategy, network_names):
+        self.calls.append(("post_query", network_names))
+        return list(self.post_attachment_details)
+
+    def _apply_attachment_phase(
+        self,
+        _module_args,
+        _strategy,
+        phase,
+        desired=None,
+        current_network_names=None,
+        current=None,
+        attachment_details=None,
+    ):
+        self.calls.append((phase, current_network_names, current, attachment_details))
+        if phase == "pre":
+            assert current_network_names == []
+            assert current == {}
+            assert attachment_details == []
+            return {"current": current, "payloads": [], "desired": desired, "deploy_targets": {}}
+        assert phase == "post"
+        assert current_network_names == ["BLUE_NET"]
+        assert current == {}
+        assert attachment_details == self.post_attachment_details
+        desired = NetworkAttachmentManager.expand_desired_attachments_with_vpc_peers(desired, attachment_details)
+        return {
+            "payloads": [desired[("BLUE_NET", "SW1")], desired[("BLUE_NET", "SW2")]],
+            "deploy_targets": {"BLUE_NET": {"SW1", "SW2"}},
+        }
+
+    @staticmethod
+    def _attachment_map_after_detach(current, _payloads):
+        return current
+
+    @staticmethod
+    def _format_state_machine_output(_state_machine):
+        return {"changed": True, "failed": False, "after": [{"network_name": "BLUE_NET"}]}
+
+    @staticmethod
+    def _merge_api_trace(result, trace, prepend=False):
+        if prepend:
+            result.setdefault("prepended", []).append(trace)
+        if trace.get("changed"):
+            result["changed"] = True
+
+    @staticmethod
+    def _build_deploy_payloads(_config, *_target_maps):
+        return []
+
+    @staticmethod
+    def _build_pending_network_deploy_payloads(_result, _config, _module_args, _strategy):
+        return []
+
+    def _restore_state_machine_params(self, original_config, original_state):
+        self.calls.append(("restore", original_config, original_state))
+
+    def _trace(self, event, **_details):
+        self.calls.append(("trace", event))
+
+
 def _orchestrator():
     strategy = StandaloneNetworkStrategy(
         fabric_name="fab1",
@@ -98,6 +211,122 @@ def _orchestrator():
         rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}),
         strategy=strategy,
     )
+
+
+def test_network_replaced_first_create_with_attachment_skips_missing_pre_query():
+    """
+    # Summary
+
+    Verify first-create state=replaced does not query attachments for a Network
+    that is absent before CRUD creation.
+    """
+    coordinator = _ReplacedNetworkCoordinator()
+    state_machine = NetworkStateMachine(coordinator)
+
+    result = state_machine.run(
+        {
+            "state": "replaced",
+            "config": [
+                {
+                    "network_name": "BLUE_NET",
+                    "attach": [
+                        {
+                            "ip_address": "192.0.2.10",
+                            "interfaces": [{"interface_range": "Ethernet1/1", "mode": "trunk"}],
+                        }
+                    ],
+                }
+            ],
+        },
+        StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}),
+    )
+
+    assert result["changed"] is True
+    assert ("pre", [], {}, []) in coordinator.calls
+    assert ("manage_state",) in coordinator.calls
+    assert ("post_query", ["BLUE_NET"]) in coordinator.calls
+    assert ("post", ["BLUE_NET"], {}, coordinator.post_attachment_details) in coordinator.calls
+
+
+def test_network_attachment_manager_expands_desired_vpc_peer_with_empty_interfaces():
+    desired = {
+        ("BLUE_NET", "SW1"): {
+            "networkName": "BLUE_NET",
+            "switchId": "SW1",
+            "vlanId": 3001,
+            "interfaces": [{"interfaceRange": "Ethernet1/29", "mode": "trunk"}],
+            "attach": True,
+        },
+        ("BLUE_NET", "SW3"): {
+            "networkName": "BLUE_NET",
+            "switchId": "SW3",
+            "vlanId": 3001,
+            "interfaces": [{"interfaceRange": "Ethernet1/29", "mode": "trunk"}],
+            "attach": True,
+        },
+    }
+    attachment_details = [
+        {"networkName": "BLUE_NET", "switchId": "SW1", "peerSwitchId": "SW2", "attach": False},
+        {"networkName": "BLUE_NET", "switchId": "SW2", "peerSwitchId": "SW1", "attach": False},
+        {"networkName": "BLUE_NET", "switchId": "SW3", "attach": False},
+    ]
+
+    expanded = NetworkAttachmentManager.expand_desired_attachments_with_vpc_peers(desired, attachment_details)
+
+    assert sorted(expanded) == [
+        ("BLUE_NET", "SW1"),
+        ("BLUE_NET", "SW2"),
+        ("BLUE_NET", "SW3"),
+    ]
+    assert expanded[("BLUE_NET", "SW2")] == {
+        "networkName": "BLUE_NET",
+        "switchId": "SW2",
+        "vlanId": 3001,
+        "interfaces": [],
+        "attach": True,
+    }
+
+
+def test_network_attachment_replaced_pre_phase_keeps_controller_added_vpc_peer():
+    class Module:
+        check_mode = False
+
+    class Coordinator:
+        module = Module()
+
+        def __init__(self):
+            self.posted_payloads = []
+
+        @staticmethod
+        def _new_network_orchestrator(_module_args, _strategy):
+            raise AssertionError("idempotent pre-phase must not post attachments")
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    current = {
+        ("BLUE_NET", "SW1"): {"networkName": "BLUE_NET", "switchId": "SW1", "peerSwitchId": "SW2", "attach": True},
+        ("BLUE_NET", "SW2"): {"networkName": "BLUE_NET", "switchId": "SW2", "peerSwitchId": "SW1", "attach": True},
+        ("BLUE_NET", "SW3"): {"networkName": "BLUE_NET", "switchId": "SW3", "attach": True},
+    }
+    desired = {
+        ("BLUE_NET", "SW1"): {"networkName": "BLUE_NET", "switchId": "SW1", "attach": True},
+        ("BLUE_NET", "SW3"): {"networkName": "BLUE_NET", "switchId": "SW3", "attach": True},
+    }
+    attachment_details = list(current.values())
+
+    trace = manager.apply_phase(
+        {
+            "state": "replaced",
+            "config": [{"network_name": "BLUE_NET"}],
+        },
+        StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}),
+        phase="pre",
+        desired=desired,
+        current_network_names=["BLUE_NET"],
+        current=current,
+        attachment_details=attachment_details,
+    )
+
+    assert trace == {"current": current}
 
 
 def test_network_workflow_coordinator_resolves_strategy_with_gen3_restsend():
@@ -1879,6 +2108,37 @@ def test_network_check_mode_attachment_phase_returns_planned_payload():
     ]
 
 
+def test_network_workflow_coordinator_apply_attachment_phase_forwards_attachment_details():
+    module_args = {"state": "replaced", "config": []}
+    strategy = _orchestrator().strategy
+    coordinator = NetworkWorkflowCoordinator(module=_Module(module_args), strategy=strategy)
+    desired = {("BLUE_NET", "SERIAL1"): {"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": True}}
+    current = {("BLUE_NET", "SERIAL2"): {"networkName": "BLUE_NET", "switchId": "SERIAL2", "attach": True}}
+    attachment_details = [{"networkName": "BLUE_NET", "switchId": "SERIAL1", "peerSwitchId": "SERIAL2", "attach": False}]
+    calls = []
+
+    class Attachments:
+        @staticmethod
+        def apply_phase(module_args, strategy, phase, desired, current_network_names, current, attachment_details):
+            calls.append((module_args, strategy, phase, desired, current_network_names, current, attachment_details))
+            return {"attachment_details": attachment_details}
+
+    object.__setattr__(coordinator, "_attachments", Attachments())
+
+    trace = coordinator._apply_attachment_phase(
+        module_args,
+        strategy,
+        phase="post",
+        desired=desired,
+        current_network_names=["BLUE_NET"],
+        current=current,
+        attachment_details=attachment_details,
+    )
+
+    assert trace == {"attachment_details": attachment_details}
+    assert calls == [(module_args, strategy, "post", desired, ["BLUE_NET"], current, attachment_details)]
+
+
 def test_network_attachment_post_validates_interfaces_before_attach():
     calls = []
 
@@ -1977,7 +2237,7 @@ def test_network_merged_runs_post_attach_and_deploy_for_desired_attachment():
                 }
             }
 
-        def _apply_attachment_phase(self, module_args, strategy, phase, desired=None, current_network_names=None, current=None):
+        def _apply_attachment_phase(self, module_args, strategy, phase, desired=None, current_network_names=None, current=None, attachment_details=None):
             self.calls.append(("phase", phase, desired, current))
             if phase == "pre":
                 return {}
@@ -2120,7 +2380,7 @@ def test_network_state_machine_idempotent_run_deploys_pending_attach():
                 }
             }
 
-        def _apply_attachment_phase(self, module_args, strategy, phase, desired=None, current_network_names=None, current=None):
+        def _apply_attachment_phase(self, module_args, strategy, phase, desired=None, current_network_names=None, current=None, attachment_details=None):
             return {"current": {}} if phase == "pre" else {}
 
         def _attachment_map_after_detach(self, current, payloads):
