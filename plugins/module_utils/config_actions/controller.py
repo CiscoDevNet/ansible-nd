@@ -54,7 +54,9 @@ class ConfigActionsController:
 
         ## Raises
 
-        Exception
+        ### Exception
+
+        - Raised by backend save or deploy operations before the controller records the failure result.
         """
         normalized_context = self._deduplicated_context(context)
         targets = self._targets(normalized_context)
@@ -124,7 +126,9 @@ class ConfigActionsController:
 
         ## Raises
 
-        Exception
+        ### Exception
+
+        - Raised by backend deploy operations when the controller requests a supported deploy scope.
         """
         if actions.type == "global":
             response = self.backend.deploy_global(context, fabric_name)
