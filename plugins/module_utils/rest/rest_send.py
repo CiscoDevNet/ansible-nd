@@ -319,7 +319,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
         """
         # Summary
 
-        Call sender.commit() with retries until successful response or timeout is exceeded.
+        Call sender.commit() with retries until a successful response, a terminal (non-retryable) failure, or timeout.
 
         ## Raises
 
@@ -376,6 +376,12 @@ class RestSend:  # pylint: disable=too-many-public-methods
 
             success = self.result_current["success"]
             if success is False:
+                if self.result_current.get("retryable", True) is False:
+                    msg = f"{self.class_name}.{method_name}: "
+                    msg += "Terminal failure (retryable=False). Not retrying. "
+                    msg += f"verb {self.verb}, path {self.path}."
+                    self.log.debug(msg)
+                    break
                 if self.unit_test is False:
                     sleep(self.send_interval)
                 timeout -= self.send_interval

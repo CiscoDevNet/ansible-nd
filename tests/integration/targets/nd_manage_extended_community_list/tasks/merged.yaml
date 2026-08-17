@@ -1,0 +1,49 @@
+---
+# Merged state tests for nd_manage_extended_community_list.
+
+- name: "MERGED CREATE: Create standard extended community list (check mode)"
+  cisco.nd.nd_manage_extended_community_list: &merge_standard
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ extended_community_list_standard }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_standard
+
+- name: "MERGED CREATE: Create standard extended community list (normal mode)"
+  cisco.nd.nd_manage_extended_community_list: *merge_standard
+  register: nm_merged_create_standard
+
+- name: "MERGED CREATE: Create expanded extended community list"
+  cisco.nd.nd_manage_extended_community_list: &merge_expanded
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ extended_community_list_expanded }}"
+    state: merged
+  register: nm_merged_create_expanded
+
+- name: "MERGED CREATE: Verify extended community list creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_standard is changed
+      - nm_merged_create_standard is changed
+      - nm_merged_create_expanded is changed
+      - nm_merged_create_standard.after | selectattr('name', 'equalto', extended_community_list_standard.name) | list | length == 1
+      - nm_merged_create_expanded.after | selectattr('name', 'equalto', extended_community_list_expanded.name) | list | length == 1
+
+- name: "MERGED IDEMPOTENT: Re-apply standard extended community list (check mode)"
+  cisco.nd.nd_manage_extended_community_list: *merge_standard
+  check_mode: true
+  register: cm_merged_idem_standard
+
+- name: "MERGED IDEMPOTENT: Re-apply standard extended community list (normal mode)"
+  cisco.nd.nd_manage_extended_community_list: *merge_standard
+  register: nm_merged_idem_standard
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_standard is not changed
+      - nm_merged_idem_standard is not changed

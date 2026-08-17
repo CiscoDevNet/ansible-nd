@@ -363,7 +363,7 @@ def test_manage_acl_00070() -> None:
     ## Classes and Methods
 
     - ManageAclOrchestrator.create_bulk
-    - ManageAclOrchestrator._raise_on_207_failures
+    - NdV1Strategy.is_success
     """
 
     def responses():
@@ -374,7 +374,7 @@ def test_manage_acl_00070() -> None:
     instance = ManageAclOrchestrator(rest_send=rest_send)
     model = AclModel.from_config(SAMPLE_CONFIG)
 
-    with pytest.raises(Exception, match="per-item failures.*ACL-BAD"):
+    with pytest.raises(Exception, match="Bulk create failed.*ACL-BAD"):
         instance.create_bulk([model])
 
 
@@ -483,7 +483,7 @@ def test_manage_acl_00110() -> None:
     ## Classes and Methods
 
     - ManageAclOrchestrator.delete_bulk
-    - ManageAclOrchestrator._raise_on_207_failures
+    - NdV1Strategy.is_success
     """
 
     def responses():
@@ -495,7 +495,7 @@ def test_manage_acl_00110() -> None:
     instance = ManageAclOrchestrator(rest_send=rest_send)
     model = AclModel.from_config(config)
 
-    with pytest.raises(Exception, match="per-item failures.*ACL-BAD"):
+    with pytest.raises(Exception, match="Bulk delete failed.*ACL-BAD"):
         instance.delete_bulk([model])
 
 

@@ -1,0 +1,55 @@
+---
+# Variables for nd_manage_extended_community_list integration tests.
+#
+# Override nd_test_fabric_name in inventory or extra-vars to match the ND 4.2 testbed.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('SITE1') }}"
+extended_community_list_tenant_identity_name: ANSIBLE_ECL_TENANT_IDENTITY
+
+extended_community_list_standard:
+  name: ANSIBLE_ECL_STANDARD
+  type: standard
+  entries:
+    - sequence_number: 10
+      action: permit
+      route_target_collection:
+        - "65000:100"
+      router_mac_collection:
+        - "d478.1111.57b8"
+    - sequence_number: 20
+      action: deny
+      site_of_origin_collection:
+        - "64512:300"
+
+extended_community_list_standard_updated:
+  name: ANSIBLE_ECL_STANDARD
+  type: standard
+  entries:
+    - sequence_number: 10
+      action: permit
+      route_target_collection:
+        - "65001:200"
+    - sequence_number: 30
+      action: permit
+      transitive_generic_extended_collection:
+        - "65000:123"
+
+extended_community_list_expanded:
+  name: ANSIBLE_ECL_EXPANDED
+  type: expanded
+  entries:
+    - sequence_number: 10
+      action: permit
+      community_number_regex: "65000:.*"
+    - sequence_number: 20
+      action: deny
+      community_number_regex: "64512:.*"
+
+extended_community_list_overridden:
+  name: ANSIBLE_ECL_OVERRIDDEN
+  type: standard
+  entries:
+    - sequence_number: 10
+      action: permit
+      non_transitive_generic_extended_collection:
+        - "64512:789"
