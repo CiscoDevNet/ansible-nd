@@ -731,7 +731,7 @@ def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
 
 
 def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
-    """Finalize chooses save, switch deploy, global deploy, skipped deploy, and check-mode correctly."""
+    """Finalize chooses save, switch deploy, global deploy, no-target failure, and check-mode correctly."""
     calls = []
     fabric_utils = SimpleNamespace(
         save_config=lambda: calls.append(("save", None)),
@@ -749,16 +749,55 @@ def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
 
     calls.clear()
     ctx.deploy_type = "switch"
-    SwitchFabricOps(ctx, fabric_utils).finalize([])
-    assert calls == [("save", None)]
-    assert ctx.results.metadata[-1]["action"] == "config_actions"
-    assert ctx.results.responses[-1]["DATA"]["actions"][-1]["status"] == "skipped"
-    assert ctx.results.responses[-1]["DATA"]["actions"][-1]["scope"] == "switch"
+    with pytest.raises(SwitchOperationError, match="Switch-level deploy requested but no serial numbers were resolved"):
+        SwitchFabricOps(ctx, fabric_utils).finalize([])
+    assert calls == []
 
     calls.clear()
     ctx.nd.module.check_mode = True
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
     assert calls == []
+
+
+def test_idempotent_sync_serials_require_resolved_switch_targets():
+    """Idempotent config-sync deploys target resolved serials and fails when targets are missing."""
+    resource = NDSwitchResourceModule.__new__(NDSwitchResourceModule)
+    nd = FakeND()
+    resource.nd = nd
+    resource.log = ListLogger()
+    resource.ctx = SwitchServiceContext(nd=nd, results=Results(), fabric="FAB1", log=resource.log, save_config=True, deploy_config=True)
+
+    out_of_sync = _sw(
+        "192.0.2.10",
+        "SERIAL1",
+        additionalData={
+            "configSyncStatus": "outOfSync",
+            "discoveryStatus": "ok",
+            "systemMode": "normal",
+            "platformType": "nx-os",
+        },
+    )
+    in_sync = _sw(
+        "192.0.2.11",
+        "SERIAL2",
+        additionalData={
+            "configSyncStatus": "inSync",
+            "discoveryStatus": "ok",
+            "systemMode": "normal",
+            "platformType": "nx-os",
+        },
+    )
+    plan = _empty_plan(idempotent=[_cfg("192.0.2.10"), _cfg("192.0.2.11")])
+
+    assert resource._idempotent_sync_serials(plan, {sw.fabric_management_ip: sw for sw in (out_of_sync, in_sync)}) == ["SERIAL1"]
+
+    resource.ctx.deploy_config = False
+    assert resource._idempotent_sync_serials(plan, {out_of_sync.fabric_management_ip: out_of_sync}) == []
+
+    resource.ctx.deploy_config = True
+    missing_plan = _empty_plan(idempotent=[_cfg("192.0.2.99")])
+    with pytest.raises(FailJsonError, match="no switch IDs were resolved.*192.0.2.99"):
+        resource._idempotent_sync_serials(missing_plan, {})
 
 
 def test_poap_handler_check_mode_noop_and_bootstrap_not_found():

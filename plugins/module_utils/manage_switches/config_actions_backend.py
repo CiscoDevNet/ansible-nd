@@ -48,7 +48,9 @@ class SwitchConfigActionsBackend:
 
         ## Raises
 
-        Exception
+        ### Exception
+
+        - Raised by the fabric utility when the controller rejects config save.
         """
         return self.fabric_utils.save_config()
 
@@ -60,7 +62,9 @@ class SwitchConfigActionsBackend:
 
         ## Raises
 
-        Exception
+        ### Exception
+
+        - Raised by the fabric utility when the controller rejects global deploy.
         """
         return self.fabric_utils.deploy_config()
 
@@ -72,7 +76,9 @@ class SwitchConfigActionsBackend:
 
         ## Raises
 
-        Exception
+        ### Exception
+
+        - Raised by the fabric utility when the controller rejects switch deploy.
         """
         return self.fabric_utils.deploy_switches(list(switch_ids))
 

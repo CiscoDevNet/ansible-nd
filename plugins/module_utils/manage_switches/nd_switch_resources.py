@@ -1402,12 +1402,19 @@ class SwitchFabricOps:
         actions = self._config_actions()
         if not actions.save and not actions.deploy:
             return
+        serials = tuple(serial_numbers or ())
+        if actions.deploy and actions.type == "switch" and not serials:
+            raise SwitchOperationError(
+                "Switch-level deploy requested but no serial numbers were resolved. "
+                "Pending configuration was not deployed. Use config_actions.type=global only when deploying all pending fabric changes is intended, "
+                "or ensure the target switches have resolved switch IDs."
+            )
 
         context = ConfigActionsContext(
             fabric_names=(self.ctx.fabric,),
             state=None,
             check_mode=self.ctx.nd.module.check_mode,
-            switch_ids=tuple(serial_numbers or ()),
+            switch_ids=serials,
         )
         controller = ConfigActionsController(SWITCH_CONFIG_ACTIONS, SwitchConfigActionsBackend(self.fabric_utils))
         result = controller.execute(actions, context)
@@ -2994,39 +3001,64 @@ class NDSwitchResourceModule:
     # State Handlers (orchestration only — delegate to services)
     # =====================================================================
 
-    def _check_idempotent_sync(
+    def _idempotent_sync_serials(
         self,
         plan: "SwitchPlan",
         existing_by_ip: dict[str, "SwitchDataModel"],
-    ) -> bool:
-        """Return True if any non-preprovision idempotent switch is out of config-sync.
+    ) -> list[str]:
+        """Return deploy targets for idempotent switches that are out of config-sync.
 
         Pre-provisioned switches are placeholder entries that are never
         in-sync by design and are excluded from this check.  Only relevant
-        when deploy is enabled; returns False immediately otherwise.
+        when deploy is enabled; returns an empty list immediately otherwise.
 
         Args:
             plan: Action plan from :meth:`SwitchDiffEngine.compute_changes`.
             existing_by_ip: Existing switches keyed by fabric management IP.
 
         Returns:
-            True if finalize should run for idempotent switches, False otherwise.
+            Switch serial numbers that require config-save/deploy.
         """
         if not self.ctx.deploy_config:
-            return False
+            return []
+        serials: list[str] = []
+        missing_targets: list[str] = []
+        seen: set[str] = set()
         for cfg in plan.idempotent:
             if cfg.operation_type == "preprovision":
                 continue
             sw = existing_by_ip.get(cfg.seed_ip)
             status = sw.additional_data.config_sync_status if sw and sw.additional_data else None
-            if status != ConfigSyncStatus.IN_SYNC:
-                self.log.info(
-                    "Switch %s is idempotent but configSyncStatus='%s' — will finalize",
+            if status == ConfigSyncStatus.IN_SYNC:
+                continue
+            status_value = getattr(status, "value", status) if status else "unknown"
+            if not sw or not sw.switch_id:
+                missing_targets.append(cfg.seed_ip)
+                self.log.error(
+                    "Switch %s is idempotent but configSyncStatus='%s' and no switchId was resolved",
                     cfg.seed_ip,
-                    getattr(status, "value", status) if status else "unknown",
+                    status_value,
                 )
-                return True
-        return False
+                continue
+            if sw.switch_id in seen:
+                continue
+            seen.add(sw.switch_id)
+            serials.append(sw.switch_id)
+            self.log.info(
+                "Switch %s is idempotent but configSyncStatus='%s' - will finalize switch %s",
+                cfg.seed_ip,
+                status_value,
+                sw.switch_id,
+            )
+        if missing_targets:
+            self.nd.module.fail_json(
+                msg=(
+                    "Switch-level deploy was requested for idempotent switches with pending config-sync, "
+                    "but no switch IDs were resolved for: "
+                    f"{', '.join(missing_targets)}. Pending configuration was not deployed."
+                )
+            )
+        return serials
 
     def _register_check_mode_result(
         self,
@@ -3181,7 +3213,8 @@ class NDSwitchResourceModule:
         # Pre-provisioned switches are placeholder entries that are never
         # in-sync by design, so they are excluded from this check. Only relevant when deploy is enabled.
         existing_by_ip = self.inventory.by_ip()
-        idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
+        sync_serials = self._idempotent_sync_serials(plan, existing_by_ip)
+        idempotent_save_req = bool(sync_serials)
 
         has_work = bool(
             plan.to_add
@@ -3240,9 +3273,6 @@ class NDSwitchResourceModule:
 
         if not switch_actions and idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
-            sync_serials = [
-                existing_by_ip[cfg.seed_ip].switch_id for cfg in plan.idempotent if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
-            ]
             self.fabric_ops.finalize(serial_numbers=sync_serials)
 
         # --- POAP / preprovision / swap / RMA -----------------------------------
@@ -3281,7 +3311,8 @@ class NDSwitchResourceModule:
         self.log.info("Handling overridden state")
 
         existing_by_ip = self.inventory.by_ip()
-        idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
+        sync_serials = self._idempotent_sync_serials(plan, existing_by_ip)
+        idempotent_save_req = bool(sync_serials)
 
         has_work = bool(
             plan.to_add
@@ -3388,9 +3419,6 @@ class NDSwitchResourceModule:
 
         if not switch_actions and idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
-            sync_serials = [
-                existing_by_ip[cfg.seed_ip].switch_id for cfg in plan.idempotent if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
-            ]
             self.fabric_ops.finalize(serial_numbers=sync_serials)
 
         # --- Phase 4: POAP workflows (bootstrap / preprovision / swap) ----------
@@ -3425,7 +3453,8 @@ class NDSwitchResourceModule:
         self.log.info("Handling replaced state")
 
         existing_by_ip = self.inventory.by_ip()
-        idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
+        sync_serials = self._idempotent_sync_serials(plan, existing_by_ip)
+        idempotent_save_req = bool(sync_serials)
 
         has_work = bool(
             plan.to_add
@@ -3527,9 +3556,6 @@ class NDSwitchResourceModule:
 
         if not switch_actions and idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
-            sync_serials = [
-                existing_by_ip[cfg.seed_ip].switch_id for cfg in plan.idempotent if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
-            ]
             self.fabric_ops.finalize(serial_numbers=sync_serials)
 
         # --- Phase 4: POAP workflows (bootstrap / preprovision / swap) ----------
