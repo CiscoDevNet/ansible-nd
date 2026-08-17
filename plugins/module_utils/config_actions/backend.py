@@ -34,7 +34,9 @@ class ConfigActionsBackend(Protocol):
 
         ## Raises
 
-        Exception
+        ### Exception
+
+        - Raised by an implementation when the controller rejects or cannot complete config save.
         """
 
     def deploy_global(self, context: ConfigActionsContext, fabric_name: str) -> Any:
@@ -45,7 +47,9 @@ class ConfigActionsBackend(Protocol):
 
         ## Raises
 
-        Exception
+        ### Exception
+
+        - Raised by an implementation when the controller rejects or cannot complete global deploy.
         """
 
     def deploy_switches(self, context: ConfigActionsContext, fabric_name: str, switch_ids: tuple[str, ...]) -> Any:
@@ -56,7 +60,9 @@ class ConfigActionsBackend(Protocol):
 
         ## Raises
 
-        Exception
+        ### Exception
+
+        - Raised by an implementation when the controller rejects or cannot complete switch deploy.
         """
 
     def deploy_resources(self, context: ConfigActionsContext, fabric_name: str, resources: tuple[str, ...]) -> Any:
@@ -67,5 +73,7 @@ class ConfigActionsBackend(Protocol):
 
         ## Raises
 
-        Exception
+        ### Exception
+
+        - Raised by an implementation when the controller rejects or cannot complete resource deploy.
         """
