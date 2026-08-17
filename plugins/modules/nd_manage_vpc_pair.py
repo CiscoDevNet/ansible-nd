@@ -51,7 +51,7 @@ options:
                 description:
                 - Deploy configuration after save.
                 type: bool
-                default: true
+                default: false
             type:
                 description:
                 - Deploy scope for configuration actions.

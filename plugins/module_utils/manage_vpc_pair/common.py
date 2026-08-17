@@ -204,7 +204,7 @@ def get_config_actions(module: Any) -> dict[str, Any]:
     raw_actions = module.params.get("config_actions")
     if isinstance(raw_actions, dict):
         save = raw_actions.get("save", True)
-        deploy = raw_actions.get("deploy", True)
+        deploy = raw_actions.get("deploy", False)
         action_type_raw = raw_actions.get("type", DEFAULT_CONFIG_ACTION_TYPE)
         action_type = str(action_type_raw).strip().lower() if action_type_raw is not None else DEFAULT_CONFIG_ACTION_TYPE
         if action_type not in CONFIG_ACTION_TYPE_CHOICES:
@@ -228,7 +228,7 @@ def get_config_actions(module: Any) -> dict[str, Any]:
 
     return {
         "save": True,
-        "deploy": True,
+        "deploy": False,
         "type": DEFAULT_CONFIG_ACTION_TYPE,
     }
 

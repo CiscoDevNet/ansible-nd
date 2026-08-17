@@ -221,7 +221,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
     """
     config_actions = get_config_actions(nrm.module)
     save_enabled = bool(config_actions.get("save", True))
-    deploy_enabled = bool(config_actions.get("deploy", True))
+    deploy_enabled = bool(config_actions.get("deploy", False))
     action_type = config_actions.get("type", "switch")
     action_payload = {"type": action_type}
 

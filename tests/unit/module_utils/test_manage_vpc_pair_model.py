@@ -245,3 +245,22 @@ def test_manage_vpc_pair_model_00120() -> None:
                 "config_actions": {"save": True, "deploy": True, "type": "bogus"},
             }
         )
+
+
+def test_manage_vpc_pair_model_00130() -> None:
+    """Verify config_actions.deploy defaults to False (opt-in deployment)."""
+    with does_not_raise():
+        model = VpcPairPlaybookConfigModel.model_validate(
+            {
+                "state": "merged",
+                "fabric_name": "fab1",
+                "config_actions": {"save": True, "type": "switch"},
+            }
+        )
+
+    assert model.config_actions is not None
+    assert model.config_actions.save is True
+    assert model.config_actions.deploy is False
+
+    spec = VpcPairPlaybookConfigModel.get_argument_spec()
+    assert spec["config_actions"]["options"]["deploy"]["default"] is False
