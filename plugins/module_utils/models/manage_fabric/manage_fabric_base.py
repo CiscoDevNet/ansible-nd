@@ -261,7 +261,8 @@ def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None)
         # - Fields not provided by the user stay out of model_fields_set
         # - Merged state only diffs/merges user-specified fields
         if field_info.is_required():
-            if not is_optional:
+            identifiers = getattr(model_cls, "identifiers", None) or []
+            if not is_optional and field_name not in identifiers:
                 spec["required"] = True
 
         # Secrets: metadata {"secret": True} is authoritative; SecretStr is a backstop.
@@ -299,7 +300,12 @@ class FabricBaseModel(NDBaseModel):
         if not hasattr(cls, "_fabric_type"):
             raise TypeError(f"{cls.__name__} must define a '_fabric_type' ClassVar with a FabricTypeEnum value")
 
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        populate_by_name=True,
+        extra="allow",
+    )
 
     # ── ClassVars (shared across all fabric models) ──
     identifiers: ClassVar[list[str] | None] = ["fabric_name"]
@@ -311,22 +317,49 @@ class FabricBaseModel(NDBaseModel):
     # Subclass must set this to the appropriate FabricTypeEnum member
     _fabric_type: ClassVar[FabricTypeEnum]
 
+    # -─ Gathered state filtering ──
+    # Concrete families opt in explicitly.  Keeping the shared base disabled
+    # prevents newer fabric types from exposing gathered before their module,
+    # orchestrator, documentation, and tests implement the full contract.
+    supports_gathered_filtering: ClassVar[bool] = False
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "fabric_name",
+        "license_tier",
+        "security_domain",
+        "alert_suspend",
+        "telemetry_collection",
+    )
+
     # ── Basic Fabric Properties ──
     category: Literal["fabric"] = Field(description="Resource category", default="fabric")
     fabric_name: NdFabricName
     location: LocationModel | None = Field(description="Geographic location of the fabric", default=None)
 
     # ── License, Telemetry, and Operations ──
-    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License Tier for fabric.", default=LicenseTierEnum.ESSENTIALS)
-    alert_suspend: AlertSuspendEnum = Field(
-        alias="alertSuspend", description="Alert Suspend state configured on the fabric.", default=AlertSuspendEnum.DISABLED
+    license_tier: LicenseTierEnum = Field(
+        alias="licenseTier",
+        description="License Tier for fabric.",
+        default=LicenseTierEnum.ESSENTIALS,
     )
-    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection.", default=False)
+    alert_suspend: AlertSuspendEnum = Field(
+        alias="alertSuspend",
+        description="Alert Suspend state configured on the fabric.",
+        default=AlertSuspendEnum.DISABLED,
+    )
+    telemetry_collection: bool = Field(
+        alias="telemetryCollection",
+        description="Enable telemetry collection.",
+        default=False,
+    )
     telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
-        alias="telemetryCollectionType", description="Telemetry collection method.", default=TelemetryCollectionTypeEnum.IN_BAND
+        alias="telemetryCollectionType",
+        description="Telemetry collection method.",
+        default=TelemetryCollectionTypeEnum.IN_BAND,
     )
     telemetry_streaming_protocol: TelemetryStreamingProtocolEnum = Field(
-        alias="telemetryStreamingProtocol", description="Telemetry Streaming Protocol.", default=TelemetryStreamingProtocolEnum.IPV4
+        alias="telemetryStreamingProtocol",
+        description="Telemetry Streaming Protocol.",
+        default=TelemetryStreamingProtocolEnum.IPV4,
     )
     telemetry_source_interface: str = Field(
         alias="telemetrySourceInterface",
@@ -334,16 +367,24 @@ class FabricBaseModel(NDBaseModel):
         default="loopback0",
     )
     telemetry_source_vrf: str = Field(
-        alias="telemetrySourceVrf", description="VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.", default="default"
+        alias="telemetrySourceVrf",
+        description="VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.",
+        default="default",
     )
-    security_domain: str = Field(alias="securityDomain", description="Security Domain associated with the fabric.", default="all")
+    security_domain: str = Field(
+        alias="securityDomain",
+        description="Security Domain associated with the fabric.",
+        default="all",
+    )
 
     # ── Optional Advanced Settings ──
     # NOTE: `management` is intentionally NOT defined here — subclasses define it
     # with their specific management model type.
     telemetry_settings: TelemetrySettingsModel | None = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
     external_streaming_settings: ExternalStreamingSettingsModel = Field(
-        alias="externalStreamingSettings", description="External streaming settings", default_factory=ExternalStreamingSettingsModel
+        alias="externalStreamingSettings",
+        description="External streaming settings",
+        default_factory=ExternalStreamingSettingsModel,
     )
 
     # ── Validators ──
@@ -409,6 +450,16 @@ class FabricBaseModel(NDBaseModel):
         return NDBaseModel.prepare_for_replacement(candidate, existing)
 
     @classmethod
+    def get_required_if(cls) -> list[tuple[str, str, list[str]]]:
+        """Require config for every mutating fabric state."""
+        return [
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ]
+
+    @classmethod
     def get_argument_spec(cls) -> dict:
         """Auto-generate Ansible argument spec from pydantic model fields.
 
@@ -418,11 +469,14 @@ class FabricBaseModel(NDBaseModel):
         are automatically excluded.
         """
         config_options = _build_options_from_model(cls)
+        states = ["merged", "replaced", "deleted", "overridden"]
+        if cls.supports_gathered_filtering:
+            states.append("gathered")
         return dict(
             state={
                 "type": "str",
                 "default": "merged",
-                "choices": ["merged", "replaced", "deleted", "overridden"],
+                "choices": states,
             },
             config={
                 "required": False,
