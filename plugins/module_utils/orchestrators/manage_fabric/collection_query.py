@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import build_lucene_expressions
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
     ResponseType,
 )
@@ -28,6 +29,8 @@ class ManageFabricCollectionQueryMixin:
     fabric_inventory_management_type: ClassVar[str]
     fabric_inventory_page_size: ClassVar[int] = 100
     fabric_inventory_max_pages: ClassVar[int] = 1000
+    gathered_lucene_spec: ClassVar[Any] = None
+    fabric_gathered_max_queries: ClassVar[int] = 3
 
     @staticmethod
     def _inventory_int(value: Any) -> int | None:
@@ -93,8 +96,8 @@ class ManageFabricCollectionQueryMixin:
             seen.add(name)
         return names
 
-    def _query_fabric_inventory_pages(self) -> dict[str, dict[str, Any]]:
-        """Return the complete owned inventory, keyed and de-duplicated by name."""
+    def _query_fabric_inventory_pages(self, expression: str | None = None) -> dict[str, dict[str, Any]]:
+        """Return the complete owned inventory, optionally narrowed by Lucene."""
         page_size = self.fabric_inventory_page_size
         max_pages = self.fabric_inventory_max_pages
         if page_size <= 0 or max_pages <= 0:
@@ -110,6 +113,8 @@ class ManageFabricCollectionQueryMixin:
             endpoint.endpoint_params.max = page_size
             endpoint.endpoint_params.offset = offset
             endpoint.endpoint_params.sort = "name"
+            if expression:
+                endpoint.endpoint_params.filter = expression
             response = self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
             if not response:
                 return inventory
@@ -177,10 +182,55 @@ class ManageFabricCollectionQueryMixin:
 
             inventory[requested_name] = dict(response)
 
-    def query_all(self, model_instance=None, **kwargs) -> ResponseType:
-        """Return the complete, reconciled inventory owned by this module."""
+    def _query_gathered_fabric_by_name(self, fabric_name: str) -> list[dict[str, Any]]:
+        """Return one exactly named fabric when it belongs to this module."""
+        endpoint = self.query_one_endpoint()
+        endpoint.set_identifiers(fabric_name)
+        response = self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
+        if not response or not self._inventory_item_matches(response):
+            return []
+        return [dict(response)]
+
+    def _query_all_for_gathered(self, gathered_filters: list[dict]) -> ResponseType:
+        """Return owned fabrics using bounded server filtering and local validation."""
+        exact_names: list[str] = []
+        lucene_filters: list[dict] = []
+
+        for filter_item in gathered_filters or [{}]:
+            fabric_name = filter_item.get("fabric_name")
+            other_active_keys = {
+                key
+                for key, value in filter_item.items()
+                if key != "fabric_name" and value not in (None, "")
+            }
+            if isinstance(fabric_name, str) and fabric_name and not other_active_keys:
+                if fabric_name not in exact_names:
+                    exact_names.append(fabric_name)
+            else:
+                lucene_filters.append(filter_item)
+
+        expressions = build_lucene_expressions(lucene_filters, spec=self.gathered_lucene_spec) if lucene_filters else []
+        if len(exact_names) + len(expressions) > self.fabric_gathered_max_queries or any('"' in expression for expression in expressions):
+            exact_names = []
+            expressions = build_lucene_expressions(filters=[], spec=self.gathered_lucene_spec)
+
+        inventory: dict[str, dict[str, Any]] = {}
+        for fabric_name in exact_names:
+            for fabric in self._query_gathered_fabric_by_name(fabric_name):
+                inventory.setdefault(fabric["name"], fabric)
+
+        for expression in expressions:
+            for name, fabric in self._query_fabric_inventory_pages(expression).items():
+                inventory.setdefault(name, fabric)
+
+        return list(inventory.values())
+
+    def query_all(self, model_instance=None, gathered_filters=None, **kwargs) -> ResponseType:
+        """Return the complete owned inventory, optionally using gathered filters."""
         del model_instance, kwargs
         try:
+            if gathered_filters is not None and self.gathered_lucene_spec is not None:
+                return self._query_all_for_gathered(gathered_filters)
             inventory = self._query_fabric_inventory_pages()
             self._reconcile_configured_fabrics(inventory)
             return list(inventory.values())
