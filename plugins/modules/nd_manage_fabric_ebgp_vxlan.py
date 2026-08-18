@@ -9,7 +9,11 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
+ANSIBLE_METADATA = {
+    "metadata_version": "1.1",
+    "status": ["preview"],
+    "supported_by": "community",
+}
 
 DOCUMENTATION = r"""
 ---
@@ -18,7 +22,7 @@ version_added: "2.0.0"
 short_description: Manage eBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
 - Manage eBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
-- It supports creating, updating, replacing, and deleting eBGP VXLAN fabrics.
+- It supports creating, updating, replacing, deleting, and gathering eBGP VXLAN fabrics.
 author:
 - Mike Wiebe (@mwiebe)
 - Matt Tarkington (@mtarking)
@@ -26,16 +30,25 @@ options:
   config:
     description:
     - The list of eBGP VXLAN fabrics to configure.
+    - For O(state=gathered), O(config) may be omitted to return all eBGP VXLAN fabrics.
+    - When O(config) is provided with O(state=gathered), every supplied property acts as a filter criterion.
+      Criteria within one list item use AND semantics, while multiple list items use OR semantics.
+    - Omitted properties are not used as gathered filter criteria, even when those properties have documented defaults.
+    - "Supported gathered filter properties: O(config.fabric_name), O(config.license_tier),
+      O(config.security_domain), O(config.alert_suspend), and O(config.telemetry_collection)."
+    - Other properties, including properties under O(config.management), are not supported as gathered filter criteria.
     type: list
     elements: dict
+    required: false
     suboptions:
       fabric_name:
         description:
         - The name of the fabric.
         - Only letters, numbers, underscores, and hyphens are allowed.
         - The O(config.fabric_name) must be defined when creating, updating or deleting a fabric.
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       location:
         description:
         - The geographic location of the fabric.
@@ -54,18 +67,21 @@ options:
       license_tier:
         description:
         - The license tier for the fabric.
+        - Optional filter for O(state=gathered).
         type: str
         default: essentials
         choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
         - The alert suspension state for the fabric.
+        - Optional filter for O(state=gathered).
         type: str
         default: disabled
         choices: [ enabled, disabled ]
       telemetry_collection:
         description:
         - Enable telemetry collection for the fabric.
+        - Optional filter for O(state=gathered).
         type: bool
         default: false
       telemetry_collection_type:
@@ -91,6 +107,7 @@ options:
       security_domain:
         description:
         - The security domain associated with the fabric.
+        - Optional filter for O(state=gathered).
         type: str
         default: all
       management:
@@ -1353,14 +1370,18 @@ options:
     - Use O(state=overridden) to enforce the configuration as the single source of truth.
       Any fabric existing on ND but not present in the configuration will be deleted. Use with extra caution.
     - Use O(state=deleted) to remove the fabrics specified in the configuration from the Cisco Nexus Dashboard.
+    - Use O(state=gathered) to read eBGP VXLAN fabric configurations from Nexus Dashboard without making changes.
+      Omit O(config) to gather all eBGP VXLAN fabrics, or provide O(config) to return matching fabrics.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
   config_actions:
     description:
     - Controls save and deploy behavior after fabric configuration is updated.
     - Save writes pending configuration to the controller.
     - Deploy pushes the saved configuration to switches.
+    - Must not enable O(config_actions.save) or O(config_actions.deploy) when O(state=gathered).
     - Skipped automatically when O(state=deleted) or when no changes are made.
     type: dict
     suboptions:
@@ -1643,6 +1664,22 @@ EXAMPLES = r"""
       - fabric_name: fabric_west
       - fabric_name: fabric_old
   register: result
+
+- name: Gather all eBGP VXLAN fabrics
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+    state: gathered
+  register: result
+
+- name: Gather selected eBGP VXLAN fabrics
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+    state: gathered
+    config:
+      - fabric_name: fabric_east
+      - license_tier: advantage
+        security_domain: production
+        alert_suspend: disabled
+        telemetry_collection: true
+  register: filtered_result
 """
 
 RETURN = r"""
@@ -1721,11 +1758,21 @@ api_payload:
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+    NDStateMachine,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import (
+    FabricEbgpModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import (
+    ManageEbgpFabricOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    require_pydantic,
+)
 
 
 def main():
@@ -1735,6 +1782,7 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=FabricEbgpModel.get_required_if(),
     )
 
     require_pydantic(module)
@@ -1747,6 +1795,9 @@ def main():
     deploy = config_actions.get("deploy", False)
     deploy_type = config_actions.get("type", "switch")
     state = module.params.get("state", "merged")
+
+    if state == "gathered" and (save or deploy):
+        module.fail_json(msg="config_actions.save and config_actions.deploy are not valid with state=gathered.")
 
     try:
         ManageEbgpFabricOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
