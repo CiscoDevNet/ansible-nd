@@ -40,7 +40,15 @@ class _FakeNrm:
 class _FakeNDModuleV2:
     """Records (path, verb, payload) calls and routes switches/action requests."""
 
-    def __init__(self, module, switches_response=None, status=200, switches_exception=None, fail_on=None, fail_exception=None):
+    def __init__(
+        self,
+        module,
+        switches_response=None,
+        status=200,
+        switches_exception=None,
+        fail_on=None,
+        fail_exception=None,
+    ):
         self.module = module
         self.status = status
         self.calls = []
