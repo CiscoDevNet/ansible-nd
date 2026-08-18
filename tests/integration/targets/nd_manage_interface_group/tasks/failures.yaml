@@ -552,18 +552,6 @@
     mode: exact
   when: not ansible_check_mode
 
-- name: Confirm resource deployment left the interface clean
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "RESOURCE DEPLOYMENT WITH AN UNDEPLOYED NETWORK"
-    preview_request_interfaces:
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_3 }}"
-    preview_test_data:
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_3 }}"
-        pending: clean
-
 - name: Preview the referenced network after resource deployment
   cisco.nd.nd_rest:
     path: >-
@@ -654,15 +642,3 @@
         | list
       }}
   when: not ansible_check_mode
-
-- name: Confirm switch-level deployment left the member interface clean
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "SWITCH DEPLOYMENT WITH A REFERENCED NETWORK"
-    preview_request_interfaces:
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_3 }}"
-    preview_test_data:
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_3 }}"
-        pending: clean

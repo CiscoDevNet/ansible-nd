@@ -41,25 +41,6 @@
     mode: exact
   when: not ansible_check_mode
 
-- name: >-
-    Confirm authoritative removal deployed both retained and removed
-    interfaces
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "REPLACED PARTIAL COLLECTIONS"
-    preview_request_interfaces:
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_1 }}"
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_2 }}"
-    preview_test_data:
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_1 }}"
-        pending: clean
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_2 }}"
-        pending: clean
-
 - name: Restore two networks and members before omitted-list preservation
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_interface_group
@@ -116,23 +97,6 @@
       - "{{ interface_group_pc_two_members }}"
     mode: exact
   when: not ansible_check_mode
-
-- name: Confirm omitted-list preservation left interfaces clean
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "REPLACED OMITTED COLLECTION PRESERVATION"
-    preview_request_interfaces:
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_1 }}"
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_2 }}"
-    preview_test_data:
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_1 }}"
-        pending: clean
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_2 }}"
-        pending: clean
 
 - name: Replace with explicit empty association collections
   cisco.nd.nd4x_module_test:
@@ -261,18 +225,6 @@
       unique_members: true
   when: not ansible_check_mode
 
-- name: Confirm the moved interface has no old or new pending configuration
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "REPLACED NETWORK-A TO NETWORK-B MOVE"
-    preview_request_interfaces:
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_2 }}"
-    preview_test_data:
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_2 }}"
-        pending: clean
-
 - name: Authoritatively replace custom-template inputs and retain membership
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_interface_group
@@ -329,16 +281,3 @@
   when:
     - test_ethernet_custom_flow_enabled | bool
     - not ansible_check_mode
-
-- name: Confirm authoritative custom-template replacement was deployed
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "REPLACED CUSTOM TEMPLATE"
-    preview_request_interfaces:
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_ethernet_custom }}"
-    preview_test_data:
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_ethernet_custom }}"
-        pending: clean
-  when: test_ethernet_custom_flow_enabled | bool

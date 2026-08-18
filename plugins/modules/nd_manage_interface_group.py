@@ -69,10 +69,8 @@ options:
           O(state=overridden).
         - May be omitted only when O(state=merged) additively updates an existing group
           identified by O(config.interface_group_name); the existing group supplies its type.
-        - C(any) accepts Ethernet and port-channel member interfaces together,
-          or vPC member interfaces by themselves. The controller rejects vPC
-          members combined with either of the other member kinds, so the module
-          fails that combination before making any write request.
+        - For C(any), the module submits newly added member interfaces through
+          cumulative PUT requests. The controller evaluates each submitted batch.
         - C(ethernetWithoutPolicy) accepts Ethernet interfaces but does not apply shared
           Ethernet attributes to them. Membership alone does not change member interface
           configuration; associated networks can still add VLAN bindings to those members.

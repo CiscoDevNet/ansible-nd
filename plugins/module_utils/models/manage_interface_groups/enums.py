@@ -3,6 +3,8 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """Enumerations for Nexus Dashboard Manage Interface Groups APIs."""
 
+from __future__ import annotations
+
 from enum import Enum
 
 

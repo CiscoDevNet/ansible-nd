@@ -26,8 +26,9 @@
       - test_switch_ip_primary != test_switch_ip_secondary
     fail_msg: >-
       Define nd_test_fabric_name, nd_test_switch_ip, and
-      nd_test_interface_group_secondary_switch_ip in the local integration
-      inventory. The two management IPs must identify different switches.
+      nd_test_interface_group_secondary_switch_ip in
+      interface_group_test_vars.yml. The two management IPs must identify
+      different switches.
   tags:
     - always
 
@@ -255,9 +256,9 @@
         [test_network_1, test_network_2, test_undeployed_network]
         | unique | list | length == 3
     fail_msg: >-
-      Define the complete two-leaf Interface Group fixture documented in this
-      target's README. All interfaces, Network IDs, and VLAN IDs must be
-      reserved for this suite.
+      Define the complete two-leaf Interface Group fixture documented in
+      interface_group_test_vars.yml.template. All interfaces, Network IDs, and
+      VLAN IDs must be reserved for this suite.
   tags:
     - always
 
@@ -317,16 +318,6 @@
             - always
       tags:
         - always
-
-    - name: Validate an any group containing all three member kinds
-      ansible.builtin.include_tasks:
-        file: any_mixed_three_types.yaml
-        apply:
-          tags:
-            - interface_groups_any_mixed_three_types
-      when: test_vpc_flow_enabled | bool
-      tags:
-        - interface_groups_any_mixed_three_types
 
     - name: Validate all Interface Group discriminator types
       ansible.builtin.include_tasks: types.yaml

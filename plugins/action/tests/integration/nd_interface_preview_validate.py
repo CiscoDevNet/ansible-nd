@@ -40,9 +40,9 @@ options:
         required: true
       pending:
         description:
-        - C(clean) requires zero pending lines.
-        - C(present) requires one or more pending lines.
-        - C(ignore) does not validate pending lines.
+        - C(clean) requires a pending configuration entry with zero lines.
+        - C(present) requires a pending configuration entry with one or more lines.
+        - C(ignore) does not validate the pending configuration entry.
         type: str
         choices: [clean, present, ignore]
         default: clean
@@ -133,13 +133,17 @@ def _combined_configs(value: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
-def _pending_lines(value: dict[str, Any]) -> int:
-    pending = _combined_configs(value).get("pending", {})
-    lines = pending.get("lines", 0)
+def _pending_lines(value: dict[str, Any]) -> int | None:
+    pending = _combined_configs(value).get("pending")
+    if not isinstance(pending, dict) or "lines" not in pending:
+        return None
+    lines = pending["lines"]
+    if isinstance(lines, bool):
+        return None
     try:
         return int(lines)
     except (TypeError, ValueError):
-        return -1
+        return None
 
 
 def _normalise_fragments(value: Any) -> list[str]:
@@ -243,7 +247,7 @@ class ActionModule(ActionBase):
                 )
 
             lines = _pending_lines(actual)
-            if (pending == "clean" and lines != 0) or (pending == "present" and lines <= 0):
+            if pending != "ignore" and (lines is None or (pending == "clean" and lines != 0) or (pending == "present" and lines <= 0)):
                 report["pending_mismatches"].append(
                     {
                         "interface": label,

@@ -592,14 +592,12 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             raise RuntimeError("Interface Group delete returned a non-success per-item status after " f"central response handling: {'; '.join(messages)}")
 
     def create_bulk(self, model_instances: list[InterfaceGroupConfigModel], **kwargs) -> ResponseType:
-        """Create Interface Groups and populate ``any`` membership safely.
+        """Create Interface Groups and populate ``any`` membership in batches.
 
-        ND rejects a single request whose newly associated members contain
-        multiple interface kinds. Create ``any`` groups without members, then
-        add each supported kind through cumulative PUTs so earlier batches are
-        retained. Preflight rejects combining vPC with Ethernet or port-channel
-        members before this method is reached. Other group types keep the
-        normal one-request bulk-create path.
+        For controller compatibility, create ``any`` groups without members,
+        then add newly associated member batches through cumulative PUTs so
+        earlier batches are retained. The controller evaluates each submitted
+        batch. Other group types keep the normal one-request bulk-create path.
         """
         endpoint = self._configure_endpoint(self.create_bulk_endpoint())
         create_models: list[InterfaceGroupConfigModel] = []
@@ -770,42 +768,6 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         if model is None:
             return set()
         return {(entry.switch_id, interface_name) for entry in model.switch_interfaces or [] for interface_name in entry.interface_names}
-
-    @classmethod
-    def _has_vpc_and_non_vpc_members(
-        cls,
-        model: InterfaceGroupConfigModel | None,
-    ) -> bool:
-        """Return whether an ``any`` group combines vPC and non-vPC members."""
-        if model is None or model.type != InterfaceGroupType.ANY.value:
-            return False
-        member_kinds = {InterfaceGroupValidators.interface_kind(interface_name) for _switch_id, interface_name in cls._interface_pairs(model)}
-        return "vpc" in member_kinds and bool(member_kinds.intersection({"ethernet", "port_channel"}))
-
-    def _validate_any_vpc_member_mixing(
-        self,
-        effective: dict[str, InterfaceGroupConfigModel],
-    ) -> None:
-        """Reject newly introduced vPC/non-vPC membership before any write.
-
-        Manage 1.1.411 documents all three member kinds for ``type=any``, but
-        the target controller rejects a vPC member when the group already has
-        Ethernet or port-channel members. Preserve idempotency for a legacy
-        group if a controller ever returns that combination, while preventing
-        this module from creating it or introducing it through an update.
-        """
-        for group_name, after in effective.items():
-            if not self._has_vpc_and_non_vpc_members(after):
-                continue
-            before = self._existing_groups.get(group_name)
-            if self._has_vpc_and_non_vpc_members(before):
-                continue
-            raise RuntimeError(
-                f"Interface Group '{group_name}' with type=any cannot combine "
-                "vPC members with Ethernet or port-channel members. The "
-                "controller rejects this combination; use a separate vPC "
-                "Interface Group."
-            )
 
     @staticmethod
     def _validate_writable_descriptions(
@@ -1170,8 +1132,6 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         self._collapse_switch_entries(model_instances)
         self._validate_runtime_member_ownership(model_instances)
         effective = {item.interface_group_name: self._effective_model(item) for item in model_instances}
-
-        self._validate_any_vpc_member_mixing(effective)
 
         for item in model_instances:
             existing = self._existing_groups.get(item.interface_group_name)

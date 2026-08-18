@@ -2,6 +2,8 @@
 
 """Unit tests for the Interface preview integration validation plugin."""
 
+from __future__ import annotations
+
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -57,6 +59,19 @@ def _preview(
     }
 
 
+def _malformed_preview(malformation: str) -> dict:
+    entry = _preview()
+    if malformation == "missing_combined_configs":
+        entry.pop("combinedConfigs")
+    elif malformation == "missing_pending_entry":
+        entry["combinedConfigs"] = [config for config in entry["combinedConfigs"] if config["configType"] != "pending"]
+    elif malformation == "missing_lines":
+        entry["combinedConfigs"][1].pop("lines")
+    else:
+        entry["combinedConfigs"][1]["lines"] = "not-an-integer"
+    return entry
+
+
 def test_extracts_documented_and_wrapped_preview_shapes():
     entry = _preview()
     assert _extract_diffs({"current": {"configurationDiffs": [entry]}}) == [entry]
@@ -96,6 +111,75 @@ def test_pending_preview_is_detected(action_plugin):
     )
 
     assert result.get("failed", False) is False
+
+
+def test_numeric_string_pending_lines_retain_compatibility(action_plugin):
+    result = _run(
+        action_plugin,
+        nd_data={"configurationDiffs": [_preview(pending_lines="0")]},
+        test_data={
+            "switch_id": "SN1",
+            "interface_name": "Ethernet1/1",
+            "pending": "clean",
+        },
+    )
+
+    assert result.get("failed", False) is False
+
+
+@pytest.mark.parametrize(
+    "malformation",
+    [
+        "missing_combined_configs",
+        "missing_pending_entry",
+        "missing_lines",
+        "non_integer_lines",
+    ],
+)
+@pytest.mark.parametrize("pending", ["clean", "present"])
+def test_missing_or_invalid_pending_data_fails(action_plugin, malformation, pending):
+    result = _run(
+        action_plugin,
+        nd_data={"configurationDiffs": [_malformed_preview(malformation)]},
+        test_data={
+            "switch_id": "SN1",
+            "interface_name": "Ethernet1/1",
+            "pending": pending,
+        },
+    )
+
+    assert result["failed"] is True
+    assert result["report"]["pending_mismatches"] == [
+        {
+            "interface": "SN1/Ethernet1/1",
+            "expected": pending,
+            "pending_lines": None,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "malformation",
+    [
+        "missing_combined_configs",
+        "missing_pending_entry",
+        "missing_lines",
+        "non_integer_lines",
+    ],
+)
+def test_pending_ignore_allows_missing_or_invalid_pending_data(action_plugin, malformation):
+    result = _run(
+        action_plugin,
+        nd_data={"configurationDiffs": [_malformed_preview(malformation)]},
+        test_data={
+            "switch_id": "SN1",
+            "interface_name": "Ethernet1/1",
+            "pending": "ignore",
+        },
+    )
+
+    assert result.get("failed", False) is False
+    assert result["report"]["pending_mismatches"] == []
 
 
 def test_missing_failed_and_pending_mismatch_are_reported(action_plugin):

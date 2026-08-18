@@ -1,9 +1,10 @@
 ---
 # Variables for comprehensive nd_manage_interface_group integration coverage.
 #
-# The suite assumes two reserved leaf switches are supplied by inventory. By
-# default it creates and removes their vPC pair, three reserved Networks, four
-# reserved port-channel interfaces, and one reserved vPC interface.
+# The suite assumes two reserved leaf switches are supplied through
+# interface_group_test_vars.yml. By default it creates and removes their vPC
+# pair, three reserved Networks, four reserved port-channel interfaces, and one
+# reserved vPC interface. Connection credentials remain in the inventory.
 
 test_fabric_name: "{{ nd_test_fabric_name | default('') }}"
 test_switch_ip_primary: "{{ nd_test_switch_ip | default('') }}"
@@ -257,7 +258,6 @@ interface_group_test_prefix: "ANSIBLE-IG-"
 
 interface_group_names:
   any: "ANSIBLE-IG-ANY"
-  any_mixed_three_types: "ANSIBLE-IG-ANY-MIXED-THREE-TYPES"
   ethernet_custom: "ANSIBLE-IG-ETH-CUSTOM"
   ethernet_with_policy: "ANSIBLE-IG-ETH-POLICY"
   ethernet_without_policy: "ANSIBLE-IG-ETH-NO-POLICY"
@@ -273,7 +273,6 @@ interface_group_names:
 
 interface_group_reserved_names:
   - "{{ interface_group_names.any }}"
-  - "{{ interface_group_names.any_mixed_three_types }}"
   - "{{ interface_group_names.ethernet_custom }}"
   - "{{ interface_group_names.ethernet_with_policy }}"
   - "{{ interface_group_names.ethernet_without_policy }}"
@@ -292,7 +291,6 @@ interface_group_reserved_names:
 
 interface_group_reserved_config:
   - interface_group_name: "{{ interface_group_names.any }}"
-  - interface_group_name: "{{ interface_group_names.any_mixed_three_types }}"
   - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
   - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
   - interface_group_name: "{{ interface_group_names.ethernet_without_policy }}"
@@ -540,22 +538,6 @@ interface_group_any_members:
     - switch_id: "{{ test_switch_id_secondary }}"
       interface_names:
         - "{{ test_any_ethernet_secondary }}"
-        - "{{ test_any_port_channel }}"
-
-# Manage 1.1.411 lists all three kinds for an ``any`` group, but the target
-# controller rejects a vPC member combined with Ethernet or port-channel
-# members. This fixture verifies that the module rejects the unsupported
-# three-way combination atomically before any write request.
-interface_group_any_mixed_three_types:
-  interface_group_name: "{{ interface_group_names.any_mixed_three_types }}"
-  type: any
-  switch_interfaces:
-    - switch_id: "{{ test_switch_id }}"
-      interface_names:
-        - "{{ test_any_ethernet_primary }}"
-        - "{{ test_vpc_interface }}"
-    - switch_id: "{{ test_switch_id_secondary }}"
-      interface_names:
         - "{{ test_any_port_channel }}"
 
 interface_group_vpc_member:

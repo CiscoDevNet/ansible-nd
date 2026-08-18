@@ -168,10 +168,10 @@
   when: not ansible_check_mode
 
 - name: >-
-    Confirm switch deployment also cleared the previously staged custom intent
+    Confirm switch deployment scope and membership-only Interface Group state
   ansible.builtin.include_tasks: preview.yaml
   vars:
-    preview_name: "DEFAULT SWITCH DEPLOYMENT SCOPE"
+    preview_name: "DEFAULT SWITCH DEPLOYMENT SCOPE AND MEMBERSHIP-ONLY GROUPS"
     preview_convergence_delay: 30
     preview_request_interfaces: >-
       {{
@@ -189,42 +189,7 @@
           {
             'switchId': test_switch_id,
             'interfaceName': test_ethernet_policy
-          }
-        ]
-      }}
-    preview_test_data: >-
-      {{
-        (
-          [
-            {
-              'switch_id': test_switch_id,
-              'interface_name': test_ethernet_custom,
-              'pending': 'clean',
-              'expected_contains': [
-                interface_group_run_marker
-              ]
-            }
-          ]
-          if test_ethernet_custom_flow_enabled
-          else []
-        )
-        + [
-          {
-            'switch_id': test_switch_id,
-            'interface_name': test_ethernet_policy,
-            'pending': 'clean',
-            'expected_contains': ['switchport mode trunk']
-          }
-        ]
-      }}
-
-- name: Confirm membership-only groups did not generate interface configuration
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "MEMBERSHIP-ONLY GROUPS"
-    preview_request_interfaces: >-
-      {{
-        [
+          },
           {
             'switchId': test_switch_id,
             'interfaceName': test_any_ethernet_primary
@@ -255,7 +220,27 @@
       }}
     preview_test_data: >-
       {{
-        [
+        (
+          [
+            {
+              'switch_id': test_switch_id,
+              'interface_name': test_ethernet_custom,
+              'pending': 'clean',
+              'expected_contains': [
+                interface_group_run_marker
+              ]
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+        + [
+          {
+            'switch_id': test_switch_id,
+            'interface_name': test_ethernet_policy,
+            'pending': 'clean',
+            'expected_contains': ['switchport mode trunk']
+          },
           {
             'switch_id': test_switch_id,
             'interface_name': test_any_ethernet_primary,

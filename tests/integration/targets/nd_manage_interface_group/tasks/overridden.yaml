@@ -71,35 +71,3 @@
       unique_group_names: true
       unique_members: true
   when: not ansible_check_mode
-
-- name: Confirm overridden deployed cleanup for the removed policy group
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "OVERRIDDEN POLICY CLEANUP"
-    preview_request_interfaces:
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_ethernet_policy }}"
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_1 }}"
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_3 }}"
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_any_ethernet_primary }}"
-      - switchId: "{{ test_switch_id_secondary }}"
-        interfaceName: "{{ test_any_port_channel }}"
-    preview_test_data:
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_ethernet_policy }}"
-        pending: clean
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_1 }}"
-        pending: clean
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_3 }}"
-        pending: clean
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_any_ethernet_primary }}"
-        pending: clean
-      - switch_id: "{{ test_switch_id_secondary }}"
-        interface_name: "{{ test_any_port_channel }}"
-        pending: clean

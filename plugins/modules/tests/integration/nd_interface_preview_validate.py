@@ -43,9 +43,9 @@ options:
         required: true
       pending:
         description:
-          - C(clean) requires zero pending lines.
-          - C(present) requires one or more pending lines.
-          - C(ignore) does not validate pending lines.
+          - C(clean) requires a pending configuration entry with zero lines.
+          - C(present) requires a pending configuration entry with one or more lines.
+          - C(ignore) does not validate the pending configuration entry.
         type: str
         choices: [clean, present, ignore]
         default: clean

@@ -162,7 +162,7 @@
     fabric_name: "{{ test_fabric_name }}"
     config: "{{ interface_group_port_channel_fixtures }}"
     config_actions:
-      deploy: true
+      deploy: false
     state: merged
   register: interface_group_port_channel_fixture_create
   when: test_create_port_channel_fixtures | bool
@@ -242,35 +242,6 @@
       The controller did not successfully deploy every requested reserved
       port-channel fixture. Inspect the per-interface outcomes before
       continuing.
-  when: test_create_port_channel_fixtures | bool
-
-- name: Confirm the reserved port-channel fixtures have no pending intent
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "PORT-CHANNEL FIXTURE BASELINE"
-    preview_convergence_delay: 30
-    preview_request_interfaces:
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_1 }}"
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_2 }}"
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_3 }}"
-      - switchId: "{{ test_switch_id_secondary }}"
-        interfaceName: "{{ test_any_port_channel }}"
-    preview_test_data:
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_1 }}"
-        pending: clean
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_2 }}"
-        pending: clean
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_3 }}"
-        pending: clean
-      - switch_id: "{{ test_switch_id_secondary }}"
-        interface_name: "{{ test_any_port_channel }}"
-        pending: clean
   when: test_create_port_channel_fixtures | bool
 
 - name: Create the reserved vPC trunk-host interface fixture

@@ -500,7 +500,7 @@ def test_manage_interface_group_00027(monkeypatch) -> None:
 
 
 def test_manage_interface_group_00028(monkeypatch) -> None:
-    """Reject moving a vPC member into an any group with non-vPC members."""
+    """Allow moving a vPC member into an any group with non-vPC members."""
     put_payloads: list[dict] = []
 
     def fake_request(self, path, verb, data=None, **kwargs):
@@ -542,12 +542,9 @@ def test_manage_interface_group_00028(monkeypatch) -> None:
         "vpc-group": vpc_existing,
     }
 
-    with pytest.raises(
-        RuntimeError,
-        match=r"type=any cannot combine vPC members with Ethernet or port-channel members",
-    ):
-        orchestrator.preflight([any_desired, vpc_desired])
+    orchestrator.preflight([any_desired, vpc_desired])
 
+    assert set(orchestrator._move_plan) == {"vpc-group"}
     assert put_payloads == []
 
 
@@ -1131,12 +1128,14 @@ def test_manage_interface_group_00131(monkeypatch) -> None:
 
 
 def test_manage_interface_group_00132(monkeypatch) -> None:
-    """Reject a new any group that mixes vPC with non-vPC members."""
+    """Send all three member kinds for a new any group to the controller."""
     calls: list[dict] = []
 
     def fake_request(self, path, verb, data=None, **kwargs):
         del self, verb, kwargs
         calls.append({"path": path, "data": data})
+        if path.endswith("/interfaceGroups"):
+            return {"interfaceGroups": [{"type": "any", "status": "success", "message": "created"}]}
         return {}
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
@@ -1150,13 +1149,22 @@ def test_manage_interface_group_00132(monkeypatch) -> None:
         ],
     )
 
-    with pytest.raises(
-        RuntimeError,
-        match=r"type=any cannot combine vPC members with Ethernet or port-channel members",
-    ):
-        orchestrator.preflight([group])
+    orchestrator.preflight([group])
+    orchestrator.create_bulk([group])
 
-    assert calls == []
+    assert len(calls) == 4
+    assert calls[0]["data"]["interfaceGroups"][0]["switchInterfaces"] == []
+    assert calls[-1]["data"]["switchInterfaces"] == [
+        {
+            "switchId": "SN1",
+            "interfaceNames": [
+                "Ethernet1/1",
+                "Ethernet1/2",
+                "Port-channel10",
+            ],
+        },
+        {"switchId": "SN2", "interfaceNames": ["vPC20"]},
+    ]
 
 
 def test_manage_interface_group_00132a(monkeypatch) -> None:

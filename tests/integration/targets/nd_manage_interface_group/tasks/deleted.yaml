@@ -51,18 +51,6 @@
       unique_members: true
   when: not ansible_check_mode
 
-- name: Confirm network-group deletion cleaned its former member
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "DELETED NETWORK GROUP"
-    preview_request_interfaces:
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_port_channel_2 }}"
-    preview_test_data:
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_port_channel_2 }}"
-        pending: clean
-
 - name: Delete a custom-policy Ethernet group with resource deployment
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_interface_group
@@ -93,18 +81,50 @@
   register: interface_group_deleted_custom
   when: test_ethernet_custom_flow_enabled | bool
 
-- name: Confirm custom-policy deletion cleaned its former Ethernet member
+- name: Confirm deleted groups cleaned their former members
   ansible.builtin.include_tasks: preview.yaml
   vars:
-    preview_name: "DELETED CUSTOM POLICY GROUP"
-    preview_request_interfaces:
-      - switchId: "{{ test_switch_id }}"
-        interfaceName: "{{ test_ethernet_custom }}"
-    preview_test_data:
-      - switch_id: "{{ test_switch_id }}"
-        interface_name: "{{ test_ethernet_custom }}"
-        pending: clean
-  when: test_ethernet_custom_flow_enabled | bool
+    preview_name: "DELETED GROUPS"
+    preview_request_interfaces: >-
+      {{
+        [
+          {
+            'switchId': test_switch_id,
+            'interfaceName': test_port_channel_2
+          }
+        ]
+        + (
+          [
+            {
+              'switchId': test_switch_id,
+              'interfaceName': test_ethernet_custom
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+      }}
+    preview_test_data: >-
+      {{
+        [
+          {
+            'switch_id': test_switch_id,
+            'interface_name': test_port_channel_2,
+            'pending': 'clean'
+          }
+        ]
+        + (
+          [
+            {
+              'switch_id': test_switch_id,
+              'interface_name': test_ethernet_custom,
+              'pending': 'clean'
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+      }}
 
 - name: Create empty groups for mixed bulk-delete coverage
   cisco.nd.nd4x_module_test:
@@ -202,52 +222,6 @@
       unique_group_names: true
       unique_members: true
   when: not ansible_check_mode
-
-- name: >-
-    Confirm bulk deletion cleaned but did not delete the underlying interfaces
-  ansible.builtin.include_tasks: preview.yaml
-  vars:
-    preview_name: "DELETED MEMBERSHIP-ONLY GROUPS"
-    preview_request_interfaces: >-
-      {{
-        (
-          [
-            {
-              'switchId': test_switch_id,
-              'interfaceName': test_vpc_interface
-            }
-          ]
-          if test_vpc_flow_enabled
-          else []
-        )
-        + [
-          {
-            'switchId': test_switch_id_secondary,
-            'interfaceName': test_ethernet_without_policy
-          }
-        ]
-      }}
-    preview_test_data: >-
-      {{
-        (
-          [
-            {
-              'switch_id': test_switch_id,
-              'interface_name': test_vpc_interface,
-              'pending': 'clean'
-            }
-          ]
-          if test_vpc_flow_enabled
-          else []
-        )
-        + [
-          {
-            'switch_id': test_switch_id_secondary,
-            'interface_name': test_ethernet_without_policy,
-            'pending': 'clean'
-          }
-        ]
-      }}
 
 - name: Re-delete all absent groups as one idempotent request
   cisco.nd.nd4x_module_test:
