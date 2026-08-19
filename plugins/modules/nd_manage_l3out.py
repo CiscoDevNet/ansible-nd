@@ -598,6 +598,7 @@ options:
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
+- cisco.nd.verification
 notes:
 - This module is only supported on Nexus Dashboard having version 4.1 or higher.
 - L3Outs provide inter-fabric connectivity between ND-managed fabrics and external networks.
@@ -848,6 +849,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.l3out.l3out import
     L3OutModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import verify_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
 )
@@ -949,6 +951,7 @@ def _handle_attachments(nd_state_machine: NDStateMachine, check_mode: bool) -> d
 
 def main():
     argument_spec = nd_argument_spec()
+    argument_spec.update(verify_spec())
     argument_spec.update(L3OutModel.get_argument_spec())
 
     module = AnsibleModule(
@@ -981,6 +984,7 @@ def main():
 
         # Post-state: handle attach/detach operations
         attach_result = _handle_attachments(nd_state_machine, module.check_mode)
+        nd_state_machine.finalize_result(changed=attach_result["attachment_changed"])
 
         # Format output
         output = nd_state_machine.output.format()

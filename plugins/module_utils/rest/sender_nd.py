@@ -28,6 +28,7 @@ from ansible.module_utils.basic import AnsibleModule  # type: ignore
 from ansible.module_utils.connection import Connection  # type: ignore
 from ansible.module_utils.connection import ConnectionError as AnsibleConnectionError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.rest.exceptions import RestTransportError
 
 
 class Sender:
@@ -157,7 +158,7 @@ class Sender:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"ConnectionError occurred: {error}"
             self.log.error(msg)
-            raise ValueError(msg) from error
+            raise RestTransportError(msg) from error
         except Exception as error:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"Unexpected error occurred: {error}"

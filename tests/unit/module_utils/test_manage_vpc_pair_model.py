@@ -142,23 +142,29 @@ def test_manage_vpc_pair_model_00060() -> None:
     config_options = spec["config"]["options"]
     assert config_options["peer1_switch_id"]["aliases"] == ["switch_id"]
     assert config_options["peer2_switch_id"]["aliases"] == ["peer_switch_id"]
+    verify_options = spec["verify"]["options"]
+    assert verify_options["attempts"] == {"type": "int", "default": 5}
+    assert verify_options["interval"] == {"type": "int", "default": 1}
+    assert verify_options["retries"] == {"type": "int"}
 
 
 def test_manage_vpc_pair_model_00070() -> None:
-    """Verify verify/config_actions schema is accepted and normalized."""
+    """Verify canonical verification settings are accepted and normalized."""
     with does_not_raise():
         model = VpcPairPlaybookConfigModel.model_validate(
             {
                 "state": "merged",
                 "fabric_name": "fab1",
-                "verify": {"enabled": True, "retries": 7, "timeout": 11},
+                "verify": {"enabled": True, "attempts": 7, "interval": 2, "timeout": 11},
                 "config_actions": {"save": True, "deploy": False, "type": "global"},
             }
         )
 
     assert model.verify is not None
     assert model.verify.enabled is True
-    assert model.verify.retries == 7
+    assert model.verify.attempts == 7
+    assert model.verify.interval == 2
+    assert model.verify.retries is None
     assert model.verify.timeout == 11
     assert model.config_actions is not None
     assert model.config_actions.save is True
@@ -191,8 +197,36 @@ def test_manage_vpc_pair_model_00090() -> None:
 
     assert model.verify is not None
     assert model.verify.enabled is True
-    assert model.verify.retries == 5
+    assert model.verify.attempts == 5
+    assert model.verify.interval == 1
+    assert model.verify.retries is None
     assert model.verify.timeout == 10
+
+
+def test_manage_vpc_pair_model_00095_keeps_released_retries_alias() -> None:
+    """The released vPC retries field remains parseable until the major-version boundary."""
+    model = VpcPairPlaybookConfigModel.model_validate(
+        {
+            "state": "merged",
+            "fabric_name": "fab1",
+            "verify": {"retries": 7},
+        }
+    )
+
+    assert model.verify is not None
+    assert model.verify.retries == 7
+
+
+@pytest.mark.parametrize("field", ["attempts", "interval", "retries", "timeout"])
+def test_manage_vpc_pair_model_00096_rejects_boolean_integer_settings(field: str) -> None:
+    with pytest.raises(ValidationError):
+        VpcPairPlaybookConfigModel.model_validate(
+            {
+                "state": "merged",
+                "fabric_name": "fab1",
+                "verify": {field: True},
+            }
+        )
 
 
 def test_manage_vpc_pair_model_00100() -> None:

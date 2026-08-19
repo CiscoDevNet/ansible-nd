@@ -352,8 +352,18 @@ class VerifyConfigModel(BaseModel):
     )
 
     enabled: bool = Field(default=True, description="Enable post-write verification refresh")
-    retries: int = Field(default=5, description="Verification retry attempts", ge=1)
+    attempts: int = Field(default=5, description="Verification HTTP attempts", ge=1)
+    interval: int = Field(default=1, description="Seconds between verification attempts", ge=0)
+    retries: int | None = Field(default=None, description="Deprecated alias for attempts", ge=1)
     timeout: int = Field(default=10, description="Per-query timeout in seconds", ge=1)
+
+    @field_validator("attempts", "interval", "retries", "timeout", mode="before")
+    @classmethod
+    def reject_boolean_integer_settings(cls, value: Any) -> Any:
+        """Reject booleans instead of accepting Python's bool-as-int coercion."""
+        if isinstance(value, bool):
+            raise ValueError("verification integer settings cannot be booleans")
+        return value
 
 
 class ConfigActionsModel(BaseModel):
@@ -409,7 +419,7 @@ class VpcPairPlaybookConfigModel(BaseModel):
     )
     verify: VerifyConfigModel | None = Field(
         default=None,
-        description="Verification controls (enabled/retries/timeout).",
+        description="Verification controls (enabled/attempts/interval and legacy retries/timeout).",
     )
     config_actions: ConfigActionsModel | None = Field(
         default=None,
@@ -450,7 +460,9 @@ class VpcPairPlaybookConfigModel(BaseModel):
                 required=False,
                 options=dict(
                     enabled=dict(type="bool", default=True),
-                    retries=dict(type="int", default=5),
+                    attempts=dict(type="int", default=5),
+                    interval=dict(type="int", default=1),
+                    retries=dict(type="int"),
                     timeout=dict(type="int", default=10),
                 ),
             ),

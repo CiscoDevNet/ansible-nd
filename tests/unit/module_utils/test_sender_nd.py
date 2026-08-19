@@ -28,6 +28,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from ansible.module_utils.connection import ConnectionError as AnsibleConnectionError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.rest.exceptions import RestTransportError
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
@@ -662,12 +663,12 @@ def test_sender_nd_00720():
     """
     # Summary
 
-    Verify commit() raises ValueError on connection failure.
+    Verify commit() raises RestTransportError on connection failure.
 
     ## Test
 
     - When Connection.send_request raises AnsibleConnectionError,
-      commit() re-raises as ValueError
+      commit() re-raises as RestTransportError
 
     ## Classes and Methods
 
@@ -690,7 +691,7 @@ def test_sender_nd_00720():
         return_value=mock_connection,
     ):
         match = r"Sender\.commit:.*ConnectionError occurred"
-        with pytest.raises(ValueError, match=match):
+        with pytest.raises(RestTransportError, match=match):
             instance.commit()
 
 
@@ -904,3 +905,8 @@ def test_sender_nd_00770():
 
     assert instance.response["RETURN_CODE"] == 200
     mock_connection.send_request.assert_called_once_with("DELETE", "/api/v1/test/delete/12345")
+
+
+def test_rest_transport_error_preserves_legacy_value_error_contract() -> None:
+    """Typed transport failures remain compatible with legacy ValueError handlers."""
+    assert issubclass(RestTransportError, ValueError)
