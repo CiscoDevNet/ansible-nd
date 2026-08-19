@@ -2,8 +2,17 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-from typing import Any, Union, List, Dict
+from dataclasses import dataclass
+from typing import Any, TypeAlias
 
-ResponseType = Union[List[Dict[str, Any]], Dict[str, Any], None]
+ResponseType: TypeAlias = list[dict[str, Any]] | dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class FinalizationContext:
+    """State-machine context available to orchestrator final-state queries."""
+
+    state: str
+    affected_identifiers: tuple[Any, ...] = ()

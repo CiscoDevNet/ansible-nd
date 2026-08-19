@@ -159,6 +159,7 @@ options:
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
+- cisco.nd.verification
 notes:
 - This module is only supported on Nexus Dashboard version 4.2.1 or higher.
 - Community lists are created and deleted in bulk via separate API endpoints.
@@ -269,7 +270,8 @@ before:
 after:
   description:
   - The community list configuration after the module ran, structured the same as O(config).
-  - This is the predicted post-write state and is not re-read from the controller after writes.
+  - By default, this is the predicted post-write state. When O(verify.enabled=true), it is replaced
+    by a controller readback after all write actions complete.
   - In check mode, this is the configuration that would result outside check mode.
   returned: always
   type: list
@@ -334,12 +336,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_l
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_community_list.manage_community_list import CommunityListModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import verify_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_community_list import ManageCommunityListOrchestrator
 
 
 def main():
     argument_spec = nd_argument_spec()
+    argument_spec.update(verify_spec())
     argument_spec.update(CommunityListModel.get_argument_spec())
 
     module = AnsibleModule(
@@ -360,6 +364,7 @@ def main():
         module_log.debug("manage_state begin state=%s check_mode=%s", module.params.get("state"), module.check_mode)
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
+        nd_state_machine.finalize_result()
 
         module.exit_json(**nd_state_machine.output.format())
 

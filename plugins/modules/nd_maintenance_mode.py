@@ -87,6 +87,7 @@ options:
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
+- cisco.nd.verification
 notes:
 - This module is only supported on Nexus Dashboard.
 - The module reads C(additionalData.intendedSystemMode) per switch for idempotency. The wire's C(additionalData.systemMode)
@@ -158,6 +159,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_l
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.maintenance_mode.maintenance_mode import MaintenanceModeModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import verify_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.maintenance_mode import MaintenanceModeOrchestrator
 
@@ -183,6 +185,7 @@ def main():
     None (catches all exceptions and calls `module.fail_json`).
     """
     argument_spec = nd_argument_spec()
+    argument_spec.update(verify_spec())
     argument_spec.update(MaintenanceModeModel.get_argument_spec())
 
     module = AnsibleModule(
@@ -210,6 +213,7 @@ def main():
         module_log.debug("manage_state begin state=%s check_mode=%s", module.params.get("state"), module.check_mode)
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
+        nd_state_machine.finalize_result()
 
         module.exit_json(**nd_state_machine.output.format())
 
