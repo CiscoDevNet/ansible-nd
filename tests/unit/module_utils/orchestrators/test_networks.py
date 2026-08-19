@@ -202,11 +202,12 @@ def test_network_parent_argument_spec_includes_child_config():
     assert spec["deploy_type"]["choices"] == ["switch", "network"]
     assert spec["vlan_network_type"]["choices"] == [
         "normal",
-        "private_primary",
-        "private_secondary_community",
+        "primary",
+        "community",
+        "isolated",
     ]
     assert "primary_network_id" in spec
-    assert "primary_network_name" not in spec
+    assert "primary_network_name" in spec
     assert "normal_network_id" not in spec
     assert "normal_network_name" not in spec
     assert "network_id" not in child_spec
@@ -252,31 +253,40 @@ def test_network_config_model_defaults_vlan_network_type_to_normal():
 
 
 def test_private_secondary_network_requires_primary_reference_and_rejects_l3_fields():
-    with pytest.raises(ValueError, match="requires primary_network_id"):
+    with pytest.raises(ValueError, match="requires primary_network_id or primary_network_name"):
         NetworkConfigModel.from_config(
             {
                 "network_name": "PVLAN_SECONDARY",
-                "vlan_network_type": "private_secondary_community",
+                "vlan_network_type": "community",
             }
         )
 
-    with pytest.raises(ValueError, match="do not support L3 fields"):
+    with pytest.raises(ValueError, match="support only PVLAN secondary template fields"):
         NetworkConfigModel.from_config(
             {
                 "network_name": "PVLAN_SECONDARY",
-                "vlan_network_type": "private_secondary_community",
+                "vlan_network_type": "community",
                 "primary_network_id": 50100,
                 "gateway_ipv4_address": "192.0.2.1/24",
             }
         )
 
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "PVLAN_SECONDARY",
+            "vlan_network_type": "isolated",
+            "primary_network_name": "PVLAN_PRIMARY",
+        }
+    )
+    assert model.to_config()["primary_network_name"] == "PVLAN_PRIMARY"
+
 
 def test_unsupported_vlan_network_types_are_not_playbook_supported():
-    with pytest.raises(ValueError, match="primary_secondary_isolated networks are not supported"):
+    with pytest.raises(ValueError, match="vlan_network_type must be one of"):
         NetworkConfigModel.from_config(
             {
-                "network_name": "BAD_ISOLATED",
-                "vlan_network_type": "primary_secondary_isolated",
+                "network_name": "BAD_SNAKE_CASE",
+                "vlan_network_type": "private_secondary_community",
                 "primary_network_id": 50100,
             }
         )
@@ -323,8 +333,12 @@ def test_private_secondary_payload_maps_pvlan_fields_and_omits_l3_data():
                 "network_name": "PVLAN_SECONDARY",
                 "network_id": 50101,
                 "vlan_id": 2101,
-                "vlan_network_type": "private_secondary_community",
+                "vlan_network_type": "community",
                 "primary_network_id": 50100,
+                "enable_ir": False,
+                "multicast_group_address": "239.1.1.101",
+                "vlan_name": "PVLAN_SECONDARY_VLAN",
+                "rt_auto": True,
             }
         ]
     )[0]
@@ -333,12 +347,113 @@ def test_private_secondary_payload_maps_pvlan_fields_and_omits_l3_data():
     payload = orchestrator._create_or_update_payload(model)
 
     assert payload["networkName"] == "PVLAN_SECONDARY"
-    assert payload["networkType"] == "vxlanIbgp"
+    assert payload["networkType"] == "userDefined"
     assert payload["vlanNetworkType"] == "privateSecondaryCommunity"
     assert payload["primaryNetworkId"] == 50100
     assert "primaryNetworkName" not in payload
     assert payload["layer"] == "layer2"
+    assert payload["networkTemplateName"] == "Pvlan_Secondary_Network"
+    assert payload["networkExtensionTemplateName"] == "Pvlan_Secondary_Network"
+    assert payload["networkTemplateConfig"] == {
+        "enableIR": "false",
+        "isLayer2Only": "true",
+        "networkMode": "layer2",
+        "networkName": "PVLAN_SECONDARY",
+        "networkType": "userDefined",
+        "nveId": "1",
+        "rtBothAuto": "true",
+        "segmentId": "50101",
+        "type": "Community",
+        "vlanId": "2101",
+        "vlanName": "PVLAN_SECONDARY_VLAN",
+        "vrfName": "NA",
+        "mcastGroup": "239.1.1.101",
+    }
+    assert "vlanId" not in payload
     assert "l3Data" not in payload
+    assert model.to_config()["vlan_network_type"] == "community"
+
+
+def test_private_secondary_isolated_payload_maps_template_type_and_primary_name():
+    orchestrator = _orchestrator()
+    transformed = orchestrator.prepare_config_data(
+        [
+            {
+                "network_name": "PVLAN_ISOLATED",
+                "network_id": 50102,
+                "vlan_id": 2102,
+                "vlan_network_type": "isolated",
+                "primary_network_name": "PVLAN_PRIMARY",
+            }
+        ]
+    )[0]
+    model = NDNetworkOrchestrator.model_class.from_config(transformed)
+
+    payload = orchestrator._create_or_update_payload(model)
+
+    assert payload["networkType"] == "userDefined"
+    assert payload["vlanNetworkType"] == "privateSecondaryIsolated"
+    assert payload["primaryNetworkName"] == "PVLAN_PRIMARY"
+    assert "primaryNetworkId" not in payload
+    assert payload["networkTemplateConfig"]["type"] == "Isolated"
+    assert payload["networkTemplateConfig"]["vlanId"] == "2102"
+    assert payload["networkTemplateConfig"]["networkType"] == "userDefined"
+    assert "vlanId" not in payload
+    assert model.to_config()["vlan_network_type"] == "isolated"
+
+
+def test_private_secondary_primary_name_resolves_id_from_same_config_batch():
+    orchestrator = _orchestrator()
+    transformed = orchestrator.prepare_config_data(
+        [
+            {
+                "network_name": "PVLAN_PRIMARY",
+                "network_id": 50100,
+                "vlan_id": 2100,
+                "vlan_network_type": "primary",
+                "is_l2only": True,
+            },
+            {
+                "network_name": "PVLAN_ISOLATED",
+                "network_id": 50102,
+                "vlan_id": 2102,
+                "vlan_network_type": "isolated",
+                "primary_network_name": "PVLAN_PRIMARY",
+            },
+        ]
+    )
+    model = NDNetworkOrchestrator.model_class.from_config(transformed[1])
+
+    payload = orchestrator._create_or_update_payload(model)
+
+    assert payload["primaryNetworkName"] == "PVLAN_PRIMARY"
+    assert payload["primaryNetworkId"] == 50100
+
+
+def test_private_secondary_rejects_freeform_template_and_l3_only_options():
+    with pytest.raises(ValueError, match="support only PVLAN secondary template fields"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "PVLAN_BAD",
+                "network_id": 50103,
+                "vlan_id": 2103,
+                "vlan_network_type": "community",
+                "primary_network_name": "PVLAN_PRIMARY",
+                "network_template_config": {"type": "Community"},
+            }
+        )
+
+    with pytest.raises(ValueError, match="support only PVLAN secondary template fields"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "PVLAN_BAD",
+                "network_id": 50103,
+                "vlan_id": 2103,
+                "vlan_network_type": "isolated",
+                "primary_network_name": "PVLAN_PRIMARY",
+                "mtu": 9216,
+            }
+        )
 
 
 def test_parent_config_accepts_child_fabric_overrides():
@@ -1644,7 +1759,7 @@ def test_mcfg_parent_private_secondary_network_create_preserves_primary_id_for_o
                     "network_name": "PVLAN_SECONDARY",
                     "network_id": 901031,
                     "vlan_id": 3131,
-                    "vlan_network_type": "private_secondary_community",
+                    "vlan_network_type": "community",
                     "primary_network_id": 901030,
                     "is_l2only": True,
                     "vrf_name": "NA",
@@ -1660,13 +1775,18 @@ def test_mcfg_parent_private_secondary_network_create_preserves_primary_id_for_o
     payload = requests[0]["data"]["networks"][0]
     assert payload["networkName"] == "PVLAN_SECONDARY"
     assert payload["fabricName"] == "MCFG_FAB"
-    assert payload["networkType"] == "vxlan"
+    assert payload["networkType"] == "userDefined"
     assert payload["networkMode"] == "layer2"
     assert payload["vlanNetworkType"] == "privateSecondaryCommunity"
     assert payload["primaryNetworkId"] == 901030
     assert "primaryNetworkName" not in payload
     assert "vlanId" not in payload
     assert "l3Data" not in payload
+    assert payload["networkTemplateName"] == "Pvlan_Secondary_Network"
+    assert payload["networkExtensionTemplateName"] == "Pvlan_Secondary_Network"
+    assert payload["networkTemplateConfig"]["type"] == "Community"
+    assert payload["networkTemplateConfig"]["segmentId"] == "901031"
+    assert payload["networkTemplateConfig"]["vlanId"] == "3131"
 
 
 def test_mcfg_parent_network_update_uses_l2_onemanage_manage_schema_payload():

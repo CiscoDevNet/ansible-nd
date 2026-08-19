@@ -52,15 +52,21 @@ options:
         description:
           - VLAN network role for normal and PVLAN networks.
           - Defaults to C(normal) when omitted.
-          - Value C(private_secondary_community) requires C(primary_network_id).
+          - Values C(community) and C(isolated) require C(primary_network_id) or C(primary_network_name).
+          - PVLAN secondary Networks accept only primary Network reference, Network ID, VLAN ID, ingress replication, multicast group,
+            VLAN name, and L2VNI route-target options for template generation.
         type: str
         choices:
           - normal
-          - private_primary
-          - private_secondary_community
+          - primary
+          - community
+          - isolated
       primary_network_id:
         description: Primary Network ID associated with a PVLAN secondary Network.
         type: int
+      primary_network_name:
+        description: Primary Network name associated with a PVLAN secondary Network.
+        type: str
       display_name:
         description: Display name.
         type: str
@@ -449,7 +455,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: PVLAN_PRIMARY
-        vlan_network_type: private_primary
+        vlan_network_type: primary
         is_l2only: true
         network_id: 50100
         vlan_id: 2100
@@ -461,11 +467,27 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: PVLAN_SECONDARY_COMMUNITY
-        vlan_network_type: private_secondary_community
+        vlan_network_type: community
         primary_network_id: 50100
         is_l2only: true
         network_id: 50101
         vlan_id: 2101
+        deploy: false
+
+- name: Create a private secondary isolated Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: merged
+    config:
+      - network_name: PVLAN_SECONDARY_ISOLATED
+        vlan_network_type: isolated
+        primary_network_name: PVLAN_PRIMARY
+        network_id: 50102
+        vlan_id: 2102
+        enable_ir: false
+        multicast_group_address: 239.1.1.102
+        vlan_name: PVLAN_SECONDARY_ISOLATED_VLAN
+        rt_auto: true
         deploy: false
 
 - name: Create Network on a parent fabric with child fabric overrides

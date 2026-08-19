@@ -12,8 +12,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
 NETWORK_TYPE_CHOICES = ["user_defined"]
 VLAN_NETWORK_TYPE_CHOICES = [
     "normal",
-    "private_primary",
-    "private_secondary_community",
+    "primary",
+    "community",
+    "isolated",
 ]
 
 
@@ -128,6 +129,7 @@ def network_base_argument_spec():
         network_type=dict(type="str", choices=NETWORK_TYPE_CHOICES),
         vlan_network_type=dict(type="str", choices=VLAN_NETWORK_TYPE_CHOICES),
         primary_network_id=dict(type="int"),
+        primary_network_name=dict(type="str"),
         display_name=dict(type="str"),
         vrf_name=dict(type="str"),
         tenant_name=dict(type="str"),

@@ -91,12 +91,38 @@ class VlanNetworkType(str, Enum):
     NORMAL = "normal"
     PRIVATE_PRIMARY = "privatePrimary"
     PRIVATE_SECONDARY_COMMUNITY = "privateSecondaryCommunity"
-    PRIMARY_SECONDARY_ISOLATED = "primarySecondaryIsolated"
+    PRIVATE_SECONDARY_ISOLATED = "privateSecondaryIsolated"
     CHILD = "child"
 
     @classmethod
     def choices(cls) -> list[str]:
         return [e.value for e in cls]
+
+
+PUBLIC_VLAN_NETWORK_TYPE_TO_API = {
+    "normal": VlanNetworkType.NORMAL.value,
+    "primary": VlanNetworkType.PRIVATE_PRIMARY.value,
+    "community": VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value,
+    "isolated": VlanNetworkType.PRIVATE_SECONDARY_ISOLATED.value,
+}
+API_VLAN_NETWORK_TYPE_TO_PUBLIC = {value: key for key, value in PUBLIC_VLAN_NETWORK_TYPE_TO_API.items()}
+
+
+def normalize_vlan_network_type(value: str | None) -> str:
+    if value is None:
+        return VlanNetworkType.NORMAL.value
+    if value in PUBLIC_VLAN_NETWORK_TYPE_TO_API:
+        return PUBLIC_VLAN_NETWORK_TYPE_TO_API[value]
+    if value in VlanNetworkType.choices():
+        return value
+    choices = sorted(PUBLIC_VLAN_NETWORK_TYPE_TO_API)
+    raise ValueError(f"vlan_network_type must be one of {choices}, got: {value}")
+
+
+def public_vlan_network_type(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return API_VLAN_NETWORK_TYPE_TO_PUBLIC.get(value, value)
 
 
 class AciVlanNetworkType(str, Enum):
