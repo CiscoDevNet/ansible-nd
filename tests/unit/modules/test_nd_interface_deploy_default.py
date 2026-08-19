@@ -15,6 +15,7 @@ Deployment is opt-in: each module must document `default: false` and build an `a
 from __future__ import annotations
 
 import importlib
+import inspect
 from typing import Any
 
 import pytest
@@ -85,3 +86,13 @@ def test_nd_interface_deploy_default_00000(monkeypatch: pytest.MonkeyPatch, modu
         module.main()
     argument_spec = exc_info.value.args[0]
     assert argument_spec["config_actions"]["options"]["deploy"]["default"] is False
+
+
+@pytest.mark.parametrize("module_name", INTERFACE_MODULES)
+def test_nd_interface_finalize_result_follows_pending_actions(module_name: str) -> None:
+    """Interface final readback occurs only after queued remove/deploy actions."""
+    module = importlib.import_module(f"ansible_collections.cisco.nd.plugins.modules.{module_name}")
+    source = inspect.getsource(module.main)
+
+    assert source.index("remove_pending()") < source.index("deploy_pending()")
+    assert source.index("deploy_pending()") < source.index("finalize_result()")

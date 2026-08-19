@@ -6,15 +6,12 @@
 from __future__ import annotations
 
 import json
-import time
 from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
-    NDConfigCollection,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vpc_pair import (
     VpcPairOrchestrator,
@@ -24,8 +21,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
     get_config_actions,
-    get_verify_iterations,
-    get_verify_settings,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.actions import (
     strip_inherited_details_for_blocked_fabric,
@@ -45,8 +40,6 @@ Note:
 RunStateHandler = Callable[[Any], dict[str, Any]]
 DeployHandler = Callable[[Any, str, dict[str, Any]], dict[str, Any]]
 NeedsDeployHandler = Callable[[dict[str, Any], Any], bool]
-
-POST_APPLY_REFRESH_RETRY_DELAY_SECONDS = 1
 
 
 class VpcPairStateMachine(NDStateMachine):
@@ -104,11 +97,11 @@ class VpcPairStateMachine(NDStateMachine):
         """
         Build final result payload compatible with nd_manage_vpc_pair runtime.
 
-        Refreshes after-state from controller, walks all log entries to build
-        the output dict with before, after, current, diff, created, deleted,
-        updated lists. Populates self.result with the final Ansible output.
+        Walks all log entries to build the output dict with before, after,
+        current, diff, created, deleted, updated lists. The resource service
+        finalizes controller verification after deployment before calling this
+        method for the final time.
         """
-        self._refresh_after_state()
         self.output.assign(
             after=getattr(self, "existing", None),
             before=getattr(self, "before", None),
@@ -131,55 +124,6 @@ class VpcPairStateMachine(NDStateMachine):
         if self.logs and "logs" not in formatted:
             formatted["logs"] = self.logs
         self.result = formatted
-
-    def _refresh_after_state(self) -> None:
-        """
-        Optionally refresh the final "after" state from controller query.
-
-        Enabled by default for write states to better reflect live controller
-        state when verify.enabled=true.
-
-        Skipped when:
-        - State is gathered (read-only)
-        - Running in check mode
-        - verify.enabled is False
-        """
-        state = self.module.params.get("state")
-        if state not in ("merged", "replaced", "overridden", "deleted"):
-            return
-        if self.module.check_mode:
-            return
-        verify_settings = get_verify_settings(self.module)
-        if not verify_settings.get("enabled", True):
-            return
-        if self.logs and not any(log.get("status") in ("created", "updated", "deleted") for log in self.logs):
-            # Skip refresh for pure no-op runs to avoid false changed flips from
-            # stale/synthetic before-state fallbacks.
-            return
-
-        verify_attempts = get_verify_iterations(self.module)
-        refresh_errors: list[str] = []
-        for attempt in range(1, verify_attempts + 1):
-            try:
-                response_data = self.model_orchestrator.query_all()
-                self.existing = NDConfigCollection.from_api_response(
-                    response_data=response_data,
-                    model_class=self.model_class,
-                )
-                return
-            except Exception as exc:
-                refresh_errors.append(str(exc))
-                if attempt < verify_attempts:
-                    self.module.warn("Post-apply refresh attempt " f"{attempt}/{verify_attempts} failed: {exc}. " "Retrying...")
-                    time.sleep(POST_APPLY_REFRESH_RETRY_DELAY_SECONDS)
-                    continue
-
-                raise VpcPairResourceError(
-                    msg=("Failed to refresh final after-state from controller query " "after write operation."),
-                    attempts=verify_attempts,
-                    retry_delay_seconds=POST_APPLY_REFRESH_RETRY_DELAY_SECONDS,
-                    refresh_errors=refresh_errors,
-                )
 
     @staticmethod
     def _identifier_to_key(identifier: Any) -> str:
@@ -577,16 +521,28 @@ class VpcPairResourceService:
         nd_manage_vpc_pair = VpcPairStateMachine(module=self.module)
         result = self.run_state_handler(nd_manage_vpc_pair)
 
-        if "_ip_to_sn_mapping" in self.module.params:
-            result["ip_to_sn_mapping"] = self.module.params["_ip_to_sn_mapping"]
-
+        deployment_result: dict[str, Any] | None = None
+        deployment_needed: bool | None = None
         config_actions = get_config_actions(self.module)
         if config_actions.get("save", False) or config_actions.get("deploy", False):
-            deploy_result = self.deploy_handler(nd_manage_vpc_pair, fabric_name, result)
-            result["deployment"] = deploy_result
-            result["deployment_needed"] = deploy_result.get(
+            deployment_result = self.deploy_handler(nd_manage_vpc_pair, fabric_name, result)
+            deployment_needed = deployment_result.get(
                 "deployment_needed",
                 self.needs_deployment_handler(result, nd_manage_vpc_pair),
             )
 
-        return result
+        changed = bool(result.get("changed")) or bool(deployment_result and deployment_result.get("changed"))
+        nd_manage_vpc_pair.finalize_result(changed=changed)
+        if nd_manage_vpc_pair.state in nd_manage_vpc_pair.WRITE_STATES:
+            nd_manage_vpc_pair.add_logs_and_outputs()
+            final_result = nd_manage_vpc_pair.result
+        else:
+            final_result = result
+
+        if "_ip_to_sn_mapping" in self.module.params:
+            final_result["ip_to_sn_mapping"] = self.module.params["_ip_to_sn_mapping"]
+        if deployment_result is not None:
+            final_result["deployment"] = deployment_result
+            final_result["deployment_needed"] = deployment_needed
+
+        return final_result

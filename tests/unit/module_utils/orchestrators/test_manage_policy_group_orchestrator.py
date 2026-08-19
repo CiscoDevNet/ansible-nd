@@ -295,21 +295,24 @@ def test_manage_policy_group_orchestrator_00020() -> None:
     """
     # Summary
 
-    ``_invalidate_cache`` resets ``_raw_cache`` to ``None``.
+    The shared final-readback hook resets policy-group query caches.
 
     ## Classes and Methods
 
-    - PolicyGroupOrchestrator._invalidate_cache
+    - PolicyGroupOrchestrator.invalidate_query_cache
     """
     rest_send = _build_rest_send([])
     instance = _make_orchestrator(rest_send)
     instance._raw_cache = [{"policyId": "p1", "description": "x", "templateName": "t"}]
+    instance._policy_summary_cache = [{"policyId": "p1"}]
     assert instance._raw_cache is not None
+    assert instance._policy_summary_cache is not None
 
     with does_not_raise():
-        instance._invalidate_cache()
+        instance.invalidate_query_cache()
 
     assert instance._raw_cache is None
+    assert instance._policy_summary_cache is None
 
 
 # =============================================================================

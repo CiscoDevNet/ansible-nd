@@ -34,10 +34,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import FabricExternalConnectivityModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import FinalizationContext
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_external import ManageExternalFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import ManageIbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.retry_policy import RestRetryPolicy
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
@@ -678,3 +680,24 @@ class TestModelClassIsClassVar:
         keeps the collision guard for genuinely dangerous names like `model_dump_mode`.
         """
         assert NDBaseOrchestrator.model_config.get("protected_namespaces") == ("model_validate", "model_dump")
+
+
+def test_base_orchestrator_final_state_invalidates_cache_and_scopes_policy(monkeypatch) -> None:
+    """The default final-state hook owns cache invalidation and REST policy scope."""
+    rest_send = _make_rest_send([])
+    orchestrator = _make_orchestrator(rest_send)
+    events: list[object] = []
+
+    monkeypatch.setattr(NDBaseOrchestrator, "invalidate_query_cache", lambda self: events.append("invalidate"))
+
+    def query_all(self, model_instance=None, **kwargs):
+        events.append(self.rest_send.retry_policy)
+        return [{"name": "controller"}]
+
+    monkeypatch.setattr(NDBaseOrchestrator, "query_all", query_all)
+    policy = RestRetryPolicy(attempts=2, interval=0, retry_transport_errors=True)
+    context = FinalizationContext(state="merged", affected_identifiers=("example",))
+
+    assert orchestrator.query_final_state(context, policy) == [{"name": "controller"}]
+    assert events == ["invalidate", policy]
+    assert rest_send.retry_policy is None

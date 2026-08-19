@@ -13,8 +13,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import FinalizationContext, ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.retry_policy import RestRetryPolicy
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
@@ -24,6 +25,8 @@ class NDStateMachine:
     """
     Generic State Machine for Nexus Dashboard (Bulk Support).
     """
+
+    WRITE_STATES = frozenset({"merged", "replaced", "overridden", "deleted"})
 
     def __init__(self, module: AnsibleModule, model_orchestrator: type[NDBaseOrchestrator] | NDBaseOrchestrator):
         """
@@ -64,6 +67,8 @@ class NDStateMachine:
         self.ignore_errors = self.module.params.get("ignore_errors", False)
         self.supports_bulk_create = self.model_orchestrator.supports_bulk_create
         self.supports_bulk_delete = self.model_orchestrator.supports_bulk_delete
+        self._deleted_identifiers: list[Any] = []
+        self._finalized = False
 
         # Initialize collections
         try:
@@ -133,6 +138,67 @@ class NDStateMachine:
 
         else:
             raise NDStateMachineError(f"Invalid state: {self.state}")
+
+    def _verification_policy(self) -> RestRetryPolicy | None:
+        """Build the opt-in final-readback policy from normalized module input."""
+        raw_verify = self.module.params.get("verify")
+        if raw_verify is None:
+            return None
+        if not isinstance(raw_verify, dict):
+            raise NDStateMachineError("verify must be a dictionary")
+
+        enabled = raw_verify.get("enabled", False)
+        if not isinstance(enabled, bool):
+            raise NDStateMachineError("verify.enabled must be a boolean")
+        if not enabled:
+            return None
+
+        try:
+            return RestRetryPolicy(
+                attempts=raw_verify.get("attempts", 5),
+                interval=raw_verify.get("interval", 1),
+                retry_transport_errors=True,
+            )
+        except (TypeError, ValueError) as error:
+            raise NDStateMachineError(f"Invalid verification settings: {error}") from error
+
+    def finalize_result(self, *, changed: bool = False) -> None:
+        """
+        Optionally replace predicted ``after`` with a final controller query.
+
+        Modules call this once after all resource-specific remove, deploy,
+        save, attachment, and action operations. Verification is opt-in and is
+        always skipped in check mode, preserving predictive dry-run output.
+        """
+        if self._finalized:
+            return
+
+        predicted_changed = bool(self.output.format().get("changed")) or bool(changed)
+        policy = self._verification_policy()
+        if self.check_mode or self.state not in self.WRITE_STATES or policy is None or not predicted_changed:
+            if changed:
+                self.output.set_changed(predicted_changed)
+            self._finalized = True
+            return
+
+        # Once controller state replaces the predicted collection, changed
+        # must continue to describe this module's operations rather than a
+        # normalized, stale, or concurrently modified readback.
+        self.output.set_changed(predicted_changed)
+        context = FinalizationContext(
+            state=self.state,
+            affected_identifiers=tuple(dict.fromkeys((*self.sent.keys(), *self._deleted_identifiers))),
+        )
+        try:
+            response_data = self.model_orchestrator.query_final_state(context, policy)
+            refreshed = NDConfigCollection.from_api_response(response_data=response_data, model_class=self.model_class)
+        except Exception as error:
+            self._finalized = True
+            raise NDStateMachineError(f"Failed to refresh final after-state from controller: {error}") from error
+
+        self.existing = refreshed
+        self.output.assign(after=refreshed)
+        self._finalized = True
 
     def _execute_operation(
         self,
@@ -253,6 +319,7 @@ class NDStateMachine:
 
         # Batch remove from collection (single index rebuild)
         keys_to_delete = [item.get_identifier_value() for item in items]
+        self._deleted_identifiers.extend(keys_to_delete)
         self.existing.delete_many(keys_to_delete)
 
         # Log deletion

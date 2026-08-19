@@ -12,7 +12,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import FinalizationContext, ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.rest.retry_policy import RestRetryPolicy
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
@@ -193,6 +194,24 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
+
+    def invalidate_query_cache(self) -> None:
+        """Drop cached query data before a final controller snapshot."""
+        return
+
+    def query_final_state(self, context: FinalizationContext, retry_policy: RestRetryPolicy) -> ResponseType:
+        """
+        Return the controller state used to finalize module output.
+
+        Subclasses may override this additive hook to invalidate query caches,
+        retain API-specific scoping, or use a more efficient read strategy.
+        The returned shape must match the subclass's normal ``query_all``
+        contract so ``NDStateMachine`` can rebuild a complete collection.
+        """
+        del context
+        self.invalidate_query_cache()
+        with self.rest_send.use_retry_policy(retry_policy):
+            return self.query_all()
 
     def prepare_config_data(self, raw_config):
         """Hook for subclasses to backfill or normalize raw user config before the proposed collection is built. Returns the list unchanged by default."""

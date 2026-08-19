@@ -20,7 +20,9 @@ import inspect
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.rest.exceptions import RestTransportError
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.retry_policy import RestRetryPolicy
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
@@ -1548,6 +1550,114 @@ def test_rest_send_01110():
 
     assert instance.response_current["RETURN_CODE"] == 200
     assert instance.result_current["success"] is True
+
+
+def test_rest_send_01120_scoped_policy_uses_exact_attempt_count(monkeypatch) -> None:
+    """A scoped policy counts the initial send and sleeps only between attempts."""
+    consumed: list[int] = []
+
+    def responses():
+        for attempt in range(1, 5):
+            consumed.append(attempt)
+            yield responses_rest_send("test_rest_send_00520a")
+
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = ResponseGenerator(responses())
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.path = "/api/v1/test/servererror"
+    instance.verb = HttpVerbEnum.GET
+    sleeps: list[int] = []
+    monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send.sleep", sleeps.append)
+
+    with instance.use_retry_policy(RestRetryPolicy(attempts=3, interval=2)):
+        instance.commit()
+
+    assert consumed == [1, 2, 3]
+    assert sleeps == [2, 2]
+    assert instance.result_current["success"] is False
+
+
+def test_rest_send_01130_scoped_policy_retries_get_transport_error() -> None:
+    """Transport retries are opt-in and limited to safe GET requests."""
+    calls: list[int] = []
+
+    def responses():
+        yield responses_rest_send("test_rest_send_00600b")
+
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = ResponseGenerator(responses())
+
+    def commit() -> None:
+        calls.append(len(calls) + 1)
+        if len(calls) == 1:
+            raise RestTransportError("connection reset")
+
+    sender.commit = commit
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.path = "/api/v1/test/read"
+    instance.verb = HttpVerbEnum.GET
+
+    with instance.use_retry_policy(RestRetryPolicy(attempts=2, interval=0, retry_transport_errors=True)):
+        instance.commit()
+
+    assert calls == [1, 2]
+    assert instance.result_current["success"] is True
+
+
+@pytest.mark.parametrize(
+    ("verb", "retry_transport_errors"),
+    [
+        (HttpVerbEnum.GET, False),
+        (HttpVerbEnum.POST, True),
+    ],
+)
+def test_rest_send_01140_scoped_policy_does_not_retry_ineligible_transport_error(verb, retry_transport_errors) -> None:
+    """Mutation requests and policies without opt-in surface transport errors immediately."""
+    calls: list[int] = []
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+
+    def commit() -> None:
+        calls.append(len(calls) + 1)
+        raise RestTransportError("connection reset")
+
+    sender.commit = commit
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.path = "/api/v1/test/request"
+    instance.verb = verb
+    if verb is HttpVerbEnum.POST:
+        instance.payload = {"name": "example"}
+
+    policy = RestRetryPolicy(attempts=3, interval=0, retry_transport_errors=retry_transport_errors)
+    with instance.use_retry_policy(policy), pytest.raises(RestTransportError, match="connection reset"):
+        instance.commit()
+
+    assert calls == [1]
+
+
+def test_rest_send_01150_nested_policy_scopes_restore_after_exception() -> None:
+    """Nested policy scopes restore the prior policy on every exit path."""
+    instance = RestSend({"check_mode": False})
+    outer = RestRetryPolicy(attempts=2, interval=1)
+    inner = RestRetryPolicy(attempts=4, interval=0)
+
+    assert instance.retry_policy is None
+    with instance.use_retry_policy(outer):
+        assert instance.retry_policy is outer
+        with pytest.raises(RuntimeError, match="stop"):
+            with instance.use_retry_policy(inner):
+                assert instance.retry_policy is inner
+                raise RuntimeError("stop")
+        assert instance.retry_policy is outer
+    assert instance.retry_policy is None
 
 
 # =============================================================================

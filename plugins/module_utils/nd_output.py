@@ -2,7 +2,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 from typing import Any, Dict, List, Optional, Union
 
@@ -14,6 +14,7 @@ class NDOutput:
     def __init__(self, output_level: str):
         self._output_level: str = output_level
         self._changed: bool = False
+        self._changed_explicit: bool | None = None
         self._before: Union[NDConfigCollection, List] = []
         self._after: Union[NDConfigCollection, List] = []
         self._diff: Union[NDConfigCollection, List] = []
@@ -22,7 +23,12 @@ class NDOutput:
         self._extra: Dict[str, Any] = {}
 
     def format(self, **kwargs) -> Dict[str, Any]:
-        if isinstance(self._before, NDConfigCollection) and isinstance(self._after, NDConfigCollection) and self._before.get_diff_collection(self._after):
+        if (
+            self._changed_explicit is None
+            and isinstance(self._before, NDConfigCollection)
+            and isinstance(self._after, NDConfigCollection)
+            and self._before.get_diff_collection(self._after)
+        ):
             self._changed = True
 
         output = {
@@ -44,6 +50,11 @@ class NDOutput:
         output.update(**kwargs)
 
         return output
+
+    def set_changed(self, changed: bool) -> None:
+        """Set an authoritative changed value independent of before/after diffing."""
+        self._changed = bool(changed)
+        self._changed_explicit = bool(changed)
 
     def format_with_verbosity(self, verbosity: int, results: Optional[Results] = None, **kwargs) -> Dict[str, Any]:
         """
