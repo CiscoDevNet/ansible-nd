@@ -31,9 +31,9 @@ pipeline {
         ND_PASSWORD = credentials('ANSIBLE_NDFC_41_117_PASSWORD')
         ANSIBLE_HOST = "10.122.84.112"
         ND_SWITCH_IP = '10.122.84.71'
-        BASE_DIR = "$HOME/ansible"
-        COLLECTIONS_DIR = "$HOME/ansible/collections/ansible_collections/cisco/nd"
-        COLL_DIR = "$HOME/ansible/collections/ansible_collections/cisco"
+        BASE_DIR = "$WORKSPACE/.jenkins-runtime"
+        COLLECTIONS_DIR = "$WORKSPACE/nd"
+        COLL_DIR = "$WORKSPACE"
         CONSUL_URL = "http://10.78.210.155:8500"
         CONSUL_PREFIX = "ansible/nd4x-nightly"
         ND_BRANCH = 'develop'
@@ -51,6 +51,7 @@ pipeline {
     }
 
     options {
+        skipDefaultCheckout(true)
         disableConcurrentBuilds()
         timeout(time: 10, unit: 'HOURS')
         timestamps()
@@ -67,24 +68,25 @@ pipeline {
         stage('Environment Setup') {
             steps {
                 sh '''#!/bin/bash
-                set -e
-                cd ${BASE_DIR}
-                export PATH=${BASE_DIR}:$PATH
+                set -euo pipefail
+                mkdir -p "${BASE_DIR}"
+                cd "${BASE_DIR}"
+                export PATH="${BASE_DIR}:$PATH"
 
                 # Create or verify the Python virtual environment.
-                if [ -d "$HOME/ansible/venv" ]; then
-                    VENV_PYTHON=$($HOME/ansible/venv/bin/python --version 2>&1 | awk '{print $2}')
+                if [ -d "${BASE_DIR}/venv" ]; then
+                    VENV_PYTHON=$(${BASE_DIR}/venv/bin/python --version 2>&1 | awk '{print $2}')
                     if [[ "$VENV_PYTHON" != 3.12.* ]]; then
                         echo "Python version mismatch, recreating venv..."
-                        rm -rf $HOME/ansible/venv
-                        python3.12 -m venv $HOME/ansible/venv
+                        rm -rf ${BASE_DIR}/venv
+                        python3.12 -m venv ${BASE_DIR}/venv
                     fi
                 else
                     echo "Creating venv with Python 3.12.3..."
-                    python3.12 -m venv $HOME/ansible/venv
+                    python3.12 -m venv ${BASE_DIR}/venv
                 fi
 
-                source $HOME/ansible/venv/bin/activate
+                source ${BASE_DIR}/venv/bin/activate
                 echo "Python: $(python --version)"
                 '''
             }
@@ -94,7 +96,7 @@ pipeline {
             steps {
                 sh '''#!/bin/bash
                 set -e
-                cd ${COLL_DIR}
+                cd "${COLL_DIR}"
 
                 if [ -d "nd/.git" ]; then
                     cd nd
@@ -105,11 +107,11 @@ pipeline {
                         echo "Repository is up-to-date"
                         exit 0
                     fi
-                    cd ${COLL_DIR}
-                    rm -rf nd
+                    cd "${COLL_DIR}"
+                    rm -rf -- nd
                 fi
 
-                git clone -b ${ND_BRANCH} https://github.com/CiscoDevNet/ansible-nd.git nd
+                git clone --branch "${ND_BRANCH}" --single-branch https://github.com/CiscoDevNet/ansible-nd.git nd
                 cd nd
                 echo "Cloned at: $(git rev-parse HEAD)"
                 source "${BASE_DIR}/venv/bin/activate"
@@ -234,17 +236,28 @@ pipeline {
                     message += "\nDetailed Results:\n${env.TEST_RESULT_SUMMARY ?: 'No results'}\n"
                     message += "Link: ${BUILD_URL}console\n"
 
-                    def safeMessage = message.replace('"', '\\"')
+                    def webexPayload = writeJSON(
+                        returnText: true,
+                        json: [
+                            roomId: env.WEBEX_ROOM_ID,
+                            text: message
+                        ]
+                    )
 
-                    withEnv(["SAFE_MESSAGE=${safeMessage}"]) {
-                        sh returnStatus: true, script: '''#!/bin/bash
-                            set +e
-                            curl -s -X POST https://webexapis.com/v1/messages \
-                                -H "Authorization: Bearer ${WEBEX_TOKEN}" \
-                                -H "Content-Type: application/json" \
-                                -d "{\"roomId\": \"${WEBEX_ROOM_ID}\", \"text\": \"${SAFE_MESSAGE}\"}"
-                            '''
-                    }
+                    httpRequest(
+                        url: 'https://webexapis.com/v1/messages',
+                        httpMode: 'POST',
+                        acceptType: 'APPLICATION_JSON',
+                        contentType: 'APPLICATION_JSON',
+                        customHeaders: [[
+                            name: 'Authorization',
+                            value: "Bearer ${env.WEBEX_TOKEN}",
+                            maskValue: true
+                        ]],
+                        requestBody: webexPayload,
+                        validResponseCodes: '200:299',
+                        consoleLogResponseBody: false
+                    )
                 } catch (Exception e) {
                     echo "Webex notification failed: ${e.getMessage()}"
                 }
@@ -259,22 +272,38 @@ def downloadFromConsul(fileName, localFileName = null) {
     }
 
     def targetFileName = localFileName ?: fileName
+
+    if (!(targetFileName ==~ /[A-Za-z0-9._-]+/)) {
+        error("Unsafe local filename: ${targetFileName}")
+    }
+
     def consulUrl =
         "${env.CONSUL_URL}/v1/kv/${env.CONSUL_PREFIX}/${fileName}?raw"
 
     echo "Downloading ${fileName} from Consul prefix ${env.CONSUL_PREFIX}"
 
-    def response = httpRequest(
-        url: consulUrl,
-        httpMode: 'GET',
-        validResponseCodes: '200',
-        consoleLogResponseBody: false
-    )
+    withEnv([
+        "CONSUL_DOWNLOAD_URL=${consulUrl}",
+        "CONSUL_TARGET_FILE=${targetFileName}"
+    ]) {
+        sh '''#!/bin/bash
+            set -euo pipefail
 
-    writeFile(
-        file: targetFileName,
-        text: response.content
-    )
+            temporary_file="$(mktemp ".${CONSUL_TARGET_FILE}.XXXXXX")"
+            trap 'rm -f -- "$temporary_file"' EXIT
+
+            curl --fail \
+                --silent \
+                --show-error \
+                --connect-timeout 10 \
+                --max-time 60 \
+                --output "$temporary_file" \
+                "$CONSUL_DOWNLOAD_URL"
+
+            mv -- "$temporary_file" "$CONSUL_TARGET_FILE"
+            trap - EXIT
+            '''
+    }
 
     echo "Downloaded ${fileName}"
 }
@@ -309,15 +338,20 @@ def runNDTests(ndConfig) {
         error('nd_suite_manifest.yaml contains no suites')
     }
 
-    def approvedSuites = manifest.suites.findAll { suiteName, suiteConfig ->
-        suiteConfig.local_status == 'passed'
+    def requestedSuiteNames
+
+    if (params.TARGET_SET == 'both') {
+        requestedSuiteNames = [
+            'nd_interface_loopback',
+            'nd_interface_ethernet_access'
+        ]
+    } else {
+        requestedSuiteNames = [params.TARGET_SET]
     }
 
-    def selectedSuites
-    if (params.TARGET_SET == 'both') {
-        selectedSuites = approvedSuites
-    } else {
-        def requestedSuite = params.TARGET_SET
+    def selectedSuites = [:]
+
+    requestedSuiteNames.each { requestedSuite ->
         def requestedConfig = manifest.suites[requestedSuite]
 
         if (!requestedConfig) {
@@ -331,7 +365,7 @@ def runNDTests(ndConfig) {
             )
         }
 
-        selectedSuites = [(requestedSuite): requestedConfig]
+        selectedSuites[requestedSuite] = requestedConfig
     }
 
     if (!selectedSuites) {
