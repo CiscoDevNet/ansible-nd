@@ -392,3 +392,9 @@ $RECYCLE.BIN/
 
 # Ansible Collection tarball
 cisco-nd-*.tar.gz
+
+# Local test environments and generated pipeline artifacts
+/.venv/
+/.venv-run/
+/collections/
+/test_output_*.txt
