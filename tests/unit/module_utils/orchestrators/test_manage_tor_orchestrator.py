@@ -32,6 +32,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_tor import (
     ManageTorOrchestrator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_tor.manage_tor import (
+    ManageTorModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
     ResponseHandler,
 )
@@ -144,6 +147,59 @@ def test_manage_tor_orchestrator_query_all_empty_fabric():
     with does_not_raise():
         result = orchestrator.query_all()
     assert result == []
+
+
+# =============================================================================
+# associate / disassociate (top-level JSON array request body)
+# =============================================================================
+
+
+def test_manage_tor_orchestrator_create_bulk_sends_array_body():
+    """associate (create_bulk) POSTs a top-level JSON array of switch pairs to
+    accessAssociationActions/associate. The array body must reach the wire
+    intact -- ND rejects anything but a bare array here, and RestSend must not
+    coerce or reject the list."""
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send(
+        [_resp({"status": "success"}, return_code=207, method="POST")], params
+    )
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+
+    pairs = [
+        ManageTorModel(fabric_name="fab1", access_or_tor_switch_id="T1", aggregation_or_leaf_switch_id="L1"),
+        ManageTorModel(fabric_name="fab1", access_or_tor_switch_id="T2", aggregation_or_leaf_switch_id="L2"),
+    ]
+
+    with does_not_raise():
+        orchestrator.create_bulk(pairs)
+
+    assert rest_send.path.endswith("/accessAssociationActions/associate")
+    assert rest_send.committed_payload == [
+        {"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1"},
+        {"accessOrTorSwitchId": "T2", "aggregationOrLeafSwitchId": "L2"},
+    ]
+
+
+def test_manage_tor_orchestrator_delete_bulk_sends_array_body():
+    """disassociate (delete_bulk) POSTs a top-level JSON array of switch-pair
+    identifiers to accessAssociationActions/disassociate."""
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send(
+        [_resp({"status": "success"}, return_code=207, method="POST")], params
+    )
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+
+    pairs = [
+        ManageTorModel(fabric_name="fab1", access_or_tor_switch_id="T1", aggregation_or_leaf_switch_id="L1"),
+    ]
+
+    with does_not_raise():
+        orchestrator.delete_bulk(pairs)
+
+    assert rest_send.path.endswith("/accessAssociationActions/disassociate")
+    assert rest_send.committed_payload == [
+        {"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1"},
+    ]
 
 
 # =============================================================================

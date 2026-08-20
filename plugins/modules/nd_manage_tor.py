@@ -137,8 +137,8 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
     config:
-      - access_or_tor_switch: "98AFDSD8V0"
-        aggregation_or_leaf_switch: "98AM4FFFFV0"
+      - access_or_tor_switch: 10.15.33.23
+        aggregation_or_leaf_switch: 10.15.33.13
         access_or_tor_port_channel_id: 501
         aggregation_or_leaf_port_channel_id: 502
     state: merged
@@ -152,6 +152,20 @@ EXAMPLES = r"""
         access_or_tor_port_channel_id: 501
         aggregation_or_leaf_port_channel_id: 502
     state: merged
+
+- name: Associate a ToR switch and save and deploy the fabric configuration
+  cisco.nd.nd_manage_tor:
+    fabric_name: my-fabric
+    config:
+      - access_or_tor_switch: "98AFDSD8V0"
+        aggregation_or_leaf_switch: "98AM4FFFFV0"
+        access_or_tor_port_channel_id: 501
+        aggregation_or_leaf_port_channel_id: 502
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
 
 - name: Associate a ToR VPC pair with a leaf VPC pair (back-to-back VPC)
   cisco.nd.nd_manage_tor:

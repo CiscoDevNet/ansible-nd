@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
@@ -63,7 +63,7 @@ class ApiCallResult(BaseModel):
     sequence_number: int = Field(ge=1)
     path: str
     verb: str
-    payload: Optional[dict[str, Any]] = None
+    payload: Optional[Union[dict[str, Any], list]] = None
     verbosity_level: int = Field(ge=1, le=6)
     response: dict[str, Any]
     result: dict[str, Any]
@@ -115,7 +115,7 @@ class FinalResultData(BaseModel):
     diff: list[dict[str, Any]] = Field(default_factory=list)
     metadata: list[dict[str, Any]] = Field(default_factory=list)
     path: list[str] = Field(default_factory=list)
-    payload: list[Optional[dict[str, Any]]] = Field(default_factory=list)
+    payload: list[Optional[Union[dict[str, Any], list]]] = Field(default_factory=list)
     response: list[dict[str, Any]] = Field(default_factory=list)
     result: list[dict[str, Any]] = Field(default_factory=list)
     verb: list[str] = Field(default_factory=list)
@@ -162,7 +162,7 @@ class PendingApiCall(BaseModel):
     operation_type: OperationType = OperationType.QUERY
     path: str = ""
     verb: HttpVerbEnum = HttpVerbEnum.GET
-    payload: Optional[dict[str, Any]] = None
+    payload: Optional[Union[dict[str, Any], list]] = None
     verbosity_level: int = Field(default=3, ge=1, le=6)
 
 
@@ -1097,7 +1097,7 @@ class Results:
         self._current.verb = value
 
     @property
-    def payload(self) -> list[Optional[dict[str, Any]]]:
+    def payload(self) -> list[Optional[Union[dict[str, Any], list]]]:
         """
         # Summary
 
@@ -1114,7 +1114,7 @@ class Results:
         return [task.payload for task in self._tasks]
 
     @property
-    def payload_current(self) -> Optional[dict[str, Any]]:
+    def payload_current(self) -> Optional[Union[dict[str, Any], list]]:
         """
         # Summary
 
@@ -1122,16 +1122,16 @@ class Results:
 
         ## Raises
 
-        -   setter: `TypeError` if value is not a dict or None
+        -   setter: `TypeError` if value is not a dict, list, or None
         """
         return self._current.payload
 
     @payload_current.setter
-    def payload_current(self, value: Optional[dict[str, Any]]) -> None:
+    def payload_current(self, value: Optional[Union[dict[str, Any], list]]) -> None:
         method_name: str = "payload_current"
-        if value is not None and not isinstance(value, dict):
+        if value is not None and not isinstance(value, (dict, list)):
             msg = f"{self.class_name}.{method_name}: "
-            msg += f"value must be a dict or None. Got {type(value).__name__}."
+            msg += f"value must be a dict, list, or None. Got {type(value).__name__}."
             raise TypeError(msg)
         self._current.payload = value
 
