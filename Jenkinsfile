@@ -27,8 +27,8 @@ pipeline {
     environment {
         WEBEX_TOKEN = credentials('ANSIBLE_WEBEX_TOKEN')
         WEBEX_ROOM_ID = "61f7d4c0-9566-11f0-b070-451eba08616c" // private test space
-        ND_USER = credentials('ANSIBLE_ND_USERNAME')
-        ND_PASSWORD = credentials('ANSIBLE_ND_PASSWORD')
+        ND_USER = credentials('ANSIBLE_NDFC_USERNAME')
+        ND_PASSWORD = credentials('ANSIBLE_NDFC_41_117_PASSWORD')
         ANSIBLE_HOST = "10.122.84.112"
         ND_SWITCH_IP = '10.122.84.71'
         BASE_DIR = "$HOME/ansible"
