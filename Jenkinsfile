@@ -20,7 +20,7 @@ pipeline {
                 'nd_interface_loopback',
                 'nd_interface_ethernet_access'
             ],
-            description: 'Run all manifest-approved suites or select one approved suite'
+            description: 'Run both supported suites or select one suite'
         )
     }
 
@@ -137,21 +137,9 @@ pipeline {
                             downloadFromConsul(fileName)
                         }
 
-                        // Derive wrapper names from the reviewed manifest.
-                        def manifest = readYaml file: 'nd_suite_manifest.yaml'
-
-                        if (!manifest?.suites) {
-                            error('Downloaded manifest contains no suites')
-                        }
-
-                        manifest.suites.keySet().each { suiteName ->
-                            def safeSuiteName = suiteName.toString()
-
-                            if (!(safeSuiteName ==~ /nd_[a-z0-9_]+/)) {
-                                error("Unsafe suite name in manifest: ${safeSuiteName}")
-                            }
-
-                            downloadFromConsul("${safeSuiteName}.yaml")
+                        // Download only the wrappers selected for this build.
+                        getRequestedSuiteNames().each { suiteName ->
+                            downloadFromConsul("${suiteName}.yaml")
                         }
                     }
                 }
@@ -183,6 +171,7 @@ pipeline {
                 python -m pip install --disable-pip-version-check \
                   -r requirements.txt
                 ansible-galaxy collection install -r requirements.yaml
+                python -c 'import yaml; print("PyYAML: " + yaml.__version__)'
 
                 echo "Python: $(python --version)"
                 echo "Ansible: $(ansible --version | head -1)"
@@ -236,13 +225,7 @@ pipeline {
                     message += "\nDetailed Results:\n${env.TEST_RESULT_SUMMARY ?: 'No results'}\n"
                     message += "Link: ${BUILD_URL}console\n"
 
-                    def webexPayload = writeJSON(
-                        returnText: true,
-                        json: [
-                            roomId: env.WEBEX_ROOM_ID,
-                            text: message
-                        ]
-                    )
+                    def webexPayload = createWebexPayload(message)
 
                     httpRequest(
                         url: 'https://webexapis.com/v1/messages',
@@ -264,6 +247,47 @@ pipeline {
             }
         }
     }
+}
+
+def getRequestedSuiteNames() {
+    def supportedTargets = [
+        'nd_interface_loopback',
+        'nd_interface_ethernet_access'
+    ]
+
+    if (params.TARGET_SET == 'both') {
+        return supportedTargets
+    }
+
+    def requestedTarget = params.TARGET_SET?.toString()
+
+    if (!supportedTargets.contains(requestedTarget)) {
+        error("Unsupported TARGET_SET: ${requestedTarget}")
+    }
+
+    return [requestedTarget]
+}
+
+def createWebexPayload(String message) {
+    def payload
+
+    withEnv(["WEBEX_MESSAGE=${message}"]) {
+        payload = sh(
+            returnStdout: true,
+            script: '''#!/bin/bash
+set -euo pipefail
+
+python3.12 -c \
+  'import json, os; print(json.dumps({"roomId": os.environ["WEBEX_ROOM_ID"], "text": os.environ["WEBEX_MESSAGE"]}))'
+'''
+        ).trim()
+    }
+
+    if (!payload) {
+        error('Python produced an empty Webex JSON payload')
+    }
+
+    return payload
 }
 
 def downloadFromConsul(fileName, localFileName = null) {
@@ -308,6 +332,104 @@ def downloadFromConsul(fileName, localFileName = null) {
     echo "Downloaded ${fileName}"
 }
 
+def loadSuiteConfiguration(String suiteName) {
+    if (!(suiteName ==~ /nd_[a-z0-9_]+/)) {
+        error("Unsafe suite name: ${suiteName}")
+    }
+
+    def manifestRecord
+
+    dir(env.COLLECTIONS_DIR) {
+        withEnv(["ND_REQUESTED_SUITE=${suiteName}"]) {
+            manifestRecord = sh(
+                returnStdout: true,
+                script: '''#!/bin/bash
+set -euo pipefail
+source "${BASE_DIR}/venv/bin/activate"
+
+python - <<'PY'
+import os
+import re
+
+import yaml
+
+
+with open("nd_suite_manifest.yaml", encoding="utf-8") as manifest_file:
+    manifest = yaml.safe_load(manifest_file)
+
+if not isinstance(manifest, dict):
+    raise SystemExit("nd_suite_manifest.yaml must contain a YAML mapping")
+
+if manifest.get("schema_version") != 1:
+    raise SystemExit(
+        "Unsupported manifest schema_version: "
+        f"{manifest.get('schema_version')}"
+    )
+
+suites = manifest.get("suites")
+if not isinstance(suites, dict) or not suites:
+    raise SystemExit("nd_suite_manifest.yaml contains no suites")
+
+suite_name = os.environ["ND_REQUESTED_SUITE"]
+suite = suites.get(suite_name)
+if not isinstance(suite, dict):
+    raise SystemExit(f"Suite is not present in the manifest: {suite_name}")
+
+testbed = suite.get("testbed")
+timeout_minutes = suite.get("timeout_minutes")
+local_status = suite.get("local_status")
+tags = suite.get("tags", [])
+
+if not isinstance(testbed, str) or not re.fullmatch(r"[a-z0-9_-]+", testbed):
+    raise SystemExit(f"Suite {suite_name} has an invalid testbed value")
+
+if (
+    not isinstance(timeout_minutes, int)
+    or isinstance(timeout_minutes, bool)
+):
+    raise SystemExit(f"Suite {suite_name} has no valid timeout_minutes value")
+
+if (
+    not isinstance(local_status, str)
+    or not re.fullmatch(r"[a-z0-9_-]+", local_status)
+):
+    raise SystemExit(f"Suite {suite_name} has an invalid local_status value")
+
+if not isinstance(tags, list):
+    raise SystemExit(f"Suite {suite_name} tags must be a YAML list")
+
+for tag in tags:
+    if not isinstance(tag, str) or not re.fullmatch(r"[a-zA-Z0-9_:-]+", tag):
+        raise SystemExit(f"Suite {suite_name} contains an unsafe tag: {tag}")
+
+tags_record = ",".join(tags) if tags else "-"
+print(
+    "\t".join(
+        [testbed, str(timeout_minutes), local_status, tags_record]
+    )
+)
+PY
+'''
+            ).trim()
+        }
+    }
+
+    def fields = manifestRecord.split('\t', -1)
+
+    if (fields.size() != 4) {
+        error("Unable to parse manifest configuration for ${suiteName}")
+    }
+
+    def tags = fields[3] == '-' ? [] : fields[3].split(',').toList()
+
+    return [
+        testbed: fields[0],
+        timeout_minutes: fields[1] as Integer,
+        local_status: fields[2],
+        tags: tags
+    ]
+}
+
 def runNDTests(ndConfig) {
     echo "Running ND ${ndConfig.version} tests..."
 
@@ -325,38 +447,12 @@ def runNDTests(ndConfig) {
         '''
     }
 
-    def manifest
-    dir(env.COLLECTIONS_DIR) {
-        manifest = readYaml file: 'nd_suite_manifest.yaml'
-    }
-
-    if (manifest.schema_version != 1) {
-        error("Unsupported manifest schema_version: ${manifest.schema_version}")
-    }
-
-    if (!manifest.suites) {
-        error('nd_suite_manifest.yaml contains no suites')
-    }
-
-    def requestedSuiteNames
-
-    if (params.TARGET_SET == 'both') {
-        requestedSuiteNames = [
-            'nd_interface_loopback',
-            'nd_interface_ethernet_access'
-        ]
-    } else {
-        requestedSuiteNames = [params.TARGET_SET]
-    }
+    def requestedSuiteNames = getRequestedSuiteNames()
 
     def selectedSuites = [:]
 
     requestedSuiteNames.each { requestedSuite ->
-        def requestedConfig = manifest.suites[requestedSuite]
-
-        if (!requestedConfig) {
-            error("Suite is not present in the manifest: ${requestedSuite}")
-        }
+        def requestedConfig = loadSuiteConfiguration(requestedSuite)
 
         if (requestedConfig.local_status != 'passed') {
             error(
