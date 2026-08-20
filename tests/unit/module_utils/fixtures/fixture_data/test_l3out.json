@@ -1,0 +1,255 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_l3out.py.",
+        "Keys follow the test_l3out_<NNNNN><a|b|c|...> convention.",
+        "Suffix order matches the order RestSend.commit() will consume responses within each test.",
+        "L3Out operations do NOT require switch resolution (unlike loopback).",
+        "L3Out create wraps in {\"l3Outs\": [...]} envelope.",
+        "L3Out query_all returns {\"l3Outs\": [...]} and uses ?fabricName= query param.",
+        "L3Out bulk delete uses POST /l3OutActions/remove with {\"l3OutNames\": [...]}."
+    ],
+
+    "test_l3out_00100a": {
+        "TEST_NOTES": ["create happy path: POST /l3Outs (200)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "test-l3out-bgp", "status": "success", "statusCode": 200}
+            ]
+        }
+    },
+
+    "test_l3out_00110a": {
+        "TEST_NOTES": ["create _request failure: POST returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_l3out_00120a": {
+        "TEST_NOTES": ["create bulk response with per-item failure: POST returns 207"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "test-l3out-bgp", "status": "failed", "statusCode": 409, "message": "L3Out already exists"}
+            ]
+        }
+    },
+
+    "test_l3out_00200a": {
+        "TEST_NOTES": ["update happy path: PUT /l3Outs/test-l3out-bgp (200)"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs/test-l3out-bgp",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_l3out_00210a": {
+        "TEST_NOTES": ["update _request failure: PUT returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs/test-l3out-bgp",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_l3out_00300a": {
+        "TEST_NOTES": ["delete happy path: DELETE /l3Outs/test-l3out-bgp (200)"],
+        "RETURN_CODE": 200,
+        "METHOD": "DELETE",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs/test-l3out-bgp",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+
+    "test_l3out_00310a": {
+        "TEST_NOTES": ["delete _request failure: DELETE returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "DELETE",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs/test-l3out-bgp",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_l3out_00400a": {
+        "TEST_NOTES": ["create_bulk happy path: POST /l3Outs (200) with 2 items"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "test-l3out-bgp", "status": "success", "statusCode": 200},
+                {"name": "test-l3out-static", "status": "success", "statusCode": 200}
+            ]
+        }
+    },
+
+    "test_l3out_00410a": {
+        "TEST_NOTES": ["create_bulk _request failure: POST returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_l3out_00500a": {
+        "TEST_NOTES": ["delete_bulk happy path: POST /l3OutActions/remove (200)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3OutActions/remove",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "test-l3out-bgp", "status": "success", "statusCode": 200},
+                {"name": "test-l3out-static", "status": "success", "statusCode": 200}
+            ]
+        }
+    },
+
+    "test_l3out_00510a": {
+        "TEST_NOTES": ["delete_bulk _request failure: POST returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3OutActions/remove",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_l3out_00520a": {
+        "TEST_NOTES": ["delete_bulk partial failure: POST returns 200 with per-item failure"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3OutActions/remove",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "test-l3out-bgp", "status": "success", "statusCode": 200},
+                {"name": "test-l3out-static", "status": "failed", "statusCode": 404, "message": "L3Out not found"}
+            ]
+        }
+    },
+
+    "test_l3out_00600a": {
+        "TEST_NOTES": ["query_one happy path: GET /l3Outs/test-l3out-bgp (200)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs/test-l3out-bgp",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "test-l3out-bgp",
+            "fabric1Name": "DC1-Fabric",
+            "fabric2Name": "External-Fabric",
+            "vrf1Name": "production",
+            "vrf2Name": "external",
+            "configuredFabrics": "both",
+            "ipVersion": "ipv4",
+            "connectivityDetails": {
+                "routingInterfaceType": "routed",
+                "links": [
+                    {
+                        "mtu": 9216,
+                        "ipv4MaskLength": 30,
+                        "switch1Details": {
+                            "switchId": "FDO12345678",
+                            "interfaceName": "Ethernet1/1",
+                            "ipv4Address": "10.0.0.1"
+                        },
+                        "switch2Details": {
+                            "switchId": "FDO87654321",
+                            "interfaceName": "Ethernet1/1",
+                            "ipv4Address": "10.0.0.2"
+                        }
+                    }
+                ]
+            },
+            "routingDetails": {
+                "routingProtocol": "bgp",
+                "bfd": true,
+                "holdInterval": 180,
+                "keepAliveInterval": 60,
+                "fabric1Details": {
+                    "advertiseDefaultRoute": true,
+                    "ipv4PeeringDetails": {
+                        "ipv4RouteMapIn": "rm-in",
+                        "ipv4RouteMapOut": "rm-out"
+                    }
+                }
+            }
+        }
+    },
+
+    "test_l3out_00610a": {
+        "TEST_NOTES": ["query_one _request failure: GET returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs/test-l3out-bgp",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_l3out_00700a": {
+        "TEST_NOTES": ["query_all happy path: POST /l3Outs?fabricName=test_fabric (200)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs?fabricName=test_fabric",
+        "MESSAGE": "OK",
+        "DATA": {
+            "l3Outs": [
+                {
+                    "name": "l3out-bgp",
+                    "fabric1Name": "DC1-Fabric",
+                    "fabric2Name": "External-Fabric",
+                    "configuredFabrics": "both",
+                    "ipVersion": "ipv4"
+                },
+                {
+                    "name": "l3out-static",
+                    "fabric1Name": "DC1-Fabric",
+                    "fabric2Name": "External-Fabric",
+                    "configuredFabrics": "fabric1",
+                    "ipVersion": "ipv4"
+                }
+            ]
+        }
+    },
+
+    "test_l3out_00710a": {
+        "TEST_NOTES": ["query_all empty result: POST returns 200 with empty l3Outs array"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs?fabricName=test_fabric",
+        "MESSAGE": "OK",
+        "DATA": {
+            "l3Outs": []
+        }
+    },
+
+    "test_l3out_00720a": {
+        "TEST_NOTES": ["query_all _request failure: POST returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs?fabricName=test_fabric",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_l3out_00730a": {
+        "TEST_NOTES": ["query_all 404 returns empty: POST returns 404"],
+        "RETURN_CODE": 404,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/l3Outs?fabricName=test_fabric",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    }
+}

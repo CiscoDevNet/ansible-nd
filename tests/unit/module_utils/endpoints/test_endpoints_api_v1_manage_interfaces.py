@@ -320,11 +320,11 @@ def test_ep_manage_interfaces_00140():
     assert path == "/api/v1/manage/fabrics/fab1/switches/SN123/interfaces"
     assert set(query.split("&")) == {
         "clusterName=cluster-a",
-        "filter=ifName:Ethernet1/1",
+        "filter=ifName%3AEthernet1%2F1",
         "max=50",
         "networkName=net1",
         "offset=0",
-        "sort=ifName:asc",
+        "sort=ifName%3Aasc",
         "configOnly=true",
     }
 

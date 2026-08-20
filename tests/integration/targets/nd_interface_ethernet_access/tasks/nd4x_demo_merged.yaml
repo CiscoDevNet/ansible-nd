@@ -5,7 +5,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names:
@@ -41,7 +40,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - "{{ ethernet_41 }}"
         expected:
@@ -112,7 +110,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - "{{ ethernet_44 }}"
         expected:
@@ -169,7 +166,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - "{{ ethernet_41 }}"
         expected:
@@ -211,7 +207,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - "{{ ethernet_41_updated }}"
         expected:
@@ -269,7 +264,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         module_args:
           deploy: false
         config:
@@ -317,7 +311,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names:

@@ -28,7 +28,6 @@
       /api/v1/manage/fabrics/{{ test_fabric_name
       }}/switches/{{ item.switchId }}/interfaces
     method: get
-    timeout: 300
   loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
   loop_control:
     label: >-
@@ -115,7 +114,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
@@ -125,7 +123,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - "{{ ethernet_41_updated }}"
           - "{{ ethernet_42_43_updated }}"
@@ -139,7 +136,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - "{{ ethernet_41_replaced }}"
         state: replaced
@@ -148,7 +144,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - "{{ ethernet_42_43_replaced }}"
         state: replaced
@@ -157,7 +152,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - "{{ ethernet_41_replaced_multi }}"
           - "{{ ethernet_44_replaced }}"
@@ -211,7 +205,6 @@
           }}/switches/{{ test_switch_id
           }}/interfaces/Ethernet1%2F48
         method: get
-        timeout: 300
       register: overridden_sentinel_before
       changed_when: false
 
@@ -230,7 +223,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - "{{ ethernet_41_overridden }}"
           - "{{ ethernet_42_overridden }}"
@@ -344,7 +336,6 @@
           }}/switches/{{ test_switch_id
           }}/interfaces/Ethernet1%2F48
         method: get
-        timeout: 300
       register: overridden_sentinel_after_reduce
       changed_when: false
 
@@ -362,7 +353,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - "{{ ethernet_41_overridden }}"
           - "{{ ethernet_42_overridden }}"
@@ -418,7 +408,6 @@
           }}/switches/{{ test_switch_id
           }}/interfaces/Ethernet1%2F48
         method: get
-        timeout: 300
       register: overridden_sentinel_after_filter
       changed_when: false
 
@@ -436,7 +425,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - "{{ ethernet_42_43 }}"
           - "{{ ethernet_44 }}"
@@ -522,7 +510,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - "{{ ethernet_45_46_47 }}"
         expected:
@@ -619,7 +606,6 @@
           }}/switches/{{ test_switch_id
           }}/interfaces/Ethernet1%2F48
         method: get
-        timeout: 300
       register: overridden_sentinel_final
       changed_when: false
 
@@ -635,7 +621,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"

@@ -1,0 +1,106 @@
+---
+# Variables for nd_interface_subinterface_managed integration tests.
+#
+# Override fabric_name, switch_ip, ethernet_parent and port_channel_parent in your
+# inventory or extra-vars to match a real ND 4.2 testbed.
+#
+# The parent interfaces must exist and (for Ethernet parents) must be free of any
+# L2 mode conflicts before subinterfaces can be created on them.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
+test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
+ethernet_parent: "{{ nd_test_ethernet_parent | default('Ethernet1/3') }}"
+port_channel_parent: "{{ nd_test_port_channel_parent | default('Port-channel10') }}"
+
+# --- Base configs ---
+
+subif_eth_2:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.2"
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Ansible integration test subif Eth.2"
+        vlan_id: 2
+        vrf_interface: default
+        ip: 192.168.50.50
+        prefix: 24
+        ipv6: "2001:192:168:50::50"
+        ipv6_prefix: 64
+        mtu: 9216
+        ip_redirects: true
+        pim_sparse: false
+        pim_dr_priority: 1
+        netflow: false
+
+subif_eth_3:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.3"
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Ansible integration test subif Eth.3"
+        vlan_id: 3
+        vrf_interface: default
+        ip: 192.168.51.50
+        prefix: 24
+
+subif_eth_4:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.4"
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Ansible integration test subif Eth.4"
+        vlan_id: 4
+        vrf_interface: default
+        ip: 192.168.52.50
+        prefix: 24
+
+subif_pc_5:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ port_channel_parent }}.5"
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Ansible integration test subif PC.5"
+        vlan_id: 5
+        vrf_interface: default
+        ip: 192.168.55.1
+        prefix: 24
+
+# --- Updated configs for merge/replace tests ---
+
+subif_eth_2_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.2"
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Updated subif Eth.2"
+        vlan_id: 2
+        vrf_interface: default
+        ip: 192.168.50.51
+        prefix: 24
+        ip_redirects: false
+        pim_sparse: true
+        pim_dr_priority: 50
+        routing_tag: "12345"
+        netflow: false
+
+# --- Cleanup helper: all test subinterfaces to remove before tests run ---
+
+cleanup_config:
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.2"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.3"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.4"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ port_channel_parent }}.5"

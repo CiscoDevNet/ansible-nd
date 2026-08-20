@@ -48,35 +48,17 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from ansible.module_utils.basic import env_fallback
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+
+# nd_argument_spec is re-exported for backward compatibility: this file previously defined its own copy and nd_manage_switches imports it from here.
+# New code should import it from nd_argument_specs directly (see issue #384).
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import nd_argument_spec  # noqa: F401  pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_handler import ResponseHandlerProtocol
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.sender import SenderProtocol
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
-
-
-def nd_argument_spec() -> dict[str, Any]:
-    """
-    Return the common argument spec for ND modules.
-
-    This function provides the standard arguments that all ND modules
-    should accept for connection and authentication.
-    """
-    return dict(
-        host=dict(type="str", required=False, aliases=["hostname"], fallback=(env_fallback, ["ND_HOST"])),
-        port=dict(type="int", required=False, fallback=(env_fallback, ["ND_PORT"])),
-        username=dict(type="str", fallback=(env_fallback, ["ND_USERNAME", "ANSIBLE_NET_USERNAME"])),
-        password=dict(type="str", required=False, no_log=True, fallback=(env_fallback, ["ND_PASSWORD", "ANSIBLE_NET_PASSWORD"])),
-        output_level=dict(type="str", default="normal", choices=["debug", "info", "normal"], fallback=(env_fallback, ["ND_OUTPUT_LEVEL"])),
-        timeout=dict(type="int", default=30, fallback=(env_fallback, ["ND_TIMEOUT"])),
-        use_proxy=dict(type="bool", fallback=(env_fallback, ["ND_USE_PROXY"])),
-        use_ssl=dict(type="bool", fallback=(env_fallback, ["ND_USE_SSL"])),
-        validate_certs=dict(type="bool", fallback=(env_fallback, ["ND_VALIDATE_CERTS"])),
-        login_domain=dict(type="str", fallback=(env_fallback, ["ND_LOGIN_DOMAIN"])),
-    )
 
 
 class NDModule:
@@ -179,6 +161,27 @@ class NDModule:
             msg += f"{params}"
             self.log.debug(msg)
         return self._rest_send
+
+    def get_rest_send(self) -> RestSend:
+        """
+        # Summary
+
+        Public accessor for the lazily-initialised ``RestSend`` instance.
+
+        Wraps the private ``_get_rest_send()`` to provide a stable public
+        API for external callers (e.g., modules or resource helpers that
+        need ``RestSend`` *before* any ``request()`` call has been made).
+
+        The existing ``rest_send`` ``@property`` is unsuitable for these
+        early-access patterns because it raises ``ValueError`` until
+        ``request()`` initialises ``_rest_send``. This method triggers
+        the lazy initialisation instead.
+
+        ## Returns
+
+        -   RestSend: Configured ``RestSend`` instance ready for use.
+        """
+        return self._get_rest_send()
 
     @property
     def rest_send(self) -> RestSend:

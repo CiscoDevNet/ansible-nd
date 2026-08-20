@@ -7,7 +7,6 @@
     idempotency: false
     common_args:
       output_level: "{{ nd_info.output_level }}"
-      timeout: 300
       fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"

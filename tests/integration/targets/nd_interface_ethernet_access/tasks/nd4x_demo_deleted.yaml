@@ -5,7 +5,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
@@ -15,7 +14,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - "{{ ethernet_45_46_47 }}"
         state: merged
@@ -44,7 +42,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names:
@@ -106,7 +103,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names:
@@ -162,7 +158,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - "{{ ethernet_41 }}"
           - "{{ ethernet_42_43 }}"
@@ -192,7 +187,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names:
@@ -264,7 +258,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names:
@@ -308,7 +301,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"

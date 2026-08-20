@@ -1,0 +1,159 @@
+---
+- name: Test Entry Point - [nd_manage_vrfs - replaced]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Replaced Tests - [nd_manage_vrfs]                       +"
+      - "----------------------------------------------------------------"
+  tags: replaced
+
+- name: Replaced - Build Standalone Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_standalone_fabric }}"
+    target_vrf_names:
+      - ansible-nd-vrf-replaced
+      - ansible-nd-vrf-replaced-l3vni
+    nd_vrf_replace_base:
+      - vrf_name: ansible-nd-vrf-replaced
+        vrf_id: "{{ nd_vrf_base_id + 2 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 2 }}"
+        vrf_description: Ansible ND VRF replaced base
+        loopback_route_tag: 12345
+        redist_direct_rmap: FABRIC-RMAP-REDIST-SUBNET
+        v6_redist_direct_rmap: FABRIC-RMAP-REDIST-SUBNET
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+      - vrf_name: ansible-nd-vrf-replaced-l3vni
+        vrf_id: "{{ nd_vrf_base_id + 12 }}"
+        l3vni_wo_vlan: true
+        vrf_description: Ansible ND VRF replaced L3VNI base
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+    nd_vrf_replace_config:
+      - vrf_name: ansible-nd-vrf-replaced
+        vrf_id: "{{ nd_vrf_base_id + 2 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 2 }}"
+        vrf_description: Ansible ND VRF replaced updated
+        max_bgp_paths: 4
+        max_ibgp_paths: 4
+        ipv6_linklocal_enable: true
+        disable_rt_auto: true
+        import_vpn_rt:
+          - "65000:50002"
+        export_vpn_rt:
+          - "65000:50002"
+        import_evpn_rt:
+          - "65000:50002"
+        export_evpn_rt:
+          - "65000:50002"
+        adv_host_routes: true
+        adv_default_routes: false
+        static_default_route: false
+        trm_enable: false
+        bgp_password: abcdef12
+        bgp_passwd_encrypt: 3
+        netflow_enable: false
+        deploy: false
+      - vrf_name: ansible-nd-vrf-replaced-l3vni
+        vrf_id: "{{ nd_vrf_base_id + 12 }}"
+        l3vni_wo_vlan: true
+        vrf_description: Ansible ND VRF replaced L3VNI updated
+        loopback_route_tag: 12356
+        max_bgp_paths: 2
+        max_ibgp_paths: 2
+        ipv6_linklocal_enable: true
+        disable_rt_auto: false
+        import_vpn_rt:
+          - "65000:50012"
+        export_vpn_rt:
+          - "65000:50012"
+        import_evpn_rt:
+          - "65000:50012"
+        export_evpn_rt:
+          - "65000:50012"
+        adv_host_routes: true
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+  delegate_to: localhost
+  tags: replaced
+
+- name: Replaced - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when: nd_vrf_run_standalone | bool
+  tags: replaced
+
+- name: Replaced - Prepare Base Configuration
+  vars:
+    file: standalone_replace_base
+    vrf_conf: "{{ nd_vrf_replace_base }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_standalone | bool
+  tags: replaced
+
+- name: Replaced - Prepare Replacement Configuration
+  vars:
+    file: standalone_replace
+    vrf_conf: "{{ nd_vrf_replace_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC1 - Create Base VRF
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_standalone_replace_base_conf }}"
+  register: replace_base_result
+  when: nd_vrf_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC2 - Replace VRF
+  cisco.nd.nd_manage_vrfs: &replace_conf
+    fabric_name: "{{ target_fabric }}"
+    state: replaced
+    config: "{{ nd_vrf_standalone_replace_conf }}"
+    output_level: debug
+  register: replace_result
+  when: nd_vrf_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC2 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - replace_result.changed == true
+  when: nd_vrf_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC2 - Gather VRFs
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: []
+  register: gathered_result
+  when: nd_vrf_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC2 - Validate Gathered Data
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ gathered_result }}"
+    test_data: "{{ nd_vrf_standalone_replace_conf }}"
+  when: nd_vrf_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC3 - Idempotence
+  cisco.nd.nd_manage_vrfs: *replace_conf
+  register: replace_idempotent
+  when: nd_vrf_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - replace_idempotent.changed == false
+  when: nd_vrf_run_standalone | bool
+  tags: replaced

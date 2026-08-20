@@ -72,6 +72,8 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
+    _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
+
     # Fabric Type (required for discriminated union)
     type: Literal[FabricTypeEnum.EXTERNAL_CONNECTIVITY] = Field(description="Fabric management type", default=FabricTypeEnum.EXTERNAL_CONNECTIVITY)
 
@@ -133,7 +135,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     dns_vrf_collection: list[str] = Field(
         alias="dnsVrfCollection",
         description="DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server",
-        default_factory=lambda: ["string"],
+        default_factory=list,
     )
 
     # Domain

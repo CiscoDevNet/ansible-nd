@@ -4,7 +4,8 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Dict, Any, Optional, List, Union
+from typing import Any, Dict, List, Optional, Union
+
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
@@ -100,7 +101,7 @@ class NDOutput:
         diff: Optional[NDConfigCollection] = None,
         proposed: Optional[NDConfigCollection] = None,
         logs: Optional[List] = None,
-        **kwargs
+        **kwargs,
     ) -> None:
         if isinstance(after, NDConfigCollection):
             self._after = after

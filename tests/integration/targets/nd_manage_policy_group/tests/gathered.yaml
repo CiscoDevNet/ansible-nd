@@ -1,0 +1,352 @@
+---
+##############################################
+##  nd_policy_group — state=gathered tests  ##
+##############################################
+#
+# All test policy groups use description prefix "IT-GATHERED-" to
+# isolate from any pre-existing fabric state.  Assertions filter
+# on this prefix so results are deterministic regardless of what
+# else exists on the controller.
+
+##############################################
+##               CLEANUP                    ##
+##############################################
+
+- name: "GATHERED - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup_gathered.yaml
+  tags: gathered
+
+- block:
+
+    ##############################################
+    ##     SETUP — Create known policy groups   ##
+    ##############################################
+
+    - name: "GATHERED SETUP - Create test policy groups"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "IT-GATHERED-Enable LACP"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lacp
+
+          - name: feature_enable
+            description: "IT-GATHERED-Enable LLDP"
+            switch_ids:
+              - "{{ switch_serial_2 }}"
+            template_inputs:
+              featureName: lldp
+
+          - name: switch_freeform
+            description: "IT-GATHERED-System vlan long-name"
+            priority: 110
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+              - "{{ switch_serial_2 }}"
+            template_inputs:
+              CONF: "system vlan long-name"
+
+          - name: clock_timezone
+            description: "IT-GATHERED-Timezone CET"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+      register: setup_result
+      tags: gathered
+
+    - name: "GATHERED SETUP - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - setup_result.changed == true
+      tags: gathered
+
+    ##############################################
+    ##         TEST CASES                       ##
+    ##############################################
+
+    # ==========================================
+    # TC-1: Gather ALL (no config)
+    # ==========================================
+    - name: "GATHERED TC1 - Gather all policy groups (no config)"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC1 - Verify our 4 test groups are present"
+      vars:
+        our_groups: "{{ result.gathered | default([]) | selectattr('description', 'match', '^IT-GATHERED-') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered is defined
+          - our_groups | length == 4
+        fail_msg: "Expected 4 IT-GATHERED groups, got {{ our_groups | length }}. Full gathered: {{ result.gathered | default([]) | map(attribute='description') | list }}"
+      tags: gathered
+
+    # ==========================================
+    # TC-2: Gather by template name (multi-match)
+    # ==========================================
+    - name: "GATHERED TC2 - Gather feature_enable groups"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: feature_enable
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC2 - Verify both feature_enable groups returned"
+      vars:
+        our_groups: "{{ result.gathered | default([]) | selectattr('description', 'match', '^IT-GATHERED-') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - our_groups | length == 2
+          - our_groups | selectattr('description', 'equalto', 'IT-GATHERED-Enable LACP') | list | length == 1
+          - our_groups | selectattr('description', 'equalto', 'IT-GATHERED-Enable LLDP') | list | length == 1
+      tags: gathered
+
+    # ==========================================
+    # TC-3: Gather by template name (single match)
+    # ==========================================
+    - name: "GATHERED TC3 - Gather clock_timezone groups"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC3 - Verify single clock_timezone group"
+      vars:
+        our_groups: "{{ result.gathered | default([]) | selectattr('description', 'match', '^IT-GATHERED-') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - our_groups | length == 1
+          - our_groups[0].description == 'IT-GATHERED-Timezone CET'
+          - our_groups[0].name == 'clock_timezone'
+      tags: gathered
+
+    # ==========================================
+    # TC-4: Gather by template + description (exact match)
+    # ==========================================
+    - name: "GATHERED TC4 - Gather exact match (feature_enable + Enable LACP)"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: feature_enable
+            description: "IT-GATHERED-Enable LACP"
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC4 - Verify exact match returns 1 entry"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length == 1
+          - result.gathered[0].description == 'IT-GATHERED-Enable LACP'
+          - result.gathered[0].name == 'feature_enable'
+      tags: gathered
+
+    # ==========================================
+    # TC-5: Gather by policy group ID
+    # ==========================================
+    - name: "GATHERED TC5a - First gather all to extract a policy_id"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+      register: all_gathered
+      tags: gathered
+
+    - name: "GATHERED TC5b - Extract policy_id for LACP group"
+      ansible.builtin.set_fact:
+        lacp_policy_id: "{{ (all_gathered.gathered | selectattr('description', 'equalto', 'IT-GATHERED-Enable LACP') | first).policy_id }}"
+      tags: gathered
+
+    - name: "GATHERED TC5c - Gather by extracted policy group ID"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: "{{ lacp_policy_id }}"
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC5d - Verify ID-based gather returns exact match"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length == 1
+          - result.gathered[0].policy_id == lacp_policy_id
+          - result.gathered[0].description == 'IT-GATHERED-Enable LACP'
+          - result.gathered[0].name == 'feature_enable'
+      tags: gathered
+
+    # ==========================================
+    # TC-6: Gather non-existent template
+    # ==========================================
+    - name: "GATHERED TC6 - Gather non-existent template"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: bogus_template_does_not_exist
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC6 - Verify empty result (Fix B: gathered key must be present)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered is defined
+          - result.gathered == []
+      tags: gathered
+
+    # ==========================================
+    # TC-7: Gather non-existent policy group ID
+    # ==========================================
+    - name: "GATHERED TC7 - Gather non-existent policy group ID"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: POLICY-GROUP-999999
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC7 - Verify empty result (Fix B: gathered key must be present)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered is defined
+          - result.gathered == []
+      tags: gathered
+
+    # ==========================================
+    # TC-8: Gather with multiple filter entries
+    # ==========================================
+    - name: "GATHERED TC8 - Gather feature_enable + clock_timezone"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: feature_enable
+          - name: clock_timezone
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC8 - Verify 3 groups returned (2 feature + 1 clock)"
+      vars:
+        our_groups: "{{ result.gathered | default([]) | selectattr('description', 'match', '^IT-GATHERED-') | list }}"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - our_groups | length == 3
+      tags: gathered
+
+    # ==========================================
+    # TC-9: Gathered output structure validation
+    # ==========================================
+    - name: "GATHERED TC9 - Validate structure of each gathered entry"
+      vars:
+        our_groups: "{{ all_gathered.gathered | default([]) | selectattr('description', 'match', '^IT-GATHERED-') | list }}"
+      ansible.builtin.assert:
+        that:
+          # Every entry has required keys
+          - item.name is defined
+          - item.policy_id is defined
+          - item.description is defined
+          - item.switch_ids is defined
+          - item.priority is defined
+          # policy_id format
+          - item.policy_id is match('^POLICY-GROUP-')
+          # switch_ids is a list
+          - item.switch_ids is iterable
+          - item.switch_ids is not string
+          # name is a template name (not a policy ID)
+          - item.name is not match('^POLICY-GROUP-')
+      loop: "{{ our_groups }}"
+      loop_control:
+        label: "{{ item.description }}"
+      tags: gathered
+
+    # ==========================================
+    # TC-10: Gathered idempotency
+    # ==========================================
+    - name: "GATHERED TC10a - First gather"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: feature_enable
+            description: "IT-GATHERED-Enable LACP"
+      register: gather_first
+      tags: gathered
+
+    - name: "GATHERED TC10b - Second gather (same params)"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: feature_enable
+            description: "IT-GATHERED-Enable LACP"
+      register: gather_second
+      tags: gathered
+
+    - name: "GATHERED TC10c - Verify both gathers return identical results"
+      ansible.builtin.assert:
+        that:
+          - gather_first.changed == false
+          - gather_second.changed == false
+          - gather_first.gathered | length == gather_second.gathered | length
+          - gather_first.gathered[0].policy_id == gather_second.gathered[0].policy_id
+          - gather_first.gathered[0].description == gather_second.gathered[0].description
+      tags: gathered
+
+    # ==========================================
+    # TC-11: Verify specific field values
+    # ==========================================
+    - name: "GATHERED TC11 - Verify field values for clock_timezone group"
+      vars:
+        clock_group: "{{ all_gathered.gathered | selectattr('description', 'equalto', 'IT-GATHERED-Timezone CET') | first }}"
+      ansible.builtin.assert:
+        that:
+          - clock_group.name == 'clock_timezone'
+          - clock_group.switch_ids | length == 1
+          - switch_serial_1 in clock_group.switch_ids
+          - clock_group.template_inputs is defined
+          - clock_group.template_inputs.TIME_ZONE == 'CET'
+      tags: gathered
+
+    - name: "GATHERED TC11b - Verify field values for switch_freeform group"
+      vars:
+        freeform_group: "{{ all_gathered.gathered | selectattr('description', 'equalto', 'IT-GATHERED-System vlan long-name') | first }}"
+      ansible.builtin.assert:
+        that:
+          - freeform_group.name == 'switch_freeform'
+          - freeform_group.switch_ids | length == 2
+          - switch_serial_1 in freeform_group.switch_ids
+          - switch_serial_2 in freeform_group.switch_ids
+          - freeform_group.priority == 110
+          # PRIORITY is controller metadata and must not leak into gathered
+          # template_inputs. Top-level priority is the canonical source.
+          - freeform_group.template_inputs.CONF == 'system vlan long-name'
+      tags: gathered
+
+  always:
+    - name: "GATHERED - Final cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup_gathered.yaml
+      tags: gathered

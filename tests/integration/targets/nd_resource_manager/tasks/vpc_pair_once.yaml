@@ -1,0 +1,116 @@
+---
+- name: Prepare expected vPC pair config once
+  ansible.builtin.set_fact:
+    rm_vpc_pair_conf:
+      - peer1_switch_id: "{{ ansible_sno_1 }}"
+        peer2_switch_id: "{{ ansible_sno_2 }}"
+        use_virtual_peer_link: false
+
+- name: Gather vPC pairs once before resource manager tests
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ ansible_it_fabric }}"
+    state: gathered
+  register: rm_vpc_pair_gathered_once
+
+- name: Normalize gathered vPC pair list
+  ansible.builtin.set_fact:
+    rm_vpc_pairs_current: >-
+      {{
+        (rm_vpc_pair_gathered_once.gathered.vpc_pairs | default([]))
+        +
+        (rm_vpc_pair_gathered_once.vpc_pairs | default([]))
+      }}
+
+- name: Detect expected vPC pair
+  ansible.builtin.set_fact:
+    rm_vpc_pair_exists: >-
+      {{
+        (
+          rm_vpc_pairs_current
+          | selectattr('switchId', 'defined')
+          | selectattr('peerSwitchId', 'defined')
+          | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
+          | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+          | list
+          | length
+        ) > 0
+        or
+        (
+          rm_vpc_pairs_current
+          | selectattr('switch_id', 'defined')
+          | selectattr('peer_switch_id', 'defined')
+          | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+          | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+          | list
+          | length
+        ) > 0
+      }}
+
+- name: Determine if vPC pair creation is needed
+  ansible.builtin.set_fact:
+    rm_vpc_pair_needs_create: "{{ not rm_vpc_pair_exists }}"
+
+- name: Create missing vPC pair once (or no-op gather)
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ ansible_it_fabric }}"
+    state: "{{ 'merged' if rm_vpc_pair_needs_create else 'gathered' }}"
+    config_actions: "{{ {'save': true, 'deploy': true, 'type': 'global'} if rm_vpc_pair_needs_create else omit }}"
+    config: "{{ rm_vpc_pair_conf if rm_vpc_pair_needs_create else omit }}"
+  register: rm_vpc_pair_create_once
+
+- name: Assert vPC pair create response when create is attempted
+  ansible.builtin.assert:
+    that:
+      - "(not rm_vpc_pair_needs_create) or ((rm_vpc_pair_create_once.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length) == 0)"
+
+- name: Re-gather vPC pairs after setup
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ ansible_it_fabric }}"
+    state: gathered
+  register: rm_vpc_pair_verify_once
+
+- name: Normalize re-gathered vPC pair list
+  ansible.builtin.set_fact:
+    rm_vpc_pairs_verify: >-
+      {{
+        (rm_vpc_pair_verify_once.gathered.vpc_pairs | default([]))
+        +
+        (rm_vpc_pair_verify_once.vpc_pairs | default([]))
+      }}
+
+- name: Compute final vPC pair existence
+  ansible.builtin.set_fact:
+    rm_vpc_pair_exists_final: >-
+      {{
+        rm_vpc_pair_exists
+        or
+        (
+          (
+            rm_vpc_pairs_verify | default([])
+            | selectattr('switchId', 'defined')
+            | selectattr('peerSwitchId', 'defined')
+            | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
+            | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+            | list
+            | length
+          ) > 0
+          or
+          (
+            rm_vpc_pairs_verify | default([])
+            | selectattr('switch_id', 'defined')
+            | selectattr('peer_switch_id', 'defined')
+            | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+            | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+            | list
+            | length
+          ) > 0
+        )
+      }}
+
+- name: Assert vPC pairing is successful before resource manager tests
+  ansible.builtin.assert:
+    that:
+      - rm_vpc_pair_exists_final | bool
+    fail_msg: >-
+      Required vPC pair for {{ ansible_sno_1 }} and {{ ansible_sno_2 }} is missing in fabric {{ ansible_it_fabric }}.
+      Automatic one-time creation was attempted but the pair is still missing.

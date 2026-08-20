@@ -1,0 +1,96 @@
+---
+# Merged state tests for nd_interface_subinterface_unmanaged
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Unmanaged subinterfaces have no user-configurable policy fields, so this file
+# exercises only create paths and idempotency. There is no "update" phase because
+# the only fields the module accepts are the identifier (switch_ip + interface_name).
+
+# --- MERGED CREATE: SINGLE SUBINTERFACE (ETHERNET PARENT) ---
+
+- name: "MERGED CREATE: Create Eth.20 subinterface (check mode)"
+  cisco.nd.nd_interface_subinterface_unmanaged: &merge_eth_20
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ subif_eth_20 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_eth_20
+
+- name: "MERGED CREATE: Create Eth.20 subinterface (normal mode)"
+  cisco.nd.nd_interface_subinterface_unmanaged: *merge_eth_20
+  register: nm_merged_create_eth_20
+
+- name: "MERGED CREATE: Verify Eth.20 creation"
+  vars:
+    expected_name: "{{ ethernet_parent }}.20"
+    eth_20_after: "{{ nm_merged_create_eth_20.after | selectattr('interface_name', 'equalto', expected_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_eth_20 is changed
+      - nm_merged_create_eth_20 is changed
+      - nm_merged_create_eth_20.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', expected_name) | list | length == 1
+      - eth_20_after.config_data.network_os.policy.policy_type == "monitorSubinterface"
+
+# --- MERGED CREATE: MULTIPLE SUBINTERFACES IN ONE TASK ---
+
+- name: "MERGED CREATE: Create Eth.21 and Eth.22 in one task"
+  cisco.nd.nd_interface_subinterface_unmanaged: &merge_eth_21_22
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ subif_eth_21 }}"
+      - "{{ subif_eth_22 }}"
+    state: merged
+  register: nm_merged_create_eth_21_22
+
+- name: "MERGED CREATE: Verify Eth.21 and Eth.22 creation"
+  vars:
+    eth_21_name: "{{ ethernet_parent }}.21"
+    eth_22_name: "{{ ethernet_parent }}.22"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_create_eth_21_22 is changed
+      - nm_merged_create_eth_21_22.after | selectattr('interface_name', 'equalto', eth_21_name) | list | length == 1
+      - nm_merged_create_eth_21_22.after | selectattr('interface_name', 'equalto', eth_22_name) | list | length == 1
+
+# --- MERGED CREATE: SUBINTERFACE ON PORT-CHANNEL PARENT ---
+
+- name: "MERGED CREATE: Create subinterface on Port-channel parent"
+  cisco.nd.nd_interface_subinterface_unmanaged:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ subif_pc_25 }}"
+    state: merged
+  register: nm_merged_create_pc_25
+
+- name: "MERGED CREATE: Verify Port-channel subinterface creation"
+  vars:
+    pc_25_name: "{{ port_channel_parent }}.25"
+    pc_25_after: "{{ nm_merged_create_pc_25.after | selectattr('interface_name', 'equalto', pc_25_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_create_pc_25 is changed
+      - nm_merged_create_pc_25.after | selectattr('interface_name', 'equalto', pc_25_name) | list | length == 1
+      - pc_25_after.config_data.network_os.policy.policy_type == "monitorSubinterface"
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Re-apply Eth.20 (check mode)"
+  cisco.nd.nd_interface_subinterface_unmanaged: *merge_eth_20
+  check_mode: true
+  register: cm_merged_idem_eth_20
+
+- name: "MERGED IDEMPOTENT: Re-apply Eth.20 (normal mode)"
+  cisco.nd.nd_interface_subinterface_unmanaged: *merge_eth_20
+  register: nm_merged_idem_eth_20
+
+- name: "MERGED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_eth_20 is not changed
+      - nm_merged_idem_eth_20 is not changed

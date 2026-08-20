@@ -293,7 +293,7 @@ def test_endpoints_api_v1_manage_vpc_pair_00540() -> None:
             "clusterName=cluster-a",
             "hostname=leaf1",
             "max=100",
-            "filter=name:leaf*",
-            "sort=name:asc",
+            "filter=name%3Aleaf%2A",
+            "sort=name%3Aasc",
         },
     )

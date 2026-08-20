@@ -48,8 +48,16 @@ def responses_loopback_interface(key: str):
     return load_fixture("test_loopback_interface")[key]
 
 
-def _build_rest_send(gen_responses: ResponseGenerator) -> RestSend:
-    """Build a `RestSend` wired to a file-based `Sender` and `ResponseHandler`."""
+def _build_rest_send(
+    gen_responses: ResponseGenerator,
+    state: str | None = None,
+    config: list[dict] | None = None,
+) -> RestSend:
+    """Build a `RestSend` wired to a file-based `Sender` and `ResponseHandler`.
+
+    `state` and `config` populate `rest_send.params` so `query_all`'s `_switches_to_query` scoping
+    (fabric-wide for `overridden`, config-scoped otherwise) can be exercised.
+    """
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
     sender.gen = gen_responses
@@ -59,7 +67,13 @@ def _build_rest_send(gen_responses: ResponseGenerator) -> RestSend:
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    rest_send = RestSend({"check_mode": False, "fabric_name": "fabric_1"})
+    params: dict = {"check_mode": False, "fabric_name": "fabric_1"}
+    if state is not None:
+        params["state"] = state
+    if config is not None:
+        params["config"] = config
+
+    rest_send = RestSend(params)
     rest_send.sender = sender
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
@@ -236,13 +250,15 @@ def test_loopback_interface_00120() -> None:
     """
     # Summary
 
-    Verify `create` wraps an unknown-switch-IP `RuntimeError` from `_resolve_switch_id`.
+    Verify `create` wraps an unknown-switch-IP `RuntimeError` raised by `_resolve_switch_id`.
+
+    Capability preflight now runs centrally in `NDStateMachine` (not inside `create`), so an unresolvable
+    `switch_ip` reaching `create` directly surfaces the raw `_resolve_switch_id` failure, wrapped by `create`.
 
     ## Test
 
     - switches-list returns a different IP than the model's `switch_ip`
-    - `_resolve_switch_id` raises `RuntimeError` with `No switch found with fabricManagementIp '192.168.12.151'`
-    - `create` re-raises as `RuntimeError` matching `Create failed for .*loopback10`
+    - `_resolve_switch_id` raises; `create` re-raises as `RuntimeError` matching `Create failed for .*loopback10`
 
     ## Classes and Methods
 
@@ -678,11 +694,12 @@ def test_loopback_interface_00700() -> None:
     """
     # Summary
 
-    Verify `query_all` validates prerequisites, iterates all switches in the fabric, filters interfaces to `policyType: loopback`,
-    and enriches each result with `switchIp`.
+    Verify `query_all` validates prerequisites, iterates all switches in the fabric (`state: overridden` is fabric-wide
+    per `_switches_to_query`), filters interfaces to `policyType: loopback`, and enriches each result with `switchIp`.
 
     ## Test
 
+    - state is `overridden`, so `_switches_to_query` returns the full switch map
     - Fabric summary fetched once (validate_prerequisites)
     - Switches-list fetched once (switch_map)
     - Per-switch interfaces fetched (two switches in fixture)
@@ -692,6 +709,7 @@ def test_loopback_interface_00700() -> None:
     ## Classes and Methods
 
     - LoopbackInterfaceOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator._switches_to_query()
     - NDBaseInterfaceOrchestrator.validate_prerequisites()
     """
     method_name = inspect.stack()[0][3]
@@ -703,7 +721,7 @@ def test_loopback_interface_00700() -> None:
         yield responses_loopback_interface(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
+    rest_send = _build_rest_send(gen_responses, state="overridden")
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
 
     with does_not_raise():
@@ -727,6 +745,7 @@ def test_loopback_interface_00710() -> None:
 
     ## Test
 
+    - state is `overridden`, so the switch's interfaces are fetched (fabric-wide scope)
     - Switch's interfaces list contains only ethernet entries
     - `query_all` returns an empty list
 
@@ -742,7 +761,7 @@ def test_loopback_interface_00710() -> None:
         yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
+    rest_send = _build_rest_send(gen_responses, state="overridden")
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
 
     with does_not_raise():
@@ -759,6 +778,7 @@ def test_loopback_interface_00720() -> None:
 
     ## Test
 
+    - state is `overridden`, so the switch's interfaces are fetched (fabric-wide scope)
     - Switch's interfaces list contains only `policyType: underlayLoopback` entries (Loopback0/Loopback1 system loopbacks)
     - `query_all` returns an empty list
 
@@ -774,7 +794,7 @@ def test_loopback_interface_00720() -> None:
         yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
+    rest_send = _build_rest_send(gen_responses, state="overridden")
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
 
     with does_not_raise():
@@ -845,6 +865,49 @@ def test_loopback_interface_00740() -> None:
         result = instance.query_all()
 
     assert result == []
+
+
+def test_loopback_interface_00750() -> None:
+    """
+    # Summary
+
+    Verify `query_all` scopes its per-switch interface-list fan-out to switches named in the user config when
+    `state` is not `overridden`, rather than querying every switch in the fabric.
+
+    ## Test
+
+    - Fabric has two switches (192.168.12.151, 192.168.12.152), but config names only 192.168.12.151
+    - state is `merged` (non-overridden), so `_switches_to_query` returns only the config switch
+    - Only the config switch's interfaces are fetched; the second switch is never queried (the response
+      generator yields exactly three responses — summary, switch list, switch-1 interfaces — and would raise
+      if a second per-switch GET were issued)
+    - Result contains only the user-managed loopback on the config switch
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._switches_to_query()
+    - LoopbackInterfaceOrchestrator.query_all()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
+
+    gen_responses = ResponseGenerator(responses())
+
+    config = [{"switch_ip": "192.168.12.151", "interface_name": "loopback10"}]
+
+    with does_not_raise():
+        rest_send = _build_rest_send(gen_responses, state="merged", config=config)
+        instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+        result = instance.query_all()
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "loopback10"
+    assert result[0]["switchIp"] == "192.168.12.151"
 
 
 # =============================================================================

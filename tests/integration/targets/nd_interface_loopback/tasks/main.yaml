@@ -147,8 +147,7 @@
         - nd4x_demo
         - nd4x_demo_overridden
       when: nd4x_supported | default(false) | bool
-  module_defaults:
-    cisco.nd.nd_interface_loopback:
-      timeout: 300
+  vars:
+    ansible_command_timeout: 300
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
