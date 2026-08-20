@@ -35,16 +35,32 @@ def _cfg(**overrides):
     return base
 
 
-def test_single_pairing_no_resources_ok_merged():
-    """A single (non-peer) pairing needs no resources for merged."""
+def test_single_pairing_with_base_pos_ok_merged():
+    """A single (non-peer) pairing needs only the two base PO IDs for merged."""
     with does_not_raise():
+        ManageTorModel.from_config(
+            _cfg(access_or_tor_port_channel_id=501, aggregation_or_leaf_port_channel_id=502),
+            context={"state": "merged"},
+        )
+
+
+def test_single_pairing_missing_base_pos_raises_merged():
+    """Both base PO IDs are required for a write; ND does not auto-allocate them."""
+    with pytest.raises(Exception, match="required for state 'merged'"):
         ManageTorModel.from_config(_cfg(), context={"state": "merged"})
 
 
 def test_vpc_leaf_peer_requires_leaf_resources_merged():
-    """A leaf vPC pairing (leaf peer set) requires leaf VPC ID + both leaf PO IDs."""
+    """A leaf vPC pairing (leaf peer set) requires leaf VPC ID + peer PO ID."""
     with pytest.raises(Exception, match="required when a peer switch is specified"):
-        ManageTorModel.from_config(_cfg(aggregation_or_leaf_peer_switch_id="L2"), context={"state": "merged"})
+        ManageTorModel.from_config(
+            _cfg(
+                aggregation_or_leaf_peer_switch_id="L2",
+                access_or_tor_port_channel_id=501,
+                aggregation_or_leaf_port_channel_id=502,
+            ),
+            context={"state": "merged"},
+        )
 
 
 def test_vpc_leaf_peer_with_resources_ok_merged():
@@ -53,6 +69,7 @@ def test_vpc_leaf_peer_with_resources_ok_merged():
         ManageTorModel.from_config(
             _cfg(
                 aggregation_or_leaf_peer_switch_id="L2",
+                access_or_tor_port_channel_id=501,
                 aggregation_or_leaf_vpc_id=2,
                 aggregation_or_leaf_port_channel_id=502,
                 aggregation_or_leaf_peer_port_channel_id=504,
@@ -62,9 +79,16 @@ def test_vpc_leaf_peer_with_resources_ok_merged():
 
 
 def test_vpc_tor_peer_requires_tor_resources_merged():
-    """A ToR vPC pairing (tor peer set) requires tor VPC ID + both tor PO IDs."""
+    """A ToR vPC pairing (tor peer set) requires tor VPC ID + peer PO ID."""
     with pytest.raises(Exception, match="required when a peer switch is specified"):
-        ManageTorModel.from_config(_cfg(access_or_tor_peer_switch_id="T2"), context={"state": "merged"})
+        ManageTorModel.from_config(
+            _cfg(
+                access_or_tor_peer_switch_id="T2",
+                access_or_tor_port_channel_id=501,
+                aggregation_or_leaf_port_channel_id=502,
+            ),
+            context={"state": "merged"},
+        )
 
 
 def test_deleted_skips_vpc_validation():

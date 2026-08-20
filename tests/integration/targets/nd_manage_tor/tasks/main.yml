@@ -147,6 +147,8 @@
       - access_or_tor_switch: "{{ test_tor_switch_id }}"
         aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
         aggregation_or_leaf_peer_switch: "{{ test_leaf_peer_switch_id }}"
+        access_or_tor_port_channel_id: 501
+        aggregation_or_leaf_port_channel_id: 502
     state: merged
   check_mode: true
   register: nm_vpc_missing_resources
@@ -157,6 +159,24 @@
     that:
       - nm_vpc_missing_resources is failed
       - "'required when a peer switch is specified' in (nm_vpc_missing_resources.msg | default(''))"
+
+- name: Associate a single pairing without base port-channel IDs (must fail)
+  cisco.nd.nd_manage_tor:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - access_or_tor_switch: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
+    state: merged
+  check_mode: true
+  register: nm_missing_base_pos
+  ignore_errors: true
+
+- name: Asserts single-pairing-without-base-POs is rejected
+  ansible.builtin.assert:
+    that:
+      - nm_missing_base_pos is failed
+      - "'required for state' in (nm_missing_base_pos.msg | default(''))"
 
 # =============================================================================
 # CONFIG_ACTIONS TESTS: validation
