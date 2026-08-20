@@ -1,0 +1,8 @@
+---
+- name: Run nd_instant_assurance_analysis integration suite
+  hosts: nd
+  gather_facts: false
+  connection: ansible.netcommon.httpapi
+
+  roles:
+    - role: nd_instant_assurance_analysis

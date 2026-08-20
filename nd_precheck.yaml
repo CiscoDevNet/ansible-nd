@@ -1,0 +1,28 @@
+---
+- name: Validate the Nexus Dashboard testbed
+  hosts: nd
+  gather_facts: false
+  connection: ansible.netcommon.httpapi
+
+  tasks:
+    - name: Check required connection variables
+      ansible.builtin.assert:
+        that:
+          - ansible_host | default('') | length > 0
+          - ansible_user | default('') | length > 0
+          - ansible_password | default('') | length > 0
+        fail_msg: Required Nexus Dashboard connection variables are missing.
+      no_log: true
+
+    - name: Query Nexus Dashboard version
+      cisco.nd.nd_version:
+        state: query
+      register: nd_precheck_version
+      changed_when: false
+
+    - name: Verify Nexus Dashboard returned its version
+      ansible.builtin.assert:
+        that:
+          - nd_precheck_version.current is defined
+          - nd_precheck_version.current.platformVersion is defined
+        fail_msg: Nexus Dashboard did not return a platform version.

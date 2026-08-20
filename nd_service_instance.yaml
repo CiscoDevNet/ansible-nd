@@ -1,0 +1,8 @@
+---
+- name: Run nd_service_instance integration suite
+  hosts: nd
+  gather_facts: false
+  connection: ansible.netcommon.httpapi
+
+  roles:
+    - role: nd_service_instance

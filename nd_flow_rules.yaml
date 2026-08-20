@@ -1,0 +1,8 @@
+---
+- name: Run nd_flow_rules integration suite
+  hosts: nd
+  gather_facts: false
+  connection: ansible.netcommon.httpapi
+
+  roles:
+    - role: nd_flow_rules

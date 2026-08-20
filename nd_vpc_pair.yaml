@@ -1,0 +1,2 @@
+---
+- import_playbook: tests/integration/targets/nd_vpc_pair/tasks/main.yaml
