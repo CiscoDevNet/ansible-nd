@@ -1,8 +1,0 @@
----
-- name: Run nd_compliance_requirement_config_snapshot integration suite
-  hosts: nd
-  gather_facts: false
-  connection: ansible.netcommon.httpapi
-
-  roles:
-    - role: nd_compliance_requirement_config_snapshot

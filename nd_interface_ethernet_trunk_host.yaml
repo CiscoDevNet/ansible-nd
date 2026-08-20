@@ -1,8 +1,0 @@
----
-- name: Run nd_interface_ethernet_trunk_host integration suite
-  hosts: nd
-  gather_facts: false
-  connection: ansible.netcommon.httpapi
-
-  roles:
-    - role: nd_interface_ethernet_trunk_host
