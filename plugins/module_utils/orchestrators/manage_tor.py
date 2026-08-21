@@ -18,6 +18,18 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageTorAssociationsGet,
 )
 
+# ND returns HTTP 207 with a ``DATA.associations[]`` array whose items carry a
+# per-item ``status`` (``success``/``failed``). These literals mark a failed item.
+_ASSOCIATE_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
+
+# A failed item whose message reports a port-channel id defaulted to 0 (the user
+# omitted the PO id, so ND fell back to 0) is benign -- the association intent is
+# still recorded. The switch UUID and the bracketed id vary between messages, so
+# match only these stable fragments (lowercased). A genuinely bad id -- e.g.
+# ``Id [5000] is not within the range of 1 and 4096`` -- will not match and still
+# raises.
+_BENIGN_ASSOCIATE_MESSAGE_FRAGMENTS = ("id [0]", "is not within the range of 1 and 4096")
+
 
 class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorModel]):
     """
@@ -53,15 +65,47 @@ class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorMode
     create_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageTorAssociatePost
     delete_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageTorDisassociatePost
 
+    @staticmethod
+    def _raise_on_associate_failures(response: ResponseType, prefix: str) -> None:
+        """
+        Surface a genuine per-item 207 failure from an associate/disassociate body.
+
+        ND wraps per-item outcomes in ``DATA.associations[]`` with a per-item
+        ``status``. The response arrives as a 2xx (207) success from the shared
+        REST layer, so the per-item outcomes must be inspected here. A ``failed``
+        item whose ``message`` reports a port-channel id defaulted to 0 (the id
+        was omitted) is treated as success -- ND still records the association
+        intent. Any other failed item is raised so the module reports it.
+        """
+        if not isinstance(response, dict):
+            return
+        associations = response.get("associations")
+        if not isinstance(associations, list):
+            return
+        real_failures = []
+        for item in associations:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("status") or "").strip().lower() not in _ASSOCIATE_FAILURE_STATUSES:
+                continue
+            message = str(item.get("message") or "").lower()
+            if all(fragment in message for fragment in _BENIGN_ASSOCIATE_MESSAGE_FRAGMENTS):
+                continue
+            real_failures.append(item)
+        if real_failures:
+            raise Exception(f"{prefix}: {real_failures}")
+
     def create_bulk(self, model_instances: List[ManageTorModel], **kwargs) -> ResponseType:
         """Associate multiple access/ToR switch pairs in a single API call."""
         try:
             api_endpoint = self.create_bulk_endpoint()
             api_endpoint.fabric_name = model_instances[0].fabric_name
             data = [instance.to_payload() for instance in model_instances]
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=data, operation_type=OperationType.CREATE)
+            response = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=data, operation_type=OperationType.CREATE)
         except Exception as e:
             raise Exception(f"Bulk associate failed: {e}") from e
+        self._raise_on_associate_failures(response, "Bulk associate failed")
+        return response
 
     def update(self, model_instance: ManageTorModel, **kwargs) -> ResponseType:
         """Re-associate an access/ToR switch pair (same as create for this API)."""
@@ -69,9 +113,11 @@ class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorMode
             api_endpoint = self.update_endpoint()
             api_endpoint.fabric_name = model_instance.fabric_name
             data = [model_instance.to_payload()]
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=data, operation_type=OperationType.UPDATE)
+            response = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=data, operation_type=OperationType.UPDATE)
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+        self._raise_on_associate_failures(response, f"Update failed for {model_instance.get_identifier_value()}")
+        return response
 
     def delete_bulk(self, model_instances: List[ManageTorModel], **kwargs) -> ResponseType:
         """Disassociate multiple access/ToR switch pairs in a single API call."""
@@ -89,9 +135,11 @@ class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorMode
                 if instance.aggregation_or_leaf_peer_switch_id is not None:
                     disassociate_payload["aggregationOrLeafPeerSwitchId"] = instance.aggregation_or_leaf_peer_switch_id
                 data.append(disassociate_payload)
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=data, operation_type=OperationType.DELETE)
+            response = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=data, operation_type=OperationType.DELETE)
         except Exception as e:
             raise Exception(f"Bulk disassociate failed: {e}") from e
+        self._raise_on_associate_failures(response, "Bulk disassociate failed")
+        return response
 
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
         """

@@ -109,20 +109,15 @@ class ManageTorModel(NDBaseModel):
     @model_validator(mode="after")
     def validate_resources_for_vpc(self, info: ValidationInfo) -> "ManageTorModel":
         """
-        Enforce that an associate supplies its required port-channel resources.
+        Enforce that vPC pairings supply their required resources.
 
-        Both base port-channel IDs (``access_or_tor_port_channel_id`` and
-        ``aggregation_or_leaf_port_channel_id``) are required for every write.
-        ND does not auto-allocate them: an omitted ID defaults to 0 and is
-        rejected with "Out of Range ... Id [0] is not within the range of 1
-        and 4096".
-
-        Each vPC side additionally requires its VPC ID and peer port-channel ID
-        when its peer switch is set: "When peer switch is specified an integer
-        VPC ID should be specified" and "Invalid PO ID for peer ... switch".
-        The two sides are independent -- a leaf vPC pair may associate with a
-        single ToR, or vice versa -- so each side is validated only when its
-        own peer switch is set.
+        ND rejects an associate for a vPC side (peer switch specified) unless
+        the matching VPC ID and both port-channel IDs are provided: "When peer
+        switch is specified an integer VPC ID should be specified" and "Invalid
+        PO ID for peer ... switch". The two sides are independent -- a leaf vPC
+        pair may associate with a single ToR, or vice versa -- so each side is
+        validated only when its own peer switch is set. A single (non-peer)
+        pairing lets ND auto-allocate, so the resource fields stay optional.
 
         The active state is read from the pydantic validation context threaded
         by ``NDStateMachine`` (``context={"state": ...}``). Only the write
@@ -132,17 +127,6 @@ class ManageTorModel(NDBaseModel):
         state = (info.context or {}).get("state") if info else None
         if state not in ("merged", "replaced", "overridden"):
             return self
-
-        base_missing = [
-            name
-            for name in ("access_or_tor_port_channel_id", "aggregation_or_leaf_port_channel_id")
-            if getattr(self, name) is None
-        ]
-        if base_missing:
-            raise ValueError(
-                f"ToR association '{self.access_or_tor_switch_id}<->{self.aggregation_or_leaf_switch_id}': "
-                f"{', '.join(base_missing)} required for state '{state}'."
-            )
 
         missing: List[str] = []
         if self.aggregation_or_leaf_peer_switch_id is not None:

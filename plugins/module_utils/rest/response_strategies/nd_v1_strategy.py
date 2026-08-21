@@ -40,21 +40,17 @@ _MULTISTATUS_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 # Per-item status literal that marks a successful item in a Multi-Status body.
 _MULTISTATUS_SUCCESS_STATUSES = frozenset({"success"})
 
-# DATA envelope keys whose items carry a per-item `status`. Four known shapes:
-# - `results`      -> batch interface POST / breakout action
-# - `switchIds`    -> switchActions/deploy (per-switch outcome)
-# - `links`        -> bulk link create (POST /links) and bulk link delete (POST /linkActions/remove),
-#                     items {linkId, message, status} with status success|failure. The GET /links list
-#                     body rides the same `links` envelope, but its link objects carry no top-level
-#                     `status` key, so the literal-gated scan cannot false-positive on queries.
-# - `associations` -> ToR associate/disassociate (POST accessAssociationActions/{associate,disassociate}),
-#                     items {accessOrTorSwitchId, message, status} with status success|failed. The GET
-#                     accessAssociations list rides the same `associations` envelope, but its items
-#                     (accessPairBase) carry no top-level `status` key, so queries cannot false-positive.
-_MULTISTATUS_ITEM_KEYS = ("results", "switchIds", "links", "associations")
+# DATA envelope keys whose items carry a per-item `status`. Three known shapes:
+# - `results`   -> batch interface POST / breakout action
+# - `switchIds` -> switchActions/deploy (per-switch outcome)
+# - `links`     -> bulk link create (POST /links) and bulk link delete (POST /linkActions/remove),
+#                  items {linkId, message, status} with status success|failure. The GET /links list
+#                  body rides the same `links` envelope, but its link objects carry no top-level
+#                  `status` key, so the literal-gated scan cannot false-positive on queries.
+_MULTISTATUS_ITEM_KEYS = ("results", "switchIds", "links")
 
 # Item keys, in priority order, used to label a failing item in an error message.
-_MULTISTATUS_ITEM_LABEL_KEYS = ("name", "switchId", "serialNumber", "linkId", "accessOrTorSwitchId", "id")
+_MULTISTATUS_ITEM_LABEL_KEYS = ("name", "switchId", "serialNumber", "linkId", "id")
 
 # Item keys, in priority order, carrying the per-item failure detail. ND is not consistent
 # across endpoints: `message` (batch interface / switchActions/deploy) and `warningMessage`
@@ -135,9 +131,9 @@ def _multistatus_items_with_status(response: dict, statuses: frozenset[str]) -> 
 
     ## Description
 
-    Scans the known ND Multi-Status envelope arrays (`DATA.results[]`, `DATA.switchIds[]`, `DATA.links[]`, and `DATA.associations[]`) and returns
-    every item whose `status` matches one of `statuses` (case-insensitive, whitespace-tolerant). Returns an empty list when `DATA` is not a dict,
-    none of the arrays is present, or no item matches.
+    Scans the known ND Multi-Status envelope arrays (`DATA.results[]`, `DATA.switchIds[]`, and `DATA.links[]`) and returns every item whose `status`
+    matches one of `statuses` (case-insensitive, whitespace-tolerant). Returns an empty list when `DATA` is not a dict, none of the arrays is
+    present, or no item matches.
 
     ## Parameters
 

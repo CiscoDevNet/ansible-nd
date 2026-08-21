@@ -160,9 +160,7 @@ def test_manage_tor_orchestrator_create_bulk_sends_array_body():
     intact -- ND rejects anything but a bare array here, and RestSend must not
     coerce or reject the list."""
     params = {"check_mode": False, "fabric_name": "fab1", "config": []}
-    rest_send = _build_rest_send(
-        [_resp({"status": "success"}, return_code=207, method="POST")], params
-    )
+    rest_send = _build_rest_send([_resp({"status": "success"}, return_code=207, method="POST")], params)
     orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
 
     pairs = [
@@ -184,9 +182,7 @@ def test_manage_tor_orchestrator_delete_bulk_sends_array_body():
     """disassociate (delete_bulk) POSTs a top-level JSON array of switch-pair
     identifiers to accessAssociationActions/disassociate."""
     params = {"check_mode": False, "fabric_name": "fab1", "config": []}
-    rest_send = _build_rest_send(
-        [_resp({"status": "success"}, return_code=207, method="POST")], params
-    )
+    rest_send = _build_rest_send([_resp({"status": "success"}, return_code=207, method="POST")], params)
     orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
 
     pairs = [
@@ -252,3 +248,118 @@ def test_manage_tor_orchestrator_execute_config_actions_save_and_switch_deploy()
     # Last request should be the switch-level deploy carrying only the
     # out-of-sync switch S1.
     assert rest_send.committed_payload == {"switchIds": ["S1"]}
+
+
+# =============================================================================
+# 207 Multi-Status per-item failure handling (benign-message allowlist)
+# =============================================================================
+
+
+def _pair(tor: str = "T1", leaf: str = "L1") -> ManageTorModel:
+    return ManageTorModel(fabric_name="fab1", access_or_tor_switch_id=tor, aggregation_or_leaf_switch_id=leaf)
+
+
+def test_manage_tor_orchestrator_create_bulk_benign_207_is_success():
+    """A 207 whose only failed item reports a port-channel id defaulted to 0
+    (the id was omitted) is benign -- ND still records the association intent --
+    so create_bulk must not raise."""
+    body = {
+        "associations": [
+            {
+                "accessOrTorSwitchId": "T1",
+                "aggregationOrLeafSwitchId": "L1",
+                "status": "failed",
+                "message": "Out of Range : DCNM-UUID-302030 Id [0] is not within the range of 1 and 4096",
+            },
+        ]
+    }
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send([_resp(body, return_code=207, method="POST")], params)
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+
+    with does_not_raise():
+        orchestrator.create_bulk([_pair()])
+
+
+def test_manage_tor_orchestrator_create_bulk_real_207_failure_raises():
+    """A 207 failed item that is NOT the benign omitted-id case must raise, and
+    the raised message must carry the real failure item."""
+    body = {
+        "associations": [
+            {
+                "accessOrTorSwitchId": "T1",
+                "aggregationOrLeafSwitchId": "L1",
+                "status": "failed",
+                "message": "Out of Range : DCNM-UUID-302030 Id [5000] is not within the range of 1 and 4096",
+            },
+        ]
+    }
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send([_resp(body, return_code=207, method="POST")], params)
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+
+    with pytest.raises(Exception, match="Bulk associate failed"):
+        orchestrator.create_bulk([_pair()])
+
+
+def test_manage_tor_orchestrator_create_bulk_mixed_raises_on_real_only():
+    """A 207 mixing a benign omitted-id failure with a genuine failure raises,
+    reporting only the genuine failure (the benign item is suppressed)."""
+    body = {
+        "associations": [
+            {
+                "accessOrTorSwitchId": "T1",
+                "aggregationOrLeafSwitchId": "L1",
+                "status": "failed",
+                "message": "Out of Range : DCNM-UUID-1 Id [0] is not within the range of 1 and 4096",
+            },
+            {
+                "accessOrTorSwitchId": "T2",
+                "aggregationOrLeafSwitchId": "L2",
+                "status": "failed",
+                "message": "Switch T2 is not reachable",
+            },
+        ]
+    }
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send([_resp(body, return_code=207, method="POST")], params)
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+
+    with pytest.raises(Exception, match="Switch T2 is not reachable") as exc_info:
+        orchestrator.create_bulk([_pair("T1", "L1"), _pair("T2", "L2")])
+    assert "Id [0]" not in str(exc_info.value)
+
+
+def test_manage_tor_orchestrator_create_bulk_all_success_207_no_raise():
+    """A 207 whose items all succeed must not raise."""
+    body = {
+        "associations": [
+            {"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1", "status": "success", "message": "associated"},
+        ]
+    }
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send([_resp(body, return_code=207, method="POST")], params)
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+
+    with does_not_raise():
+        orchestrator.create_bulk([_pair()])
+
+
+def test_manage_tor_orchestrator_delete_bulk_real_207_failure_raises():
+    """A genuine 207 failure on disassociate raises under the disassociate prefix."""
+    body = {
+        "associations": [
+            {
+                "accessOrTorSwitchId": "T1",
+                "aggregationOrLeafSwitchId": "L1",
+                "status": "failed",
+                "message": "Association not found",
+            },
+        ]
+    }
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send([_resp(body, return_code=207, method="POST")], params)
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+
+    with pytest.raises(Exception, match="Bulk disassociate failed"):
+        orchestrator.delete_bulk([_pair()])
