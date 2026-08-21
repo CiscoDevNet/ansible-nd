@@ -43,6 +43,8 @@ pipeline {
         BUILD_FAILURE_REASON = ''
         TOTAL_PASSED_COUNT = '0'
         TOTAL_FAILED_COUNT = '0'
+        TOTAL_SKIPPED_COUNT = '0'
+        RECORDED_SUITES = ''
         CURRENT_ND_INVENTORY = ''
     }
 
@@ -194,6 +196,8 @@ pipeline {
                     env.BUILD_FAILURE_REASON = ''
                     env.TOTAL_PASSED_COUNT = '0'
                     env.TOTAL_FAILED_COUNT = '0'
+                    env.TOTAL_SKIPPED_COUNT = '0'
+                    env.RECORDED_SUITES = ''
 
                     try {
                         runNDTests(ndConfig)
@@ -218,12 +222,16 @@ pipeline {
                             '''
                     }
 
-                    def message = "ND Nightly Build ${BUILD_NUMBER}\n"
-                    message += "Result: ${currentBuild.currentResult}\n"
+                    def message = "ND NIGHTLY NOTIFICATION\n"
+                    message += (
+                        "📊 Pipeline completed for the ND Nightly run - " +
+                        "Build ${BUILD_NUMBER}\n\n"
+                    )
                     message += "Total Passed: ${env.TOTAL_PASSED_COUNT ?: '0'}\n"
-                    message += "Total Failed: ${env.TOTAL_FAILED_COUNT ?: '0'}\n"
-                    message += "\nDetailed Results:\n${env.TEST_RESULT_SUMMARY ?: 'No results'}\n"
-                    message += "Link: ${BUILD_URL}console\n"
+                    message += "Total Failed: ${env.TOTAL_FAILED_COUNT ?: '0'}\n\n"
+                    message += "📝 DETAILED TEST RESULTS:\n"
+                    message += "${env.TEST_RESULT_SUMMARY ?: 'No results'}\n\n"
+                    message += "🔗 Build: ${BUILD_URL}console\n"
 
                     def webexPayload = createWebexPayload(message)
 
@@ -470,7 +478,9 @@ def runNDTests(ndConfig) {
 
     env.TOTAL_PASSED_COUNT = '0'
     env.TOTAL_FAILED_COUNT = '0'
+    env.TOTAL_SKIPPED_COUNT = '0'
     env.TEST_RESULT_SUMMARY = ''
+    env.RECORDED_SUITES = ''
 
     def suiteFailures = []
 
@@ -480,6 +490,16 @@ def runNDTests(ndConfig) {
             runSuiteWithVerification(ndConfig, suiteName, suiteConfig)
         } catch (Exception suiteError) {
             env.PIPELINE_FAILED = 'true'
+            if (!hasRecordedTestResult(suiteName)) {
+                recordTestResult(
+                    ndConfig,
+                    suiteName,
+                    0,
+                    1,
+                    0,
+                    '0m 0s'
+                )
+            }
             suiteFailures << "${suiteName}: ${suiteError.getMessage()}"
             echo "Suite execution failed: ${suiteName}"
         }
@@ -603,7 +623,12 @@ def runSuiteWithVerification(ndConfig, String suiteName, suiteConfig) {
     }
 
     if (fileExists(outputFile)) {
-        parseTestResults(ndConfig, suiteName, outputFile)
+        parseTestResults(
+            ndConfig,
+            suiteName,
+            outputFile,
+            !failureMessages.isEmpty()
+        )
         def timestamp = new Date().format('yyyyMMdd_HHmmss')
         def artifactName = "test_output_${suiteName}_${timestamp}.txt"
         sh "cp '${outputFile}' '${env.WORKSPACE}/${artifactName}'"
@@ -612,6 +637,7 @@ def runSuiteWithVerification(ndConfig, String suiteName, suiteConfig) {
     } else {
         failureMessages << 'no output file was produced'
         env.PIPELINE_FAILED = 'true'
+        recordTestResult(ndConfig, suiteName, 0, 1, 0, 'N/A')
     }
 
     if (failureMessages) {
@@ -657,7 +683,12 @@ nd_test_switch_ip=${env.ND_SWITCH_IP}
 }
 
 
-def parseTestResults(ndConfig, targetName, outputFile) {
+def parseTestResults(
+    ndConfig,
+    String targetName,
+    String outputFile,
+    boolean executionFailed
+) {
     def output = readFile(outputFile)
 
     // Extract duration
@@ -672,34 +703,118 @@ def parseTestResults(ndConfig, targetName, outputFile) {
         }
     }
 
-    // Parse PLAY RECAP lines for ok= and failed= counts
+    // Exclude the cleanup verification recap from the suite's own result.
+    def suiteOutput = output
+    def cleanupIndex = output.indexOf('[CLEANUP VERIFY:')
+    if (cleanupIndex >= 0) {
+        suiteOutput = output.substring(0, cleanupIndex)
+    }
+
+    // Parse the suite PLAY RECAP lines.
     def okCount = 0
     def failedCount = 0
+    def skippedCount = 0
 
-    output.split('\n').each { line ->
-        if (line.contains('ok=')) {
-            def idx = line.indexOf('ok=')
-            def after = line.substring(idx + 3)
-            def end = after.indexOf(' ')
-            def val = (end > 0 ? after.substring(0, end) : after).replaceAll('[^0-9]', '')
-            if (val) okCount += val as Integer
-        }
-        if (line.contains('failed=')) {
-            def idx = line.indexOf('failed=')
-            def after = line.substring(idx + 7)
-            def end = after.indexOf(' ')
-            def val = (end > 0 ? after.substring(0, end) : after).replaceAll('[^0-9]', '')
-            if (val) failedCount += val as Integer
+    suiteOutput.split('\n').each { line ->
+        if (
+            line.contains('ok=') &&
+            line.contains('changed=') &&
+            line.contains('unreachable=') &&
+            line.contains('failed=') &&
+            line.contains('skipped=')
+        ) {
+            okCount += extractRecapValue(line, 'ok')
+            failedCount += extractRecapValue(line, 'failed')
+            skippedCount += extractRecapValue(line, 'skipped')
         }
     }
 
-    // Accumulate into global counters
-    env.TOTAL_PASSED_COUNT = ((env.TOTAL_PASSED_COUNT as Integer) + okCount).toString()
-    env.TOTAL_FAILED_COUNT = ((env.TOTAL_FAILED_COUNT as Integer) + failedCount).toString()
-    env.TEST_RESULT_SUMMARY += "\nTarget: ${targetName} | Passed: ${okCount} | Failed: ${failedCount} | Duration: ${durationStr}"
+    // A wrapper/setup/timeout failure may occur before Ansible emits a recap.
+    if (executionFailed && failedCount == 0) {
+        failedCount = 1
+    }
+
+    recordTestResult(
+        ndConfig,
+        targetName,
+        okCount,
+        failedCount,
+        skippedCount,
+        durationStr
+    )
 
     if (failedCount > 0) {
         env.PIPELINE_FAILED = 'true'
         echo "Failures detected in ${targetName}: ${failedCount} tasks failed"
     }
+}
+
+def extractRecapValue(String line, String fieldName) {
+    def marker = "${fieldName}="
+    def markerIndex = line.indexOf(marker)
+
+    if (markerIndex < 0) {
+        return 0
+    }
+
+    def valueStart = markerIndex + marker.length()
+    def remainder = line.substring(valueStart).trim()
+    def valueEnd = 0
+
+    while (
+        valueEnd < remainder.length() &&
+        Character.isDigit(remainder.charAt(valueEnd))
+    ) {
+        valueEnd++
+    }
+
+    def digits = remainder.substring(0, valueEnd)
+
+    return digits ? digits as Integer : 0
+}
+
+def recordTestResult(
+    ndConfig,
+    String targetName,
+    int passedCount,
+    int failedCount,
+    int skippedCount,
+    String duration
+) {
+    env.TOTAL_PASSED_COUNT = (
+        (env.TOTAL_PASSED_COUNT as Integer) + passedCount
+    ).toString()
+    env.TOTAL_FAILED_COUNT = (
+        (env.TOTAL_FAILED_COUNT as Integer) + failedCount
+    ).toString()
+    env.TOTAL_SKIPPED_COUNT = (
+        (env.TOTAL_SKIPPED_COUNT as Integer) + skippedCount
+    ).toString()
+
+    def resultLine = (
+        "📋 Playbook: ${targetName} | Fabric: ${env.FABRIC} | " +
+        "ND: ${ndConfig.version} | Passed: ${passedCount} | " +
+        "Failed: ${failedCount} | Skipped: ${skippedCount} | " +
+        "Duration: ${duration}"
+    )
+
+    env.TEST_RESULT_SUMMARY = env.TEST_RESULT_SUMMARY?.trim() ?
+        "${env.TEST_RESULT_SUMMARY}\n${resultLine}" :
+        resultLine
+
+    def recordedSuites = env.RECORDED_SUITES?.trim() ?
+        env.RECORDED_SUITES.split(',').toList() :
+        []
+    if (!recordedSuites.contains(targetName)) {
+        recordedSuites << targetName
+    }
+    env.RECORDED_SUITES = recordedSuites.join(',')
+}
+
+def hasRecordedTestResult(String targetName) {
+    if (!env.RECORDED_SUITES?.trim()) {
+        return false
+    }
+
+    return env.RECORDED_SUITES.split(',').contains(targetName)
 }
