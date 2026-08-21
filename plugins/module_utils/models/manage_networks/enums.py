@@ -6,6 +6,8 @@
 
 """Enumerations for Nexus Dashboard Manage network APIs."""
 
+from __future__ import annotations
+
 from enum import Enum
 
 
