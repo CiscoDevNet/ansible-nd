@@ -10,10 +10,15 @@ fragments (`config_actions_spec`, `ntp_server_spec`, ...) that modules compose i
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Any
 
 from ansible.module_utils.basic import env_fallback
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import (
+    _select_options as _config_actions_select_options,
+    config_actions_spec as _config_actions_spec,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import LEGACY_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionsPolicy
 
 
 def nd_argument_spec() -> dict[str, Any]:
@@ -39,55 +44,46 @@ def nd_argument_spec() -> dict[str, Any]:
     }
 
 
-def _select_options(options: dict[str, Any], include: Iterable[str] | None) -> dict[str, Any]:
+def _select_options(options: dict[str, Any], include: object | None) -> dict[str, Any]:
     """
     # Summary
 
-    Return a copy of `options` filtered to the allowlist `include`. `include=None` selects every option.
-
-    An allowlist (rather than an exclude list) is deliberate: options added to a shared fragment in the future must never silently appear in
-    modules that composed the fragment before the addition.
+    Compatibility wrapper for filtering config action option specs.
 
     ## Raises
 
     ### ValueError
 
-    - If `include` names an option that does not exist in `options`
+    - If `include` contains an unknown option.
     """
-    if include is None:
-        return dict(options)
-    include_set = set(include)
-    unknown = include_set - options.keys()
-    if unknown:
-        raise ValueError(f"Unknown option name(s) in include: {', '.join(sorted(unknown))}. Valid options: {', '.join(sorted(options))}.")
-    return {key: value for key, value in options.items() if key in include_set}
+    return _config_actions_select_options(options, include)
 
 
-def config_actions_spec(include: Iterable[str] | None = None) -> dict[str, Any]:
+def config_actions_spec(
+    policy: ConfigActionsPolicy | None = None,
+    include: object | None = None,
+) -> dict[str, Any]:
     """
     # Summary
 
-    Return the shared `config_actions` argument spec fragment, filtered to the allowlist `include`.
+    Return the shared `config_actions` argument spec fragment.
 
-    The full option set is `save`, `deploy`, and `type`. Modules that expose only a subset pass the option names they support, e.g.
-    `config_actions_spec(include=("deploy",))` for the `nd_interface_*` modules.
-
-    `type` accepts `resource`, `switch`, and `global`, per the contract in issue #368. The companion per-resource `deploy` key described in that
-    issue is not part of this fragment yet: it lives in each module's `config` suboptions and its interaction with `config_actions` (mutually
-    exclusive, or gated on `type == "resource"`) is still under discussion on #368. It will be added as a separate fragment once settled.
+    This compatibility wrapper delegates to the policy-based implementation in `config_actions.argument_spec`.
 
     ## Raises
 
     ### ValueError
 
-    - If `include` names an option that is not part of the fragment
+    - If the policy or include list references unsupported options.
     """
-    options: dict[str, Any] = {
-        "save": {"type": "bool", "default": True},
-        "deploy": {"type": "bool", "default": True},
-        "type": {"type": "str", "default": "switch", "choices": ["resource", "switch", "global"]},
-    }
-    return {"config_actions": {"type": "dict", "options": _select_options(options, include)}}
+    selected_policy = policy or LEGACY_CONFIG_ACTIONS
+    selected_include = include
+
+    if policy is not None and not isinstance(policy, ConfigActionsPolicy):
+        selected_policy = LEGACY_CONFIG_ACTIONS
+        selected_include = policy
+
+    return _config_actions_spec(selected_policy, include=selected_include)
 
 
 def ntp_server_spec():
