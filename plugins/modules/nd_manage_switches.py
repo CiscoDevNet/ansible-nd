@@ -127,7 +127,7 @@ options:
                 - Bootstrap POAP config for the switch.
                 - C(serial_number) and C(hostname) are mandatory.
                 - Model, version, and config data are sourced from the bootstrap API at runtime.
-                - C(software_image) can be provided to select the image used in the import payload.
+                - C(software_image) can be provided to select the software image used during POAP import.
                 - If the bootstrap API reports a different hostname or role, the API value
                   overrides the user-provided value and a warning is logged.
                 - To perform a B(swap) operation, provide both C(poap) and C(preprovision)
@@ -158,7 +158,7 @@ options:
                     software_image:
                         description:
                         - Software image file to use during POAP import.
-                        - When omitted, C(softwareImage) is not sent in the import payload.
+                        - When omitted, no software image override is requested.
                         type: str
             preprovision:
                 description:

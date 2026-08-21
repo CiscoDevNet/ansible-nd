@@ -89,7 +89,7 @@ class POAPConfigModel(NDNestedModel):
     Used when ``poap`` is specified alone (bootstrap-only operation).
     ``serial_number`` and ``hostname`` are mandatory; all other fields are optional.
     Model, version, and config data are sourced from the bootstrap API at runtime.
-    ``software_image`` can be provided to select the image used in the import payload.
+    ``software_image`` can be provided to select the software image used during POAP import.
     If the bootstrap API reports a different hostname or role, the API value overrides
     the user-provided value and a warning is logged.
     """
