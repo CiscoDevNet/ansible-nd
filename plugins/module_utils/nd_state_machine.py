@@ -238,6 +238,11 @@ class NDStateMachine:
             existing_item for proposed_item in self.proposed if (existing_item := self.existing.get(proposed_item.get_identifier_value())) is not None
         ]
         self._delete_items(items_to_delete)
+        # Record removals as sent so save/deploy gates that fire on len(sent)
+        # trigger for deletes too (a disassociate stages config that must be
+        # pushed). Scoped to the deleted state; override deletions are unchanged.
+        if items_to_delete:
+            self.sent.add_many(items_to_delete)
 
     def _delete_items(self, items: list[NDBaseModel]) -> None:
         """Delete a list of items individually or in bulk."""

@@ -214,6 +214,38 @@ def test_nd_state_machine_00120() -> None:
     assert "preflight_create" not in names
 
 
+def test_nd_state_machine_00125() -> None:
+    """
+    # Summary
+
+    Verify a real `deleted` operation records the removed items into `sent`, so
+    downstream save/deploy gates that fire on `len(sent) > 0` (e.g. nd_manage_tor)
+    trigger on removals -- not just create/update. Regression guard: `sent` was
+    previously populated only on the merged path, so deletes silently skipped the
+    config save.
+
+    ## Test
+
+    - `state: deleted`, one proposed item that matches a seeded existing item
+    - `delete_bulk` is recorded and `sent` contains the deleted item
+
+    ## Classes and Methods
+
+    - NDStateMachine._manage_delete_state()
+    """
+    instance = _build_state_machine(state="deleted", check_mode=False, config=_CONFIG)
+    # Seed existing so the proposed item resolves to a real deletion.
+    instance.existing = instance.proposed.copy()
+    instance.before = instance.existing.copy()
+
+    with does_not_raise():
+        instance._manage_delete_state()
+
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert "delete_bulk" in names
+    assert len(instance.sent) == 1
+
+
 def test_nd_state_machine_00130() -> None:
     """
     # Summary
