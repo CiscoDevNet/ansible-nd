@@ -23,7 +23,9 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import ClassVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
@@ -31,10 +33,20 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPut,
     EpManageInterfacesRemove,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
+    GatheredLuceneSpec,
+    build_lucene_expressions,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    LoopbackInterfaceModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    NDBaseInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 
 
 class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfaceModel]):
@@ -76,6 +88,19 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     supports_bulk_delete: ClassVar[bool] = True
     interface_type: ClassVar[str] = "loopback"
     interface_mode: ClassVar[str] = "managed"
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(
+            ("interfaceType", "loopback"),
+            ("policyType", "loopback"),
+        ),
+        field_map={
+            ("interface_name",): "interfaceName",
+        },
+    )
+    # Maximum Lucene expressions per switch before collapsing to the base query
+    # Beyond this threshold, a single broad query is cheaper than N targeted ones.
+    _MAX_EXPRESSIONS_PER_SWITCH: ClassVar[int] = 3
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -224,15 +249,153 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: NDBaseModel | None = None, **kwargs) -> ResponseType:
+    @staticmethod
+    def _is_managed_loopback(interface: dict) -> bool:
+        """
+        Return whether an interface belongs to this module.
+
+        The interface must be a loopback using the user-managed loopback
+        policy. System-managed underlay loopbacks are intentionally excluded.
+        """
+        if interface.get("interfaceType") != "loopback":
+            return False
+
+        policy_type = interface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType")
+
+        return policy_type == "loopback"
+
+    def _build_gathered_query_plan(self, gathered_filters: list[dict]) -> dict[str, tuple[str, set[str]]]:
+        """
+        Build one or more Lucene expressions for each target switch.
+
+        Multiple filter items remain separate expressions because the
+        interface endpoint does not reliably support Lucene OR.
+        """
+        switch_map = self.fabric_context.switch_map
+        query_plan: dict[str, tuple[str, set[str]]] = {}
+        base_expression = build_lucene_expressions(
+            filters=[],
+            spec=self.gathered_lucene_spec,
+        )[0]
+
+        filter_items = gathered_filters or [{}]
+
+        for filter_item in filter_items:
+            requested_switch_ip = filter_item.get("switch_ip")
+            if requested_switch_ip:
+                switch_id = switch_map.get(requested_switch_ip)
+                if switch_id is None:
+                    raise ValueError(
+                        f"Gathered filter references switch_ip '{requested_switch_ip}' " f"which does not exist in fabric '{self.fabric_context.fabric_name}'."
+                    )
+                target_switches = {
+                    requested_switch_ip: switch_id,
+                }
+            else:
+                target_switches = switch_map
+            expressions = build_lucene_expressions(
+                filters=[filter_item],
+                spec=self.gathered_lucene_spec,
+            )
+            for switch_ip, switch_id in target_switches.items():
+                if switch_ip not in query_plan:
+                    query_plan[switch_ip] = (switch_id, set())
+
+                planned_expressions = query_plan[switch_ip][1]
+                for expression in expressions:
+                    # The base query already returns every managed loopback on
+                    # this switch, so any narrower interface-name query would
+                    # only duplicate candidates and REST calls.
+                    if expression == base_expression:
+                        planned_expressions.clear()
+                        planned_expressions.add(base_expression)
+                    elif base_expression not in planned_expressions:
+                        planned_expressions.add(expression)
+
+        # Cap fan-out: if a switch accumulated more expressions than the threshold,
+        # collapse to the base expression. The local filter guarantees correctness;
+        # the server filter only reduces candidate volume.
+        for switch_ip, (switch_id, expressions) in query_plan.items():
+            if len(expressions) > self._MAX_EXPRESSIONS_PER_SWITCH:
+                expressions.clear()
+                expressions.add(base_expression)
+        return query_plan
+
+    def _query_interfaces_with_lucene(
+        self,
+        switch_id: str,
+        expression: str,
+    ) -> list[dict]:
+        """Query every page for one Lucene expression."""
+        page_size = 500
+        max_pages = 100
+        offset = 0
+        candidates: list[dict] = []
+
+        for _page_number in range(max_pages):
+            api_endpoint = self._configure_endpoint(
+                self.query_all_endpoint(),
+                switch_sn=switch_id,
+            )
+
+            # The complete config is needed for final local filtering.
+            api_endpoint.endpoint_params.config_only = False
+
+            api_endpoint.lucene_params.filter = expression
+            api_endpoint.lucene_params.max = page_size
+            api_endpoint.lucene_params.offset = offset
+
+            result = self._request(
+                path=api_endpoint.path,
+                verb=api_endpoint.verb,
+                not_found_ok=True,
+            )
+
+            if not isinstance(result, dict):
+                break
+
+            page = result.get("interfaces", []) or []
+            candidates.extend(page)
+
+            if not page:
+                break
+
+            meta = result.get("meta") or {}
+            counts = meta.get("counts") or {}
+            remaining_raw = counts.get("remaining")
+
+            if remaining_raw is not None:
+                try:
+                    remaining = int(remaining_raw)
+                except (TypeError, ValueError):
+                    remaining = None
+            else:
+                remaining = None
+            if remaining is not None and remaining <= 0:
+                break
+            if remaining is None and len(page) < page_size:
+                break
+            offset += len(page)
+        else:
+            raise RuntimeError(
+                f"Pagination limit reached ({max_pages} pages, {len(candidates)} candidates collected) "
+                f"for switch '{switch_id}'. Results may be incomplete."
+            )
+        return candidates
+
+    def query_all(
+        self,
+        model_instance: NDBaseModel | None = None,
+        gathered_filters: list[dict] | None = None,
+        **kwargs,
+    ) -> ResponseType:
         """
         # Summary
 
-        Validate the fabric context and query interfaces, filtering for user-managed loopback interfaces only
-        (`policyType: "loopback"`).
+        Validate the fabric context and query candidate interfaces, filtering for user-managed loopback interfaces only
+        (`policyType: "loopback"`). For gathered state, switch and interface-name criteria reduce the endpoint query scope;
+        all other criteria are applied by the generic local gathered filter.
 
-        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
-        and limited to switches named in the user config for all other states.
 
         System-provisioned loopbacks (e.g. Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) and
         non-standard policy templates (`ipfmLoopback`, `userDefined`) are excluded - those will be managed by dedicated modules.
@@ -252,14 +415,88 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         """
         try:
             self.validate_prerequisites()
-            all_loopbacks = []
-            for switch_ip, switch_id in self._switches_to_query().items():
-                interfaces = list(self._switch_interfaces(switch_id).values())
-                loopbacks = [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
-                managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") == "loopback"]
-                for iface in managed:
-                    iface["switchIp"] = switch_ip
-                all_loopbacks.extend(managed)
-            return all_loopbacks
+
+            if gathered_filters is None:
+                return self._query_all_for_management_states()
+            return self._query_all_for_gathered(gathered_filters)
+
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
+
+    def _query_all_for_management_states(self) -> list[dict]:
+        """
+        Preserve the existing list-all behavior used by merged,
+        replaced, overridden, and deleted states.
+        """
+        candidates_by_switch: list[tuple[str, list[dict]]] = []
+
+        for switch_ip, switch_id in self._switches_to_query().items():
+            api_endpoint = self._configure_endpoint(
+                self.query_all_endpoint(),
+                switch_sn=switch_id,
+            )
+
+            result = self._request(
+                path=api_endpoint.path,
+                verb=api_endpoint.verb,
+                not_found_ok=True,
+            )
+
+            candidates = []
+            if isinstance(result, dict):
+                candidates = result.get("interfaces", []) or []
+
+            candidates_by_switch.append((switch_ip, candidates))
+
+        return self._collect_managed_loopbacks(candidates_by_switch)
+
+    def _query_all_for_gathered(self, gathered_filters: list[dict]) -> list[dict]:
+        """Run server-filtered gathered requests."""
+        candidates_by_switch: list[tuple[str, list[dict]]] = []
+
+        query_plan = self._build_gathered_query_plan(gathered_filters)
+
+        for switch_ip, (switch_id, expressions) in query_plan.items():
+            switch_candidates = []
+
+            for expression in sorted(expressions):
+                switch_candidates.extend(
+                    self._query_interfaces_with_lucene(
+                        switch_id=switch_id,
+                        expression=expression,
+                    )
+                )
+
+            candidates_by_switch.append((switch_ip, switch_candidates))
+
+        return self._collect_managed_loopbacks(candidates_by_switch)
+
+    def _collect_managed_loopbacks(
+        self,
+        candidates_by_switch: list[tuple[str, list[dict]]],
+    ) -> list[dict]:
+        """Validate, enrich, and deduplicate responses."""
+        all_loopbacks = []
+        seen_identifiers: set[tuple[str, str]] = set()
+
+        for switch_ip, candidates in candidates_by_switch:
+            for interface in candidates:
+                if not self._is_managed_loopback(interface):
+                    continue
+
+                interface_name = interface.get("interfaceName")
+                if not interface_name:
+                    continue
+
+                identifier = (switch_ip, interface_name)
+
+                if identifier in seen_identifiers:
+                    continue
+
+                enriched = dict(interface)
+                enriched["switchIp"] = switch_ip
+
+                seen_identifiers.add(identifier)
+                all_loopbacks.append(enriched)
+
+        return all_loopbacks

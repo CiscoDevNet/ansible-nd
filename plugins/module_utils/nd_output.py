@@ -6,13 +6,17 @@ from __future__ import absolute_import, division, print_function
 
 from typing import Any, Dict, List, Optional, Union
 
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+from ansible_collections.cisco.nd.plugins.module_utils.utils import prune_to_spec
 
 
 class NDOutput:
-    def __init__(self, output_level: str):
+    def __init__(self, output_level: str, state: str = ""):
         self._output_level: str = output_level
+        self._state: str = state
         self._changed: bool = False
         self._before: Union[NDConfigCollection, List] = []
         self._after: Union[NDConfigCollection, List] = []
@@ -20,17 +24,45 @@ class NDOutput:
         self._proposed: Union[NDConfigCollection, List] = []
         self._logs: List = []
         self._extra: Dict[str, Any] = {}
+        # Argument-spec ``config.options`` mapping used to prune gathered output
+        # down to valid module arguments so it round-trips as ``config``.
+        self._gathered_spec: Dict[str, Any] = {}
+        # Optional callable that reshapes each gathered item before pruning.
+        # Used by modules whose input format differs from the model's internal
+        # representation (e.g. interface_names plural vs interface_name singular).
+        self._gathered_transform = None
 
     def format(self, **kwargs) -> Dict[str, Any]:
+        # Read-only gathered state follows the Ansible resource-module
+        # convention: return the fetched objects under a ``gathered`` key and
+        # omit the change-oriented before/after/diff/proposed keys.
+        if self._state == "gathered":
+            gathered_items = self._after.to_ansible_config() if isinstance(self._after, NDConfigCollection) else self._after
+            if self._gathered_transform and isinstance(gathered_items, list):
+                gathered_items = [self._gathered_transform(item) for item in gathered_items]
+            if self._gathered_spec and isinstance(gathered_items, list):
+                gathered_items = [prune_to_spec(item, self._gathered_spec) for item in gathered_items]
+            gathered_output = {
+                "output_level": self._output_level,
+                "changed": False,
+                "gathered": gathered_items,
+            }
+            if self._output_level == "debug":
+                gathered_output["logs"] = self._logs
+            if self._extra:
+                gathered_output.update(self._extra)
+            gathered_output.update(**kwargs)
+            return gathered_output
+
         if isinstance(self._before, NDConfigCollection) and isinstance(self._after, NDConfigCollection) and self._before.get_diff_collection(self._after):
             self._changed = True
 
         output = {
             "output_level": self._output_level,
             "changed": self._changed,
-            "after": self._after.to_ansible_config() if isinstance(self._after, NDConfigCollection) else self._after,
-            "before": self._before.to_ansible_config() if isinstance(self._before, NDConfigCollection) else self._before,
-            "diff": self._diff.to_ansible_config() if isinstance(self._diff, NDConfigCollection) else self._diff,
+            "after": (self._after.to_ansible_config() if isinstance(self._after, NDConfigCollection) else self._after),
+            "before": (self._before.to_ansible_config() if isinstance(self._before, NDConfigCollection) else self._before),
+            "diff": (self._diff.to_ansible_config() if isinstance(self._diff, NDConfigCollection) else self._diff),
         }
 
         if self._output_level in ("debug", "info"):
@@ -101,6 +133,8 @@ class NDOutput:
         diff: Optional[NDConfigCollection] = None,
         proposed: Optional[NDConfigCollection] = None,
         logs: Optional[List] = None,
+        gathered_spec: Optional[Dict[str, Any]] = None,
+        gathered_transform=None,
         **kwargs,
     ) -> None:
         if isinstance(after, NDConfigCollection):
@@ -113,4 +147,8 @@ class NDOutput:
             self._proposed = proposed
         if isinstance(logs, List):
             self._logs = logs
+        if isinstance(gathered_spec, dict):
+            self._gathered_spec = gathered_spec
+        if gathered_transform is not None:
+            self._gathered_transform = gathered_transform
         self._extra.update(**kwargs)

@@ -165,6 +165,9 @@
       - nm_merged_create_local_users.proposed.1.security_domains | length == 1
       - nm_merged_create_local_users.proposed.1.security_domains.0.name == "all"
 
+- name: Run nd_local_user gathered state tests
+  ansible.builtin.include_tasks: gathered.yml
+
 # MERGED STATE TESTS: UPDATE
 - name: Update all ansible_local_user_2's attributes except password (merge state - check mode)
   cisco.nd.nd_local_user: &update_second_local_user_merged_state
