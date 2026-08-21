@@ -4,7 +4,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Type, ClassVar, List
+from typing import Dict, Optional, Tuple, Type, ClassVar, List
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions_mixin import ConfigActionsMixin
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
@@ -15,6 +15,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types impor
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_tor import (
     EpManageTorAssociatePost,
     EpManageTorDisassociatePost,
+    EpManageTorReserveResourcesPost,
     EpManageTorAssociationsGet,
 )
 
@@ -29,6 +30,22 @@ _ASSOCIATE_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 # ``Id [5000] is not within the range of 1 and 4096`` -- will not match and still
 # raises.
 _BENIGN_ASSOCIATE_MESSAGE_FRAGMENTS = ("id [0]", "is not within the range of 1 and 4096")
+
+# Model fields (snake_case) carrying the port-channel / VPC resource IDs that ND
+# 4.2.x requires on associate. When the user supplies none of them we ask ND to
+# allocate them via reserveResources before associating.
+_RESOURCE_FIELDS = (
+    "access_or_tor_port_channel_id",
+    "aggregation_or_leaf_port_channel_id",
+    "access_or_tor_peer_port_channel_id",
+    "aggregation_or_leaf_peer_port_channel_id",
+    "access_or_tor_vpc_id",
+    "aggregation_or_leaf_vpc_id",
+)
+
+# Controllers below this (major, minor) require the caller to reserve the
+# port-channel / VPC IDs before associate; ND 4.3+ allocates them implicitly.
+_RESOURCE_RESERVATION_MAX_VERSION = (4, 3)
 
 
 class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorModel]):
@@ -95,12 +112,70 @@ class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorMode
         if real_failures:
             raise Exception(f"{prefix}: {real_failures}")
 
+    @staticmethod
+    def _parse_major_minor(version: Optional[str]) -> Optional[Tuple[int, int]]:
+        """Return ``(major, minor)`` from a build version like ``"4.2.1.10"``, or ``None``."""
+        if not version:
+            return None
+        parts = str(version).split(".")
+        try:
+            return (int(parts[0]), int(parts[1]))
+        except (IndexError, ValueError):
+            return None
+
+    def _requires_manual_resource_reservation(self) -> bool:
+        """
+        True when the controller needs the caller to reserve resource IDs.
+
+        ND 4.2.x rejects an associate that omits the port-channel / VPC IDs, so
+        we pre-allocate them via reserveResources. ND 4.3+ allocates implicitly.
+        When the version cannot be determined, default to reserving (the current
+        GA is 4.2.x and the extra call is harmless on 4.3).
+        """
+        parsed = self._parse_major_minor(self.rest_send.controller_version)
+        if parsed is None:
+            return True
+        return parsed < _RESOURCE_RESERVATION_MAX_VERSION
+
+    def _reserve_resources(self, model_instance: ManageTorModel) -> Dict[str, int]:
+        """Ask ND to allocate the port-channel / VPC IDs for a prospective association."""
+        api_endpoint = EpManageTorReserveResourcesPost()
+        api_endpoint.fabric_name = model_instance.fabric_name
+        body: Dict[str, str] = {
+            "accessOrTorSwitchId": model_instance.access_or_tor_switch_id,
+            "aggregationOrLeafSwitchId": model_instance.aggregation_or_leaf_switch_id,
+        }
+        if model_instance.access_or_tor_peer_switch_id is not None:
+            body["accessOrTorPeerSwitchId"] = model_instance.access_or_tor_peer_switch_id
+        if model_instance.aggregation_or_leaf_peer_switch_id is not None:
+            body["aggregationOrLeafPeerSwitchId"] = model_instance.aggregation_or_leaf_peer_switch_id
+        response = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=body, operation_type=OperationType.CREATE)
+        resources = response.get("resources") if isinstance(response, dict) else None
+        return resources if isinstance(resources, dict) else {}
+
+    def _build_associate_payload(self, model_instance: ManageTorModel, reserve: bool) -> Dict:
+        """
+        Build one associate payload, reserving resource IDs first when required.
+
+        Reservation runs only when ``reserve`` is set (controller needs it and
+        not check mode) and the user supplied none of the resource IDs -- an
+        explicit ID is always honoured as-is.
+        """
+        payload = model_instance.to_payload()
+        user_omitted_resources = all(getattr(model_instance, name) is None for name in _RESOURCE_FIELDS)
+        if reserve and user_omitted_resources:
+            reserved = self._reserve_resources(model_instance)
+            if reserved:
+                payload["resources"] = {**payload.get("resources", {}), **reserved}
+        return payload
+
     def create_bulk(self, model_instances: List[ManageTorModel], **kwargs) -> ResponseType:
         """Associate multiple access/ToR switch pairs in a single API call."""
         try:
             api_endpoint = self.create_bulk_endpoint()
             api_endpoint.fabric_name = model_instances[0].fabric_name
-            data = [instance.to_payload() for instance in model_instances]
+            reserve = self._requires_manual_resource_reservation() and not self.rest_send.check_mode
+            data = [self._build_associate_payload(instance, reserve) for instance in model_instances]
             response = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=data, operation_type=OperationType.CREATE)
         except Exception as e:
             raise Exception(f"Bulk associate failed: {e}") from e
@@ -112,7 +187,8 @@ class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorMode
         try:
             api_endpoint = self.update_endpoint()
             api_endpoint.fabric_name = model_instance.fabric_name
-            data = [model_instance.to_payload()]
+            reserve = self._requires_manual_resource_reservation() and not self.rest_send.check_mode
+            data = [self._build_associate_payload(model_instance, reserve)]
             response = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=data, operation_type=OperationType.UPDATE)
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e

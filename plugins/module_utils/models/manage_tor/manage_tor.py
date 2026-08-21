@@ -8,7 +8,6 @@ from typing import List, Dict, Any, Optional, ClassVar, Literal, Set
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
-    ValidationInfo,
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -103,55 +102,6 @@ class ManageTorModel(NDBaseModel):
                 data.setdefault(key, val)
 
         return data
-
-    # --- Validators (Cross-field) ---
-
-    @model_validator(mode="after")
-    def validate_resources_for_vpc(self, info: ValidationInfo) -> "ManageTorModel":
-        """
-        Enforce that vPC pairings supply their required resources.
-
-        ND rejects an associate for a vPC side (peer switch specified) unless
-        the matching VPC ID and both port-channel IDs are provided: "When peer
-        switch is specified an integer VPC ID should be specified" and "Invalid
-        PO ID for peer ... switch". The two sides are independent -- a leaf vPC
-        pair may associate with a single ToR, or vice versa -- so each side is
-        validated only when its own peer switch is set. A single (non-peer)
-        pairing lets ND auto-allocate, so the resource fields stay optional.
-
-        The active state is read from the pydantic validation context threaded
-        by ``NDStateMachine`` (``context={"state": ...}``). Only the write
-        states enforce this; identifier-only items for ``deleted`` and models
-        built from controller responses (no context) parse unconditionally.
-        """
-        state = (info.context or {}).get("state") if info else None
-        if state not in ("merged", "replaced", "overridden"):
-            return self
-
-        missing: List[str] = []
-        if self.aggregation_or_leaf_peer_switch_id is not None:
-            for name in (
-                "aggregation_or_leaf_vpc_id",
-                "aggregation_or_leaf_port_channel_id",
-                "aggregation_or_leaf_peer_port_channel_id",
-            ):
-                if getattr(self, name) is None:
-                    missing.append(name)
-        if self.access_or_tor_peer_switch_id is not None:
-            for name in (
-                "access_or_tor_vpc_id",
-                "access_or_tor_port_channel_id",
-                "access_or_tor_peer_port_channel_id",
-            ):
-                if getattr(self, name) is None:
-                    missing.append(name)
-
-        if missing:
-            raise ValueError(
-                f"ToR association '{self.access_or_tor_switch_id}<->{self.aggregation_or_leaf_switch_id}': "
-                f"{', '.join(missing)} required when a peer switch is specified (vPC pairing)."
-            )
-        return self
 
     # --- Argument Spec ---
 

@@ -136,10 +136,10 @@
       - nm_merged_create_vpc_tor_again is not changed
 
 # =============================================================================
-# NEGATIVE TESTS: vPC peer requires resources
+# vPC peer without resources is accepted (ND defaults the VPC/PO IDs)
 # =============================================================================
 
-- name: Associate a vPC leaf pair without required resources (must fail)
+- name: Associate a vPC leaf pair without resources (accepted, check mode)
   cisco.nd.nd_manage_tor:
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
@@ -149,14 +149,13 @@
         aggregation_or_leaf_peer_switch: "{{ test_leaf_peer_switch_id }}"
     state: merged
   check_mode: true
-  register: nm_vpc_missing_resources
+  register: nm_vpc_no_resources
   ignore_errors: true
 
-- name: Asserts vPC-without-resources is rejected
+- name: Asserts vPC-without-resources is accepted
   ansible.builtin.assert:
     that:
-      - nm_vpc_missing_resources is failed
-      - "'required when a peer switch is specified' in (nm_vpc_missing_resources.msg | default(''))"
+      - nm_vpc_no_resources is not failed
 
 # =============================================================================
 # CONFIG_ACTIONS TESTS: validation

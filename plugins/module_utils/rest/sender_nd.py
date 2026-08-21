@@ -164,6 +164,13 @@ class Sender:
             self.log.error(msg)
             raise ValueError(msg) from error
 
+    def get_version(self) -> Optional[str]:
+        """Return the ND controller build version (e.g. ``"4.2.1.10"``) via the HttpApi plugin."""
+        if self._connection is None:
+            self._connection = Connection(self.ansible_module._socket_path)  # pylint: disable=protected-access
+            self._connection.set_params(self.ansible_module.params)
+        return self._connection.get_version("nd")
+
     def _normalize_response(self, response: dict) -> dict:
         """
         # Summary

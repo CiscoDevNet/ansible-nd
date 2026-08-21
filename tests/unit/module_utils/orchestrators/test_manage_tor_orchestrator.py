@@ -56,9 +56,12 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sen
 # =============================================================================
 
 
-def _build_rest_send(response_dicts: list[dict], params: dict[str, Any]) -> RestSend:
+def _build_rest_send(response_dicts: list[dict], params: dict[str, Any], controller_version: str = "4.3.1") -> RestSend:
     """Build a real ``RestSend`` wired to a file-based ``Sender`` yielding
     ``response_dicts`` in order, with ``params`` exposed via ``rest_send.params``.
+
+    ``controller_version`` defaults to a 4.3+ build so the associate path does
+    not pre-reserve resources; reservation tests pass a 4.2.x version explicitly.
     """
 
     def responses():
@@ -78,6 +81,7 @@ def _build_rest_send(response_dicts: list[dict], params: dict[str, Any]) -> Rest
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
     rest_send.timeout = 1
+    rest_send.controller_version = controller_version
     return rest_send
 
 
@@ -363,3 +367,137 @@ def test_manage_tor_orchestrator_delete_bulk_real_207_failure_raises():
 
     with pytest.raises(Exception, match="Bulk disassociate failed"):
         orchestrator.delete_bulk([_pair()])
+
+
+# =============================================================================
+# Version-gated resource reservation (ND 4.2.x reserve -> associate)
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "version, expected",
+    [
+        ("4.2.1.10", (4, 2)),
+        ("4.3.0", (4, 3)),
+        ("5.0", (5, 0)),
+        (None, None),
+        ("", None),
+        ("garbage", None),
+        ("4", None),
+    ],
+)
+def test_manage_tor_orchestrator_parse_major_minor(version, expected):
+    """_parse_major_minor extracts (major, minor) or None for unparseable input."""
+    assert ManageTorOrchestrator._parse_major_minor(version) == expected
+
+
+@pytest.mark.parametrize(
+    "version, expected",
+    [
+        ("4.2.1.10", True),  # 4.2.x requires manual reservation
+        ("4.3.0", False),  # 4.3+ allocates implicitly
+        ("5.1.2", False),
+        (None, True),  # unknown version -> reserve (current GA is 4.2.x)
+    ],
+)
+def test_manage_tor_orchestrator_requires_manual_resource_reservation(version, expected):
+    """The capability flag is driven by the controller (major, minor) version."""
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send([], params, controller_version=version)
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+    assert orchestrator._requires_manual_resource_reservation() is expected
+
+
+def test_manage_tor_orchestrator_create_bulk_reserves_on_4_2_when_resources_omitted():
+    """On ND 4.2.x, an associate that omits the resource IDs first POSTs to
+    reserveResources and merges the allocated IDs into the associate payload."""
+    reserved = {
+        "accessOrTorPortChannelId": 501,
+        "aggregationOrLeafPortChannelId": 502,
+    }
+    responses = [
+        _resp({"resources": reserved}, method="POST"),  # reserveResources
+        _resp({"status": "success"}, return_code=207, method="POST"),  # associate
+    ]
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send(responses, params, controller_version="4.2.1.10")
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+
+    with does_not_raise():
+        orchestrator.create_bulk([_pair()])
+
+    # Last committed payload is the associate array carrying the reserved IDs.
+    assert rest_send.path.endswith("/accessAssociationActions/associate")
+    assert rest_send.committed_payload == [
+        {
+            "accessOrTorSwitchId": "T1",
+            "aggregationOrLeafSwitchId": "L1",
+            "resources": reserved,
+        }
+    ]
+
+
+def test_manage_tor_orchestrator_create_bulk_skips_reserve_on_4_3():
+    """On ND 4.3+, associate omits the resource IDs and no reserveResources call
+    is made (a single associate response is the only request consumed)."""
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send(
+        [_resp({"status": "success"}, return_code=207, method="POST")],
+        params,
+        controller_version="4.3.1",
+    )
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+
+    with does_not_raise():
+        orchestrator.create_bulk([_pair()])
+
+    assert rest_send.path.endswith("/accessAssociationActions/associate")
+    assert rest_send.committed_payload == [
+        {"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1"},
+    ]
+
+
+def test_manage_tor_orchestrator_create_bulk_skips_reserve_when_user_supplies_resources():
+    """On ND 4.2.x, a user-supplied resource ID is honoured as-is -- no
+    reserveResources call is made (only the associate request is consumed)."""
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send(
+        [_resp({"status": "success"}, return_code=207, method="POST")],
+        params,
+        controller_version="4.2.1.10",
+    )
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+
+    pair = ManageTorModel(
+        fabric_name="fab1",
+        access_or_tor_switch_id="T1",
+        aggregation_or_leaf_switch_id="L1",
+        access_or_tor_port_channel_id=777,
+    )
+
+    with does_not_raise():
+        orchestrator.create_bulk([pair])
+
+    assert rest_send.path.endswith("/accessAssociationActions/associate")
+    assert rest_send.committed_payload == [
+        {
+            "accessOrTorSwitchId": "T1",
+            "aggregationOrLeafSwitchId": "L1",
+            "resources": {"accessOrTorPortChannelId": 777},
+        }
+    ]
+
+
+def test_manage_tor_orchestrator_create_bulk_skips_reserve_in_check_mode():
+    """Check mode never mutates the controller: reserveResources is skipped even
+    on ND 4.2.x with the resource IDs omitted."""
+    params = {"check_mode": True, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send([], params, controller_version="4.2.1.10")
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+
+    with does_not_raise():
+        orchestrator.create_bulk([_pair()])
+
+    assert rest_send.committed_payload == [
+        {"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1"},
+    ]

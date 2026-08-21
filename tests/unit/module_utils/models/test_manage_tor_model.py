@@ -16,7 +16,6 @@ API responses.
 
 from __future__ import annotations
 
-import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_tor.manage_tor import (
     ManageTorModel,
 )
@@ -41,9 +40,11 @@ def test_single_pairing_no_resources_ok_merged():
         ManageTorModel.from_config(_cfg(), context={"state": "merged"})
 
 
-def test_vpc_leaf_peer_requires_leaf_resources_merged():
-    """A leaf vPC pairing (leaf peer set) requires leaf VPC ID + both leaf PO IDs."""
-    with pytest.raises(Exception, match="required when a peer switch is specified"):
+def test_vpc_leaf_peer_no_resources_ok_merged():
+    """A leaf vPC pairing without resources is valid; ND defaults the VPC/PO IDs
+    and returns a benign 207 ("Id [0] ... not within the range") the orchestrator
+    tolerates."""
+    with does_not_raise():
         ManageTorModel.from_config(_cfg(aggregation_or_leaf_peer_switch_id="L2"), context={"state": "merged"})
 
 
@@ -61,9 +62,10 @@ def test_vpc_leaf_peer_with_resources_ok_merged():
         )
 
 
-def test_vpc_tor_peer_requires_tor_resources_merged():
-    """A ToR vPC pairing (tor peer set) requires tor VPC ID + both tor PO IDs."""
-    with pytest.raises(Exception, match="required when a peer switch is specified"):
+def test_vpc_tor_peer_no_resources_ok_merged():
+    """A ToR vPC pairing without resources is valid; ND defaults the VPC/PO IDs
+    and returns a benign 207 the orchestrator tolerates."""
+    with does_not_raise():
         ManageTorModel.from_config(_cfg(access_or_tor_peer_switch_id="T2"), context={"state": "merged"})
 
 

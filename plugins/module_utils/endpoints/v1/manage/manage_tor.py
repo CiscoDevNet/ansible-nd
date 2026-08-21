@@ -12,6 +12,8 @@ Endpoints:
   (POST /api/v1/manage/fabrics/{fabricName}/accessAssociationActions/associate)
 - EpManageTorDisassociatePost - Disassociate access/ToR switches
   (POST /api/v1/manage/fabrics/{fabricName}/accessAssociationActions/disassociate)
+- EpManageTorReserveResourcesPost - Reserve port-channel/VPC IDs for an association
+  (POST /api/v1/manage/fabrics/{fabricName}/accessAssociationActions/reserveResources)
 - EpManageTorAssociationsGet - List access/ToR associations
   (GET /api/v1/manage/fabrics/{fabricName}/accessAssociations)
 """
@@ -120,6 +122,31 @@ class EpManageTorDisassociatePost(_EpManageTorBase):
     @property
     def path(self) -> str:
         return self._build_path("accessAssociationActions", "disassociate")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpManageTorReserveResourcesPost(_EpManageTorBase):
+    """
+    POST /api/v1/manage/fabrics/{fabricName}/accessAssociationActions/reserveResources
+
+    Reserve port-channel and VPC IDs for a prospective association. Request body is a
+    single object of switch identifiers; the response returns the allocated ``resources``.
+    Required on ND 4.2.x, where associate rejects a payload that omits these IDs; ND 4.3+
+    allocates them implicitly so this step is skipped.
+    """
+
+    class_name: Literal["EpManageTorReserveResourcesPost"] = Field(
+        default="EpManageTorReserveResourcesPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        return self._build_path("accessAssociationActions", "reserveResources")
 
     @property
     def verb(self) -> HttpVerbEnum:
