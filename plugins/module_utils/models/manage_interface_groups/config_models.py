@@ -40,6 +40,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.types import (
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import (
     config_actions_spec,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 
 class InterfaceGroupSwitchInterfacesModel(NDNestedModel):
@@ -346,6 +347,45 @@ class InterfaceGroupConfigModel(NDBaseModel):
                 merged[key] = deepcopy(value)
         return merged
 
+    @staticmethod
+    def _normalize_controller_omitted_empty_attributes(
+        first: dict[str, Any],
+        second: dict[str, Any],
+    ) -> None:
+        """Treat controller-omitted empty policy strings as equivalent.
+
+        ND may omit empty optional shared-policy strings from a subsequent GET.
+        Remove an empty value only when the corresponding key is absent on the
+        other side. A comparison against a non-empty value remains a real diff,
+        so an explicit empty string can still clear existing configuration.
+        """
+        first_attributes = first.get("ethernetAttributes")
+        second_attributes = second.get("ethernetAttributes")
+        if not isinstance(first_attributes, dict) or not isinstance(second_attributes, dict):
+            return
+
+        for key in ("extraConfig", "netflowMonitor", "netflowSampler"):
+            first_has_key = key in first_attributes
+            second_has_key = key in second_attributes
+            if first_has_key and first_attributes[key] == "" and not second_has_key:
+                first_attributes.pop(key)
+            elif second_has_key and second_attributes[key] == "" and not first_has_key:
+                second_attributes.pop(key)
+
+    @classmethod
+    def _semantic_diff_dicts(
+        cls,
+        first: "InterfaceGroupConfigModel",
+        second: "InterfaceGroupConfigModel",
+        *,
+        second_exclude_unset: bool = False,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Return comparison dictionaries with ND empty-string echoes aligned."""
+        first_data = first.to_diff_dict()
+        second_data = second.to_diff_dict(exclude_unset=second_exclude_unset)
+        cls._normalize_controller_omitted_empty_attributes(first_data, second_data)
+        return first_data, second_data
+
     def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
         """Compare merged input using additive association semantics.
 
@@ -361,10 +401,12 @@ class InterfaceGroupConfigModel(NDBaseModel):
         template_config_supplied = "template_config" in other.model_fields_set
         if not template_config_supplied:
             if not exclude_unset:
-                return super().get_diff(other, exclude_unset=exclude_unset)
+                current_data, proposed_data = self._semantic_diff_dicts(self, other)
+                return issubset(proposed_data, current_data)
             candidate = deepcopy(self)
             candidate.merge(other)
-            return candidate.to_diff_dict() == self.to_diff_dict()
+            candidate_data, current_data = self._semantic_diff_dicts(candidate, self)
+            return candidate_data == current_data
 
         current_template_config = self.template_config or {}
         proposed_template_config = other.template_config or {}
@@ -379,15 +421,16 @@ class InterfaceGroupConfigModel(NDBaseModel):
         proposed_without_template.template_config = {}
 
         if not exclude_unset:
-            return template_matches and NDBaseModel.get_diff(
+            current_data, proposed_data = self._semantic_diff_dicts(
                 current_without_template,
                 proposed_without_template,
-                exclude_unset=False,
             )
+            return template_matches and issubset(proposed_data, current_data)
 
         candidate = deepcopy(current_without_template)
         candidate.merge(proposed_without_template)
-        return template_matches and candidate.to_diff_dict() == current_without_template.to_diff_dict()
+        candidate_data, current_data = self._semantic_diff_dicts(candidate, current_without_template)
+        return template_matches and candidate_data == current_data
 
     def merge(self, other: "NDBaseModel") -> "InterfaceGroupConfigModel":
         """Merge one Interface Group additively for ``state=merged``.

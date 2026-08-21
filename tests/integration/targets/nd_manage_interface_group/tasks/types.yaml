@@ -32,6 +32,8 @@
         method: get
         expected_status: 200
   register: interface_group_types_result
+  tags:
+    - interface_groups_types
 
 - name: Validate successful state-machine output contract
   ansible.builtin.assert:
@@ -45,6 +47,8 @@
         interface_group_types_result.second_run_result.before
         == interface_group_types_result.second_run_result.after
   when: not ansible_check_mode
+  tags:
+    - interface_groups_types
 
 - name: Validate proposed output at info and debug output levels
   ansible.builtin.assert:
@@ -58,6 +62,8 @@
   when:
     - not ansible_check_mode
     - nd_info.output_level in ['info', 'debug']
+  tags:
+    - interface_groups_types
 
 - name: Validate all Interface Group types from the list response
   cisco.nd.tests.integration.nd_interface_group_validate:
@@ -73,3 +79,5 @@
       unique_members: true
       consistent_counts: true
   when: not ansible_check_mode
+  tags:
+    - interface_groups_types

@@ -91,6 +91,62 @@ def test_normalises_ethernet_attribute_aliases():
     }
 
 
+def test_ethernet_validation_accepts_controller_omitted_empty_strings(action_plugin):
+    result = _run(
+        action_plugin,
+        nd_data={
+            "current": {
+                "interfaceGroupName": "ANSIBLE-IG-ETH-POLICY",
+                "type": "ethernet",
+                "policyDetails": {
+                    "policyType": "sharedTrunkHost",
+                    "ethernetAttributes": {"adminState": True},
+                },
+            }
+        },
+        test_data=[
+            {
+                "interface_group_name": "ANSIBLE-IG-ETH-POLICY",
+                "type": "ethernetWithPolicy",
+                "ethernet_attributes": {
+                    "admin_state": True,
+                    "extra_config": "",
+                    "netflow_monitor": "",
+                    "netflow_sampler": "",
+                },
+            }
+        ],
+        mode="exact",
+    )
+
+    assert result.get("failed", False) is False
+
+
+def test_ethernet_validation_rejects_empty_against_nonempty_value(action_plugin):
+    result = _run(
+        action_plugin,
+        nd_data={
+            "current": {
+                "interfaceGroupName": "ANSIBLE-IG-ETH-POLICY",
+                "type": "ethernet",
+                "policyDetails": {
+                    "policyType": "sharedTrunkHost",
+                    "ethernetAttributes": {"extraConfig": "feature lacp"},
+                },
+            }
+        },
+        test_data=[
+            {
+                "interface_group_name": "ANSIBLE-IG-ETH-POLICY",
+                "ethernet_attributes": {"extra_config": ""},
+            }
+        ],
+        mode="exact",
+    )
+
+    assert result["failed"] is True
+
+
 def test_custom_template_validation_accepts_controller_scalar_echoes(action_plugin):
     result = _run(
         action_plugin,

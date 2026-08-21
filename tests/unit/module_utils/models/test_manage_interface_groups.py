@@ -676,6 +676,62 @@ def test_manage_interface_groups_model_00080() -> None:
     assert "description" not in response.to_config()["ethernet_attributes"]
 
 
+def test_manage_interface_groups_model_00081() -> None:
+    """Treat controller-omitted empty shared-policy strings as idempotent."""
+    existing = InterfaceGroupConfigModel.from_response(
+        {
+            "interfaceGroupName": "shared-policy-group",
+            "type": "ethernet",
+            "policyDetails": {
+                "policyType": "sharedTrunkHost",
+                "ethernetAttributes": {
+                    "adminState": True,
+                },
+            },
+        }
+    )
+    proposed = InterfaceGroupConfigModel.from_config(
+        {
+            "interface_group_name": "shared-policy-group",
+            "type": "ethernetWithPolicy",
+            "ethernet_attributes": {
+                "admin_state": True,
+                "extra_config": "",
+                "netflow_monitor": "",
+                "netflow_sampler": "",
+            },
+        }
+    )
+
+    assert existing.get_diff(proposed, exclude_unset=True) is True
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+def test_manage_interface_groups_model_00082() -> None:
+    """Keep an explicit empty shared-policy string as a clear operation."""
+    existing = InterfaceGroupConfigModel.from_response(
+        {
+            "interfaceGroupName": "shared-policy-group",
+            "type": "ethernet",
+            "policyDetails": {
+                "policyType": "sharedTrunkHost",
+                "ethernetAttributes": {
+                    "extraConfig": "logging event port link-status",
+                },
+            },
+        }
+    )
+    proposed = InterfaceGroupConfigModel.from_config(
+        {
+            "interface_group_name": "shared-policy-group",
+            "ethernet_attributes": {"extra_config": ""},
+        }
+    )
+
+    assert existing.get_diff(proposed, exclude_unset=True) is False
+    assert existing.get_diff(proposed, exclude_unset=False) is False
+
+
 def test_manage_interface_groups_model_00100() -> None:
     """
     # Summary

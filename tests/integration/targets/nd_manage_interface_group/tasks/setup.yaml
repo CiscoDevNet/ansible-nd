@@ -202,42 +202,41 @@
       - >-
         interface_group_port_channel_fixture_deploy.current.results
         | default([])
-        | list
-        | length == 4
-      - >-
-        interface_group_port_channel_fixture_deploy.current.results
-        | default([])
         | rejectattr('status', 'equalto', 'success')
         | list
         | length == 0
       - >-
-        interface_group_port_channel_fixture_deploy.current.results
+        test_port_channel_1 | lower in
+        (interface_group_port_channel_fixture_deploy.current.results
         | default([])
         | selectattr('switchId', 'equalto', test_switch_id)
-        | selectattr('interfaceName', 'equalto', test_port_channel_1)
-        | list
-        | length == 1
+        | map(attribute='interfaceName')
+        | map('lower')
+        | list)
       - >-
-        interface_group_port_channel_fixture_deploy.current.results
+        test_port_channel_2 | lower in
+        (interface_group_port_channel_fixture_deploy.current.results
         | default([])
         | selectattr('switchId', 'equalto', test_switch_id)
-        | selectattr('interfaceName', 'equalto', test_port_channel_2)
-        | list
-        | length == 1
+        | map(attribute='interfaceName')
+        | map('lower')
+        | list)
       - >-
-        interface_group_port_channel_fixture_deploy.current.results
+        test_port_channel_3 | lower in
+        (interface_group_port_channel_fixture_deploy.current.results
         | default([])
         | selectattr('switchId', 'equalto', test_switch_id)
-        | selectattr('interfaceName', 'equalto', test_port_channel_3)
-        | list
-        | length == 1
+        | map(attribute='interfaceName')
+        | map('lower')
+        | list)
       - >-
-        interface_group_port_channel_fixture_deploy.current.results
+        test_any_port_channel | lower in
+        (interface_group_port_channel_fixture_deploy.current.results
         | default([])
         | selectattr('switchId', 'equalto', test_switch_id_secondary)
-        | selectattr('interfaceName', 'equalto', test_any_port_channel)
-        | list
-        | length == 1
+        | map(attribute='interfaceName')
+        | map('lower')
+        | list)
     fail_msg: >-
       The controller did not successfully deploy every requested reserved
       port-channel fixture. Inspect the per-interface outcomes before

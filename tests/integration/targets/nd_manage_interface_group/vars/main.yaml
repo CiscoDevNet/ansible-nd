@@ -7,9 +7,9 @@
 # reserved vPC interface. Connection credentials remain in the inventory.
 
 test_fabric_name: "{{ nd_test_fabric_name | default('') }}"
-test_switch_ip_primary: "{{ nd_test_switch_ip | default('') }}"
-test_switch_ip_secondary: >-
-  {{ nd_test_interface_group_secondary_switch_ip | default('') }}
+test_switch_id_input: "{{ nd_test_switch_id | default('') }}"
+test_switch_id_secondary_input: >-
+  {{ nd_test_interface_group_secondary_switch_id | default('') }}
 test_vpc_flow_enabled: >-
   {{
     nd_test_interface_group_vpc_flow_enabled

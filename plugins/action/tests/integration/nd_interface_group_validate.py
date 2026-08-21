@@ -329,6 +329,20 @@ def _dict_is_subset(want: dict[str, Any], have: dict[str, Any]) -> bool:
     return True
 
 
+def _align_controller_omitted_empty_attributes(
+    expected: dict[str, Any],
+    actual: dict[str, Any],
+) -> None:
+    """Align empty optional strings that ND may omit from Interface Group GETs."""
+    for key in ("extra_config", "netflow_monitor", "netflow_sampler"):
+        expected_has_key = key in expected
+        actual_has_key = key in actual
+        if expected_has_key and expected[key] == "" and not actual_has_key:
+            expected.pop(key)
+        elif actual_has_key and actual[key] == "" and not expected_has_key:
+            actual.pop(key)
+
+
 def _compare_group(
     want: dict[str, Any],
     have: dict[str, Any],
@@ -355,7 +369,10 @@ def _compare_group(
         elif field_name == "template_config":
             matches = InterfaceGroupValidators.template_config_is_subset(expected or {}, actual or {})
         elif field_name == "ethernet_attributes":
-            matches = _dict_is_subset(expected or {}, actual or {})
+            compared_expected = dict(expected or {})
+            compared_actual = dict(actual or {})
+            _align_controller_omitted_empty_attributes(compared_expected, compared_actual)
+            matches = _dict_is_subset(compared_expected, compared_actual)
         if not matches:
             mismatches.append(
                 {

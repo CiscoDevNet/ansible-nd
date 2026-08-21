@@ -28,10 +28,10 @@
 # - When Ethernet-custom coverage is enabled, ND must contain a compatible
 #   user-defined Ethernet shared-policy template.
 #
-# Interface Groups accept a management IP or serial number as the switch
-# identifier. This test target takes management IPs because the interface and
-# Network fixture modules require them. It queries the fabric inventory once
-# and derives the serial numbers used by Interface Group requests.
+# Supply only switch serial numbers. The target verifies them against the
+# fabric inventory and derives management IPs internally only for prerequisite
+# modules whose public input requires an IP address. Interface Group requests
+# use the supplied canonical serial numbers.
 #
 # The same physical port number may be used on different switches. Fixtures on
 # the same switch must use distinct interfaces where exclusive use is required.
@@ -47,8 +47,8 @@
 
 # Required environment-specific values.
 nd_test_fabric_name: <FABRIC_NAME>
-nd_test_switch_ip: <PRIMARY_LEAF_MANAGEMENT_IP>
-nd_test_interface_group_secondary_switch_ip: <SECONDARY_LEAF_MANAGEMENT_IP>
+nd_test_switch_id: <PRIMARY_LEAF_SERIAL_NUMBER>
+nd_test_interface_group_secondary_switch_id: <SECONDARY_LEAF_SERIAL_NUMBER>
 
 # Optional flows and fixture creation.
 nd_test_interface_group_vpc_flow_enabled: true

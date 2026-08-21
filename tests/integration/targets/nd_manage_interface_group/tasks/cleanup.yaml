@@ -141,6 +141,12 @@
       type: switch
     state: gathered
   register: interface_group_vpc_pair_cleanup_gathered
+  until: >-
+    interface_group_vpc_pair_cleanup_gathered.gathered.vpc_pairs
+    | default([])
+    | length == 0
+  retries: 12
+  delay: 5
   when:
     - test_vpc_flow_enabled | bool
     - test_create_vpc_pair_fixture | bool
