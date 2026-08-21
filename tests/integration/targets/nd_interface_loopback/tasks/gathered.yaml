@@ -1,0 +1,223 @@
+---
+- name: "GATHERED: Read all user-managed loopback interfaces"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: nm_gathered_all
+
+- name: "GATHERED: Verify read-only behavior"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_all is not changed
+      - nm_gathered_all.gathered is defined
+      - nm_gathered_all.gathered | type_debug == "list"
+      - nm_gathered_all.before is not defined
+      - nm_gathered_all.after is not defined
+      - nm_gathered_all.diff is not defined
+      - nm_gathered_all.proposed is not defined
+
+- name: "GATHERED: Read all interfaces with explicit empty config"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config: []
+  register: nm_gathered_empty_config
+
+- name: "GATHERED: Verify explicit empty config gathers all"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_config is not changed
+      - nm_gathered_empty_config.gathered == nm_gathered_all.gathered
+
+- name: "GATHERED: Filter by switch only"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+  register: nm_gathered_switch
+
+- name: "GATHERED: Verify switch-only filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_switch is not changed
+      - nm_gathered_switch.gathered | length >= 1
+      - nm_gathered_switch.gathered | rejectattr('switch_ip', 'equalto', test_switch_ip) | list | length == 0
+
+- name: "GATHERED: Filter by switch and interface name"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Loopback101
+  register: nm_gathered_exact
+
+- name: "GATHERED: Verify exact switch and interface filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_exact is not changed
+      - nm_gathered_exact.gathered | length == 1
+      - nm_gathered_exact.gathered[0].switch_ip == test_switch_ip
+      - nm_gathered_exact.gathered[0].interface_name == "loopback101"
+
+- name: "GATHERED: Reuse gathered output as config in check mode"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config: "{{ nm_gathered_exact.gathered }}"
+  check_mode: true
+  register: cm_reuse_gathered_loopback
+
+- name: "GATHERED: Verify gathered output round-trips as config"
+  ansible.builtin.assert:
+    that:
+      - cm_reuse_gathered_loopback is not changed
+      - cm_reuse_gathered_loopback.proposed | length == 1
+      - cm_reuse_gathered_loopback.proposed.0.switch_ip == test_switch_ip
+      - cm_reuse_gathered_loopback.proposed.0.interface_name == "loopback101"
+
+- name: "GATHERED: Filter by nested local criterion"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - config_data:
+          network_os:
+            policy:
+              description: "Ansible integration test loopback102"
+  register: nm_gathered_nested
+
+- name: "GATHERED: Verify nested local filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_nested is not changed
+      - nm_gathered_nested.gathered | length == 1
+      - nm_gathered_nested.gathered[0].interface_name == "loopback102"
+
+- name: "GATHERED: Combine server and local criteria"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Loopback101
+        config_data:
+          network_os:
+            policy:
+              description: "Ansible integration test loopback101"
+  register: nm_gathered_mixed_and
+
+- name: "GATHERED: Verify server and local criteria use AND semantics"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_mixed_and is not changed
+      - nm_gathered_mixed_and.gathered | length == 1
+      - nm_gathered_mixed_and.gathered.0.interface_name == "loopback101"
+
+- name: "GATHERED: Filter with multiple OR criteria"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - interface_name: loopback101
+      - interface_name: loopback102
+  register: nm_gathered_multiple
+
+- name: "GATHERED: Verify multiple filters use OR semantics"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_multiple is not changed
+      - nm_gathered_multiple.gathered | length == 2
+      - nm_gathered_multiple.gathered | map(attribute='interface_name') | sort | list == ['loopback101', 'loopback102']
+
+- name: "GATHERED: Apply overlapping filters"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - interface_name: loopback101
+      - config_data:
+          network_os:
+            policy:
+              description: "Ansible integration test loopback101"
+  register: nm_gathered_deduplicated
+
+- name: "GATHERED: Verify overlapping filters do not duplicate results"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_deduplicated is not changed
+      - nm_gathered_deduplicated.gathered | length == 1
+      - nm_gathered_deduplicated.gathered.0.interface_name == "loopback101"
+
+- name: "GATHERED: Filter with no matching interface"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - interface_name: loopback999
+  register: nm_gathered_no_match
+
+- name: "GATHERED: Verify no-match filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_no_match is not changed
+      - nm_gathered_no_match.gathered == []
+
+- name: "GATHERED: Filter by a switch outside the fabric"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: "192.0.2.250"
+  register: nm_gathered_unknown_switch
+
+- name: "GATHERED: Verify unknown switch returns no results"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_unknown_switch is not changed
+      - nm_gathered_unknown_switch.gathered == []
+
+- name: "GATHERED: Preview a merged change without applying it"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback101
+        config_data:
+          network_os:
+            policy:
+              description: "CHECK MODE ONLY - must not reach controller"
+  check_mode: true
+  register: cm_gathered_merge_preview
+
+- name: "GATHERED: Read interface after merged check-mode preview"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback101
+  register: nm_gathered_after_preview
+
+- name: "GATHERED: Verify merged check mode did not change controller configuration"
+  ansible.builtin.assert:
+    that:
+      - cm_gathered_merge_preview is changed
+      - nm_gathered_after_preview is not changed
+      - nm_gathered_after_preview.gathered | length == 1
+      - nm_gathered_after_preview.gathered.0.config_data.network_os.policy.description == 'Ansible integration test loopback101'

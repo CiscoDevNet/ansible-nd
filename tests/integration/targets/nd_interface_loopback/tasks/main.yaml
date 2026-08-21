@@ -50,6 +50,9 @@
     - name: Run nd_interface_loopback overridden state tests
       ansible.builtin.include_tasks: overridden.yaml
 
+    - name: Run nd_interface_loopback gathered state tests
+      ansible.builtin.include_tasks: gathered.yaml
+
     - name: Run nd_interface_loopback deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
   vars:

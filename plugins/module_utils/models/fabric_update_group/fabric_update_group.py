@@ -13,9 +13,14 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, model_validator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+    model_validator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
+)
 
 
 class InstallImageDataModel(NDNestedModel):
@@ -77,7 +82,12 @@ ExecutionLiteral = Literal["parallel", "serial"]
 ContingencyLiteral = Literal["continue", "pause"]
 AnalysisLiteral = Literal["snapshot", "noAnalysis", "fullAnalysis", "usePreExistingAnalysis"]
 ReportSelectionLiteral = Literal["noReport", "basic", "advanced"]
-ReportsLiteral = Literal["noReport", "usePreExistingReports", "useDefaultPreAndPostReports", "useAdvancePreAndPostReports"]
+ReportsLiteral = Literal[
+    "noReport",
+    "usePreExistingReports",
+    "useDefaultPreAndPostReports",
+    "useAdvancePreAndPostReports",
+]
 
 
 class FabricUpdateGroupModel(NDBaseModel):
@@ -97,6 +107,16 @@ class FabricUpdateGroupModel(NDBaseModel):
     identifiers: ClassVar[list[str] | None] = ["update_group_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
 
+    # --- Gathered Filtering Configuration ---
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "update_group_name",
+        "execution",
+        "contingency",
+        "analysis",
+        "is_maintenance",
+        "is_disruptive_update",
+    )
     # TODO(4.2.1) ND silently drops `installationOrderDevices` on the updateGroups create/update endpoints.
     # The POST/PUT accept the field without error, but GET (single and list) never echoes it back. We still
     # send it (ND may consume it during the actual upgrade run), but it must be excluded from the idempotency
@@ -156,17 +176,22 @@ class FabricUpdateGroupModel(NDBaseModel):
                 type="list",
                 elements="dict",
                 options=dict(
-                    update_group_name=dict(type="str", required=True),
+                    update_group_name=dict(type="str", required=False),
                     execution=dict(type="str", choices=["parallel", "serial"]),
                     contingency=dict(type="str", choices=["continue", "pause"]),
                     analysis=dict(
                         type="str",
-                        choices=["snapshot", "noAnalysis", "fullAnalysis", "usePreExistingAnalysis"],
+                        choices=[
+                            "snapshot",
+                            "noAnalysis",
+                            "fullAnalysis",
+                            "usePreExistingAnalysis",
+                        ],
                     ),
                     is_maintenance=dict(type="bool"),
                     is_disruptive_update=dict(type="bool"),
                     update_group_switches=dict(type="list", elements="str"),
-                    force_created=dict(type="bool", default=False),
+                    force_created=dict(type="bool"),
                     install_image_data=dict(
                         type="dict",
                         options=dict(
@@ -202,6 +227,6 @@ class FabricUpdateGroupModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

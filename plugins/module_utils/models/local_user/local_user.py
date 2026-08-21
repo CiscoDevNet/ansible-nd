@@ -16,8 +16,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     SerializationInfo,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.constants import (
+    NDConstantMapping,
+)
 
 USER_ROLES_MAPPING = NDConstantMapping(
     {
@@ -77,6 +81,16 @@ class LocalUserModel(NDBaseModel):
     identifiers: ClassVar[Optional[List[str]]] = ["login_id"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
 
+    # --- Gathered Filtering Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "login_id",
+        "email",
+        "first_name",
+        "last_name",
+    )
+
     # --- Serialization Configuration ---
 
     exclude_from_diff: ClassVar[set] = {"user_password"}
@@ -96,7 +110,11 @@ class LocalUserModel(NDBaseModel):
     email: Optional[str] = Field(default=None, alias="email")
     first_name: Optional[str] = Field(default=None, alias="firstName")
     last_name: Optional[str] = Field(default=None, alias="lastName")
-    user_password: Optional[SecretStr] = Field(default=None, alias="password")
+    user_password: Optional[SecretStr] = Field(
+        default=None,
+        alias="password",
+        json_schema_extra={"secret": True},
+    )
     reuse_limitation: Optional[int] = Field(default=None, alias="reuseLimitation")
     time_interval_limitation: Optional[int] = Field(default=None, alias="timeIntervalLimitation")
     security_domains: Optional[List[LocalUserSecurityDomainModel]] = Field(default=None, alias="rbac")
@@ -140,6 +158,9 @@ class LocalUserModel(NDBaseModel):
         """
         if not isinstance(data, dict):
             return data
+
+        # Pydantic before-validators should not mutate the caller's dictionary.
+        data = dict(data)
 
         policy = data.pop("passwordPolicy", None)
         if isinstance(policy, dict):
@@ -187,10 +208,10 @@ class LocalUserModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
                     email=dict(type="str"),
-                    login_id=dict(type="str", required=True),
+                    login_id=dict(type="str"),
                     first_name=dict(type="str"),
                     last_name=dict(type="str"),
                     user_password=dict(type="str", no_log=True),
@@ -223,6 +244,6 @@ class LocalUserModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

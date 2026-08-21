@@ -13,6 +13,7 @@ Tests:
 - to_payload / from_response round-trip
 - Nested InstallImageDataModel and UpdateReportCheckModel
 - get_argument_spec shape
+- Gathered state filtering
 """
 
 # pylint: disable=disallowed-name,protected-access,redefined-outer-name,too-many-lines,line-too-long,invalid-name
@@ -20,12 +21,20 @@ Tests:
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
+    filter_gathered_response,
+    validate_gathered_filters,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_group.fabric_update_group import (
     FabricUpdateGroupModel,
     InstallImageDataModel,
     UpdateReportCheckModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_update_group import (
+    FabricUpdateGroupOrchestrator,
 )
 
 
@@ -612,8 +621,10 @@ def test_fabric_update_group_00600() -> None:
 
     - `fabric_name`, `state`, `config`, `auto_assign` are top-level keys
     - `state` choices are merged/replaced/overridden/deleted (no `query` - the ND collection has no
-      `query` state; `gathered` is the planned read mechanism)
-    - `config.options.update_group_name` is required
+      `query` state;)
+    - `state` choices include `gathered`
+    - `config` is optional (not required) so state=gathered can run without input
+    - `config.options.update_group_name` is not required (optional filter for gathered)
     - `install_image_data` and `update_report_checks` are nested dicts/lists
 
     ## Classes and Methods
@@ -624,14 +635,26 @@ def test_fabric_update_group_00600() -> None:
 
     assert set(spec.keys()) == {"fabric_name", "config", "state", "auto_assign"}
     assert spec["fabric_name"]["required"] is True
-    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
+    assert spec["state"]["choices"] == [
+        "merged",
+        "replaced",
+        "overridden",
+        "deleted",
+        "gathered",
+    ]
     assert spec["config"]["type"] == "list"
     assert spec["config"]["elements"] == "dict"
+    assert spec["config"].get("required", False) is False
 
     options = spec["config"]["options"]
-    assert options["update_group_name"]["required"] is True
+    assert options["update_group_name"]["required"] is False
     assert options["execution"]["choices"] == ["parallel", "serial"]
-    assert options["analysis"]["choices"] == ["snapshot", "noAnalysis", "fullAnalysis", "usePreExistingAnalysis"]
+    assert options["analysis"]["choices"] == [
+        "snapshot",
+        "noAnalysis",
+        "fullAnalysis",
+        "usePreExistingAnalysis",
+    ]
     assert options["install_image_data"]["type"] == "dict"
     assert "nos_image_name" in options["install_image_data"]["options"]
     assert options["update_report_checks"]["type"] == "list"
@@ -839,4 +862,346 @@ def test_fabric_update_group_00830() -> None:
     options = FabricUpdateGroupModel.get_argument_spec()["config"]["options"]
 
     assert options["force_created"]["type"] == "bool"
-    assert options["force_created"]["default"] is False
+    assert options["force_created"].get("default") is None
+
+
+# =============================================================================
+# Test: Gathered State Filtering
+# =============================================================================
+
+
+def test_fabric_update_group_00900() -> None:
+    """
+    # Summary
+
+    Verify `FabricUpdateGroupModel` opts into gathered filtering and
+    `FabricUpdateGroupOrchestrator` does NOT opt into server-side (Lucene) filtering.
+
+    The updateGroups endpoint does not support Lucene query parameters,
+    so all filtering is local (post-query).
+
+    ## Test
+
+    - `supports_gathered_filtering` is True on the model
+    - `gathered_filter_properties` contains the expected 6 properties
+    - `supports_gathered_server_filtering` is False on the orchestrator
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupModel (class vars)
+    - FabricUpdateGroupOrchestrator (class vars)
+    """
+    assert FabricUpdateGroupModel.supports_gathered_filtering is True
+    assert FabricUpdateGroupModel.gathered_filter_properties == (
+        "update_group_name",
+        "execution",
+        "contingency",
+        "analysis",
+        "is_maintenance",
+        "is_disruptive_update",
+    )
+    assert FabricUpdateGroupOrchestrator.supports_gathered_server_filtering is False
+
+
+def test_fabric_update_group_00910() -> None:
+    """
+    # Summary
+
+    Verify gathered filter matches by `update_group_name` (primary identifier).
+
+    ## Test
+
+    - Filter with matching name returns 1 result
+    - Filter with non-matching name returns 0 results
+
+    ## Classes and Methods
+
+    - filter_gathered_response()
+    - FabricUpdateGroupModel.matches_gathered_filter()
+    """
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"update_group_name": "leaf_group"}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 1
+    assert result[0].update_group_name == "leaf_group"
+
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"update_group_name": "nonexistent_group"}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 0
+
+
+def test_fabric_update_group_00920() -> None:
+    """
+    # Summary
+
+    Verify gathered filter matches by `execution` enum value.
+
+    ## Test
+
+    - Filter `execution: serial` matches the sample (which has serial)
+    - Filter `execution: parallel` does not match
+
+    ## Classes and Methods
+
+    - filter_gathered_response()
+    """
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"execution": "serial"}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 1
+
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"execution": "parallel"}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 0
+
+
+def test_fabric_update_group_00930() -> None:
+    """
+    # Summary
+
+    Verify gathered filter matches by boolean properties.
+
+    Boolean `False` is a meaningful filter criterion (not treated as absent).
+    This confirms the framework correctly distinguishes `False` from `None`.
+
+    ## Test
+
+    - Filter `is_maintenance: true` matches (sample has True)
+    - Filter `is_maintenance: false` does not match
+    - Filter `is_disruptive_update: true` matches (sample has True)
+
+    ## Classes and Methods
+
+    - filter_gathered_response()
+    """
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"is_maintenance": True}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 1
+
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"is_maintenance": False}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 0
+
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"is_disruptive_update": True}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 1
+
+
+def test_fabric_update_group_00940() -> None:
+    """
+    # Summary
+
+    Verify AND semantics within a single gathered filter item.
+
+    When a user supplies multiple criteria in one config item, ALL must match
+    the candidate for it to be included in the result.
+
+    ## Test
+
+    - `execution: serial` AND `contingency: continue` → matches (both true in sample)
+    - `execution: serial` AND `contingency: pause` → no match (contingency mismatch)
+
+    ## Classes and Methods
+
+    - filter_gathered_response()
+    """
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"execution": "serial", "contingency": "continue"}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 1
+
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"execution": "serial", "contingency": "pause"}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 0
+
+
+def test_fabric_update_group_00950() -> None:
+    """
+    # Summary
+
+    Verify OR semantics across multiple gathered filter items.
+
+    When a user supplies multiple items in the config list, a candidate matches
+    if ANY item matches (union). This lets users express "show me groups that are
+    serial OR groups named X" in a single task.
+
+    ## Test
+
+    - Two filter items: one doesn't match (name), one does (execution) → 1 result
+    - Two filter items: neither matches → 0 results
+
+    ## Classes and Methods
+
+    - filter_gathered_response()
+    """
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[
+            {"update_group_name": "nonexistent"},
+            {"execution": "serial"},
+        ],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 1
+
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[
+            {"update_group_name": "nonexistent"},
+            {"execution": "parallel"},
+        ],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 0
+
+
+def test_fabric_update_group_00960() -> None:
+    """
+    # Summary
+
+    Verify `report_selection` and `reports` enum-valued gathered filters.
+
+    ## Test
+
+    - Filter `report_selection: advanced` matches (sample has advanced)
+    - Filter `reports: usePreExistingReports` matches
+    - Filter `report_selection: noReport` does not match
+
+    ## Classes and Methods
+
+    - filter_gathered_response()
+    """
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"report_selection": "advanced"}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 1
+
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"reports": "usePreExistingReports"}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 1
+
+    result = filter_gathered_response(
+        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
+        filters=[{"report_selection": "noReport"}],
+        model_class=FabricUpdateGroupModel,
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+    )
+    assert len(result) == 0
+
+
+@pytest.mark.parametrize(
+    "filter_item",
+    [
+        {"update_group_switches": ["192.168.7.11"]},
+        {"force_created": True},
+        {"install_image_data": {"nos_image_name": "nxos.9.3.13.bin"}},
+    ],
+    ids=["update_group_switches", "force_created", "install_image_data_nested"],
+)
+def test_fabric_update_group_00970(filter_item) -> None:
+    """
+    # Summary
+
+    Verify unsupported gathered filter properties are rejected with a clear error.
+
+    Properties excluded from `gathered_filter_properties` must not silently pass
+    validation. This guards against customers accidentally filtering on fields
+    that cannot work (module-only params, nested objects, list-valued fields).
+
+    ## Test
+
+    - `update_group_switches` (list-valued, no meaningful equality match)
+    - `force_created` (module-only operational flag, never returned by API)
+    - `install_image_data.nos_image_name` (nested property, not supported)
+
+    ## Classes and Methods
+
+    - validate_gathered_filters()
+    """
+    with pytest.raises(ValueError, match="unsupported properties"):
+        validate_gathered_filters(
+            filters=[filter_item],
+            normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+            supported_properties=FabricUpdateGroupModel.gathered_filter_properties,
+        )
+
+
+def test_fabric_update_group_00980() -> None:
+    """
+    # Summary
+
+    Verify Ansible-injected None values are not treated as filter criteria.
+
+    Ansible pads all omitted suboptions with None after argument validation.
+    These Nones must not trigger "unsupported property" errors or act as
+    filter criteria. Only explicitly supplied non-None values count.
+
+    ## Test
+
+    - Filter item with one active property and several None-padded properties
+      passes validation without error
+
+    ## Classes and Methods
+
+    - validate_gathered_filters()
+    """
+    filter_item = {
+        "update_group_name": "leaf_group",
+        "execution": None,
+        "contingency": None,
+        "analysis": None,
+        "is_maintenance": None,
+        "is_disruptive_update": None,
+        "update_group_switches": None,
+        "force_created": None,
+        "install_image_data": None,
+    }
+
+    # Should not raise — None values are ignored by property validation
+    validate_gathered_filters(
+        filters=[filter_item],
+        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+        supported_properties=FabricUpdateGroupModel.gathered_filter_properties,
+    )

@@ -36,7 +36,7 @@
     config:
       - "{{ {'fabric_name': test_fabric_merged} | combine(fabric_config_ibgp) }}"
   register: merged_result_1
-  tags: [test_merged, test_merged_create]
+  tags: [test_merged, test_merged_create, test_gathered]
 
 - name: "TEST 1a: Verify fabric was created using merged state"
   assert:
@@ -45,7 +45,7 @@
       - merged_result_1 is not failed
     fail_msg: "Fabric creation with state merged failed"
     success_msg: "Fabric successfully created with state merged"
-  tags: [test_merged, test_merged_create]
+  tags: [test_merged, test_merged_create, test_gathered]
 
 - name: "TEST 1b: Create fabric using state merged (second run - idempotency test)"
   cisco.nd.nd_manage_fabric_ibgp_vxlan:
@@ -54,7 +54,7 @@
     config:
       - "{{ {'fabric_name': test_fabric_merged} | combine(fabric_config_ibgp) }}"
   register: merged_result_2
-  tags: [test_merged, test_merged_idempotent]
+  tags: [test_merged, test_merged_idempotent, test_gathered]
 
 - name: "TEST 1b: Verify merged state is idempotent"
   assert:
@@ -63,7 +63,7 @@
       - merged_result_2 is not failed
     fail_msg: "Merged state is not idempotent - should not change when run twice with same config"
     success_msg: "Merged state is idempotent - no changes on second run"
-  tags: [test_merged, test_merged_idempotent]
+  tags: [test_merged, test_merged_idempotent, test_gathered]
 
 - name: "TEST 1c: Update fabric using state merged (modify existing)"
   cisco.nd.nd_manage_fabric_ibgp_vxlan:
@@ -142,7 +142,7 @@
           management_gateway: ""
           management_ipv4_prefix: 24
   register: merged_result_3
-  tags: [test_merged, test_merged_update]
+  tags: [test_merged, test_merged_update, test_gathered]
 
 - name: "TEST 1c: Verify fabric was updated using merged state"
   assert:
@@ -151,7 +151,195 @@
       - merged_result_3 is not failed
     fail_msg: "Fabric update with state merged failed"
     success_msg: "Fabric successfully updated with state merged"
-  tags: [test_merged, test_merged_update]
+  tags: [test_merged, test_merged_update, test_gathered]
+
+#############################################################################
+# TEST GATHERED: Read-only state and supported filtering
+#############################################################################
+- name: "GATHERED: Read all iBGP VXLAN fabrics"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+  register: ibgp_gathered_all
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify gather-all output is read-only"
+  ansible.builtin.assert:
+    that:
+      - ibgp_gathered_all is not changed
+      - ibgp_gathered_all.gathered is defined
+      - ibgp_gathered_all.gathered | type_debug == "list"
+      - test_fabric_merged in (ibgp_gathered_all.gathered | map(attribute='fabric_name') | list)
+      - ibgp_gathered_all.before is not defined
+      - ibgp_gathered_all.after is not defined
+      - ibgp_gathered_all.diff is not defined
+      - ibgp_gathered_all.proposed is not defined
+  tags: [test_gathered]
+
+- name: "GATHERED: Read all fabrics with explicit empty config"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+    config: []
+  register: ibgp_gathered_empty_config
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify explicit empty config matches omitted config"
+  ansible.builtin.assert:
+    that:
+      - ibgp_gathered_empty_config is not changed
+      - >-
+        ibgp_gathered_empty_config.gathered | map(attribute='fabric_name') | sort | list
+        == ibgp_gathered_all.gathered | map(attribute='fabric_name') | sort | list
+  tags: [test_gathered]
+
+- name: "GATHERED: Filter by exact fabric name"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+    config:
+      - fabric_name: "{{ test_fabric_merged }}"
+  register: ibgp_gathered_exact
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify exact-name filter"
+  ansible.builtin.assert:
+    that:
+      - ibgp_gathered_exact is not changed
+      - ibgp_gathered_exact.gathered | length == 1
+      - ibgp_gathered_exact.gathered[0].fabric_name == test_fabric_merged
+  tags: [test_gathered]
+
+- name: "GATHERED: Filter with all five supported properties"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+    config:
+      - fabric_name: "{{ ibgp_gathered_exact.gathered[0].fabric_name }}"
+        license_tier: "{{ ibgp_gathered_exact.gathered[0].license_tier }}"
+        security_domain: "{{ ibgp_gathered_exact.gathered[0].security_domain }}"
+        alert_suspend: "{{ ibgp_gathered_exact.gathered[0].alert_suspend }}"
+        telemetry_collection: "{{ ibgp_gathered_exact.gathered[0].telemetry_collection }}"
+  register: ibgp_gathered_all_fields
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify all supported properties use AND semantics"
+  ansible.builtin.assert:
+    that:
+      - ibgp_gathered_all_fields is not changed
+      - ibgp_gathered_all_fields.gathered | length == 1
+      - ibgp_gathered_all_fields.gathered[0].fabric_name == test_fabric_merged
+  tags: [test_gathered]
+
+- name: "GATHERED: Apply overlapping filters"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+    config:
+      - fabric_name: "{{ test_fabric_merged }}"
+      - fabric_name: "{{ ibgp_gathered_exact.gathered[0].fabric_name }}"
+        license_tier: "{{ ibgp_gathered_exact.gathered[0].license_tier }}"
+  register: ibgp_gathered_overlapping
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify OR semantics and deduplication"
+  ansible.builtin.assert:
+    that:
+      - ibgp_gathered_overlapping is not changed
+      - ibgp_gathered_overlapping.gathered | length == 1
+      - ibgp_gathered_overlapping.gathered[0].fabric_name == test_fabric_merged
+  tags: [test_gathered]
+
+- name: "GATHERED: Filter with more than three expressions"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+    config:
+      - fabric_name: "{{ test_fabric_merged }}"
+      - fabric_name: nonexistent_ibgp_fallback_1
+      - fabric_name: nonexistent_ibgp_fallback_2
+      - fabric_name: nonexistent_ibgp_fallback_3
+  register: ibgp_gathered_fallback
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify fallback preserves the matching OR item"
+  ansible.builtin.assert:
+    that:
+      - ibgp_gathered_fallback is not changed
+      - ibgp_gathered_fallback.gathered | length == 1
+      - ibgp_gathered_fallback.gathered[0].fabric_name == test_fabric_merged
+  tags: [test_gathered]
+
+- name: "GATHERED: Filter by a non-existent fabric name"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+    config:
+      - fabric_name: nonexistent_ibgp_fabric_999
+  register: ibgp_gathered_no_match
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify no-match filter returns an empty list"
+  ansible.builtin.assert:
+    that:
+      - ibgp_gathered_no_match is not changed
+      - ibgp_gathered_no_match.gathered == []
+  tags: [test_gathered]
+
+- name: "GATHERED: Reject an empty filter item"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+    config:
+      - {}
+  register: ibgp_gathered_empty_filter
+  ignore_errors: true
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify empty filter rejection"
+  ansible.builtin.assert:
+    that:
+      - ibgp_gathered_empty_filter is failed
+      - "'must contain at least one filtering criterion' in ibgp_gathered_empty_filter.msg"
+  tags: [test_gathered]
+
+- name: "GATHERED: Reject an unsupported location filter"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+    config:
+      - location:
+          latitude: 0.0
+          longitude: 0.0
+  register: ibgp_gathered_unsupported_filter
+  ignore_errors: true
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify unsupported filter rejection"
+  ansible.builtin.assert:
+    that:
+      - ibgp_gathered_unsupported_filter is failed
+      - "'unsupported properties' in ibgp_gathered_unsupported_filter.msg"
+      - "'location.latitude' in ibgp_gathered_unsupported_filter.msg"
+      - "'location.longitude' in ibgp_gathered_unsupported_filter.msg"
+  tags: [test_gathered]
+
+- name: "GATHERED: Reuse exact gathered output as config in check mode"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config: "{{ ibgp_gathered_exact.gathered }}"
+  check_mode: true
+  register: ibgp_gathered_round_trip
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify gathered output round-trips without drift"
+  ansible.builtin.assert:
+    that:
+      - ibgp_gathered_round_trip is not changed
+      - ibgp_gathered_round_trip.proposed | length == 1
+      - ibgp_gathered_round_trip.proposed[0].fabric_name == test_fabric_merged
+  tags: [test_gathered]
 
 #############################################################################
 # VALIDATION: Query test_fabric_merged and validate expected changes
