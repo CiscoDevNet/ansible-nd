@@ -37,14 +37,14 @@ _CUSTOM_NETWORK_TEMPLATE_FIELDS = (
 
 _VLAN_NETWORK_TYPE_ALIASES = {
     "normal": "normal",
-    "private_primary": "privatePrimary",
+    "primary": "privatePrimary",
     "privatePrimary": "privatePrimary",
-    "private_secondary_community": "privateSecondaryCommunity",
+    "community": "privateSecondaryCommunity",
     "privateSecondaryCommunity": "privateSecondaryCommunity",
-    "private_secondary_isolated": "privateSecondaryIsolated",
+    "isolated": "privateSecondaryIsolated",
     "privateSecondaryIsolated": "privateSecondaryIsolated",
-    "child": "child",
 }
+_PRIVATE_SECONDARY_VLAN_NETWORK_TYPES = frozenset({"privateSecondaryCommunity", "privateSecondaryIsolated"})
 
 _NORMAL_NETWORK_INTERFACE_MODES = frozenset(
     {
@@ -152,7 +152,7 @@ class NetworkAttachmentConfigModel(NDNestedModel):
 
     ip_address: str
     vlan_id: int | None = Field(default=None)
-    interfaces: list[NetworkInterfaceConfigModel] = Field(default=...)
+    interfaces: list[NetworkInterfaceConfigModel] = Field(default_factory=list)
     deploy: bool | None = True
     attachment_options: NetworkAttachmentOptionsConfigModel | None = Field(default=None)
     freeform_config: str | None = Field(default=None)
@@ -166,12 +166,6 @@ class NetworkAttachmentConfigModel(NDNestedModel):
     @classmethod
     def _validate_vlan(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_vlan_id(v)
-
-    @model_validator(mode="after")
-    def _check_interfaces(self):
-        if not self.interfaces:
-            raise ValueError("interfaces is required for network attachments")
-        return self
 
 
 class NetworkChildConfigModel(NDNestedModel):
@@ -309,6 +303,15 @@ class NetworkConfigModel(NDBaseModel):
     def _validate_network_id(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_network_id(v)
 
+    @field_validator("network_type", mode="before")
+    @classmethod
+    def _validate_network_type(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if v in (NetworkType.USER_DEFINED.value, "user_defined"):
+            return NetworkType.USER_DEFINED.value
+        raise ValueError("network_type must be omitted unless using user_defined")
+
     @field_validator("vlan_id", mode="before")
     @classmethod
     def _validate_vlan_id(cls, v: int | None) -> int | None:
@@ -374,12 +377,61 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
         if self.layer == "layer3" and not self.vrf_name:
             raise ValueError("vrf_name is required for layer3 networks")
+        self._check_vlan_network_type_rules()
         self._check_attachment_interface_modes()
         return self
 
+    def _check_vlan_network_type_rules(self) -> None:
+        vlan_network_type = self.vlan_network_type or "normal"
+        if vlan_network_type in ("normal", "privatePrimary"):
+            if self.primary_network_id is not None:
+                raise ValueError(f"{vlan_network_type} networks do not use primary_network_id")
+            return
+        if vlan_network_type not in _PRIVATE_SECONDARY_VLAN_NETWORK_TYPES:
+            return
+
+        if self.primary_network_id is None:
+            raise ValueError(f"{vlan_network_type} requires primary_network_id")
+        if self.layer == "layer3":
+            raise ValueError(f"{vlan_network_type} networks do not support layer3 intent")
+
+        disallowed_fields = {
+            "vrf_name": None,
+            "gateway_ipv4_address": None,
+            "gateway_ipv6_address": None,
+            "secondary_gateway_ipv4_collection": None,
+            "secondary_gateway_ipv6_collection": None,
+            "vlan_intf_desc": None,
+            "mtu": 9216,
+            "arp_suppression": False,
+            "routing_tag": None,
+            "dhcp_servers": None,
+            "loopback_id": None,
+            "igmp_version": None,
+            "trm_enable": None,
+            "ipv6_trm": None,
+            "netflow_enable": False,
+            "l2_netflow_monitor": None,
+            "l3_netflow_monitor": None,
+            "netflow_sampler": None,
+            "gateway_on_border": None,
+            "x_connect": None,
+            "ds_vni": None,
+            "network_template_name": None,
+            "network_extension_template_name": None,
+            "service_network_template_name": None,
+            "network_template_config": None,
+        }
+        rejected_fields = []
+        for field, default in disallowed_fields.items():
+            if field in self.model_fields_set and getattr(self, field) != default:
+                rejected_fields.append(field)
+        if rejected_fields:
+            raise ValueError(f"{vlan_network_type} networks support only PVLAN secondary fields: " f"{', '.join(sorted(rejected_fields))}")
+
     def _check_attachment_interface_modes(self) -> None:
         vlan_network_type = self.vlan_network_type or "normal"
-        if vlan_network_type in ("normal", "child"):
+        if vlan_network_type == "normal":
             allowed_modes = _NORMAL_NETWORK_INTERFACE_MODES
         elif vlan_network_type == "privatePrimary":
             allowed_modes = _PRIVATE_PRIMARY_INTERFACE_MODES

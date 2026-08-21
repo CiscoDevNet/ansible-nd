@@ -12,10 +12,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
 
 _VLAN_NETWORK_TYPE_CHOICES = [
     "normal",
-    "private_primary",
-    "private_secondary_community",
-    "private_secondary_isolated",
-    "child",
+    "primary",
+    "community",
+    "isolated",
 ]
 
 
@@ -52,7 +51,7 @@ def _attachment_spec():
     return dict(
         ip_address=dict(type="str", required=True),
         vlan_id=dict(type="int"),
-        interfaces=dict(type="list", elements="dict", required=True, options=_network_interface_spec()),
+        interfaces=dict(type="list", elements="dict", default=[], options=_network_interface_spec()),
         deploy=dict(type="bool", default=True),
         attachment_options=dict(type="dict", options=_attachment_options_spec()),
         freeform_config=dict(type="str"),

@@ -292,27 +292,28 @@ def test_manage_network_attachment_config_models_00316() -> None:
         NetworkConfigModel(
             network_name="net1",
             layer="layer2",
-            vlan_network_type="private_primary",
+            vlan_network_type="primary",
             attach=[{"ip_address": "192.0.2.10", "interfaces": [{"mode": "host", "interface_range": "Ethernet1/1"}]}],
         )
     with pytest.raises(ValidationError, match="mode=trunk is not valid for vlan_network_type=privateSecondaryCommunity"):
         NetworkConfigModel(
             network_name="net1",
             layer="layer2",
-            vlan_network_type="private_secondary_community",
+            vlan_network_type="community",
+            primary_network_id=30000,
             attach=[{"ip_address": "192.0.2.10", "interfaces": [{"mode": "trunk", "interface_range": "Ethernet1/1"}]}],
         )
 
     private_primary = NetworkConfigModel(
         network_name="net1",
         layer="layer2",
-        vlan_network_type="private_primary",
+        vlan_network_type="primary",
         attach=[{"ip_address": "192.0.2.10", "interfaces": [{"mode": "promiscuous", "interface_range": "Ethernet1/1"}]}],
     )
     private_secondary = NetworkConfigModel(
         network_name="net2",
         layer="layer2",
-        vlan_network_type="private_secondary_isolated",
+        vlan_network_type="isolated",
         primary_network_id=30000,
         attach=[{"ip_address": "192.0.2.10", "interfaces": [{"mode": "host", "interface_range": "Ethernet1/2"}]}],
     )

@@ -29,6 +29,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
     OperationStatus,
     VlanNetworkType,
     VlanPoolDomainType,
+    public_vlan_network_type,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.validators import (
     NetworkValidators,
@@ -346,7 +347,7 @@ class NetworkBaseModel(NetworkCommonModel):
     """Generic model for components/schemas/networkBase discriminator payloads."""
 
     network_type: NetworkType | str | None = Field(default=None, alias="networkType")
-    vlan_network_type: VlanNetworkType | str | None = Field(default=None, alias="vlanNetworkType")
+    vlan_network_type: VlanNetworkType | str | None = Field(default=VlanNetworkType.NORMAL, alias="vlanNetworkType")
     primary_network_id: int | None = Field(default=None, alias="primaryNetworkId")
     primary_network_name: str | None = Field(default=None, alias="primaryNetworkName")
     normal_network_id: int | None = Field(default=None, alias="normalNetworkId")
@@ -367,6 +368,12 @@ class NetworkBaseModel(NetworkCommonModel):
     @classmethod
     def validate_network_id(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_network_id(v)
+
+    def to_config(self, **kwargs) -> dict[str, Any]:
+        data = super().to_config(**kwargs)
+        if "vlan_network_type" in data:
+            data["vlan_network_type"] = public_vlan_network_type(data["vlan_network_type"])
+        return data
 
     @classmethod
     def from_response(cls, response: dict[str, Any], **kwargs) -> "NetworkBaseModel":

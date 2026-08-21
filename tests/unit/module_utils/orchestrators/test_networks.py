@@ -376,20 +376,21 @@ def _mcfg_parent_orchestrator():
     )
 
 
-def test_network_config_model_requires_attachment_interfaces():
-    with pytest.raises(ValueError, match="interfaces"):
-        NetworkConfigModel.from_config(
-            {
-                "network_name": "BLUE_NET",
-                "layer": "layer2",
-                "vlan_id": 2301,
-                "attach": [
-                    {
-                        "ip_address": "10.1.1.11",
-                    }
-                ],
-            }
-        )
+def test_network_config_model_defaults_missing_attachment_interfaces_to_empty_list():
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "BLUE_NET",
+            "layer": "layer2",
+            "vlan_id": 2301,
+            "attach": [
+                {
+                    "ip_address": "10.1.1.11",
+                }
+            ],
+        }
+    )
+
+    assert model.to_config()["attach"][0]["interfaces"] == []
 
 
 def test_network_parent_argument_spec_includes_child_config():
@@ -400,7 +401,7 @@ def test_network_parent_argument_spec_includes_child_config():
     assert spec["attach"]["options"]["interfaces"]["options"]["mode"]["choices"]
     assert spec["attach"]["options"]["interfaces"]["options"]["mode"]["required"] is True
     assert spec["attach"]["options"]["interfaces"]["options"]["interface_range"]["required"] is True
-    assert spec["attach"]["options"]["interfaces"]["required"] is True
+    assert spec["attach"]["options"]["interfaces"]["default"] == []
     assert spec["attach"]["options"]["deploy"]["default"] is True
     assert "ports" not in spec["attach"]["options"]
     assert "tor_ports" not in spec["attach"]["options"]
@@ -417,6 +418,7 @@ def test_network_parent_argument_spec_includes_child_config():
     assert "l2_fabric_data" not in spec
     assert "gw_ip_subnet" not in spec
     assert spec["deploy_type"]["choices"] == ["switch", "network"]
+    assert spec["vlan_network_type"]["choices"] == ["normal", "primary", "community", "isolated"]
     assert "network_id" not in child_spec
     assert "vlan_id" not in child_spec
     assert "vlan_name" not in child_spec
@@ -431,6 +433,117 @@ def test_network_parent_argument_spec_includes_child_config():
     assert "gateway_on_border" in child_spec
 
 
+def test_network_config_model_accepts_user_facing_pvlan_types_only():
+    primary = NetworkConfigModel.from_config({"network_name": "PVLAN_PRIMARY", "vlan_network_type": "primary"})
+    community = NetworkConfigModel.from_config(
+        {
+            "network_name": "PVLAN_COMMUNITY",
+            "vlan_network_type": "community",
+            "primary_network_id": 50100,
+        }
+    )
+    isolated = NetworkConfigModel.from_config(
+        {
+            "network_name": "PVLAN_ISOLATED",
+            "vlan_network_type": "isolated",
+            "primary_network_id": 50100,
+        }
+    )
+
+    assert primary.vlan_network_type == "privatePrimary"
+    assert community.vlan_network_type == "privateSecondaryCommunity"
+    assert isolated.vlan_network_type == "privateSecondaryIsolated"
+
+    with pytest.raises(ValueError, match="vlan_network_type must be one of"):
+        NetworkConfigModel.from_config({"network_name": "OLD_PRIMARY", "vlan_network_type": "private_primary"})
+
+
+def test_private_secondary_network_requires_primary_id_and_rejects_l3_fields():
+    with pytest.raises(ValueError, match="requires primary_network_id"):
+        NetworkConfigModel.from_config({"network_name": "PVLAN_COMMUNITY", "vlan_network_type": "community"})
+
+    with pytest.raises(ValueError, match="do not support layer3 intent"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "PVLAN_COMMUNITY",
+                "vlan_network_type": "community",
+                "primary_network_id": 50100,
+                "layer": "layer3",
+                "vrf_name": "VRF_BLUE",
+            }
+        )
+
+    with pytest.raises(ValueError, match="support only PVLAN secondary fields"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "PVLAN_COMMUNITY",
+                "vlan_network_type": "community",
+                "primary_network_id": 50100,
+                "gateway_ipv4_address": "192.0.2.1/24",
+            }
+        )
+
+
+def test_private_secondary_network_payload_is_generated_from_primary_id():
+    orchestrator = _orchestrator()
+    transformed = orchestrator.prepare_config_data(
+        [
+            {
+                "network_name": "PVLAN_COMMUNITY",
+                "network_id": 50101,
+                "vlan_id": 2101,
+                "vlan_network_type": "community",
+                "primary_network_id": 50100,
+                "multicast_group_address": "239.1.1.101",
+                "vlan_name": "PVLAN_COMMUNITY_VLAN",
+                "route_target_both": True,
+            }
+        ]
+    )[0]
+    model = orchestrator.model_class.from_config(transformed)
+    payload = orchestrator._create_or_update_payload(model)
+
+    assert payload["networkType"] == "userDefined"
+    assert payload["vlanNetworkType"] == "privateSecondaryCommunity"
+    assert payload["primaryNetworkId"] == 50100
+    assert "primaryNetworkName" not in payload
+    assert "vlanId" not in payload
+    assert payload["networkTemplateName"] == "Pvlan_Secondary_Network"
+    assert payload["networkExtensionTemplateName"] == "Pvlan_Secondary_Network"
+    assert payload["networkTemplateConfig"] == {
+        "isLayer2Only": "true",
+        "networkMode": "layer2",
+        "networkName": "PVLAN_COMMUNITY",
+        "networkType": "userDefined",
+        "nveId": "1",
+        "rtBothAuto": "true",
+        "segmentId": "50101",
+        "type": "Community",
+        "vlanId": "2101",
+        "vrfName": "NA",
+        "vlanName": "PVLAN_COMMUNITY_VLAN",
+        "mcastGroup": "239.1.1.101",
+    }
+    assert "l3Data" not in payload
+    assert model.to_config()["vlan_network_type"] == "community"
+
+
+def test_private_secondary_query_infers_vlan_type_from_template_config_for_manage_read():
+    orchestrator = _orchestrator()
+
+    normalized = orchestrator._normalize_query_network_item(
+        {
+            "networkName": "PVLAN_COMMUNITY",
+            "networkTemplateConfig": '{"segmentId":"50101","vlanId":"2101","isLayer2Only":"true","type":"Community"}',
+        }
+    )
+
+    assert normalized["vlanNetworkType"] == "privateSecondaryCommunity"
+    assert normalized["networkId"] == 50101
+    assert normalized["vlanId"] == 2101
+    assert orchestrator.model_class.from_response(normalized).to_config()["vlan_network_type"] == "community"
+
+
 def test_user_defined_template_fields_infer_user_defined_type():
     model = NetworkConfigModel.from_config(
         {
@@ -442,8 +555,21 @@ def test_user_defined_template_fields_infer_user_defined_type():
     assert model.network_type == "userDefined"
 
 
+def test_user_defined_network_type_maps_to_api_value_when_explicit():
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "CUSTOM_TEMPLATE",
+            "network_type": "user_defined",
+            "network_template_name": "Custom_Network",
+            "network_template_config": {"segmentId": "50100"},
+        }
+    )
+
+    assert model.to_config()["network_type"] == "userDefined"
+
+
 def test_user_defined_template_fields_reject_explicit_non_user_defined_type():
-    with pytest.raises(ValueError, match="network template fields require"):
+    with pytest.raises(ValueError, match="network_type must be omitted unless using user_defined"):
         NetworkConfigModel.from_config(
             {
                 "network_name": "BAD_TEMPLATE",
@@ -877,10 +1003,8 @@ def test_parse_config_preserves_attachment_only_shape_before_transform():
                         {
                             "mode": "trunk",
                             "interface_range": "Ethernet1/1",
-                            "native_vlan": False,
                         }
                     ],
-                    "deploy": True,
                 }
             ],
             "deploy": True,
@@ -1252,7 +1376,7 @@ def test_network_query_all_unfiltered_walks_paginated_results():
     ]
 
 
-def test_attachment_shape_rejects_ports_without_interfaces():
+def test_attachment_shape_rejects_ports_and_defaults_missing_interfaces():
     model = NetworkConfigModel.from_config(
         {
             "network_name": "ATTACH_SHAPE",
@@ -1276,7 +1400,21 @@ def test_attachment_shape_rejects_ports_without_interfaces():
     assert attach["deploy"] is False
     assert attach["interfaces"][0]["interface_range"] == "Ethernet1/1"
 
-    with pytest.raises(ValueError, match="interfaces"):
+    omitted = NetworkConfigModel.from_config(
+        {
+            "network_name": "ATTACH_NO_INTERFACES",
+            "layer": "layer2",
+            "attach": [
+                {
+                    "ip_address": "10.1.1.11",
+                }
+            ],
+        }
+    )
+
+    assert omitted.to_config()["attach"][0]["interfaces"] == []
+
+    with pytest.raises(ValueError, match="ports"):
         NetworkConfigModel.from_config(
             {
                 "network_name": "ATTACH_PORTS",
@@ -1363,6 +1501,27 @@ def test_attachment_options_replace_instance_values():
         "switchRouteTargetImport": ["65000:100"],
     }
     assert desired[("ATTACH_OPTIONS", "FDO123")]["extraConfig"] == "interface Ethernet1/1\n  description attached by test"
+
+
+def test_empty_attachment_interfaces_are_preserved_in_payload():
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "EMPTY_ATTACH",
+            "layer": "layer2",
+            "attach": [
+                {
+                    "ip_address": "10.1.1.11",
+                    "interfaces": [],
+                }
+            ],
+        }
+    )
+    manager = NetworkAttachmentManager(coordinator=None)
+    manager.resolve_switch_ids = lambda *_args: {"10.1.1.11": "FDO123"}
+
+    desired = manager.desired_attachment_map({"config": [model.to_config()]}, _orchestrator().strategy)
+
+    assert desired[("EMPTY_ATTACH", "FDO123")]["interfaces"] == []
 
 
 def test_attachment_config_rejects_camelcase_aliases():
@@ -1724,6 +1883,51 @@ def test_mcfg_parent_network_create_uses_onemanage_manage_schema_payload():
     }
 
 
+def test_mcfg_parent_private_secondary_network_create_omits_layer2_compat_l3_data():
+    orchestrator = _mcfg_parent_orchestrator()
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        return {"results": [{"networkName": "PVLAN_COMMUNITY", "status": "success"}]}
+
+    object.__setattr__(orchestrator, "_request", request)
+    model = NDNetworkOrchestrator.model_class.from_config(
+        orchestrator.prepare_config_data(
+            [
+                {
+                    "network_name": "PVLAN_COMMUNITY",
+                    "network_id": 901031,
+                    "vlan_id": 3131,
+                    "vlan_network_type": "community",
+                    "primary_network_id": 901030,
+                    "layer": "layer2",
+                    "vrf_name": "NA",
+                }
+            ]
+        )[0]
+    )
+
+    result = orchestrator.create_bulk([model])
+
+    assert result == {"results": [{"networkName": "PVLAN_COMMUNITY", "status": "success"}]}
+    assert requests[0]["path"] == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks"
+    payload = requests[0]["data"]["networks"][0]
+    assert payload["networkName"] == "PVLAN_COMMUNITY"
+    assert payload["fabricName"] == "MCFG_FAB"
+    assert payload["networkType"] == "userDefined"
+    assert payload["networkMode"] == "layer2"
+    assert payload["vlanNetworkType"] == "privateSecondaryCommunity"
+    assert payload["primaryNetworkId"] == 901030
+    assert "vlanId" not in payload
+    assert "l3Data" not in payload
+    assert payload["networkTemplateName"] == "Pvlan_Secondary_Network"
+    assert payload["networkExtensionTemplateName"] == "Pvlan_Secondary_Network"
+    assert payload["networkTemplateConfig"]["type"] == "Community"
+    assert payload["networkTemplateConfig"]["segmentId"] == "901031"
+    assert payload["networkTemplateConfig"]["vlanId"] == "3131"
+
+
 def test_mcfg_parent_network_create_keeps_onemanage_netflow_monitor_fields():
     orchestrator = _mcfg_parent_orchestrator()
     requests = []
@@ -1993,6 +2197,30 @@ def test_mcfg_parent_network_query_normalizes_top_down_template_config():
     assert normalized["l3Data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
     assert normalized["l3Data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
     assert normalized["l3Data"]["fabricData"]["netflowSampler"] == "NF_SAMPLER"
+
+
+def test_mcfg_parent_network_query_infers_private_secondary_vlan_type_from_template_config():
+    orchestrator = _mcfg_parent_orchestrator()
+
+    community = orchestrator._normalize_query_network_item(
+        {
+            "fabric": "MCFG_FAB",
+            "networkName": "PVLAN_COMMUNITY",
+            "networkTemplateConfig": '{"segmentId":"901031","vlanId":"3131","isLayer2Only":"true","type":"Community"}',
+        }
+    )
+    isolated = orchestrator._normalize_query_network_item(
+        {
+            "fabric": "MCFG_FAB",
+            "networkName": "PVLAN_ISOLATED",
+            "networkTemplateConfig": '{"segmentId":"901032","vlanId":"3132","isLayer2Only":"true","type":"Isolated"}',
+        }
+    )
+
+    assert community["vlanNetworkType"] == "privateSecondaryCommunity"
+    assert isolated["vlanNetworkType"] == "privateSecondaryIsolated"
+    assert orchestrator.model_class.from_response(community).to_config()["vlan_network_type"] == "community"
+    assert orchestrator.model_class.from_response(isolated).to_config()["vlan_network_type"] == "isolated"
 
 
 def test_mcfg_parent_delete_does_not_seed_empty_network_level_deploy():

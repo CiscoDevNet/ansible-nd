@@ -93,15 +93,15 @@ options:
           interfaces:
             description: Interface attachment entries.
             type: list
-            required: true
+            default: []
             elements: dict
             suboptions:
               mode:
                 description:
                   - Interface mode.
-                  - C(normal) and C(child) Networks allow C(access), C(dot1qTunnel), and C(trunk).
-                  - C(private_primary) Networks allow C(promiscuous) and C(trunkPromiscuous).
-                  - C(private_secondary_community) and C(private_secondary_isolated) Networks allow C(host) and C(trunkSecondary).
+                  - C(normal) Networks allow C(access), C(dot1qTunnel), and C(trunk).
+                  - C(primary) Networks allow C(promiscuous) and C(trunkPromiscuous).
+                  - C(community) and C(isolated) Networks allow C(host) and C(trunkSecondary).
                 type: str
                 required: true
                 choices: [ access, dot1qTunnel, trunk, promiscuous, trunkPromiscuous, host, trunkSecondary ]
@@ -175,13 +175,15 @@ options:
       vlan_network_type:
         description:
           - VLAN network type.
-          - C(normal) and C(child) Networks allow C(access), C(dot1qTunnel), and C(trunk) attachment interface modes.
-          - C(private_primary) Networks allow C(promiscuous) and C(trunkPromiscuous) attachment interface modes.
-          - C(private_secondary_community) and C(private_secondary_isolated) Networks allow C(host) and C(trunkSecondary) attachment interface modes.
+          - C(primary) is mapped to the ND private primary Network type.
+          - C(community) and C(isolated) are mapped to private secondary Network templates and require O(config.primary_network_id).
+          - C(normal) Networks allow C(access), C(dot1qTunnel), and C(trunk) attachment interface modes.
+          - C(primary) Networks allow C(promiscuous) and C(trunkPromiscuous) attachment interface modes.
+          - C(community) and C(isolated) Networks allow C(host) and C(trunkSecondary) attachment interface modes.
         type: str
-        choices: [ normal, private_primary, private_secondary_community, private_secondary_isolated, child ]
+        choices: [ normal, primary, community, isolated ]
       primary_network_id:
-        description: Primary Network ID used by private secondary Networks.
+        description: Primary Network ID used by C(community) and C(isolated) Networks.
         type: int
       vlan_name:
         description: VLAN name.
@@ -380,6 +382,45 @@ EXAMPLES = r"""
         gateway_ipv4_address: 10.10.20.1/24
         arp_suppression: true
         routing_tag: 12345
+        deploy: false
+
+- name: Create a private primary Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: merged
+    config:
+      - network_name: PVLAN_PRIMARY
+        vlan_network_type: primary
+        layer: layer2
+        network_id: 50100
+        vlan_id: 2100
+        deploy: false
+
+- name: Create a private secondary community Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: merged
+    config:
+      - network_name: PVLAN_COMMUNITY
+        vlan_network_type: community
+        primary_network_id: 50100
+        network_id: 50101
+        vlan_id: 2101
+        vlan_name: PVLAN_COMMUNITY_VLAN
+        route_target_both: true
+        multicast_group_address: 239.1.1.101
+        deploy: false
+
+- name: Create a private secondary isolated Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: merged
+    config:
+      - network_name: PVLAN_ISOLATED
+        vlan_network_type: isolated
+        primary_network_id: 50100
+        network_id: 50102
+        vlan_id: 2102
         deploy: false
 
 - name: Create Network on a parent fabric with child fabric overrides
