@@ -203,7 +203,7 @@ def test_manage_interface_groups_model_00030() -> None:
         {
             "interfaceGroupName": "eth-group",
             "type": "ethernet",
-            "description": "Server-facing Ethernet group",
+            "description": "Controller field not exposed by the module",
             "interfaceGroupAssociation": {
                 "networkNames": ["net2", "net1"],
                 "switchInterfaces": [{"switchId": "SN1", "interfaceNames": ["eth1/2", "Ethernet1/1"]}],
@@ -224,7 +224,7 @@ def test_manage_interface_groups_model_00030() -> None:
         "Ethernet1/2",
     ]
     gathered_config = model.to_config()
-    assert gathered_config["description"] == "Server-facing Ethernet group"
+    assert "description" not in gathered_config
     assert gathered_config["networks"] == ["net1", "net2"]
     assert "network_names" not in gathered_config
     assert "interface_count" not in gathered_config
@@ -245,7 +245,7 @@ def test_manage_interface_groups_model_00035() -> None:
 
     - Derive ethernetWithPolicy from type=ethernet and policyDetails.
     - Flatten the nested policy identifier and attributes.
-    - Preserve the direct Manage 1.1.411 Ethernet attribute names and types.
+    - Preserve the supported Ethernet attribute names and types.
     - Keep type=ethernet invalid for playbook input.
 
     ## Classes and Methods
@@ -294,10 +294,10 @@ def test_manage_interface_groups_model_00035() -> None:
     )
     assert policyless.type == "ethernetWithoutPolicy"
 
-    with pytest.raises(ValidationError, match=r"policyDetails\.policyType"):
+    with pytest.raises(ValidationError, match=r"unsupported Ethernet Interface Group policy type"):
         InterfaceGroupConfigModel.from_response({"interfaceGroupName": "missing-policy-details", "type": "ethernet"})
 
-    with pytest.raises(ValidationError, match=r"policyDetails\.policyType"):
+    with pytest.raises(ValidationError, match=r"unsupported Ethernet Interface Group policy type"):
         InterfaceGroupConfigModel.from_response(
             {
                 "interfaceGroupName": "unknown-policy-type",
@@ -467,7 +467,7 @@ def test_manage_interface_groups_model_00070() -> None:
 
 
 def test_manage_interface_groups_model_00072() -> None:
-    """Round-trip every shared Ethernet property defined by Manage 1.1.411."""
+    """Round-trip every supported shared Ethernet property."""
     module_attributes = {
         "admin_state": False,
         "allowed_vlans": "1, 10-20, 4094",
@@ -510,7 +510,6 @@ def test_manage_interface_groups_model_00072() -> None:
         {
             "interface_group_name": "ethernet-all-fields",
             "type": "ethernetWithPolicy",
-            "description": "All 1.1.411 attributes",
             "ethernet_attributes": module_attributes,
         }
     )
@@ -519,7 +518,6 @@ def test_manage_interface_groups_model_00072() -> None:
     assert wire == {
         "interfaceGroupName": "ethernet-all-fields",
         "type": "ethernet",
-        "description": "All 1.1.411 attributes",
         "networkNames": [],
         "switchInterfaces": [],
         "policyDetails": {
@@ -530,7 +528,6 @@ def test_manage_interface_groups_model_00072() -> None:
 
     response = InterfaceGroupConfigModel.from_response(wire)
     assert response.type == "ethernetWithPolicy"
-    assert response.description == "All 1.1.411 attributes"
     assert response.to_config()["ethernet_attributes"] == {
         **module_attributes,
         "allowed_vlans": "1,10-20,4094",
@@ -538,7 +535,7 @@ def test_manage_interface_groups_model_00072() -> None:
 
 
 def test_manage_interface_groups_model_00074() -> None:
-    """Emit only the defaults explicitly documented by Manage 1.1.411."""
+    """Emit only the supported shared-policy defaults."""
     model = InterfaceGroupConfigModel.from_config(
         {
             "interface_group_name": "ethernet-defaults",
@@ -630,7 +627,7 @@ def test_manage_interface_groups_model_00077(value) -> None:
     ],
 )
 def test_manage_interface_groups_model_00078(removed_field: str) -> None:
-    """Reject 1.1.332 Ethernet names that are not part of the target contract."""
+    """Reject unsupported legacy Ethernet attribute names."""
     with pytest.raises(ValidationError, match=removed_field):
         InterfaceGroupConfigModel.from_config(
             {
@@ -642,7 +639,7 @@ def test_manage_interface_groups_model_00078(removed_field: str) -> None:
 
 
 def test_manage_interface_groups_model_00079() -> None:
-    """Enforce the Manage 1.1.411 nested Ethernet description bounds."""
+    """Enforce the supported nested Ethernet description bounds."""
     for description in ("", "x" * 255, "interface description ☃"):
         with pytest.raises(ValidationError):
             InterfaceGroupConfigModel.from_config(
@@ -700,7 +697,7 @@ def test_manage_interface_groups_model_00100() -> None:
     config_options = spec["config"]["options"]
 
     assert set(action_options) == {"deploy", "type"}
-    assert action_options["deploy"] == {"type": "bool", "default": True}
+    assert action_options["deploy"] == {"type": "bool", "default": False}
     assert action_options["type"] == {
         "type": "str",
         "default": "switch",
@@ -709,7 +706,7 @@ def test_manage_interface_groups_model_00100() -> None:
     assert config_options["deploy"] == {"type": "bool"}
     assert config_options["networks"] == {"type": "list", "elements": "str"}
     assert "network_names" not in config_options
-    assert config_options["description"] == {"type": "str"}
+    assert "description" not in config_options
     assert "ticket_id" not in spec
     assert "cluster_name" not in spec
 
@@ -809,7 +806,8 @@ def test_manage_interface_groups_model_00130() -> None:
 
     ## Test
 
-    - Omitted config-item deploy defaults effectively to true.
+    - Explicit top-level deployment is required because it defaults to false.
+    - Omitted config-item deploy defaults effectively to true once resource deployment is enabled.
     - Explicit false disables only that resource.
     - Top-level config_actions.deploy=false disables all resources.
 
@@ -820,7 +818,7 @@ def test_manage_interface_groups_model_00130() -> None:
     model = InterfaceGroupModuleConfigModel.model_validate(
         {
             "fabric_name": "fab1",
-            "config_actions": {"type": "resource"},
+            "config_actions": {"type": "resource", "deploy": True},
             "config": [
                 {"interface_group_name": "group1", "type": "portChannel"},
                 {
@@ -835,11 +833,19 @@ def test_manage_interface_groups_model_00130() -> None:
     assert model.resource_deploy_enabled(model.config[0]) is True
     assert model.resource_deploy_enabled(model.config[1]) is False
 
+    default_disabled = InterfaceGroupModuleConfigModel.model_validate(
+        {
+            "fabric_name": "fab1",
+            "config": [{"interface_group_name": "group1", "type": "portChannel"}],
+        }
+    )
+    assert default_disabled.resource_deploy_enabled(default_disabled.config[0]) is False
+
     disabled = InterfaceGroupModuleConfigModel.model_validate(
         {
             "fabric_name": "fab1",
             "config_actions": {"type": "resource", "deploy": False},
-            "config": [{"interface_group_name": "group1", "type": "portChannel"}],
+            "config": [{"interface_group_name": "group1", "type": "portChannel", "deploy": True}],
         }
     )
     assert disabled.resource_deploy_enabled(disabled.config[0]) is False
@@ -1016,23 +1022,21 @@ def test_manage_interface_groups_model_00155() -> None:
 
 
 def test_manage_interface_groups_model_00157() -> None:
-    """Accept and serialize the top-level Interface Group description."""
-    module_config = InterfaceGroupModuleConfigModel.model_validate(
-        {
-            "fabric_name": "fabric1",
-            "state": "merged",
-            "config": [
-                {
-                    "interface_group_name": "group1",
-                    "type": "portChannel",
-                    "description": "Server-facing port channels",
-                }
-            ],
-        }
-    )
-
-    assert module_config.config[0].description == "Server-facing port channels"
-    assert module_config.config[0].to_payload()["description"] == "Server-facing port channels"
+    """Reject the unsupported top-level Interface Group description."""
+    with pytest.raises(ValidationError, match=r"unsupported option.*description"):
+        InterfaceGroupModuleConfigModel.model_validate(
+            {
+                "fabric_name": "fabric1",
+                "state": "merged",
+                "config": [
+                    {
+                        "interface_group_name": "group1",
+                        "type": "portChannel",
+                        "description": "Server-facing port channels",
+                    }
+                ],
+            }
+        )
 
 
 def test_manage_interface_groups_model_00160() -> None:
@@ -1379,7 +1383,7 @@ def test_manage_interface_groups_model_00220() -> None:
     """
     # Summary
 
-    Verify list responses accept the Manage 1.1.411 response wrapper.
+    Verify list responses accept the supported ND response wrapper.
 
     ## Test
 

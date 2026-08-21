@@ -103,6 +103,7 @@ def test_nd_manage_interface_group_00005() -> None:
         "exit_json",
     ]
     assert events[0][1]["argument_spec"]["timeout"]["default"] == 300
+    assert events[0][1]["argument_spec"]["config_actions"]["options"]["deploy"]["default"] is False
 
 
 def test_nd_manage_interface_group_00007() -> None:

@@ -126,12 +126,15 @@ def test_manage_interface_group_00005() -> None:
     assert orchestrator.create_bulk_endpoint is EpManageFabricsInterfaceGroupsPost
     assert orchestrator.delete_bulk_endpoint is EpManageFabricsInterfaceGroupsActionsRemovePost
     assert orchestrator.fabric_name == "fab1"
-    assert orchestrator.config_actions == {"deploy": True, "type": "switch"}
+    assert orchestrator.config_actions == {"deploy": False, "type": "switch"}
 
     configured = _orchestrator(
         config_actions={"deploy": False, "type": "resource"},
     )
     assert configured.config_actions == {"deploy": False, "type": "resource"}
+
+    partial = _orchestrator(config_actions={"type": "resource"})
+    assert partial.config_actions == {"deploy": False, "type": "resource"}
 
 
 def test_manage_interface_group_00010() -> None:
@@ -187,7 +190,6 @@ def test_manage_interface_group_00020() -> None:
         {
             "interfaceGroupName": "custom",
             "type": "ethernet",
-            "description": "Custom server ports",
             "networkNames": ["network-a", "network-b"],
             "switchInterfaces": [
                 {
@@ -263,8 +265,6 @@ def test_manage_interface_group_00020() -> None:
         ]
     ) == ["policy"]
     assert names([InterfaceGroupGatheredFilterModel.model_validate({"interface_group_name": "missing"})]) == []
-    assert names([InterfaceGroupGatheredFilterModel.model_validate({"description": "Custom server ports"})]) == ["custom"]
-    assert names([InterfaceGroupGatheredFilterModel.model_validate({"description": "missing"})]) == []
 
 
 def test_manage_interface_group_00021() -> None:
@@ -1165,34 +1165,6 @@ def test_manage_interface_group_00132(monkeypatch) -> None:
         },
         {"switchId": "SN2", "interfaceNames": ["vPC20"]},
     ]
-
-
-def test_manage_interface_group_00132a(monkeypatch) -> None:
-    """Reject top-level descriptions before a controller write."""
-
-    def unexpected_request(*args, **kwargs):
-        del args, kwargs
-        raise AssertionError("Description preflight must not send a request")
-
-    monkeypatch.setattr(
-        ManageInterfaceGroupOrchestrator,
-        "_request",
-        unexpected_request,
-    )
-    orchestrator = _orchestrator(config_actions={"deploy": False, "type": "resource"})
-    group = InterfaceGroupConfigModel.from_config(
-        {
-            "interface_group_name": "described",
-            "type": "any",
-            "description": "Ansible Interface Group description",
-        }
-    )
-
-    with pytest.raises(
-        RuntimeError,
-        match=r"controller drops it on POST and PUT",
-    ):
-        orchestrator.preflight([group])
 
 
 def test_manage_interface_group_00133(monkeypatch) -> None:

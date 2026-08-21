@@ -75,12 +75,6 @@
               interface_names:
                 - Loopback0
       message: "not valid for interface group type"
-    - label: target controller drops top-level group descriptions
-      config:
-        - interface_group_name: "ANSIBLE-IG-DESCRIPTION-UNSUPPORTED"
-          type: any
-          description: Ansible Interface Group description
-      message: "controller drops it on POST and PUT"
     - label: Ethernet custom rejects port-channel interfaces
       config:
         - interface_group_name: "ANSIBLE-IG-CUSTOM-WRONG-KIND"

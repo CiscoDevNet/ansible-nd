@@ -305,7 +305,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         """Return config actions with the module defaults applied."""
         actions = self.rest_send.params.get("config_actions") or {}
         return {
-            "deploy": actions.get("deploy", True),
+            "deploy": actions.get("deploy", False),
             "type": actions.get("type", InterfaceGroupConfigActionType.SWITCH.value),
         }
 
@@ -455,8 +455,6 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         if "interface_group_name" in supplied and group.interface_group_name != filter_item.interface_group_name:
             return False
         if "type" in supplied and group.type != filter_item.type:
-            return False
-        if "description" in supplied and group.description != filter_item.description:
             return False
         if "template_name" in supplied and group.template_name != (filter_item.template_name):
             return False
@@ -641,10 +639,9 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 payload.setdefault("ethernetAttributes", {})
             if model_instance.type == InterfaceGroupType.ETHERNET_CUSTOM.value:
                 payload.setdefault("templateConfig", {})
-        # The controller treats both association collections as mandatory on
-        # PUT even when the OpenAPI schema does not mark them as required.
-        # Emitting explicit empty lists also preserves authoritative update
-        # semantics for groups without networks or member interfaces.
+        # ND requires both association collections on an update. Emitting
+        # explicit empty lists also preserves authoritative update semantics
+        # for groups without networks or member interfaces.
         return InterfaceGroupValidators.to_wire_group(
             payload,
             include_empty_associations=True,
@@ -768,31 +765,6 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         if model is None:
             return set()
         return {(entry.switch_id, interface_name) for entry in model.switch_interfaces or [] for interface_name in entry.interface_names}
-
-    @staticmethod
-    def _validate_writable_descriptions(
-        model_instances: Sequence[InterfaceGroupConfigModel],
-    ) -> None:
-        """Reject the documented group description that ND does not persist.
-
-        Manage 1.1.411 declares top-level ``description`` on every Interface
-        Group discriminator, but the target controller silently drops it on
-        both POST and PUT and omits it from GET-one and list responses. Failing
-        before mutation prevents an apparently successful, permanently
-        non-idempotent configuration. The nested Ethernet policy description
-        is a separate field and remains supported.
-        """
-        described_groups = [item.interface_group_name for item in model_instances if "description" in item.model_fields_set and item.description is not None]
-        if not described_groups:
-            return
-        quoted = ", ".join(f"'{name}'" for name in sorted(described_groups))
-        raise RuntimeError(
-            f"Top-level description for Interface Group(s) {quoted} is "
-            "declared by Manage 1.1.411, but this controller drops it on "
-            "POST and PUT. Remove description to avoid a permanently "
-            "non-idempotent configuration. The nested "
-            "ethernet_attributes.description field remains supported."
-        )
 
     @staticmethod
     def _policy_signature(
@@ -1126,7 +1098,6 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         """Validate immutable fields, moves, and referenced networks before writes."""
         self._resolve_config_switch_identifiers(model_instances)
         self._collapse_switch_entries(model_instances)
-        self._validate_writable_descriptions(model_instances)
         self._preserve_omitted_associations(model_instances)
         self._align_vpc_member_switch_ids(model_instances)
         self._collapse_switch_entries(model_instances)

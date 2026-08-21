@@ -27,7 +27,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
 
 
 class InterfaceGroupsCreateRequestModel(NDBaseModel):
-    """Request body for POST ``/fabrics/{fabricName}/interfaceGroups``."""
+    """Request body for creating Interface Groups."""
 
     identifiers: ClassVar[list[str]] = []
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
@@ -42,7 +42,7 @@ class InterfaceGroupsCreateRequestModel(NDBaseModel):
 
 
 class InterfaceGroupsRemoveRequestModel(NDBaseModel):
-    """Request body for POST ``/fabrics/{fabricName}/interfaceGroups/actions/remove``."""
+    """Request body for removing Interface Groups."""
 
     identifiers: ClassVar[list[str]] = []
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
@@ -101,7 +101,7 @@ class InterfaceGroupsDeleteResponseModel(NDBaseModel):
 
 
 class InterfaceGroupsListResponseModel(NDBaseModel):
-    """Response body for GET ``/fabrics/{fabricName}/interfaceGroups``."""
+    """Response containing Interface Groups."""
 
     identifiers: ClassVar[list[str]] = []
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"

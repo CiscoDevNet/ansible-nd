@@ -83,10 +83,28 @@
     mode: subset
   when: not ansible_check_mode
 
-- name: Confirm resource deployment did not deploy the staged custom group
+- name: Stage a policy update with the default deployment setting
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    config:
+      - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
+        ethernet_attributes:
+          admin_state: false
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+
+- name: Confirm resource isolation and default staging leave intent pending
   ansible.builtin.include_tasks: preview.yaml
   vars:
-    preview_name: "RESOURCE DEPLOYMENT ISOLATION"
+    preview_name: "RESOURCE DEPLOYMENT ISOLATION AND DEFAULT STAGING"
     preview_request_interfaces: >-
       {{
         (
@@ -123,13 +141,13 @@
           {
             'switch_id': test_switch_id,
             'interface_name': test_ethernet_policy,
-            'pending': 'clean'
+            'pending': 'present'
           }
         ]
       }}
 
 - name: >-
-    Use default switch deployment to apply all pending intent on the primary
+    Use explicit switch deployment to apply all pending intent on the primary
     leaf
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_interface_group
@@ -137,9 +155,14 @@
     common_args:
       output_level: "{{ nd_info.output_level }}"
       fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: switch
     config:
       - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
         ethernet_attributes:
+          admin_state: true
           cdp: true
     check_mode: false
     idempotency: false
@@ -163,6 +186,7 @@
       - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
         type: ethernetWithPolicy
         ethernet_attributes:
+          admin_state: true
           cdp: true
     mode: subset
   when: not ansible_check_mode
@@ -171,7 +195,7 @@
     Confirm switch deployment scope and membership-only Interface Group state
   ansible.builtin.include_tasks: preview.yaml
   vars:
-    preview_name: "DEFAULT SWITCH DEPLOYMENT SCOPE AND MEMBERSHIP-ONLY GROUPS"
+    preview_name: "SWITCH DEPLOYMENT SCOPE AND MEMBERSHIP-ONLY GROUPS"
     preview_convergence_delay: 30
     preview_request_interfaces: >-
       {{

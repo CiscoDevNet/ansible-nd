@@ -69,8 +69,8 @@ options:
           O(state=overridden).
         - May be omitted only when O(state=merged) additively updates an existing group
           identified by O(config.interface_group_name); the existing group supplies its type.
-        - For C(any), the module submits newly added member interfaces through
-          cumulative PUT requests. The controller evaluates each submitted batch.
+        - C(any) supports Ethernet, port-channel, and vPC members. Existing members are
+          preserved while newly added members are processed in compatible groups.
         - C(ethernetWithoutPolicy) accepts Ethernet interfaces but does not apply shared
           Ethernet attributes to them. Membership alone does not change member interface
           configuration; associated networks can still add VLAN bindings to those members.
@@ -82,21 +82,9 @@ options:
         - ethernetWithoutPolicy
         - portChannel
         - vpc
-      description:
-        description:
-        - Description of the Interface Group.
-        - This describes the group itself. For the description applied to member
-          interfaces, use O(config.ethernet_attributes.description).
-        - Manage 1.1.411 declares this field, but the target controller silently
-          drops it on both create and update and omits it from readback. Write
-          states therefore reject it before mutation to prevent a permanently
-          non-idempotent configuration.
-        - With O(state=gathered), this remains an exact-description filter for
-          controller data that includes the field.
-        type: str
       networks:
         description:
-        - Names of existing NDFC networks associated with this Interface Group.
+        - Names of existing ND networks associated with this Interface Group.
         - With O(state=gathered), all supplied names must be associated with a
           returned group. An explicit empty list returns groups with no networks.
         - For write states, the module fails with C(changed=false) if a supplied
@@ -260,7 +248,8 @@ options:
         - Resource-level deployment decision for this Interface Group.
         - Valid only when O(config_actions.type=resource).
         - Not valid with O(state=gathered).
-        - The effective default is C(true). Set C(false) to stage this resource without deploying it.
+        - When O(config_actions.deploy=true), the effective default is C(true). Set C(false)
+          to stage this resource without deploying it.
         type: bool
   config_actions:
     description:
@@ -270,10 +259,10 @@ options:
     suboptions:
       deploy:
         description:
-        - Whether to deploy switch-affecting changes.
-        - Defaults to C(true). Set C(false) to stage changes only.
+        - Whether to deploy staged Interface Group changes after reconciliation.
+        - Defaults to C(false). Set C(true) to deploy changes after reconciliation.
         type: bool
-        default: true
+        default: false
       type:
         description:
         - Deployment scope.
@@ -304,21 +293,20 @@ extends_documentation_fragment:
 notes:
 - Supported Interface Group types are C(any), C(ethernetCustom), C(ethernetWithPolicy),
   C(ethernetWithoutPolicy), C(portChannel), and C(vpc).
-- The module contract is aligned with Manage API OpenAPI version C(1.1.411).
-  The three convenient Ethernet types are translated on the wire to
-  C(type=ethernet) with C(policyDetails.policyType=userDefinedSharedTrunk),
-  C(sharedTrunkHost), or C(none), respectively.
 - A switch interface can belong to only one Interface Group. Under O(state=merged), attempting
   to add a member owned by another group fails because merged is additive. O(state=replaced) and
   O(state=overridden) can move it when the source group's desired membership removes it.
-- With O(config_actions.type=resource), network deployment is not handled by this module.
+- Deployment is opt-in. Omitting O(config_actions) or O(config_actions.deploy) stages
+  changes without deploying them. Set O(config_actions.deploy=true) on a mutating task
+  when this module should deploy its changes.
+- With O(config_actions.deploy=true) and O(config_actions.type=resource), network deployment
+  is not handled by this module.
   The module verifies that referenced networks exist, but does not query or enforce their
   deployment status. It proceeds with the requested Interface Group intent, deploys affected
   interfaces only, and returns a warning for referenced networks. Use
   M(cisco.nd.nd_manage_networks) to deploy those networks separately.
-- With O(config_actions.type=switch), the selected switch-level deploy is intentionally broad and
-  can deploy unrelated pending switch configuration.
-- O(config_actions.deploy=false) does not deploy any configuration.
+- With O(config_actions.deploy=true) and O(config_actions.type=switch), the selected
+  switch-level deploy is intentionally broad and can deploy unrelated pending switch configuration.
 - O(state=gathered) performs one paginated fabric read and applies the complete
   filter contract locally so nested network/member filters and normalized
   Ethernet types produce consistent results.
@@ -359,7 +347,7 @@ EXAMPLES = r"""
       type: switch
     state: replaced
 
-- name: Create a shared-policy Ethernet Interface Group with Manage 1.1.411 attributes
+- name: Create a shared-policy Ethernet Interface Group
   cisco.nd.nd_manage_interface_group:
     fabric_name: fabric-1
     config:
@@ -393,6 +381,9 @@ EXAMPLES = r"""
     fabric_name: fabric-1
     config:
       - interface_group_name: server-port-channels
+    config_actions:
+      type: resource
+      deploy: true
     state: deleted
 
 - name: Gather groups containing a network and member interface

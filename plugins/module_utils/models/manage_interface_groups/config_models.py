@@ -129,7 +129,6 @@ class InterfaceGroupConfigModel(NDBaseModel):
 
     interface_group_name: str = Field(alias="interfaceGroupName", min_length=1, description="Interface group name")
     type: InterfaceGroupType | None = Field(default=None, description="Interface group type")
-    description: str | None = Field(default=None, description="Description about the Interface Group")
     networks: list[str] | None = Field(
         default=None,
         alias="networkNames",
@@ -426,7 +425,7 @@ class InterfaceGroupConfigActionsModel(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
-    deploy: bool = Field(default=True, description="Whether to deploy staged Interface Group changes")
+    deploy: bool = Field(default=False, description="Whether to deploy staged Interface Group changes")
     type: InterfaceGroupConfigActionType = Field(default=InterfaceGroupConfigActionType.SWITCH, description="Deployment scope")
 
 
@@ -484,7 +483,6 @@ class InterfaceGroupGatheredFilterModel(BaseModel):
         description="Exact Interface Group name",
     )
     type: InterfaceGroupType | None = Field(default=None, description="Exact normalized Interface Group type")
-    description: str | None = Field(default=None, description="Exact Interface Group description")
     networks: list[str] | None = Field(
         default=None,
         alias="networkNames",
@@ -567,7 +565,6 @@ class InterfaceGroupModuleConfigModel(BaseModel):
     _config_input_keys: ClassVar[set[str]] = {
         "interface_group_name",
         "type",
-        "description",
         "networks",
         "switch_interfaces",
         "template_name",
@@ -703,7 +700,6 @@ class InterfaceGroupModuleConfigModel(BaseModel):
                 "options": {
                     "interface_group_name": {"type": "str", "required": False},
                     "type": {"type": "str", "choices": InterfaceGroupType.choices()},
-                    "description": {"type": "str"},
                     "networks": {"type": "list", "elements": "str"},
                     "switch_interfaces": {
                         "type": "list",
@@ -721,7 +717,7 @@ class InterfaceGroupModuleConfigModel(BaseModel):
                     "template_config": {"type": "dict"},
                     "ethernet_attributes": {"type": "dict"},
                     # No Ansible default here: explicit presence must remain distinguishable from omission.
-                    # Runtime semantics default an omitted resource deploy flag to true when type=resource.
+                    # An omitted item flag defaults to true only when top-level resource deployment is enabled.
                     "deploy": {"type": "bool"},
                 },
             },
@@ -732,6 +728,7 @@ class InterfaceGroupModuleConfigModel(BaseModel):
             },
         }
         config_actions = config_actions_spec(include=("deploy", "type"))
+        config_actions["config_actions"]["options"]["deploy"]["default"] = False
         config_actions["config_actions"]["options"]["type"]["choices"] = InterfaceGroupConfigActionType.choices()
         spec.update(config_actions)
         return spec

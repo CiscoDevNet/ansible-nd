@@ -108,15 +108,14 @@ class InterfaceGroupValidators:
 
     @staticmethod
     def normalize_response_ethernet_attributes(value: dict | None) -> dict | None:
-        """Keep shared-policy attributes defined by the Manage 1.1.411 contract."""
+        """Keep supported shared-policy attributes from an ND response."""
         if not isinstance(value, dict):
             return value
         normalized = {}
         for key, item in value.items():
             if key not in _ETHERNET_ATTRIBUTE_KEYS:
                 continue
-            # Manage 1.1.411 declares minLength=1 for input but existing
-            # controller-created policies can still echo an empty description.
+            # Existing controller-created policies can echo an empty description.
             # Treat that response-only default as unset without weakening input
             # validation or emitting an invalid blank value on later writes.
             if key == "description" and item == "":
@@ -126,7 +125,7 @@ class InterfaceGroupValidators:
 
     @staticmethod
     def normalize_allowed_vlans(value: Any) -> str | None:
-        """Normalize and validate a Manage 1.1.411 allowed-VLAN expression."""
+        """Normalize and validate an allowed-VLAN expression."""
         if value is None:
             return None
         if isinstance(value, bool):
@@ -176,7 +175,7 @@ class InterfaceGroupValidators:
                 "userDefinedSharedTrunk": "ethernetCustom",
             }
             if policy_type not in module_type_by_policy_type:
-                raise ValueError("Manage 1.1.411 Ethernet response requires policyDetails.policyType to be sharedTrunkHost, none, or userDefinedSharedTrunk")
+                raise ValueError("ND returned an unsupported Ethernet Interface Group policy type")
             normalized["type"] = module_type_by_policy_type[policy_type]
 
         ethernet_attributes = policy_details.get("ethernetAttributes")
@@ -201,7 +200,7 @@ class InterfaceGroupValidators:
 
     @staticmethod
     def to_wire_ethernet_attributes(value: dict | None) -> dict:
-        """Build the Manage 1.1.411 nested shared-policy attribute shape."""
+        """Build the ND shared-policy attribute shape."""
         attributes = dict(_ETHERNET_WITH_POLICY_DEFAULTS)
         attributes.update(value or {})
         return {key: item for key, item in attributes.items() if key in _ETHERNET_ATTRIBUTE_KEYS}
