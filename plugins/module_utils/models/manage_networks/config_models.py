@@ -182,6 +182,7 @@ class NetworkChildConfigModel(NDNestedModel):
     fabric_name: str
     multicast_group_address: str | None = Field(default=None, alias="multicastGroup")
     ds_vni: int | None = Field(default=None, alias="dsVni")
+    route_target_both: bool | None = Field(default=None, alias="routeTargetBoth")
     dhcp_servers: list[dict[str, Any]] | None = Field(default=None, alias="dhcpServers")
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion")
@@ -231,9 +232,9 @@ class NetworkConfigModel(NDBaseModel):
     vlan_id: int | None = Field(default=None, alias="vlanId")
     vlan_network_type: str | None = Field(default=None, alias="vlanNetworkType")
     primary_network_id: int | None = Field(default=None, alias="primaryNetworkId")
-    tenant_name: str | None = Field(default=None, alias="tenantName")
     layer: str | None = None
     vlan_name: str | None = Field(default=None, alias="vlanName")
+    route_target_both: bool | None = Field(default=None, alias="routeTargetBoth")
     x_connect: bool | None = Field(default=None, alias="xConnect")
     multicast_group_address: str | None = Field(default=None, alias="multicastGroup")
     ds_vni: int | None = Field(default=None, alias="dsVni")
@@ -302,11 +303,6 @@ class NetworkConfigModel(NDBaseModel):
     @classmethod
     def _validate_network_name(cls, v: str | None) -> str | None:
         return NetworkValidators.validate_network_name(v)
-
-    @field_validator("tenant_name", mode="before")
-    @classmethod
-    def _validate_tenant_name(cls, v: str | None) -> str | None:
-        return NetworkValidators.validate_tenant_name(v)
 
     @field_validator("network_id", mode="before")
     @classmethod

@@ -42,9 +42,6 @@ options:
       vrf_name:
         description: VRF name associated with the Network.
         type: str
-      tenant_name:
-        description: Tenant name.
-        type: str
       layer:
         description: Network layer.
         type: str
@@ -189,6 +186,11 @@ options:
       vlan_name:
         description: VLAN name.
         type: str
+      route_target_both:
+        description:
+          - Enable automatic L2VNI route-target import/export assignment.
+          - Maps to the ND C(rtAuto) API field.
+        type: bool
       gateway_ipv4_address:
         description: IPv4 gateway address and prefix.
         type: str
@@ -307,6 +309,11 @@ options:
           ds_vni:
             description: Downstream VNI.
             type: int
+          route_target_both:
+            description:
+              - Enable automatic L2VNI route-target import/export assignment on the child fabric.
+              - Maps to the ND C(rtAuto) API field.
+            type: bool
           netflow_enable:
             description: Enable netflow.
             type: bool
@@ -369,6 +376,7 @@ EXAMPLES = r"""
         network_id: 50020
         vlan_id: 2002
         vlan_name: Network_L3_VLAN
+        route_target_both: true
         gateway_ipv4_address: 10.10.20.1/24
         arp_suppression: true
         routing_tag: 12345

@@ -123,6 +123,7 @@ class DefaultL2DataModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
     vlan_name: str | None = Field(default=None, alias="vlanName", description="VLAN name")
+    rt_auto: bool | None = Field(default=None, alias="rtAuto", description="Enable L2VNI route-target both")
     x_connect: bool | None = Field(default=None, alias="xConnect", description="Enable xConnect")
     fabric_data: DefaultL2FabricDataModel | dict[str, Any] | None = Field(default=None, alias="fabricData")
 
@@ -328,18 +329,12 @@ class NetworkCommonModel(NDBaseModel):
     display_name: str | None = Field(default=None, alias="displayName")
     vrf_name: str | None = Field(default=None, alias="vrfName", max_length=32)
     vlan_id: int | None = Field(default=None, alias="vlanId", ge=2, le=4094)
-    tenant_name: str | None = Field(default=None, alias="tenantName", max_length=63)
     layer: NetworkLayer | None = Field(default=None, alias="networkMode")
 
     @field_validator("network_name", mode="before")
     @classmethod
     def validate_network_name(cls, v: str | None) -> str | None:
         return NetworkValidators.validate_network_name(v)
-
-    @field_validator("tenant_name", mode="before")
-    @classmethod
-    def validate_tenant_name(cls, v: str | None) -> str | None:
-        return NetworkValidators.validate_tenant_name(v)
 
     @field_validator("vlan_id", mode="before")
     @classmethod
@@ -381,7 +376,6 @@ class NetworkBaseModel(NetworkCommonModel):
         l2_data = normalized.get("l2Data")
         if isinstance(l2_data, dict):
             l2_data = dict(l2_data)
-            l2_data.pop("rtAuto", None)
             l2_data.pop("disableRtAuto", None)
             fabric_data = l2_data.get("fabricData")
             if isinstance(fabric_data, dict):

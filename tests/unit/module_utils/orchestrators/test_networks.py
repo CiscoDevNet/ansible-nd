@@ -992,7 +992,8 @@ def test_argument_spec_uses_manage_json_defaults():
     assert "default" not in spec["ipv6_trm"]
     assert "enable_ir" not in spec
     assert "rt_auto" not in spec
-    assert "route_target_both" not in spec
+    assert "default" not in spec["route_target_both"]
+    assert "default" not in spec["child_fabric_config"]["options"]["route_target_both"]
     assert spec["dhcp_servers"]["options"]["server_address"]["required"] is True
 
 
@@ -1579,6 +1580,7 @@ def test_transform_l2_network_payload_uses_manage_schema_shape():
                 "layer": "layer2",
                 "vlan_id": 2301,
                 "vlan_name": "BLUE_VLAN",
+                "route_target_both": True,
                 "multicast_group_address": "239.1.1.2",
             }
         ]
@@ -1589,10 +1591,25 @@ def test_transform_l2_network_payload_uses_manage_schema_shape():
     assert payload["layer"] == "layer2"
     assert payload["vrf_name"] == "NA"
     assert payload["l2_data"]["vlanName"] == "BLUE_VLAN"
-    assert "rtAuto" not in payload["l2_data"]
+    assert payload["l2_data"]["rtAuto"] is True
     assert "enableIr" not in payload["l2_data"]["fabricData"]
     assert payload["l2_data"]["fabricData"]["multicastGroup"] == "239.1.1.2"
     assert "l3_data" not in payload
+
+
+def test_transform_l2_network_payload_maps_route_target_both_false_to_rt_auto():
+    payload = _orchestrator().prepare_config_data(
+        [
+            {
+                "network_name": "BLUE_NET",
+                "layer": "layer2",
+                "route_target_both": False,
+            }
+        ]
+    )[0]
+
+    assert payload["l2_data"]["rtAuto"] is False
+    assert "disableRtAuto" not in payload["l2_data"]
 
 
 def test_network_create_result_failures_raise():
@@ -1694,6 +1711,7 @@ def test_mcfg_parent_network_create_uses_onemanage_manage_schema_payload():
     assert "vlanId" not in payload
     assert payload["l2Data"]["vlanName"] == ""
     assert "rtAuto" not in payload["l2Data"]
+    assert "disableRtAuto" not in payload["l2Data"]
     assert payload["l2Data"]["fabricData"] == {}
     assert payload["l3Data"] == {
         "gatewayIpv4Address": "",
@@ -1968,7 +1986,8 @@ def test_mcfg_parent_network_query_normalizes_top_down_template_config():
     assert normalized["vlanId"] == 3130
     assert normalized["layer"] == "layer2"
     assert normalized["l2Data"]["vlanName"] == "BLUE_VLAN"
-    assert "rtAuto" not in normalized["l2Data"]
+    assert normalized["l2Data"]["rtAuto"] is True
+    assert "disableRtAuto" not in normalized["l2Data"]
     assert "fabricData" not in normalized["l2Data"]
     assert normalized["l3Data"]["fabricData"]["netflow"] is True
     assert normalized["l3Data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
@@ -3047,7 +3066,7 @@ def test_pending_network_delete_wait_retries_undeploy():
     assert deploy_payloads == [{"networkNames": ["BLUE_NET"]}]
 
 
-def test_network_response_omits_unsupported_l2_fields_for_idempotency():
+def test_network_response_omits_disable_rt_auto_without_normalizing_rt_auto():
     model = NDNetworkOrchestrator.model_class.from_response(
         {
             "fabricName": "fab1",
@@ -3057,7 +3076,6 @@ def test_network_response_omits_unsupported_l2_fields_for_idempotency():
             "networkMode": "layer2",
             "l2Data": {
                 "disableRtAuto": False,
-                "rtAuto": True,
                 "vlanName": "BLUE_VLAN",
                 "fabricData": {"enableIr": False},
             },

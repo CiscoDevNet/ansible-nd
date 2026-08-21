@@ -50,7 +50,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.va
 def test_manage_network_validators_00010() -> None:
     """Verify network validators accept valid schema values."""
     assert NetworkValidators.validate_network_name("net1") == "net1"
-    assert NetworkValidators.validate_tenant_name("tenant_1") == "tenant_1"
     assert NetworkValidators.validate_vlan_id(2) == 2
     assert NetworkValidators.validate_network_id(16777214) == 16777214
     assert NetworkValidators.validate_cidrv4("192.0.2.1/24") == "192.0.2.1/24"
@@ -62,8 +61,6 @@ def test_manage_network_validators_00020() -> None:
     """Verify network validators reject invalid schema values."""
     with pytest.raises(ValueError):
         NetworkValidators.validate_network_name("n" * 129)
-    with pytest.raises(ValueError):
-        NetworkValidators.validate_tenant_name("bad tenant")
     with pytest.raises(ValueError):
         NetworkValidators.validate_vlan_id(1)
     with pytest.raises(ValueError):
@@ -81,7 +78,6 @@ def test_manage_network_data_models_00100() -> None:
         networkName="net1",
         vrfName="vrf1",
         vlanId=3000,
-        tenantName="tenant1",
         layer="layer3",
         l2Data=DefaultL2DataModel(vlanName="VLAN3000"),
         l3Data=DefaultL3DataModel(
