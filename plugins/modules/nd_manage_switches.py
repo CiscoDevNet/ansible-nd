@@ -127,6 +127,7 @@ options:
                 - Bootstrap POAP config for the switch.
                 - C(serial_number) and C(hostname) are mandatory.
                 - Model, version, and config data are sourced from the bootstrap API at runtime.
+                - C(software_image) can be provided to select the image used in the import payload.
                 - If the bootstrap API reports a different hostname or role, the API value
                   overrides the user-provided value and a warning is logged.
                 - To perform a B(swap) operation, provide both C(poap) and C(preprovision)
@@ -153,6 +154,11 @@ options:
                     discovery_password:
                         description:
                         - Password for device discovery during POAP.
+                        type: str
+                    software_image:
+                        description:
+                        - Software image file to use during POAP import.
+                        - When omitted, C(softwareImage) is not sent in the import payload.
                         type: str
             preprovision:
                 description:
@@ -320,6 +326,7 @@ EXAMPLES = """
           hostname: leaf-bootstrap
           discovery_username: root
           discovery_password: "{{ discovery_password }}"
+          software_image: nxos64-cs.10.6.4.M.bin
     state: merged
 
 - name: Swap serial number on a pre-provisioned switch (POAP swap)

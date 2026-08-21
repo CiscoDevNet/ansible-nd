@@ -31,7 +31,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.validators import (
     require_hostname,
-    require_ip_address,
     validate_cidr_optional,
     validate_ip_address,
 )
@@ -250,9 +249,7 @@ class BootstrapImportSwitchModel(NDBaseModel):
     @field_validator("ip", "dhcp_bootstrap_ip", mode="before")
     @classmethod
     def validate_ip_field(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        return require_ip_address(v)
+        return validate_ip_address(v)
 
     @field_validator("hostname", mode="before")
     @classmethod

@@ -1729,7 +1729,7 @@ class POAPHandler:
         # bootstrap-only operations.
         model = bs.get("model", "")
         version = bs.get("softwareVersion", "")
-        software_image = bs.get("softwareImage")
+        software_image = poap_cfg.software_image
 
         gateway_ip_mask = bs.get("gatewayIpMask") or bs_data.get("gatewayIpMask")
         data_models = bs_data.get("models", [])

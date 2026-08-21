@@ -76,11 +76,6 @@ class PreProvisionSwitchModel(NDBaseModel):
         alias="softwareVersion",
         description="Software version of the switch to pre-provision",
     )
-    software_image: str | None = Field(
-        default=None,
-        alias="softwareImage",
-        description="Software image file for the switch to pre-provision",
-    )
     gateway_ip_mask: str = Field(
         alias="gatewayIpMask",
         description="Gateway IP address with mask (e.g., 10.23.244.1/24)",

@@ -18,6 +18,7 @@ from ipaddress import ip_address
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
     Field,
     ValidationInfo,
     computed_field,
@@ -88,6 +89,7 @@ class POAPConfigModel(NDNestedModel):
     Used when ``poap`` is specified alone (bootstrap-only operation).
     ``serial_number`` and ``hostname`` are mandatory; all other fields are optional.
     Model, version, and config data are sourced from the bootstrap API at runtime.
+    ``software_image`` can be provided to select the image used in the import payload.
     If the bootstrap API reports a different hostname or role, the API value overrides
     the user-provided value and a warning is logged.
     """
@@ -112,6 +114,12 @@ class POAPConfigModel(NDNestedModel):
         default=None,
         alias="discoveryPassword",
         description="Password for device discovery during POAP",
+    )
+    software_image: str | None = Field(
+        default=None,
+        alias="softwareImage",
+        min_length=1,
+        description="Software image file to use during POAP import",
     )
 
     @field_validator("hostname", mode="before")
@@ -143,6 +151,7 @@ class PreprovisionConfigModel(NDNestedModel):
     """
 
     identifiers: ClassVar[list[str]] = []
+    model_config = ConfigDict(extra="forbid")
 
     # Mandatory
     serial_number: str = Field(
@@ -616,6 +625,7 @@ class SwitchConfigModel(NDBaseModel):
                             hostname=dict(type="str", required=True),
                             discovery_username=dict(type="str"),
                             discovery_password=dict(type="str", no_log=True),
+                            software_image=dict(type="str"),
                         ),
                     ),
                     preprovision=dict(

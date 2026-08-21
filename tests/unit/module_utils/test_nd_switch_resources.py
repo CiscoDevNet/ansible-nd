@@ -779,11 +779,22 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     fabric_ops = RecordingFabricOps()
     handler = POAPHandler(ctx, fabric_ops, RecordingWait(), StaticBootstrapCache({"POAP1": bootstrap}))
 
-    handler.handle([_cfg("192.0.2.10", poap={"serial_number": "POAP1", "hostname": "user-host"})])
+    handler.handle(
+        [
+            _cfg(
+                "192.0.2.10",
+                poap={
+                    "serial_number": "POAP1",
+                    "hostname": "user-host",
+                    "software_image": "nxos64-cs.10.6.4.M.bin",
+                },
+            )
+        ]
+    )
     assert ctx.results.metadata[-1]["action"] == "bootstrap"
     assert ctx.results.diffs[-1]["switches"][0]["hostname"] == "api-host"
     assert ctx.results.diffs[-1]["switches"][0]["switchRole"] == "spine"
-    assert ctx.results.diffs[-1]["switches"][0]["softwareImage"] == "nxos64-cs.10.3.1.F.bin"
+    assert ctx.results.diffs[-1]["switches"][0]["softwareImage"] == "nxos64-cs.10.6.4.M.bin"
     assert ctx.results.diffs[-1]["switches"][0]["dhcpBootstrapIp"] == "192.0.2.50"
     assert "imagePolicy" not in ctx.results.diffs[-1]["switches"][0]
     assert "reAdd" not in ctx.results.diffs[-1]["switches"][0]
@@ -802,6 +813,8 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     handler.handle([preprov_cfg])
     assert ctx.results.metadata[-1]["action"] == "preprovision"
     assert ctx.results.diffs[-1]["switches"][0]["serialNumber"] == "PRE1"
+    assert ctx.results.diffs[-1]["switches"][0]["softwareVersion"] == "10.3(1)"
+    assert "softwareImage" not in ctx.results.diffs[-1]["switches"][0]
     assert "imagePolicy" not in ctx.results.diffs[-1]["switches"][0]
 
     swap_cfg = _cfg(
@@ -820,6 +833,18 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     swap_handler.handle([swap_cfg], [_sw("192.0.2.30", "OLD1")])
     assert cache.refreshes == 1
     assert [entry["action"] for entry in swap_handler.ctx.results.metadata] == ["swap_serial", "bootstrap"]
+
+
+def test_poap_handler_omits_software_image_when_not_requested():
+    """POAP import sends softwareImage only when the playbook selects one."""
+    bootstrap = _bootstrap_entry("POAP1")
+    ctx = _ctx(results=Results())
+    handler = POAPHandler(ctx, RecordingFabricOps(), RecordingWait(), StaticBootstrapCache({"POAP1": bootstrap}))
+
+    handler.handle([_cfg("192.0.2.10", poap={"serial_number": "POAP1", "hostname": "user-host"})])
+
+    assert ctx.results.diffs[-1]["switches"][0]["softwareVersion"] == "10.3(1)"
+    assert "softwareImage" not in ctx.results.diffs[-1]["switches"][0]
 
 
 def test_poap_handler_requires_bootstrap_identity_fields():
