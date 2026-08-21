@@ -388,6 +388,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     require_pydantic,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import (
+    parse_config_actions,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import (
+    SWITCH_CONFIG_ACTIONS,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import (
+    get_raw_module_args,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.config_models import (
     SwitchConfigModel,
 )
@@ -421,9 +430,15 @@ def main():
 
     require_pydantic(module)
 
-    config_actions = module.params.get("config_actions") or {}
-    if config_actions.get("deploy", True) and not config_actions.get("save", True):
-        module.fail_json(msg="'config_actions.deploy: true' requires 'config_actions.save: true'")
+    try:
+        config_actions = parse_config_actions(
+            params=module.params,
+            raw_args=get_raw_module_args(),
+            policy=SWITCH_CONFIG_ACTIONS,
+            state=module.params.get("state"),
+        )
+    except ValueError as error:
+        module.fail_json(msg=str(error))
 
     # Initialize logging
     try:
@@ -447,7 +462,7 @@ def main():
         nd = NDModule(module)
 
         # Create NDSwitchResourceModule
-        sw_module = NDSwitchResourceModule(nd=nd, results=results, logger=log)
+        sw_module = NDSwitchResourceModule(nd=nd, results=results, logger=log, config_actions=config_actions)
 
         # Manage state for merged, overridden, deleted
         sw_module.manage_state()
