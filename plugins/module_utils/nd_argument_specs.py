@@ -84,7 +84,7 @@ def config_actions_spec(include: Iterable[str] | None = None) -> dict[str, Any]:
     """
     options: dict[str, Any] = {
         "save": {"type": "bool", "default": True},
-        "deploy": {"type": "bool", "default": True},
+        "deploy": {"type": "bool", "default": False},
         "type": {"type": "str", "default": "switch", "choices": ["resource", "switch", "global"]},
     }
     return {"config_actions": {"type": "dict", "options": _select_options(options, include)}}
