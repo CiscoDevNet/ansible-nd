@@ -287,17 +287,24 @@ notes:
   drift. If C(role) is omitted, role drift is ignored and the controller
   default applies on add.
 - The module validates switch platform, provided C(role), and C(preserve_config)
-  against the resolved fabric type before discovery or write operations.
-- Supported fabric families are Data Center VXLAN iBGP/eBGP and Campus VXLAN.
+  against the resolved fabric type for configurations that require discovery or
+  write operations. Existing idempotent switches are not rejected only because
+  onboarding-only options were omitted.
+- Supported fabric families are Data Center VXLAN iBGP/eBGP, Campus VXLAN, and
+  External and Inter-Fabric Connectivity.
 - Data Center VXLAN iBGP/eBGP supports NX-OS switches.
 - Campus VXLAN supports NX-OS and IOS-XE switches.
+- External and Inter-Fabric Connectivity supports NX-OS, IOS-XE, IOS-XR, and
+  other platform switches.
 - C(preserve_config) must be C(false) for Campus VXLAN and Data Center VXLAN
   eBGP fabrics.
+- C(preserve_config) must be C(true) for External and Inter-Fabric Connectivity
+  fabrics.
 - C(preserve_config) can be C(true) or C(false) for Data Center VXLAN iBGP
   fabrics.
 - When C(preserve_config) is omitted, the module derives C(false) for Campus
   VXLAN and Data Center VXLAN eBGP fabrics. It derives C(true) for Data Center
-  VXLAN iBGP fabrics.
+  VXLAN iBGP and External and Inter-Fabric Connectivity fabrics.
 - Campus VXLAN supports C(leaf) and C(spine) roles for IOS-XE switches.
 - Campus VXLAN supports C(border_gateway), C(border_gateway_spine), and
   C(border_gateway_super_spine) roles for NX-OS switches.

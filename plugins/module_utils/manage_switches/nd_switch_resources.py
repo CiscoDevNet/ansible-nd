@@ -86,6 +86,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils imp
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.fabric_switch_capabilities import (
     SwitchFabricCapabilityError,
+    capability_for_fabric_type,
     validate_switch_configs_for_fabric_type,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
@@ -1543,10 +1544,19 @@ class SwitchFabricOps:
             nd.module.fail_json(msg=msg)
 
     @staticmethod
+    def _requires_reload_observation(cfg: "SwitchConfigModel", platform_type: PlatformType) -> bool:
+        """
+        # Summary
+
+        Return True when a post-add switch must pass through reload observation.
+        """
+        return platform_type == PlatformType.NX_OS and cfg.operation_type in {"poap", "swap"}
+
+    @staticmethod
     def _split_post_add_wait_sets(
         switch_actions: list[tuple[str, "SwitchConfigModel"]],
     ) -> SwitchWaitSets:
-        """Split post-add wait sets by platform reload behavior."""
+        """Split post-add wait sets by platform and operation reload behavior."""
         nxos_reload: list[tuple[str, SwitchConfigModel]] = []
         nxos_preserve: list[tuple[str, SwitchConfigModel]] = []
         ready_without_reload: list[tuple[str, SwitchConfigModel]] = []
@@ -1554,10 +1564,10 @@ class SwitchFabricOps:
         for serial_number, cfg in switch_actions:
             platform_type = cfg.platform_type or PlatformType.NX_OS
             if platform_type == PlatformType.NX_OS:
-                if cfg.preserve_config:
-                    nxos_preserve.append((serial_number, cfg))
-                else:
+                if SwitchFabricOps._requires_reload_observation(cfg, platform_type) or not cfg.preserve_config:
                     nxos_reload.append((serial_number, cfg))
+                else:
+                    nxos_preserve.append((serial_number, cfg))
             else:
                 ready_without_reload.append((serial_number, cfg))
 
@@ -2793,6 +2803,119 @@ class NDSwitchResourceModule:
             self.log.error(msg)
             self.nd.module.fail_json(msg=msg)
 
+    def _validate_supported_fabric(self) -> None:
+        """
+        # Summary
+
+        Validate that the target fabric is supported before any mutating state
+        can reach add, update, or delete paths.
+        """
+        try:
+            fabric_type = self.fabric_details_cache.get_fabric_type()
+            capability = capability_for_fabric_type(fabric_type)
+            self.log.debug(
+                "Switch fabric support validation passed for fabric %s using %s matrix",
+                self.fabric,
+                capability.family,
+            )
+        except SwitchFabricCapabilityError as exc:
+            msg = str(exc)
+            self.log.error(msg)
+            self.nd.module.fail_json(msg=msg)
+        except _FABRIC_OPERATION_ERRORS as exc:
+            msg = f"Failed to query fabric '{self.fabric}' capabilities: {exc}"
+            self.log.error(msg)
+            self.nd.module.fail_json(msg=msg)
+
+    @staticmethod
+    def _inventory_platform_type(sw: "SwitchDataModel" | None) -> PlatformType | None:
+        """
+        # Summary
+
+        Return the platform type reported by an existing inventory record.
+        """
+        if sw is None or sw.additional_data is None:
+            return None
+        return getattr(sw.additional_data, "platform_type", None)
+
+    def _apply_existing_platform_types(
+        self,
+        plan: "SwitchPlan",
+        existing_by_ip: dict[str, "SwitchDataModel"],
+    ) -> None:
+        """
+        # Summary
+
+        Resolve omitted platform_type values from inventory for configs that
+        already map to switches in the fabric.
+
+        New add and re-add configs intentionally keep platform_type omitted so
+        the add-operation default remains localized to capability validation.
+        """
+        for cfg in plan.idempotent + plan.to_update + plan.migration_mode:
+            if cfg.platform_type is not None:
+                continue
+            platform_type = self._inventory_platform_type(existing_by_ip.get(cfg.seed_ip))
+            if platform_type is None:
+                continue
+            if platform_type in (PlatformType.SONIC, PlatformType.APIC):
+                self.log.debug(
+                    "Leaving omitted platform_type unset for existing read-side platform %s on switch %s",
+                    getattr(platform_type, "value", platform_type),
+                    cfg.seed_ip,
+                )
+                continue
+            cfg.platform_type = platform_type
+            self.log.debug(
+                "Resolved omitted platform_type for existing switch %s from inventory as %s",
+                cfg.seed_ip,
+                getattr(platform_type, "value", platform_type),
+            )
+
+    def _validate_actionable_existing_platforms(
+        self,
+        configs: list["SwitchConfigModel"],
+        existing_by_ip: dict[str, "SwitchDataModel"],
+    ) -> None:
+        """
+        # Summary
+
+        Fail closed when an actionable existing switch reports a read-side-only
+        platform and the playbook omitted platform_type.
+        """
+        for cfg in configs:
+            if cfg.platform_type is not None:
+                continue
+            platform_type = self._inventory_platform_type(existing_by_ip.get(cfg.seed_ip))
+            if platform_type not in (PlatformType.SONIC, PlatformType.APIC):
+                continue
+            platform_value = getattr(platform_type, "value", platform_type)
+            msg = (
+                f"Switch {cfg.seed_ip} reports platform_type '{platform_value}', which is not supported for switch write operations. "
+                "The module will not default this actionable existing switch to platform_type 'nx-os'."
+            )
+            self.log.error(msg)
+            self.nd.module.fail_json(msg=msg)
+
+    @staticmethod
+    def _capability_validation_configs(plan: "SwitchPlan") -> list["SwitchConfigModel"]:
+        """
+        # Summary
+
+        Return configs that may result in switch writes and therefore require
+        onboarding capability validation.
+        """
+        return (
+            list(plan.to_add)
+            + list(plan.to_update)
+            + list(plan.migration_mode)
+            + list(plan.to_bootstrap)
+            + list(plan.normal_readd)
+            + list(plan.to_preprovision)
+            + list(plan.to_swap)
+            + list(plan.to_rma)
+        )
+
     def _build_check_mode_output(self) -> dict[str, Any]:
         """Build before/after/diff/changed output for check mode.
 
@@ -2938,15 +3061,10 @@ class NDSwitchResourceModule:
 
         if self.state == "gathered":
             # gathered: expose the already-queried inventory in config shape.
-            # No re-query needed — nothing was changed.
-            gathered = []
-            for sw in self.existing:
-                try:
-                    gathered.append(SwitchConfigModel.from_switch_data(sw).to_gathered_dict())
-                except _OUTPUT_CONVERSION_ERRORS as exc:
-                    msg = f"Failed to convert switch {sw.switch_id!r} to gathered format: {exc}"
-                    self.log.error(msg)
-                    self.nd.module.fail_json(msg=msg)
+            # No re-query needed and no write-model validation is applied; the
+            # controller may report read-side platform values that are not
+            # supported for switch onboarding.
+            gathered = self._inventory_to_config_list(self.existing)
             self.output.assign(after=self.existing)
             final.update(self.output.format(gathered=gathered))
         elif self.nd.module.check_mode:
@@ -3030,26 +3148,27 @@ class NDSwitchResourceModule:
                 self.nd.module.fail_json(msg="'config' must not be provided for 'gathered' state.")
             return self._handle_gathered_state()
 
-        # deleted — config is optional; handled separately (lighter path)
-        if self.state == "deleted":
-            proposed_config = SwitchDiffEngine.validate_configs(self.config, self.state, self.nd, self.log) if self.config else None
-            return self._handle_deleted_state(proposed_config)
+        if self.state not in ("merged", "replaced", "overridden", "deleted"):
+            self.nd.module.fail_json(msg=f"Unsupported state: {self.state}")
 
         # merged / replaced — config required
         if self.state in ("merged", "replaced") and not self.config:
             self.nd.module.fail_json(msg=f"'config' is required for '{self.state}' state.")
+
+        self._validate_supported_fabric()
+
+        # deleted — config is optional; handled separately (lighter path)
+        if self.state == "deleted":
+            proposed_config = SwitchDiffEngine.validate_configs(self.config, self.state, self.nd, self.log) if self.config else None
+            return self._handle_deleted_state(proposed_config)
 
         # overridden with no/empty config — delete everything
         if self.state == "overridden" and not self.config:
             self.log.info("Overridden state with no config — deleting all switches from fabric")
             return self._handle_deleted_state(None)
 
-        if self.state not in ("merged", "replaced", "overridden"):
-            self.nd.module.fail_json(msg=f"Unsupported state: {self.state}")
-
         # --- Validate & classify ------------------------------------------------
         proposed_config = SwitchDiffEngine.validate_configs(self.config, self.state, self.nd, self.log)
-        self._validate_fabric_capabilities(proposed_config)
 
         # Enforce state constraints
         rma_configs = [c for c in proposed_config if c.operation_type == "rma"]
@@ -3066,6 +3185,11 @@ class NDSwitchResourceModule:
         # Classify all configs in one pass — idempotency included
         plan = SwitchDiffEngine.compute_changes(proposed_config, list(self.existing), self.log)
         self._plan = plan
+        existing_by_ip = self.inventory.by_ip()
+        self._apply_existing_platform_types(plan, existing_by_ip)
+        capability_configs = self._capability_validation_configs(plan)
+        self._validate_actionable_existing_platforms(capability_configs, existing_by_ip)
+        self._validate_fabric_capabilities(capability_configs)
 
         # --- Single combined discovery pass -------------------------------------
         # Discover every switch that is not yet in the fabric:

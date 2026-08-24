@@ -191,6 +191,8 @@ SUPPORTED_SWITCH_ONBOARDING_FABRIC_TYPES = frozenset(
         "vxlanibgp",
         "vxlanebgp",
         "vxlancampus",
+        "external",
+        "externalconnectivity",
     }
 )
 

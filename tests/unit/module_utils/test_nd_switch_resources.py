@@ -494,8 +494,8 @@ def test_switch_argument_spec_exposes_supported_platform_type_choices():
     assert platform_spec["choices"] == ["nx-os", "ios-xe", "ios-xr", "other"]
 
 
-def test_fabric_capability_validation_rejects_campus_leaf_before_writes():
-    """Campus VXLAN rejects leaf role before discovery/add/config-save can start."""
+def test_fabric_capability_validation_rejects_new_campus_leaf_before_writes():
+    """Campus VXLAN rejects new NX-OS-default leaf role before discovery/add/config-save can start."""
     config = [{"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf", "preserve_config": False}]
     resource = _resource(state="merged", config=config)
     resource.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "vxlanCampus")
@@ -506,6 +506,92 @@ def test_fabric_capability_validation_rejects_campus_leaf_before_writes():
     resource.fabric_ops = SimpleNamespace(save_config=lambda: raise_assertion("configSave should not run after capability validation failure"))
 
     with pytest.raises(FailJsonError, match="role 'leaf' is not supported for platform_type 'nx-os' in Campus VXLAN"):
+        resource.manage_state()
+
+
+def test_existing_campus_ios_xe_leaf_omitted_platform_is_idempotent():
+    """Existing Campus IOS-XE leaf can omit platform_type during no-op reconciliation."""
+    config = [{"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf"}]
+    existing = [
+        _sw(
+            "192.0.2.10",
+            "IOSXE1",
+            role="leaf",
+            additionalData={
+                "discoveryStatus": "ok",
+                "systemMode": "normal",
+                "platformType": "ios-xe",
+                "configSyncStatus": "inSync",
+            },
+        )
+    ]
+    resource = _resource(state="merged", config=config, existing=existing)
+    resource.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "vxlanCampus")
+    resource.discovery = SimpleNamespace(
+        discover=lambda configs: raise_assertion("discovery should not run for an existing idempotent switch"),
+        build_proposed=lambda configs, discovered, existing_items: [],
+    )
+    resource.fabric_ops = SimpleNamespace(save_config=lambda: raise_assertion("configSave should not run for an idempotent switch"))
+
+    resource.manage_state()
+
+    assert resource._plan is not None
+    assert [cfg.seed_ip for cfg in resource._plan.idempotent] == ["192.0.2.10"]
+    assert resource._plan.idempotent[0].platform_type == "ios-xe"
+    assert resource.msg == "No switches to merge — fabric already matches desired config"
+
+
+def test_existing_read_side_platform_omitted_platform_noop_skips_onboarding_validation():
+    """Existing idempotent read-side platforms do not require onboarding platform support."""
+    config = [{"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf"}]
+    existing = [
+        _sw(
+            "192.0.2.10",
+            "SONIC1",
+            role="leaf",
+            additionalData={
+                "discoveryStatus": "ok",
+                "systemMode": "normal",
+                "platformType": "sonic",
+                "configSyncStatus": "inSync",
+            },
+        )
+    ]
+    resource = _resource(state="merged", config=config, existing=existing)
+    resource.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "vxlanIbgp")
+
+    resource.manage_state()
+
+    assert resource._plan is not None
+    assert [cfg.seed_ip for cfg in resource._plan.idempotent] == ["192.0.2.10"]
+    assert resource._plan.idempotent[0].platform_type is None
+    assert resource.msg == "No switches to merge — fabric already matches desired config"
+
+
+def test_existing_read_side_platform_actionable_write_does_not_default_to_nxos():
+    """Actionable existing read-side platforms fail before omitted platform_type can default to NX-OS."""
+    config = [{"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "spine"}]
+    existing = [
+        _sw(
+            "192.0.2.10",
+            "SONIC1",
+            role="leaf",
+            additionalData={
+                "discoveryStatus": "ok",
+                "systemMode": "normal",
+                "platformType": "sonic",
+                "configSyncStatus": "inSync",
+            },
+        )
+    ]
+    resource = _resource(state="replaced", config=config, existing=existing)
+    resource.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "vxlanIbgp")
+    resource.discovery = SimpleNamespace(
+        discover=lambda configs: raise_assertion("discovery should not run for unsupported read-side platform writes"),
+        build_proposed=lambda configs, discovered, existing_items: [],
+    )
+
+    with pytest.raises(FailJsonError, match="will not default this actionable existing switch to platform_type 'nx-os'"):
         resource.manage_state()
 
 
@@ -568,6 +654,7 @@ def test_switch_config_rejects_explicit_null_role():
         ("vxlanCampus", False),
         ("vxlanIbgp", True),
         ("vxlanEbgp", False),
+        ("externalConnectivity", True),
     ],
 )
 def test_fabric_capability_validation_derives_omitted_preserve_config(fabric_type, expected):
@@ -577,6 +664,19 @@ def test_fabric_capability_validation_derives_omitted_preserve_config(fabric_typ
     validate_switch_configs_for_fabric_type("FAB1", fabric_type, [cfg])
 
     assert cfg.preserve_config is expected
+
+
+@pytest.mark.parametrize("fabric_type", ["externalConnectivity", "external"])
+@pytest.mark.parametrize("platform_type", ["nx-os", "ios-xe", "ios-xr", "other"])
+def test_fabric_capability_validation_allows_external_connectivity_platforms(fabric_type, platform_type):
+    """External and Inter-Fabric Connectivity accepts all supported switch platform types."""
+    cfg = _cfg_without_role(platform_type=platform_type)
+
+    capability = validate_switch_configs_for_fabric_type("EXTERNAL_A", fabric_type, [cfg])
+
+    assert capability.family == "External"
+    assert cfg.platform_type == platform_type
+    assert cfg.preserve_config is True
 
 
 @pytest.mark.parametrize(
@@ -603,7 +703,10 @@ def test_fabric_capability_validation_rejects_matrix_entries_outside_exposure_ga
     for fabric_type in gated_fabric_types:
         with pytest.raises(
             SwitchFabricCapabilityError,
-            match="currently supports switch onboarding only for these fabric families: Campus VXLAN, Data Center VXLAN eBGP, Data Center VXLAN iBGP",
+            match=(
+                "currently supports switch onboarding only for these fabric families: "
+                "Campus VXLAN, Data Center VXLAN eBGP, Data Center VXLAN iBGP, External"
+            ),
         ):
             validate_switch_configs_for_fabric_type(
                 "FAB1",
@@ -1003,6 +1106,57 @@ def test_post_add_processing_splits_reload_waits_by_platform():
     assert ctx.results.payload[-1] == {"switchIds": ["NXOS1", "NXOS2", "IOSXE1", "IOSXR1"]}
 
 
+def test_post_add_processing_forces_poap_and_swap_nxos_reload_observation():
+    """NX-OS POAP and swap operations require reload observation even with preserve_config=true."""
+    poap_cfg = _cfg(
+        "192.0.2.20",
+        platform_type="nx-os",
+        preserve_config=True,
+        poap={"serial_number": "POAP1", "hostname": "poap1"},
+    )
+    swap_cfg = _cfg(
+        "192.0.2.21",
+        platform_type="nx-os",
+        preserve_config=True,
+        poap={"serial_number": "NEW1", "hostname": "swap"},
+        preprovision={
+            "serial_number": "OLD1",
+            "model": "N9K-C93180YC-EX",
+            "version": "10.3(1)",
+            "hostname": "swap",
+            "config_data": {"models": ["N9K-C93180YC-EX"], "gateway": "192.0.2.1/24"},
+        },
+    )
+    normal_cfg = _cfg("192.0.2.22", platform_type="nx-os", preserve_config=True)
+
+    wait_sets = SwitchFabricOps._split_post_add_wait_sets(
+        [
+            ("POAP1", poap_cfg),
+            ("NEW1", swap_cfg),
+            ("NORMAL1", normal_cfg),
+        ]
+    )
+
+    assert [serial for serial, _cfg in wait_sets.nxos_reload] == ["POAP1", "NEW1"]
+    assert [serial for serial, _cfg in wait_sets.nxos_preserve] == ["NORMAL1"]
+
+
+def test_derived_ibgp_preserve_config_does_not_bypass_poap_reload_observation():
+    """Fabric-derived iBGP preserve_config=true still uses reload wait policy for POAP."""
+    cfg = _cfg(
+        "192.0.2.20",
+        platform_type="nx-os",
+        poap={"serial_number": "POAP1", "hostname": "poap1"},
+    )
+
+    validate_switch_configs_for_fabric_type("FABRIC_IBGP", "vxlanIbgp", [cfg])
+    wait_sets = SwitchFabricOps._split_post_add_wait_sets([("POAP1", cfg)])
+
+    assert cfg.preserve_config is True
+    assert [serial for serial, _cfg in wait_sets.nxos_reload] == ["POAP1"]
+    assert not wait_sets.nxos_preserve
+
+
 def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
     """Finalize chooses save, switch deploy, global deploy, and check-mode no-op correctly."""
     calls = []
@@ -1300,9 +1454,44 @@ def test_manage_state_routes_gathered_deleted_and_required_config_paths():
     assert deleted_calls[-1] is None
 
     with pytest.raises(FailJsonError, match="'config' is required"):
-        _resource(state="merged").manage_state()
+        merged = _resource(state="merged")
+        merged.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: raise_assertion("fabric lookup should not run before required config check"))
+        merged.manage_state()
     with pytest.raises(FailJsonError, match="'config' is required"):
-        _resource(state="replaced").manage_state()
+        replaced = _resource(state="replaced")
+        replaced.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: raise_assertion("fabric lookup should not run before required config check"))
+        replaced.manage_state()
+
+
+def test_manage_state_blocks_unsupported_fabric_before_destructive_delete_paths():
+    """Unsupported fabrics fail closed before delete and override handlers."""
+    deleted = _resource(state="deleted", config=[{"seed_ip": "192.0.2.10"}])
+    deleted.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "ipfm")
+    deleted._handle_deleted_state = lambda proposed: raise_assertion("deleted handler should not run for unsupported fabric")
+
+    with pytest.raises(FailJsonError, match="Fabric type 'ipfm' is not supported"):
+        deleted.manage_state()
+
+    overridden = _resource(state="overridden")
+    overridden.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "ipfm")
+    overridden._handle_deleted_state = lambda proposed: raise_assertion("delete-all handler should not run for unsupported fabric")
+
+    with pytest.raises(FailJsonError, match="Fabric type 'ipfm' is not supported"):
+        overridden.manage_state()
+
+    non_empty_overridden = _resource(state="overridden", config=[{"seed_ip": "192.0.2.10", "username": "admin", "password": "password"}])
+    non_empty_overridden.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "ipfm")
+    non_empty_overridden._handle_overridden_state = lambda plan, discovered: raise_assertion("overridden handler should not run for unsupported fabric")
+
+    with pytest.raises(FailJsonError, match="Fabric type 'ipfm' is not supported"):
+        non_empty_overridden.manage_state()
+
+    replaced = _resource(state="replaced", config=[{"seed_ip": "192.0.2.10", "username": "admin", "password": "password"}])
+    replaced.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "ipfm")
+    replaced._handle_replaced_state = lambda plan, discovered: raise_assertion("replaced handler should not run for unsupported fabric")
+
+    with pytest.raises(FailJsonError, match="Fabric type 'ipfm' is not supported"):
+        replaced.manage_state()
 
 
 def test_manage_state_enforces_rma_state_constraint_and_unsupported_state():
@@ -1383,6 +1572,33 @@ def test_exit_json_gathered_outputs_existing_inventory_without_requery():
     assert final["gathered"][0]["seed_ip"] == "192.0.2.10"
     assert final["gathered"][0]["password"] == "<password>"
     assert final["after"][0]["switch_id"] == "SERIAL1"
+
+
+def test_exit_json_gathered_allows_read_side_platform_values():
+    """gathered output reports inventory platform values that are not supported for onboarding."""
+    resource = _resource(
+        state="gathered",
+        existing=[
+            _sw(
+                "192.0.2.10",
+                "SONIC1",
+                additionalData={
+                    "discoveryStatus": "ok",
+                    "systemMode": "normal",
+                    "platformType": "sonic",
+                },
+            )
+        ],
+        output_level="info",
+    )
+    resource._handle_gathered_state()
+    resource.exit_json()
+
+    final = resource.module.exit_kwargs
+    assert final["changed"] is False
+    assert final["gathered"][0]["seed_ip"] == "192.0.2.10"
+    assert final["gathered"][0]["platform_type"] == "sonic"
+    assert final["gathered"][0]["password"] == "<password>"
 
 
 def test_exit_json_check_mode_uses_synthetic_before_after_diff():
