@@ -54,6 +54,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_interface_base import VpcInterfaceBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
@@ -158,10 +159,15 @@ def _build_orchestrator(
     fabric_name: str = "fabric_1",
     state: str | None = None,
     config: list[dict] | None = None,
+    results: Results | None = None,
 ) -> _StubVpcOrchestrator:
-    """Construct a `_StubVpcOrchestrator` with the file-based `RestSend` injected."""
+    """Construct a `_StubVpcOrchestrator` with the file-based `RestSend` injected.
+
+    Pass `results` when a test needs to assert on the orchestrator's request sequence (`Results.path`); without it the base
+    orchestrator registers nothing.
+    """
     rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, state=state, config=config)
-    return _StubVpcOrchestrator(rest_send=rest_send)
+    return _StubVpcOrchestrator(rest_send=rest_send, results=results)
 
 
 def _build_model(
@@ -1176,6 +1182,46 @@ def test_vpc_interface_base_00960() -> None:
     assert result == []
 
 
+def test_vpc_interface_base_00970() -> None:
+    """
+    # Summary
+
+    Verify the configured-peer preference survives a mixed-case `interface_name` in the user config. The vPC models lowercase
+    `interface_name` (`VPC501` -> `vpc501`) and ND echoes the canonical lowercase name, so the preference map must be keyed on the
+    same canonical form; keyed on the raw input it never matches, the dedup silently falls back to the alphabetically-lower peer, and
+    `state: overridden` plans a spurious create + delete for an interface that is already in the desired state (PR #411 review).
+
+    ## Test
+
+    - `state=overridden` so both peers are scanned (192.168.1.1 / FDO11111AAA and 192.168.1.2 / FDO22222BBB)
+    - Config names `VPC501` (mixed case) on the higher-`switchId` peer 192.168.1.2; both echoes carry `vpc501`
+    - The deduped entry carries `switchIp` 192.168.1.2 (the configured peer), not the lower-`switchId` default
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.query_all()
+    - VpcInterfaceBaseOrchestrator._configured_switch_ips_by_interface_name()
+    - VpcInterfaceBaseOrchestrator._prefers_candidate()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        for suffix in ("a", "b", "c", "d"):
+            yield responses_vpc_base(f"{method_name}{suffix}")
+
+    gen_responses = ResponseGenerator(responses())
+
+    config = [{"switch_ip": "192.168.1.2", "interface_name": "VPC501"}]
+
+    with does_not_raise():
+        instance = _build_orchestrator(gen_responses, state="overridden", config=config)
+        result = instance.query_all()
+
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "vpc501"
+    assert result[0]["switchIp"] == "192.168.1.2"
+
+
 # =============================================================================
 # Test: query_all multi-pair dedup (#356)
 # =============================================================================
@@ -1224,13 +1270,67 @@ def test_vpc_interface_base_01010() -> None:
     """
     # Summary
 
-    Verify a managed vPC record with no `peerSwitchId` is still returned (dedup key falls back to `frozenset({switchId})`) rather than
-    raising. The real wire always carries `peerSwitchId` (2026-07-20 captures); this pins the tolerant fallback for issue #356.
+    Verify a managed vPC record with no `peerSwitchId` has its pair identity resolved from the authoritative `vpcPair` endpoint
+    (cached per primary switch) rather than keyed on `frozenset({switchId})` alone. A singleton key is unsafe: if the other peer's
+    echo does carry `peerSwitchId`, the two copies get disjoint keys, both survive dedup, and `state: overridden` deletes the
+    "unconfigured" copy — which removes the pair-wide interface from both peers (PR #411 review).
 
     ## Test
 
     - `state=overridden`, one switch, one managed vPC record without `peerSwitchId`
+    - A `vpcPair` GET for that switch supplies the peer serial
     - `query_all` returns exactly that record, `switchIp` stamped
+    - Request sequence (via `Results.path`) is: interfaces(A), vpcPair(A)
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.query_all()
+    - VpcInterfaceBaseOrchestrator._pair_key()
+    - VpcInterfaceBaseOrchestrator._resolve_peer_switch_id()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        for suffix in ("a", "b", "c", "d"):
+            yield responses_vpc_base(f"{method_name}{suffix}")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        results = Results()
+        instance = _build_orchestrator(gen_responses, state="overridden", results=results)
+        result = instance.query_all()
+
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "vpc300"
+    assert result[0]["switchIp"] == "192.168.1.1"
+
+    # The file-based Sender replays responses positionally, so pin the request sequence: this proves the vpcPair lookup
+    # actually happens (and where), rather than a later interfaces GET silently consuming the vpcPair fixture.
+    assert results.path == [
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
+    ]
+
+
+def test_vpc_interface_base_01020() -> None:
+    """
+    # Summary
+
+    Verify the two peer copies of one vPC interface collapse to a single entry when only ONE echo omits `peerSwitchId`. The
+    OpenAPI schema does not mark `peerSwitchId` required, so this is a schema-valid response; with a singleton fallback key
+    peer A would key on `{A}` and peer B on `{A, B}`, both would survive, and an `overridden` run naming only peer A would
+    delete the interface through peer B (PR #411 review).
+
+    ## Test
+
+    - `state=overridden`, two peers; switch A's `vpc300` echo carries `peerSwitchId`, switch B's omits it
+    - One `vpcPair` GET (for switch B) supplies B's peer; no lookup is needed for A
+    - `query_all` returns exactly ONE `vpc300`, stamped with the lower-`switchId` peer 192.168.1.1
+    - Request sequence (via `Results.path`) is: interfaces(A), interfaces(B), vpcPair(B) — no vpcPair(A)
+
+    Switch B (queried second) is the one that omits the field so the file-based Sender's positional replay feeds both echoes to the
+    pre-fix code as well — a singleton-key fallback then yields TWO entries, which is the real symptom this test pins.
 
     ## Classes and Methods
 
@@ -1240,18 +1340,106 @@ def test_vpc_interface_base_01010() -> None:
     method_name = inspect.stack()[0][3]
 
     def responses():
-        for suffix in ("a", "b", "c"):
+        for suffix in ("a", "b", "c", "d", "e"):
             yield responses_vpc_base(f"{method_name}{suffix}")
 
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        instance = _build_orchestrator(gen_responses, state="overridden")
+        results = Results()
+        instance = _build_orchestrator(gen_responses, state="overridden", results=results)
         result = instance.query_all()
 
     assert len(result) == 1
     assert result[0]["interfaceName"] == "vpc300"
     assert result[0]["switchIp"] == "192.168.1.1"
+
+    # The file-based Sender replays responses positionally, so pin the request sequence: this proves the vpcPair lookup
+    # actually happens (and where), rather than a later interfaces GET silently consuming the vpcPair fixture.
+    assert results.path == [
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/vpcPair",
+    ]
+
+
+def test_vpc_interface_base_01030() -> None:
+    """
+    # Summary
+
+    Verify the two peer copies of one vPC interface collapse to a single entry when BOTH echoes omit `peerSwitchId`: each
+    switch's pair is resolved from its `vpcPair` record and the two resolved keys are the same unordered set (PR #411 review).
+
+    ## Test
+
+    - `state=overridden`, two peers; both `vpc300` echoes omit `peerSwitchId`
+    - One `vpcPair` GET per switch supplies the peer serials
+    - `query_all` returns exactly ONE `vpc300`, stamped with the lower-`switchId` peer 192.168.1.1
+    - Request sequence (via `Results.path`) is: interfaces(A), vpcPair(A), interfaces(B), vpcPair(B)
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.query_all()
+    - VpcInterfaceBaseOrchestrator._pair_key()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        for suffix in ("a", "b", "c", "d", "e", "f"):
+            yield responses_vpc_base(f"{method_name}{suffix}")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        results = Results()
+        instance = _build_orchestrator(gen_responses, state="overridden", results=results)
+        result = instance.query_all()
+
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "vpc300"
+    assert result[0]["switchIp"] == "192.168.1.1"
+
+    # The file-based Sender replays responses positionally, so pin the request sequence: this proves the vpcPair lookup
+    # actually happens (and where), rather than a later interfaces GET silently consuming the vpcPair fixture.
+    assert results.path == [
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/vpcPair",
+    ]
+
+
+def test_vpc_interface_base_01040() -> None:
+    """
+    # Summary
+
+    Verify `query_all` fails closed when a vPC record omits `peerSwitchId` AND the switch's `vpcPair` lookup returns 404: the
+    pair identity cannot be established, so the run aborts before any override deletion can be computed against a guessed
+    per-switch key (PR #411 review).
+
+    ## Test
+
+    - `state=overridden`, one switch, one managed vPC record without `peerSwitchId`
+    - The `vpcPair` GET returns 404
+    - `query_all` raises `RuntimeError` matching `Query all failed.*not in a vPC pair`
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.query_all()
+    - VpcInterfaceBaseOrchestrator._pair_key()
+    - VpcInterfaceBaseOrchestrator._resolve_peer_switch_id()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        for suffix in ("a", "b", "c", "d"):
+            yield responses_vpc_base(f"{method_name}{suffix}")
+
+    gen_responses = ResponseGenerator(responses())
+    instance = _build_orchestrator(gen_responses, state="overridden")
+
+    with pytest.raises(RuntimeError, match=r"Query all failed.*192\.168\.1\.1.*not in a vPC pair"):
+        instance.query_all()
 
 
 # =============================================================================

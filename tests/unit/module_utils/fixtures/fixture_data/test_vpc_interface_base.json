@@ -646,6 +646,41 @@
         "DATA": [{"interfaceName": "junk", "interfaceType": "vpc"}]
     },
 
+    "test_vpc_interface_base_00970a": {
+        "TEST_NOTES": ["query_all mixed-case config name (#411 review): fabric summary."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "ownerCluster": "cluster_a"}
+    },
+    "test_vpc_interface_base_00970b": {
+        "TEST_NOTES": ["query_all mixed-case config name (#411 review): switches list (two vPC peers)."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}, {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}]}
+    },
+    "test_vpc_interface_base_00970c": {
+        "TEST_NOTES": ["query_all mixed-case config name (#411 review): switch A (lower switchId) echoes canonical lowercase vpc501; deduped away in favor of the configured peer."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [
+            {"interfaceName": "vpc501", "interfaceType": "vpc",
+             "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost", "accessVlan": 100, "peerSwitchId": "FDO22222BBB"}}}}
+        ]}
+    },
+    "test_vpc_interface_base_00970d": {
+        "TEST_NOTES": ["query_all mixed-case config name (#411 review): switch B (higher switchId, configured as VPC501 in mixed case) echoes canonical lowercase vpc501; kept."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [
+            {"interfaceName": "vpc501", "interfaceType": "vpc",
+             "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost", "accessVlan": 100, "peerSwitchId": "FDO11111AAA"}}}}
+        ]}
+    },
+
     "test_vpc_interface_base_01000a": {
         "TEST_NOTES": ["Multi-pair dedup (#356): fabric summary (validate_prerequisites)."],
         "RETURN_CODE": 200, "METHOD": "GET",
@@ -720,7 +755,7 @@
         "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}]}
     },
     "test_vpc_interface_base_01010c": {
-        "TEST_NOTES": ["peerSwitchId-missing fallback (#356): vpc record WITHOUT peerSwitchId — keyed on frozenset({switchId}), kept, not raised on."],
+        "TEST_NOTES": ["peerSwitchId-missing fallback (#356 / #411 review): vpc300 echo WITHOUT peerSwitchId — pair identity must be resolved from the vpcPair endpoint, not guessed from switchId alone."],
         "RETURN_CODE": 200, "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
         "MESSAGE": "OK",
@@ -728,6 +763,133 @@
             {"interfaceName": "vpc300", "interfaceType": "vpc",
              "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost", "accessVlan": 30}}}}
         ]}
+    },
+    "test_vpc_interface_base_01010d": {
+        "TEST_NOTES": ["peerSwitchId-missing fallback (#356 / #411 review): vpcPair for FDO11111AAA — peer is FDO22222BBB; completes the dedup key {FDO11111AAA, FDO22222BBB}."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"switchId": "FDO11111AAA", "peerSwitchId": "FDO22222BBB"}
+    },
+    "test_vpc_interface_base_01020a": {
+        "TEST_NOTES": ["one peer echo omits peerSwitchId (#411 review): fabric summary."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "ownerCluster": "cluster_a"}
+    },
+    "test_vpc_interface_base_01020b": {
+        "TEST_NOTES": ["one peer echo omits peerSwitchId (#411 review): switches list (two vPC peers)."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}, {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}]}
+    },
+    "test_vpc_interface_base_01020c": {
+        "TEST_NOTES": ["one peer echo omits peerSwitchId (#411 review): switch A echoes vpc300 WITH peerSwitchId."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [
+            {"interfaceName": "vpc300", "interfaceType": "vpc",
+             "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost", "accessVlan": 30, "peerSwitchId": "FDO22222BBB"}}}}
+        ]}
+    },
+    "test_vpc_interface_base_01020d": {
+        "TEST_NOTES": ["one peer echo omits peerSwitchId (#411 review): switch B echoes vpc300 WITHOUT peerSwitchId; must collapse into A's entry, not survive as a second resource."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [
+            {"interfaceName": "vpc300", "interfaceType": "vpc",
+             "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost", "accessVlan": 30}}}}
+        ]}
+    },
+    "test_vpc_interface_base_01020e": {
+        "TEST_NOTES": ["one peer echo omits peerSwitchId (#411 review): vpcPair for FDO22222BBB fills in the missing peer so B's copy keys on {FDO11111AAA, FDO22222BBB}."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"switchId": "FDO22222BBB", "peerSwitchId": "FDO11111AAA"}
+    },
+    "test_vpc_interface_base_01030a": {
+        "TEST_NOTES": ["both peer echoes omit peerSwitchId (#411 review): fabric summary."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "ownerCluster": "cluster_a"}
+    },
+    "test_vpc_interface_base_01030b": {
+        "TEST_NOTES": ["both peer echoes omit peerSwitchId (#411 review): switches list (two vPC peers)."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}, {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}]}
+    },
+    "test_vpc_interface_base_01030c": {
+        "TEST_NOTES": ["both peer echoes omit peerSwitchId (#411 review): switch A echoes vpc300 WITHOUT peerSwitchId."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [
+            {"interfaceName": "vpc300", "interfaceType": "vpc",
+             "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost", "accessVlan": 30}}}}
+        ]}
+    },
+    "test_vpc_interface_base_01030d": {
+        "TEST_NOTES": ["both peer echoes omit peerSwitchId (#411 review): vpcPair for FDO11111AAA."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"switchId": "FDO11111AAA", "peerSwitchId": "FDO22222BBB"}
+    },
+    "test_vpc_interface_base_01030e": {
+        "TEST_NOTES": ["both peer echoes omit peerSwitchId (#411 review): switch B echoes vpc300 WITHOUT peerSwitchId."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [
+            {"interfaceName": "vpc300", "interfaceType": "vpc",
+             "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost", "accessVlan": 30}}}}
+        ]}
+    },
+    "test_vpc_interface_base_01030f": {
+        "TEST_NOTES": ["both peer echoes omit peerSwitchId (#411 review): vpcPair for FDO22222BBB."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"switchId": "FDO22222BBB", "peerSwitchId": "FDO11111AAA"}
+    },
+    "test_vpc_interface_base_01040a": {
+        "TEST_NOTES": ["peerSwitchId missing and vpcPair 404 (#411 review): fabric summary."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "ownerCluster": "cluster_a"}
+    },
+    "test_vpc_interface_base_01040b": {
+        "TEST_NOTES": ["peerSwitchId missing and vpcPair 404 (#411 review): switches list (one switch)."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}]}
+    },
+    "test_vpc_interface_base_01040c": {
+        "TEST_NOTES": ["peerSwitchId missing and vpcPair 404 (#411 review): switch A echoes vpc300 WITHOUT peerSwitchId."],
+        "RETURN_CODE": 200, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [
+            {"interfaceName": "vpc300", "interfaceType": "vpc",
+             "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost", "accessVlan": 30}}}}
+        ]}
+    },
+    "test_vpc_interface_base_01040d": {
+        "TEST_NOTES": ["peerSwitchId missing and vpcPair 404 (#411 review): vpcPair GET returns 404 — pair identity cannot be established; query_all must fail closed rather than key on switchId alone."],
+        "RETURN_CODE": 404, "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
+        "MESSAGE": "Not Found",
+        "DATA": {}
     },
     "test_vpc_interface_base_01100a": {
         "TEST_NOTES": ["Same-pair-dupe guard (#356): switches list for _resolve_switch_id (two peers of one pair)."],
