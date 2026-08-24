@@ -279,6 +279,18 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
     if save_enabled:
         save_path = fabric_utils.config_save_path
 
+        # A bare configSave (Recalculate & Save) does not push to the switches:
+        # on a merely-pending pair it recomputes the identical config and leaves
+        # the switches pending. It is therefore idempotent and must not, by
+        # itself, drive module-level changed (otherwise repeated save=true,
+        # deploy=false runs report changed=true forever). Only a declarative
+        # delta (create/update/delete) or an actual deploy (Step 2) is a change.
+        save_changed = (
+            _has_explicit_diff_changes(result)
+            or bool(nrm.module.params.get("_pending_create"))
+            or bool(nrm.module.params.get("_pending_delete"))
+        )
+
         try:
             response = fabric_utils.save_config(action_payload)
             register_action_api_call(
@@ -288,7 +300,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 return_code=response.get("status"),
                 message="Config saved successfully",
                 success=True,
-                changed=True,
+                changed=save_changed,
             )
 
         except NDModuleError as error:

@@ -588,8 +588,10 @@ class VpcPairResourceService:
                 "deployment_needed",
                 self.needs_deployment_handler(result, nd_manage_vpc_pair),
             )
-            # A save/deploy that actually ran (e.g. saving an out-of-sync pair
-            # with no declarative diff) must surface as a module-level change.
+            # A deploy that actually pushed config (or a save coupled with a
+            # declarative diff) must surface as a module-level change. A bare
+            # configSave with no declarative diff is idempotent and reports
+            # changed=false, keeping repeated save-only runs idempotent.
             if deploy_result.get("changed"):
                 result["changed"] = True
 
