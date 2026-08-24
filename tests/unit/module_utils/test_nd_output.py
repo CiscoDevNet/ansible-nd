@@ -17,7 +17,10 @@ from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import (
+    HttpVerbEnum,
+    OperationType,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
@@ -198,13 +201,25 @@ class TestNDOutputFormat:
         from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
             EthernetTrunkHostInterfaceModel,
         )
-        from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+        from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+            NDConfigCollection,
+        )
 
         def response(policy):
-            return {"switchIp": "192.0.2.10", "interfaceName": "Ethernet1/1", "configData": {"networkOS": {"policy": policy}}}
+            return {
+                "switchIp": "192.0.2.10",
+                "interfaceName": "Ethernet1/1",
+                "configData": {"networkOS": {"policy": policy}},
+            }
 
         before_item = EthernetTrunkHostInterfaceModel.from_response(
-            response({"policyType": "trunkHost", "stormControlBroadcastLevel": 50.0, "stormControlBroadcastLevelPps": 12345})
+            response(
+                {
+                    "policyType": "trunkHost",
+                    "stormControlBroadcastLevel": 50.0,
+                    "stormControlBroadcastLevelPps": 12345,
+                }
+            )
         )
         after_item = EthernetTrunkHostInterfaceModel.from_response(response({"policyType": "trunkHost", "stormControlBroadcastLevelPps": 12345}))
         before = NDConfigCollection(model_class=EthernetTrunkHostInterfaceModel, items=[before_item])
@@ -213,6 +228,95 @@ class TestNDOutputFormat:
         output = NDOutput("normal")
         output.assign(before=before, after=after)
         assert output.format()["changed"] is True
+
+
+class TestNDOutputGatheredState:
+    """Tests for the read-only gathered state output convention."""
+
+    def test_gathered_uses_gathered_key(self):
+        """state='gathered' surfaces fetched objects under a 'gathered' key."""
+        output = NDOutput("normal", state="gathered")
+        output._after = [{"name": "link1"}]
+        result = output.format()
+        assert result["gathered"] == [{"name": "link1"}]
+
+    def test_gathered_omits_change_oriented_keys(self):
+        """state='gathered' omits before/after/diff/proposed."""
+        output = NDOutput("info", state="gathered")
+        result = output.format()
+        for key in ("after", "before", "diff", "proposed"):
+            assert key not in result
+
+    def test_gathered_is_not_changed(self):
+        """gathered is read-only, so changed is always False."""
+        output = NDOutput("normal", state="gathered")
+        result = output.format()
+        assert result["changed"] is False
+
+    def test_gathered_debug_includes_logs(self):
+        """Debug output_level still surfaces logs under gathered."""
+        output = NDOutput("debug", state="gathered")
+        output.assign(logs=["l1"])
+        result = output.format()
+        assert result["logs"] == ["l1"]
+
+    def test_non_gathered_state_keeps_classic_shape(self):
+        """Non-gathered states retain the before/after/diff shape and no gathered key."""
+        output = NDOutput("normal", state="merged")
+        result = output.format()
+        assert "gathered" not in result
+        assert "after" in result and "before" in result and "diff" in result
+
+    def test_gathered_prunes_to_argument_spec(self):
+        """gathered_spec drops response-only keys so output round-trips as config."""
+        output = NDOutput("normal", state="gathered")
+        output._after = [{"src_switch_name": "leaf1", "link_id": "UUID-123"}]
+        output.assign(gathered_spec={"src_switch_name": {"type": "str"}})
+        result = output.format()
+        assert result["gathered"] == [{"src_switch_name": "leaf1"}]
+
+    def test_gathered_prunes_nested_but_keeps_free_form(self):
+        """Pruning recurses into modeled dicts but leaves free-form dicts intact."""
+        output = NDOutput("normal", state="gathered")
+        output._after = [
+            {
+                "src_switch_name": "leaf1",
+                "config_data": {
+                    "policy_type": "numbered",
+                    "template_inputs": {"anyKey": 1},
+                    "server_only": "drop-me",
+                },
+            }
+        ]
+        output.assign(
+            gathered_spec={
+                "src_switch_name": {"type": "str"},
+                "config_data": {
+                    "type": "dict",
+                    "options": {
+                        "policy_type": {"type": "str"},
+                        "template_inputs": {"type": "dict"},
+                    },
+                },
+            }
+        )
+        result = output.format()
+        assert result["gathered"] == [
+            {
+                "src_switch_name": "leaf1",
+                "config_data": {
+                    "policy_type": "numbered",
+                    "template_inputs": {"anyKey": 1},
+                },
+            }
+        ]
+
+    def test_gathered_without_spec_is_unpruned(self):
+        """No gathered_spec means no pruning (backward compatible)."""
+        output = NDOutput("normal", state="gathered")
+        output._after = [{"src_switch_name": "leaf1", "link_id": "UUID-123"}]
+        result = output.format()
+        assert result["gathered"] == [{"src_switch_name": "leaf1", "link_id": "UUID-123"}]
 
 
 # =============================================================================
@@ -376,7 +480,13 @@ class TestFormatWithVerbosityLevel3:
         output = NDOutput("normal")
         results = _make_results_write_and_query()
         result = output.format_with_verbosity(3, results)
-        for key in ("api_response", "api_result", "api_diff", "api_metadata", "api_payload"):
+        for key in (
+            "api_response",
+            "api_result",
+            "api_diff",
+            "api_metadata",
+            "api_payload",
+        ):
             assert len(result[key]) == 2, f"{key} should have 2 entries"
 
     def test_verbosity_3_payload_contains_correct_data(self):

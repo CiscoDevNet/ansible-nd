@@ -6,7 +6,11 @@
 
 """Ansible module for managing loopback interfaces on Cisco Nexus Dashboard."""
 
-ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
+ANSIBLE_METADATA = {
+    "metadata_version": "1.1",
+    "status": ["preview"],
+    "supported_by": "community",
+}
 
 DOCUMENTATION = r"""
 ---
@@ -30,21 +34,31 @@ options:
     - Each item specifies the target switch and interface configuration.
     - Multiple switches can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Not required for O(state=gathered).
+    - For O(state=gathered), every supplied field is a filter criterion. Criteria within one list item use AND semantics,
+      while multiple list items use OR semantics.
+    - Supported endpoint criteria are used to reduce candidates with server-side Lucene queries. All criteria are then
+      evaluated locally to preserve complete and consistent matching semantics.
     type: list
     elements: dict
-    required: true
+    required: false
     suboptions:
       switch_ip:
         description:
         - The management IP address of the switch on which to manage this loopback interface.
         - This is resolved to the switch serial number (switchId) internally.
+        - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       interface_name:
         description:
         - The name of the loopback interface (e.g., C(loopback0), C(Loopback10)).
+        - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       config_data:
         description:
         - The configuration data for the interface, following the ND API structure.
@@ -110,9 +124,11 @@ options:
       The resources on ND will be modified to exactly match the configuration.
       Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
     - Use O(state=deleted) to remove the resources specified in the configuration from the Cisco Nexus Dashboard.
+    - Use O(state=gathered) to read all user-managed loopback interfaces in the fabric without making changes.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -242,9 +258,31 @@ EXAMPLES = r"""
                 ip ospf network point-to-point
                 no ip redirects
     state: merged
+
+- name: Gather all user-managed loopback interfaces in a fabric
+  cisco.nd.nd_interface_loopback:
+    fabric_name: my_fabric
+    state: gathered
+  register: gathered_loopbacks
+
+- name: Gather one loopback interface from a specific switch
+  cisco.nd.nd_interface_loopback:
+    fabric_name: my_fabric
+    state: gathered
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: Loopback10
+  register: gathered_loopback10
 """
 
 RETURN = r"""
+gathered:
+  description:
+  - User-managed loopback interfaces matching the supplied O(config) filters.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 """
 # pylint: disable=wrong-import-position
 
@@ -252,14 +290,26 @@ import logging
 import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    require_pydantic,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    LoopbackInterfaceModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+    NDStateMachine,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    NDBaseInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import (
+    LoopbackInterfaceOrchestrator,
+)
 
 
 def main():
@@ -282,6 +332,12 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
@@ -312,7 +368,7 @@ def main():
         module_log.debug("manage_state end")
 
         # Execute all queued bulk operations
-        if not module.check_mode:
+        if not module.check_mode and module.params["state"] != "gathered":
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 

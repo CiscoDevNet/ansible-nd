@@ -30,6 +30,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesRemove,
     ManageInterfacesListEndpointParams,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    LuceneQueryParams,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
@@ -228,6 +231,8 @@ def test_ep_manage_interfaces_00100():
     assert instance.class_name == "EpManageInterfacesListGet"
     assert instance.verb == HttpVerbEnum.GET
     assert isinstance(instance.endpoint_params, ManageInterfacesListEndpointParams)
+    assert isinstance(instance.lucene_params, LuceneQueryParams)
+    assert instance.lucene_params.is_empty()
 
 
 def test_ep_manage_interfaces_00110():
@@ -327,6 +332,54 @@ def test_ep_manage_interfaces_00140():
         "sort=ifName%3Aasc",
         "configOnly=true",
     }
+
+
+def test_ep_manage_interfaces_00150():
+    """Verify endpoint-specific and URL-encoded Lucene parameters compose."""
+    instance = EpManageInterfacesListGet()
+    instance.fabric_name = "fab1"
+    instance.switch_sn = "SN123"
+    instance.endpoint_params.cluster_name = "cluster-a"
+    instance.endpoint_params.network_name = "net1"
+    instance.endpoint_params.config_only = False
+    instance.lucene_params.filter = "interfaceType:loopback AND policyType:loopback AND interfaceName:loopback101"
+    instance.lucene_params.max = 500
+    instance.lucene_params.offset = 0
+    instance.lucene_params.sort = "interfaceName:asc"
+    instance.lucene_params.fields = "interfaceName,configData"
+
+    path, query = instance.path.split("?", 1)
+
+    assert path == "/api/v1/manage/fabrics/fab1/switches/SN123/interfaces"
+    assert set(query.split("&")) == {
+        "clusterName=cluster-a",
+        "networkName=net1",
+        "configOnly=false",
+        "filter=interfaceType:loopback%20AND%20policyType:loopback%20AND%20interfaceName:loopback101",
+        "max=500",
+        "offset=0",
+        "sort=interfaceName%3Aasc",
+        "fields=interfaceName%2CconfigData",
+    }
+
+
+@pytest.mark.parametrize(
+    ("legacy_field", "legacy_value"),
+    [
+        ("filter", "interfaceType:loopback"),
+        ("offset", 0),
+    ],
+)
+def test_ep_manage_interfaces_00160(legacy_field, legacy_value):
+    """Verify callers cannot mix legacy and new Lucene parameter groups."""
+    instance = EpManageInterfacesListGet()
+    instance.fabric_name = "fab1"
+    instance.switch_sn = "SN123"
+    setattr(instance.endpoint_params, legacy_field, legacy_value)
+    instance.lucene_params.max = 500
+
+    with pytest.raises(ValueError, match="either.*endpoint_params.*or.*lucene_params"):
+        str(instance.path)
 
 
 # =============================================================================
@@ -759,7 +812,11 @@ def test_ep_manage_interfaces_00600():
     - EpManageInterfacesGet.path
     - EpManageInterfacesPut.path
     """
-    params = {"fabric_name": "fab1", "switch_sn": "SN123", "interface_name": "loopback0"}
+    params = {
+        "fabric_name": "fab1",
+        "switch_sn": "SN123",
+        "interface_name": "loopback0",
+    }
     expected_path = "/api/v1/manage/fabrics/fab1/switches/SN123/interfaces/loopback0"
 
     with does_not_raise():

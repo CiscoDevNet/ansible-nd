@@ -26,6 +26,7 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -33,8 +34,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4CIDR, IPv6CIDR
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import (
+    AsciiDescription,
+    IPv4CIDR,
+    IPv6CIDR,
+)
 
 
 class LoopbackPolicyModel(NDNestedModel):
@@ -49,14 +56,41 @@ class LoopbackPolicyModel(NDNestedModel):
     """
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    ip: IPv4CIDR = Field(default=None, alias="ip", description="Loopback IPv4 address in CIDR notation (e.g. 10.1.1.1/32)")
+    ip: IPv4CIDR = Field(
+        default=None,
+        alias="ip",
+        description="Loopback IPv4 address in CIDR notation (e.g. 10.1.1.1/32)",
+    )
     ipv6: IPv6CIDR = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
-    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
-    route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
-    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    vrf: str | None = Field(
+        default=None,
+        alias="vrfInterface",
+        min_length=1,
+        max_length=32,
+        description="Interface VRF name",
+    )
+    route_map_tag: str | None = Field(
+        default=None,
+        alias="routeMapTag",
+        description="Route-Map tag associated with interface IP",
+    )
+    description: AsciiDescription = Field(
+        default=None,
+        alias="description",
+        min_length=1,
+        max_length=254,
+        description="Interface description",
+    )
+    extra_config: str | None = Field(
+        default=None,
+        alias="extraConfig",
+        description="Additional CLI for the interface",
+    )
     policy_type: Literal["loopback"] = Field(
-        default="loopback", alias="policyType", frozen=True, description="Loopback policy template (hardcoded for this module)"
+        default="loopback",
+        alias="policyType",
+        frozen=True,
+        description="Loopback policy template (hardcoded for this module)",
     )
 
     # --- Validators ---
@@ -130,6 +164,18 @@ class LoopbackInterfaceModel(NDBaseModel):
     identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
 
+    # --- Gathered Filtering Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.ip",
+        "config_data.network_os.policy.ipv6",
+        "config_data.network_os.policy.vrf",
+    )
+
     # --- Serialization Configuration ---
 
     payload_exclude_fields: ClassVar[set[str]] = {"switch_ip"}
@@ -157,6 +203,28 @@ class LoopbackInterfaceModel(NDBaseModel):
             return value.lower()
         return value
 
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """
+        # Summary
+
+        Normalize a partial gathered-state filter.
+
+        Gathered filters are not complete LoopbackInterfaceModel instances, so
+        the normal Pydantic interface_name validator does not run against them.
+
+        ## Raises
+
+        None
+        """
+        normalized = deepcopy(filter_item)
+
+        interface_name = normalized.get("interface_name")
+        if isinstance(interface_name, str):
+            normalized["interface_name"] = interface_name.lower()
+
+        return normalized
+
     # --- Argument Spec ---
 
     @classmethod
@@ -175,10 +243,10 @@ class LoopbackInterfaceModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
-                    switch_ip=dict(type="str", required=True),
-                    interface_name=dict(type="str", required=True),
+                    switch_ip=dict(type="str"),
+                    interface_name=dict(type="str"),
                     config_data=dict(
                         type="dict",
                         options=dict(
@@ -206,6 +274,6 @@ class LoopbackInterfaceModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

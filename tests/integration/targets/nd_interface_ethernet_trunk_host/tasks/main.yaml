@@ -56,6 +56,9 @@
     - name: Run nd_interface_ethernet_trunk_host overridden state tests
       ansible.builtin.include_tasks: overridden.yaml
 
+    - name: Run nd_interface_ethernet_trunk_host gathered state tests
+      ansible.builtin.include_tasks: gathered.yaml
+
     - name: Run nd_interface_ethernet_trunk_host deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
   environment:

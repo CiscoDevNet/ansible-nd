@@ -75,6 +75,50 @@ def issubset(subset: Any, superset: Any) -> bool:
     return True
 
 
+def prune_to_spec(data: Any, options_spec: dict) -> Any:
+    """Prune a dict to only the keys defined by an Ansible argument spec.
+
+    Why this exists: read-only ``gathered`` output is meant to be copy-pasted
+    back as ``config``. The model can carry more than the module exposes
+    (response-only fields such as ``link_id``), and Ansible validates suboptions
+    at every nesting level, so any stray key would fail with "Unsupported
+    parameters". Pruning to the argument spec guarantees a clean round-trip.
+
+    Walks ``data`` in lockstep with ``options_spec`` (an argument spec
+    ``options`` mapping) and keeps only keys the spec declares, recursing into
+    nested ``dict`` and ``list`` of ``dict`` suboptions that carry their own
+    ``options``. Suboptions without an ``options`` mapping (scalars, lists of
+    scalars, free-form dicts) are copied verbatim; recursion stops there so
+    free-form content (e.g. ``template_inputs``) is preserved untouched.
+
+    ``no_log`` suboptions are dropped entirely: a read cannot round-trip a
+    secret, so omitting the key keeps the output idempotent (absent == no
+    change) rather than surfacing an API-returned secret in gathered output.
+    """
+    if not isinstance(data, dict):
+        return data
+
+    pruned = {}
+    for key, value in data.items():
+        if key not in options_spec:
+            continue
+
+        sub_spec = options_spec[key]
+        if isinstance(sub_spec, dict) and sub_spec.get("no_log"):
+            continue
+
+        sub_options = sub_spec.get("options") if isinstance(sub_spec, dict) else None
+
+        if sub_options and sub_spec.get("type") == "dict":
+            pruned[key] = prune_to_spec(value, sub_options) if isinstance(value, dict) else value
+        elif sub_options and sub_spec.get("type") == "list" and sub_spec.get("elements") == "dict":
+            pruned[key] = [prune_to_spec(item, sub_options) for item in value] if isinstance(value, list) else value
+        else:
+            pruned[key] = value
+
+    return pruned
+
+
 def remove_unwanted_keys(data: dict, unwanted_keys: list[str | list[str]]) -> dict:
     """Remove unwanted keys from dict (supports nested paths)."""
     data = deepcopy(data)
