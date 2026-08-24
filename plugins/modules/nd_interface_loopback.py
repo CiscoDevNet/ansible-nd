@@ -103,8 +103,9 @@ options:
           execution via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
+        - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
-        default: true
+        default: false
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -142,6 +143,8 @@ EXAMPLES = r"""
               description: Management loopback
               route_map_tag: 12345
               vrf: default
+    config_actions:
+      deploy: true
     state: merged
   register: result
 
@@ -171,6 +174,8 @@ EXAMPLES = r"""
             policy:
               ip: 10.1.1.2
               description: Router ID loopback on switch 2
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Replace a loopback interface
@@ -184,6 +189,8 @@ EXAMPLES = r"""
             policy:
               ip: 10.1.1.2
               description: Updated loopback description
+    config_actions:
+      deploy: true
     state: replaced
 
 - name: Delete a loopback interface
@@ -192,6 +199,8 @@ EXAMPLES = r"""
     config:
       - switch_ip: 192.168.1.1
         interface_name: loopback0
+    config_actions:
+      deploy: true
     state: deleted
 
 - name: Override loopback interfaces on a fabric (single source of truth)
@@ -214,6 +223,8 @@ EXAMPLES = r"""
             policy:
               ip: 10.1.1.2
               description: Router ID loopback on switch 2
+    config_actions:
+      deploy: true
     state: overridden
 
 - name: Create loopback interfaces without deploying (for batching)
@@ -247,6 +258,8 @@ EXAMPLES = r"""
                 ip pim sparse-mode
                 ip ospf network point-to-point
                 no ip redirects
+    config_actions:
+      deploy: true
     state: merged
 """
 
@@ -305,7 +318,7 @@ def main():
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
         config_actions = module.params.get("config_actions") or {}
-        deploy = config_actions.get("deploy", True)
+        deploy = config_actions.get("deploy", False)
         nd_state_machine.model_orchestrator.deploy = deploy
 
         module_log.debug(
