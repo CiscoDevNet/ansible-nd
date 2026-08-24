@@ -30,7 +30,7 @@ options:
     required: true
   config:
     description:
-    - The list of port-channel trunkPoHost interfaces to configure.
+    - The list of port-channel (trunkPoHost) interfaces to configure.
     - Each item specifies the target switch, the port-channel interface name, and its configuration.
     - Multiple switches can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
@@ -61,7 +61,7 @@ options:
             suboptions:
               policy:
                 description:
-                - The policy configuration for the trunkPoHost port-channel.
+                - The policy configuration for the (trunkPoHost) port-channel.
                 type: dict
                 suboptions:
                   admin_state:
@@ -161,6 +161,7 @@ options:
                   netflow_monitor:
                     description:
                     - The netflow Layer-2 monitor name for the port-channel.
+                    - Required when O(config[].config_data.network_os.policy.netflow=true).
                     type: str
                   netflow_sampler:
                     description:
