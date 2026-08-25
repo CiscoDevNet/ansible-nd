@@ -94,7 +94,7 @@ options:
         - Whether changed interfaces should be deployed in one consolidated action after successful mutation groups.
         - Has no side effect in check mode.
         type: bool
-        default: true
+        default: false
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -107,8 +107,8 @@ notes:
 - Sibling policy-type transitions are rejected unless an explicit, tested transition sequence is added; they are never inferred as an
   independent create.
 - The shared snapshot is execution-scoped and is never accepted from arbitrary caller input or persisted across Ansible tasks.
-- Normal-mode execution uses the interface model and orchestrator contracts currently present in the develop branch. Outstanding interface
-  pull-request behavior is intentionally deferred until those pull requests merge.
+- Normal-mode execution uses the same current interface model and orchestrator contracts as the standalone modules, so merged validation,
+  normalization, and deployment behavior is inherited automatically.
 - Deletes run before updates and creates. Deferred logical removes, Ethernet normalize/reset operations, and deployments are consolidated
   across compatible resource groups.
 - The executor stops after the first failed mutation phase, does not replay mixed-success requests, reports succeeded, failed, uncertain,
@@ -417,9 +417,7 @@ def interface_workflow_argument_spec():
 
 def main():
     """Run the public aggregate workflow module."""
-    module = AnsibleModule(
-        argument_spec=interface_workflow_argument_spec(), supports_check_mode=True
-    )
+    module = AnsibleModule(argument_spec=interface_workflow_argument_spec(), supports_check_mode=True)
     require_pydantic(module)
     try:
         module.exit_json(**InterfaceWorkflowCoordinator(module=module).run())
@@ -434,9 +432,7 @@ def main():
     except InterfaceWorkflowValidationError as exc:
         module.fail_json(msg=str(exc), changed=False)
     except Exception as exc:  # pylint: disable=broad-except
-        module.fail_json(
-            msg=f"Unexpected interface workflow error: {exc}", changed=False
-        )
+        module.fail_json(msg=f"Unexpected interface workflow error: {exc}", changed=False)
 
 
 if __name__ == "__main__":

@@ -52,7 +52,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     SpeedEnum,
     StormControlActionEnum,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.netflow import (
+    NetflowAtomicMergeMixin,
+    netflow_validation_suspended,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
@@ -65,7 +68,7 @@ _INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
 _CANONICAL_MEMBER_TYPE = "Ethernet"
 
 
-class PortChannelAccessPolicyModel(StormControlMutexMixin):
+class PortChannelAccessPolicyModel(NetflowAtomicMergeMixin):
     """
     # Summary
 
@@ -172,6 +175,8 @@ class PortChannelAccessPolicyModel(StormControlMutexMixin):
 
         - If `netflow` is true and `netflow_monitor` is missing or empty.
         """
+        if netflow_validation_suspended():
+            return self
         if self.netflow is True and not self.netflow_monitor:
             raise ValueError("netflow_monitor must be provided when netflow is true.")
         return self

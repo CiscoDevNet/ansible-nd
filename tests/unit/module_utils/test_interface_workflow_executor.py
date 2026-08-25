@@ -124,9 +124,7 @@ class FakeOrchestrator:
             raise RuntimeError("switch is not capable")
 
     def delete_bulk(self, models):
-        self.events.append(
-            ("delete_bulk", self.name, tuple(model.interface_name for model in models))
-        )
+        self.events.append(("delete_bulk", self.name, tuple(model.interface_name for model in models)))
         for model in models:
             target = (
                 model.interface_name,
@@ -162,9 +160,7 @@ class FakeOrchestrator:
                     "message": "invalid policy",
                 },
             ]
-            self.rest_send.record(
-                "/interfaces", success=False, changed=True, data={"results": outcomes}
-            )
+            self.rest_send.record("/interfaces", success=False, changed=True, data={"results": outcomes})
             raise RuntimeError("mixed create result")
         self.rest_send.record("/interfaces")
         for model in models:
@@ -223,9 +219,7 @@ class FakeSnapshot:
         self.events.append(("refresh", tuple(switch_ids)))
 
 
-def resource(
-    index, orchestrator, *, deletes=(), updates=(), creates=(), actual=("after",)
-):
+def resource(index, orchestrator, *, deletes=(), updates=(), creates=(), actual=("after",)):
     """Build one InterfaceResourcePlan-shaped value."""
     before = FakeCollection(["before"])
     return SimpleNamespace(
@@ -234,9 +228,7 @@ def resource(
         state="merged",
         proposed=FakeCollection(["proposed"]),
         before=before,
-        operations=SimpleNamespace(
-            deletes=tuple(deletes), updates=tuple(updates), creates=tuple(creates)
-        ),
+        operations=SimpleNamespace(deletes=tuple(deletes), updates=tuple(updates), creates=tuple(creates)),
         orchestrator=orchestrator,
         adapter=FakeAdapter(FakeCollection(actual)),
     )
@@ -244,9 +236,7 @@ def resource(
 
 def plan(*resources):
     """Build one InterfaceWorkflowPlan-shaped value."""
-    return SimpleNamespace(
-        resources=tuple(resources), target_switch_ids=("SERIAL1", "SERIAL2")
-    )
+    return SimpleNamespace(resources=tuple(resources), target_switch_ids=("SERIAL1", "SERIAL2"))
 
 
 def test_executor_orders_phases_consolidates_remove_and_deploy_then_refreshes():
@@ -269,9 +259,7 @@ def test_executor_orders_phases_consolidates_remove_and_deploy_then_refreshes():
         ),
     )
 
-    result = InterfaceWorkflowExecutor(
-        snapshot=FakeSnapshot(events), deploy=True
-    ).execute(workflow_plan)
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
 
     phase_names = [event[0] for event in events]
     assert result.failed is False
@@ -279,12 +267,7 @@ def test_executor_orders_phases_consolidates_remove_and_deploy_then_refreshes():
     assert result.changed is True
     assert result.mutation_requests == 4
     assert result.deploy_requests == 1
-    assert (
-        phase_names.index("remove")
-        < phase_names.index("update")
-        < phase_names.index("create")
-        < phase_names.index("deploy")
-    )
+    assert phase_names.index("remove") < phase_names.index("update") < phase_names.index("create") < phase_names.index("deploy")
     assert phase_names.count("remove") == 1
     assert phase_names.count("deploy") == 1
     remove_event = next(event for event in events if event[0] == "remove")
@@ -304,16 +287,28 @@ def test_executor_orders_phases_consolidates_remove_and_deploy_then_refreshes():
     assert {item.status for item in result.items} == {"succeeded"}
 
 
+def test_executor_defaults_to_staging_changes_without_deployment():
+    events = []
+    orchestrator = FakeOrchestrator("only", events)
+    workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1")]))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.status == "staged"
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 0
+    assert result.deployment["requested"] is False
+    assert result.deployment["status"] == "disabled"
+    assert "deploy" not in [event[0] for event in events]
+
+
 def test_preflight_failure_sends_no_writes_and_leaves_every_item_not_attempted():
     events = []
     orchestrator = FakeOrchestrator("only", events, fail_preflight=True)
-    workflow_plan = plan(
-        resource(0, orchestrator, creates=[FakeModel("loopback1")], actual=("before",))
-    )
+    workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1")], actual=("before",)))
 
-    result = InterfaceWorkflowExecutor(
-        snapshot=FakeSnapshot(events), deploy=True
-    ).execute(workflow_plan)
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
 
     assert result.failed is True
     assert result.status == "failed"
@@ -321,23 +316,15 @@ def test_preflight_failure_sends_no_writes_and_leaves_every_item_not_attempted()
     assert result.mutation_requests == 0
     assert result.deploy_requests == 0
     assert result.items[0].status == "not_attempted"
-    assert not any(
-        event[0] in {"create", "deploy", "dirty", "refresh"} for event in events
-    )
+    assert not any(event[0] in {"create", "deploy", "dirty", "refresh"} for event in events)
 
 
 def test_mixed_create_response_preserves_per_item_partial_success_and_stops_deploy():
     events = []
     orchestrator = FakeOrchestrator("only", events, fail_create=True)
-    workflow_plan = plan(
-        resource(
-            0, orchestrator, creates=[FakeModel("loopback1"), FakeModel("loopback2")]
-        )
-    )
+    workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1"), FakeModel("loopback2")]))
 
-    result = InterfaceWorkflowExecutor(
-        snapshot=FakeSnapshot(events), deploy=True
-    ).execute(workflow_plan)
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
 
     statuses = {item.interface_name: item.status for item in result.items}
     assert result.failed is True
@@ -357,19 +344,11 @@ def test_mixed_create_response_preserves_per_item_partial_success_and_stops_depl
 def test_mixed_deploy_response_reports_target_outcomes_without_erasing_mutation_success():
     events = []
     orchestrator = FakeOrchestrator("only", events, fail_deploy=True)
-    workflow_plan = plan(
-        resource(
-            0, orchestrator, creates=[FakeModel("loopback1"), FakeModel("loopback2")]
-        )
-    )
+    workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1"), FakeModel("loopback2")]))
 
-    result = InterfaceWorkflowExecutor(
-        snapshot=FakeSnapshot(events), deploy=True
-    ).execute(workflow_plan)
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
 
-    deploy_statuses = {
-        item["interface_name"]: item["status"] for item in result.deployment["targets"]
-    }
+    deploy_statuses = {item["interface_name"]: item["status"] for item in result.deployment["targets"]}
     assert result.failed is True
     assert result.status == "partial_failure"
     assert result.changed is True
@@ -385,9 +364,7 @@ def test_deploy_false_stages_changes_without_sending_deploy_request():
     orchestrator = FakeOrchestrator("only", events)
     workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1")]))
 
-    result = InterfaceWorkflowExecutor(
-        snapshot=FakeSnapshot(events), deploy=False
-    ).execute(workflow_plan)
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=False).execute(workflow_plan)
 
     assert result.failed is False
     assert result.status == "staged"
