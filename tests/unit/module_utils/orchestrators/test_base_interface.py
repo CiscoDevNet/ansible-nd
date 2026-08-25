@@ -1436,3 +1436,68 @@ def test_base_interface_00960() -> None:
 
     with pytest.raises(RuntimeError, match=r"without a policy"):
         instance.preflight_create([_iface_model("192.168.12.151", "loopback100", config_data=False)])
+
+
+@pytest.mark.parametrize("deploy", [True, False])
+def test_base_interface_00970(deploy: bool) -> None:
+    """
+    # Summary
+
+    Verify `apply_config_actions` sets `deploy` from an explicit `config_actions.deploy` and returns the resolved value.
+
+    ## Test
+
+    - `params["config_actions"]["deploy"]` is set explicitly
+    - `apply_config_actions(params)` returns that value
+    - `instance.deploy` equals that value
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.apply_config_actions()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.apply_config_actions({"config_actions": {"deploy": deploy}})
+
+    assert result is deploy
+    assert instance.deploy is deploy
+
+
+@pytest.mark.parametrize("params", [{}, {"config_actions": None}, {"config_actions": {}}])
+def test_base_interface_00980(params: dict) -> None:
+    """
+    # Summary
+
+    Verify `apply_config_actions` defaults `deploy` to `False` (deployment is opt-in) when `config_actions` is absent, `None`, or empty.
+
+    ## Test
+
+    - `config_actions` is omitted, `None`, or `{}`
+    - `apply_config_actions(params)` returns `False`
+    - `instance.deploy` is `False`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.apply_config_actions()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True  # prove the helper actively resets rather than relying on the class default
+
+    with does_not_raise():
+        result = instance.apply_config_actions(params)
+
+    assert result is False
+    assert instance.deploy is False

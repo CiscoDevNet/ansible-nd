@@ -16,8 +16,8 @@ with interface-type-specific payload construction and query filtering.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import ClassVar
+from collections.abc import Mapping, Sequence
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
@@ -79,6 +79,22 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         self._pending_deploys: list[tuple[str, str]] = []
         self._pending_removes: list[tuple[str, str]] = []
         self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
+
+    def apply_config_actions(self, params: Mapping[str, Any]) -> bool:
+        """
+        # Summary
+
+        Set `deploy` from the module's `config_actions` params and return the resolved value. This is the single bridge between the shared
+        `config_actions_spec(include=("deploy",))` argument fragment and the orchestrator, so every `nd_interface_*` module resolves the
+        deploy flag the same way. Deployment is opt-in: when `config_actions` is absent, `None`, or empty, `deploy` is `False`.
+
+        ## Raises
+
+        None
+        """
+        config_actions = params.get("config_actions") or {}
+        self.deploy = bool(config_actions.get("deploy", False))
+        return self.deploy
 
     @property
     def fabric_name(self) -> str:
