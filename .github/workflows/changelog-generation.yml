@@ -14,6 +14,7 @@ jobs:
         with:
           repository: ciscoecosystem/release_script
           path: ./release_script
+          ref: 894a44483a85778e7cc44218be10a13753154586
 
       - name: Check out collection code
         uses: actions/checkout@v6
