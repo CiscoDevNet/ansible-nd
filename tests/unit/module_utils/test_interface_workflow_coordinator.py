@@ -58,20 +58,12 @@ class FakeModule:
 def resource(index, *, changed=True):
     """Return one InterfaceResourcePlan-shaped object."""
     before_config = [{"interface_name": f"Ethernet1/{index + 1}", "value": "old"}]
-    after_config = (
-        [{"interface_name": f"Ethernet1/{index + 1}", "value": "new"}]
-        if changed
-        else before_config
-    )
+    after_config = [{"interface_name": f"Ethernet1/{index + 1}", "value": "new"}] if changed else before_config
     before = FakeCollection(before_config)
     after = FakeCollection(after_config)
     operations = SimpleNamespace(
         after=after,
-        creates=(
-            (FakeModel({"interface_name": f"Ethernet1/{index + 1}"}),)
-            if changed
-            else ()
-        ),
+        creates=((FakeModel({"interface_name": f"Ethernet1/{index + 1}"}),) if changed else ()),
         updates=(),
         deletes=(),
     )
@@ -109,10 +101,7 @@ class FakeExecution:
         self.message = "execution failed" if failed else ""
         self.mutation_requests = 1
         self.deploy_requests = 1 if not failed else 0
-        self.actual_after_by_resource = {
-            item.resource_index: item.operations.after if not failed else item.before
-            for item in workflow_plan.resources
-        }
+        self.actual_after_by_resource = {item.resource_index: item.operations.after if not failed else item.before for item in workflow_plan.resources}
 
     def to_dict(self):
         return {
@@ -168,9 +157,7 @@ def test_check_mode_result_retains_repeated_groups_and_reports_planned_change():
 
 
 def test_info_output_includes_normalized_proposed_config():
-    coordinator = InterfaceWorkflowCoordinator(
-        FakeModule(check_mode=True, output_level="info")
-    )
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True, output_level="info"))
     result = coordinator._format_result(plan())
     assert result["resources"][0]["proposed"][0]["value"] == "new"
 
@@ -192,15 +179,25 @@ def test_normal_no_change_run_succeeds_without_execution(monkeypatch):
     assert result["execution"]["status"] == "no_change"
 
 
+def test_normal_no_change_defaults_deploy_to_false_when_omitted(monkeypatch):
+    module = FakeModule(check_mode=False)
+    module.params["config_actions"] = {}
+    coordinator = InterfaceWorkflowCoordinator(module)
+    monkeypatch.setattr(coordinator, "_build_plan", lambda: plan(changed=False))
+
+    result = coordinator.run()
+
+    assert result["config_actions"] == {}
+    assert result["execution"]["deployment"]["requested"] is False
+
+
 def test_normal_changing_run_executes_and_reports_actual_state(monkeypatch):
     calls = []
     coordinator = InterfaceWorkflowCoordinator(
         FakeModule(check_mode=False),
         executor_factory=lambda **kwargs: FakeExecutor(calls, **kwargs),
     )
-    coordinator._snapshot = SimpleNamespace(
-        request_stats={"switches": 2, "interface_inventory_gets": 2}
-    )
+    coordinator._snapshot = SimpleNamespace(request_stats={"switches": 2, "interface_inventory_gets": 2})
     workflow_plan = plan()
     monkeypatch.setattr(coordinator, "_build_plan", lambda: workflow_plan)
 
@@ -215,15 +212,30 @@ def test_normal_changing_run_executes_and_reports_actual_state(monkeypatch):
     assert result["request_stats"]["deploy_requests"] == 1
 
 
+def test_normal_changing_run_defaults_deploy_to_false_when_omitted(monkeypatch):
+    calls = []
+    module = FakeModule(check_mode=False)
+    module.params["config_actions"] = {}
+    coordinator = InterfaceWorkflowCoordinator(
+        module,
+        executor_factory=lambda **kwargs: FakeExecutor(calls, **kwargs),
+    )
+    coordinator._snapshot = SimpleNamespace(request_stats={"switches": 2, "interface_inventory_gets": 2})
+    workflow_plan = plan()
+    monkeypatch.setattr(coordinator, "_build_plan", lambda: workflow_plan)
+
+    coordinator.run()
+
+    assert calls[0][1]["deploy"] is False
+
+
 def test_normal_execution_failure_preserves_structured_result(monkeypatch):
     calls = []
     coordinator = InterfaceWorkflowCoordinator(
         FakeModule(check_mode=False),
         executor_factory=lambda **kwargs: FakeExecutor(calls, failed=True, **kwargs),
     )
-    coordinator._snapshot = SimpleNamespace(
-        request_stats={"switches": 2, "interface_inventory_gets": 2}
-    )
+    coordinator._snapshot = SimpleNamespace(request_stats={"switches": 2, "interface_inventory_gets": 2})
     monkeypatch.setattr(coordinator, "_build_plan", lambda: plan())
 
     with pytest.raises(InterfaceWorkflowExecutionFailed) as exc_info:
@@ -253,13 +265,9 @@ def test_vpc_pair_map_is_authoritative_and_bidirectional(monkeypatch):
     monkeypatch.setattr(
         coordinator,
         "_request",
-        lambda *_args, **_kwargs: {
-            "vpcPairs": [{"switchId": "SERIAL1", "peerSwitchId": "SERIAL2"}]
-        },
+        lambda *_args, **_kwargs: {"vpcPairs": [{"switchId": "SERIAL1", "peerSwitchId": "SERIAL2"}]},
     )
-    pair_map = coordinator._vpc_pair_map(
-        resources=resources, fabric_context=FakeFabricContext(), rest_send=object()
-    )
+    pair_map = coordinator._vpc_pair_map(resources=resources, fabric_context=FakeFabricContext(), rest_send=object())
     assert pair_map == {"192.0.2.1": "SERIAL2", "192.0.2.2": "SERIAL1"}
     assert coordinator._vpc_pair_gets == 1
 
@@ -273,17 +281,13 @@ def test_vpc_group_rejects_switch_missing_from_authoritative_pair_inventory(
     monkeypatch.setattr(
         coordinator,
         "_request",
-        lambda *_args, **_kwargs: {
-            "vpcPairs": [{"switchId": "SERIAL1", "peerSwitchId": "SERIAL2"}]
-        },
+        lambda *_args, **_kwargs: {"vpcPairs": [{"switchId": "SERIAL1", "peerSwitchId": "SERIAL2"}]},
     )
     with pytest.raises(
         InterfaceWorkflowValidationError,
         match=r"resources\[0\]\.config\[0\].*192\.0\.2\.99",
     ):
-        coordinator._vpc_pair_map(
-            resources=resources, fabric_context=FakeFabricContext(), rest_send=object()
-        )
+        coordinator._vpc_pair_map(resources=resources, fabric_context=FakeFabricContext(), rest_send=object())
 
 
 def test_non_vpc_workflow_skips_pair_inventory(monkeypatch):

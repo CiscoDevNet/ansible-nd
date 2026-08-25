@@ -41,9 +41,7 @@ def test_argument_spec_uses_exact_registry_and_excludes_flow_rules():
         "elements": "dict",
         "required": True,
     }
-    assert spec["config_actions"]["options"] == {
-        "deploy": {"type": "bool", "default": True}
-    }
+    assert spec["config_actions"]["options"] == {"deploy": {"type": "bool", "default": False}}
 
 
 def test_documentation_links_every_standalone_module_and_not_flow_rules():
@@ -60,10 +58,9 @@ def test_documentation_links_every_standalone_module_and_not_flow_rules():
         "nd_interface_vpc_trunk_host",
     ):
         assert f"M(cisco.nd.{module_name})" in nd_interfaces_workflow.DOCUMENTATION
-    assert (
-        "M(cisco.nd.nd_interface_flow_rules)"
-        not in nd_interfaces_workflow.DOCUMENTATION
-    )
+    assert "M(cisco.nd.nd_interface_flow_rules)" not in nd_interfaces_workflow.DOCUMENTATION
+    assert "default: false" in nd_interfaces_workflow.DOCUMENTATION
+    assert "Outstanding interface" not in nd_interfaces_workflow.DOCUMENTATION
 
 
 def test_main_requires_pydantic_then_runs_coordinator_and_exits():
@@ -100,9 +97,7 @@ def test_main_requires_pydantic_then_runs_coordinator_and_exits():
     with (
         patch.object(nd_interfaces_workflow, "AnsibleModule", FakeAnsibleModule),
         patch.object(nd_interfaces_workflow, "require_pydantic", fake_require_pydantic),
-        patch.object(
-            nd_interfaces_workflow, "InterfaceWorkflowCoordinator", FakeCoordinator
-        ),
+        patch.object(nd_interfaces_workflow, "InterfaceWorkflowCoordinator", FakeCoordinator),
     ):
         nd_interfaces_workflow.main()
 
@@ -152,9 +147,7 @@ def test_main_preserves_structured_execution_failure():
     with (
         patch.object(nd_interfaces_workflow, "AnsibleModule", FakeAnsibleModule),
         patch.object(nd_interfaces_workflow, "require_pydantic", lambda _module: None),
-        patch.object(
-            nd_interfaces_workflow, "InterfaceWorkflowCoordinator", FakeCoordinator
-        ),
+        patch.object(nd_interfaces_workflow, "InterfaceWorkflowCoordinator", FakeCoordinator),
     ):
         nd_interfaces_workflow.main()
 
