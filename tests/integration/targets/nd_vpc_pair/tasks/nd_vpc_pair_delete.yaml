@@ -545,6 +545,21 @@
       - result.msg is search("Config parameter is required for state 'deleted'")
   tags: delete
 
+##################################################
+##  TC9 - Staged-delete flush regression (#467)  ##
+##################################################
+# TC9 drives a real create+deploy convergence to set up the staged-delete flush
+# scenario. It converges on a peer-link-capable bed and fails (correct signal)
+# on a bed that cannot bring up the vPC peer-link. The body lives in
+# delete_tc9_body.yaml.
+
+- name: DELETE - TC9 - Staged-delete flush regression (#467)
+  ansible.builtin.include_tasks:
+    file: delete_tc9_body.yaml
+    apply:
+      tags: delete
+  tags: delete
+
 ##############################################
 ##                 CLEAN-UP                 ##
 ##############################################

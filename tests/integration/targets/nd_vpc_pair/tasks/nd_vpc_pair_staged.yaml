@@ -6,9 +6,12 @@
 # Covers the staged "create-now, save/deploy-later" workflow for issue #467:
 #   - Atomic create+save+deploy converges and repeats are idempotent (TC3/TC4).
 #   - G-A: merged(save=true, deploy=false) on an existing, never-deployed pair
-#     saves (configSave) without deploying (TC5 G-A).
+#     saves (configSave) without deploying, and is idempotent: with no
+#     declarative diff it reports changed=false (save-only fix, issue #503).
 #   - G-B: a later merged(save=true, deploy=true) on that saved-but-undeployed
 #     pair deploys it and converges the switches to inSync (TC5 G-B).
+#   - TC6: repeated merged(save=true, deploy=false) stays changed=false on every
+#     run (save-only idempotency regression, issue #503).
 # Background and root-cause analysis: delete_temp/docs/nd_vpc_pair_467_report.md.
 
 - name: Import nd_vpc_pair Base Tasks
@@ -238,11 +241,13 @@
   register: result_ga
   tags: staged
 
-- name: STAGED - TC5 (G-A) - ASSERT - configSave fired, deploy did NOT
+- name: STAGED - TC5 (G-A) - ASSERT - configSave fired, deploy did NOT, save-only idempotent
   ansible.builtin.assert:
     that:
       - result_ga.failed == false
-      - result_ga.changed == true
+      # save-only fix (#503): a bare configSave with no declarative diff is
+      # idempotent, so changed is false even though configSave still fires.
+      - result_ga.changed == false
       - result_ga.deployment is defined
       - >
         (result_ga.deployment.response
@@ -253,8 +258,9 @@
          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
          | list | length) == 0
     fail_msg: >-
-      G-A regression (#467): merged(save=true, deploy=false) on an existing
-      pending pair must call configSave and must NOT deploy.
+      G-A regression (#467/#503): merged(save=true, deploy=false) on an existing
+      pending pair must call configSave, must NOT deploy, and (no declarative
+      diff) must report changed=false.
   tags: staged
 
 # ---- G-B: later deploy converges the saved-but-undeployed pair ----
@@ -306,6 +312,105 @@
     fail_msg: >-
       G-B regression (#467): after the later deploy, no switch should remain
       in configSyncStatus=pending.
+  tags: staged
+
+##################################################
+##  TC6 - Save-only idempotency (issue #503)     ##
+##################################################
+# A bare configSave (save=true, deploy=false) with no declarative diff must be
+# idempotent: it reports changed=false on the FIRST and every REPEAT run while
+# still issuing configSave. Before the fix the pending pair was re-flagged
+# out-of-sync each run, so save-only reported changed=true forever.
+
+- name: STAGED - TC6 - Reset to a clean, never-deployed pair
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions: {save: true, deploy: true, type: switch}
+    config: "{{ vpc_pair_conf }}"
+  failed_when: false
+  tags: staged
+
+- name: STAGED - TC6 - reset connection
+  ansible.builtin.meta: reset_connection
+  tags: staged
+
+- name: STAGED - TC6 - Create controller-only pair (save=false, deploy=false)
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions: {save: false, deploy: false, type: switch}
+    config: "{{ vpc_pair_conf }}"
+  register: tc6_create
+  tags: staged
+
+- name: STAGED - TC6 - ASSERT - controller-only create is a change
+  ansible.builtin.assert:
+    that:
+      - tc6_create.failed == false
+      - tc6_create.changed == true
+  tags: staged
+
+- name: STAGED - TC6 - First save-only run (save=true, deploy=false)
+  cisco.nd.nd_manage_vpc_pair: &tc6_saveonly
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions: {save: true, deploy: false, type: switch}
+    config: "{{ vpc_pair_conf }}"
+  register: tc6_save1
+  tags: staged
+
+- name: STAGED - TC6 - ASSERT - first save-only is changed=false, configSave fired, no deploy
+  ansible.builtin.assert:
+    that:
+      - tc6_save1.failed == false
+      - tc6_save1.changed == false
+      - tc6_save1.deployment is defined
+      - >
+        (tc6_save1.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+         | list | length) > 0
+      - >
+        (tc6_save1.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | list | length) == 0
+    fail_msg: >-
+      Save-only regression (#503): the first merged(save=true, deploy=false)
+      with no declarative diff must call configSave, must NOT deploy, and must
+      report changed=false.
+  tags: staged
+
+- name: STAGED - TC6 - Second save-only run (idempotent repeat)
+  cisco.nd.nd_manage_vpc_pair: *tc6_saveonly
+  register: tc6_save2
+  tags: staged
+
+- name: STAGED - TC6 - ASSERT - repeat save-only stays changed=false
+  ansible.builtin.assert:
+    that:
+      - tc6_save2.failed == false
+      - tc6_save2.changed == false
+    fail_msg: >-
+      Save-only regression (#503): repeated merged(save=true, deploy=false)
+      must stay idempotent (changed=false), not report changed=true forever.
+  tags: staged
+
+- name: STAGED - TC6 - Third save-only run (still idempotent)
+  cisco.nd.nd_manage_vpc_pair: *tc6_saveonly
+  register: tc6_save3
+  tags: staged
+
+- name: STAGED - TC6 - ASSERT - third save-only stays changed=false
+  ansible.builtin.assert:
+    that:
+      - tc6_save3.failed == false
+      - tc6_save3.changed == false
+    fail_msg: >-
+      Save-only regression (#503): save-only must remain idempotent across
+      any number of repeats.
   tags: staged
 
 ##############################################
