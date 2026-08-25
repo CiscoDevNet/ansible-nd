@@ -119,7 +119,7 @@ def test_base_interface_00010() -> None:
     ## Test
 
     - `_pending_deploys` and `_pending_removes` start empty
-    - `deploy` defaults to True
+    - `deploy` defaults to False
     - `_fabric_context` is None before first access
 
     ## Classes and Methods
@@ -139,7 +139,7 @@ def test_base_interface_00010() -> None:
 
     assert instance._pending_deploys == []
     assert instance._pending_removes == []
-    assert instance.deploy is True
+    assert instance.deploy is False
     assert instance._fabric_context is None
 
 
@@ -605,6 +605,7 @@ def test_base_interface_00620() -> None:
 
     ## Test
 
+    - `deploy` is enabled (it defaults to False)
     - Two pairs are queued
     - POST is issued to `/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy`
     - Request body is `{"interfaces": [{"interfaceName": ..., "switchId": ...}, ...]}` in queue order
@@ -623,6 +624,7 @@ def test_base_interface_00620() -> None:
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
     instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
     instance._queue_deploy("loopback10", "FDO12345ABC")
     instance._queue_deploy("loopback20", "FDO12345ABD")
 
@@ -649,6 +651,7 @@ def test_base_interface_00630() -> None:
 
     ## Test
 
+    - `deploy` is enabled (it defaults to False)
     - One pair queued
     - POST returns 500
     - `RuntimeError` matches `Bulk deploy failed`
@@ -666,6 +669,7 @@ def test_base_interface_00630() -> None:
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
     instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
     instance._queue_deploy("loopback10", "FDO12345ABC")
 
     match = r"Bulk deploy failed"
