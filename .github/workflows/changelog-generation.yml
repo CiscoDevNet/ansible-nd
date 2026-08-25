@@ -1,6 +1,12 @@
 name: Generate Changelog
 on:
   workflow_dispatch:
+    inputs:
+      compare_ref:
+        description: Branch or ref to compare against the latest release and generate the changelog from
+        required: false
+        default: develop
+        type: string
 jobs:
   generate-changelog:
     name: Run automation script
@@ -14,18 +20,18 @@ jobs:
         with:
           repository: ciscoecosystem/release_script
           path: ./release_script
-          ref: 894a44483a85778e7cc44218be10a13753154586
+          ref: c3405128f9ff87cf5231cf2aac8e03424921b1a6
 
       - name: Check out collection code
         uses: actions/checkout@v6
         with:
           path: ./collection
-          ref: develop
+          ref: ${{ inputs.compare_ref }}
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v6
         with:
-          python-version: 3.10
+          python-version: "3.10"
 
       - name: Install release script requirements
         run: pip install -r ./release_script/requirements.txt
@@ -34,3 +40,4 @@ jobs:
         run: python ./release_script/script.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMPARE_REF: ${{ inputs.compare_ref }}
