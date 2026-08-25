@@ -64,6 +64,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     default_policy_type,
     normalize_member_interface_names,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.netflow import (
+    NetflowAtomicMergeMixin,
+    netflow_validation_suspended,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_common import PortChannelInterfaceBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
@@ -212,7 +216,7 @@ class PortChannelTrunkHostVlanMappingEntryModel(NDNestedModel):
     provider_vlan_id: int | None = Field(default=None, alias="providerVlanId", ge=1, le=4094, description="Provider VLAN id")
 
 
-class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
+class PortChannelTrunkHostPolicyModel(NetflowAtomicMergeMixin):
     """
     # Summary
 
@@ -401,6 +405,8 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
 
         - If `netflow` is true and `netflow_monitor` is missing or empty.
         """
+        if netflow_validation_suspended():
+            return self
         if self.netflow is True and not self.netflow_monitor:
             raise ValueError("netflow_monitor must be provided when netflow is true.")
         return self

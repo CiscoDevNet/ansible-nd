@@ -62,16 +62,12 @@ class InterfaceWorkflowCoordinator:
         self._vpc_pair_gets = 0
         self._snapshot: InterfaceStateSnapshot | None = None
 
-    def _new_rest_send(
-        self, params: dict[str, Any] | None = None, *, check_mode: bool | None = None
-    ) -> RestSend:
+    def _new_rest_send(self, params: dict[str, Any] | None = None, *, check_mode: bool | None = None) -> RestSend:
         """Build an authenticated collection REST runtime for this module invocation."""
         sender = Sender()
         sender.ansible_module = self.module
         rest_send_params = dict(params if params is not None else self.module.params)
-        rest_send_params["check_mode"] = (
-            self.module.check_mode if check_mode is None else check_mode
-        )
+        rest_send_params["check_mode"] = self.module.check_mode if check_mode is None else check_mode
         rest_send = RestSend(rest_send_params)
         rest_send.sender = sender
         rest_send.response_handler = ResponseHandler()
@@ -98,11 +94,7 @@ class InterfaceWorkflowCoordinator:
 
     @staticmethod
     def _uses_vpc(resources: list[dict[str, Any]]) -> bool:
-        return any(
-            isinstance(resource, dict)
-            and resource.get("type") in {"vpc_access", "vpc_trunk_host"}
-            for resource in resources
-        )
+        return any(isinstance(resource, dict) and resource.get("type") in {"vpc_access", "vpc_trunk_host"} for resource in resources)
 
     def _vpc_pair_map(
         self,
@@ -118,14 +110,10 @@ class InterfaceWorkflowCoordinator:
         endpoint = EpVpcPairsListGet()
         endpoint.fabric_name = fabric_context.fabric_name
         self._vpc_pair_gets += 1
-        data = self._request(
-            rest_send, path=endpoint.path, verb=endpoint.verb, not_found_ok=True
-        )
+        data = self._request(rest_send, path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
         records = data.get("vpcPairs") or data.get("items") or []
         if not isinstance(records, list):
-            raise InterfaceWorkflowValidationError(
-                "The Nexus Dashboard vPC-pair response must contain a list in 'vpcPairs'."
-            )
+            raise InterfaceWorkflowValidationError("The Nexus Dashboard vPC-pair response must contain a list in 'vpcPairs'.")
 
         pair_by_switch_ip: dict[str, str] = {}
         for record in records:
@@ -133,12 +121,7 @@ class InterfaceWorkflowCoordinator:
                 continue
             first = record.get("switchId") or record.get("peer1SwitchId")
             second = record.get("peerSwitchId") or record.get("peer2SwitchId")
-            if (
-                not isinstance(first, str)
-                or not first
-                or not isinstance(second, str)
-                or not second
-            ):
+            if not isinstance(first, str) or not first or not isinstance(second, str) or not second:
                 continue
             try:
                 pair_by_switch_ip[fabric_context.get_switch_ip(first)] = second
@@ -180,9 +163,7 @@ class InterfaceWorkflowCoordinator:
         )
         planner = self.planner_factory(
             snapshot=snapshot,
-            rest_send_factory=lambda params: self._new_rest_send(
-                params=params, check_mode=True
-            ),
+            rest_send_factory=lambda params: self._new_rest_send(params=params, check_mode=True),
             vpc_pair_by_switch_ip=vpc_pair_by_switch_ip,
             run_capability_preflight=True,
         )
@@ -199,9 +180,7 @@ class InterfaceWorkflowCoordinator:
         }
 
     @classmethod
-    def _resource_result(
-        cls, resource, *, after, include_proposed: bool, after_verified: bool
-    ) -> dict[str, Any]:
+    def _resource_result(cls, resource, *, after, include_proposed: bool, after_verified: bool) -> dict[str, Any]:
         """Serialize one indexed group without losing repeated resource types."""
         changed = bool(resource.before.get_diff_collection(after))
         result = {
@@ -232,15 +211,9 @@ class InterfaceWorkflowCoordinator:
         output_level = self.module.params.get("output_level", "normal")
         resource_results = []
         for resource in plan.resources:
-            actual = (
-                execution.actual_after_by_resource.get(resource.resource_index)
-                if execution is not None
-                else None
-            )
+            actual = execution.actual_after_by_resource.get(resource.resource_index) if execution is not None else None
             after = actual if actual is not None else resource.operations.after
-            after_verified = actual is not None or (
-                execution is None and not self.module.check_mode
-            )
+            after_verified = actual is not None or (execution is None and not self.module.check_mode)
             resource_results.append(
                 self._resource_result(
                     resource,
@@ -250,20 +223,12 @@ class InterfaceWorkflowCoordinator:
                 )
             )
 
-        request_stats = dict(
-            self._snapshot.request_stats
-            if self._snapshot is not None
-            else plan.request_stats
-        )
+        request_stats = dict(self._snapshot.request_stats if self._snapshot is not None else plan.request_stats)
         request_stats.update(
             {
                 "vpc_pair_gets": self._vpc_pair_gets,
-                "mutation_requests": (
-                    execution.mutation_requests if execution is not None else 0
-                ),
-                "deploy_requests": (
-                    execution.deploy_requests if execution is not None else 0
-                ),
+                "mutation_requests": (execution.mutation_requests if execution is not None else 0),
+                "deploy_requests": (execution.deploy_requests if execution is not None else 0),
             }
         )
 
@@ -281,9 +246,7 @@ class InterfaceWorkflowCoordinator:
             execution_result = execution.to_dict()
             changed = execution.changed
         else:
-            deploy = bool(
-                (self.module.params.get("config_actions") or {}).get("deploy", True)
-            )
+            deploy = bool((self.module.params.get("config_actions") or {}).get("deploy", False))
             execution_result = {
                 "status": "check_mode" if self.module.check_mode else "no_change",
                 "mutations_sent": 0,
@@ -323,12 +286,8 @@ class InterfaceWorkflowCoordinator:
             return self._format_result(plan)
         if self._snapshot is None:
             raise RuntimeError("Interface workflow snapshot was not initialized.")
-        deploy = bool(
-            (self.module.params.get("config_actions") or {}).get("deploy", True)
-        )
-        execution = self.executor_factory(
-            snapshot=self._snapshot, deploy=deploy
-        ).execute(plan)
+        deploy = bool((self.module.params.get("config_actions") or {}).get("deploy", False))
+        execution = self.executor_factory(snapshot=self._snapshot, deploy=deploy).execute(plan)
         result = self._format_result(plan, execution)
         if execution.failed:
             result["failed"] = True

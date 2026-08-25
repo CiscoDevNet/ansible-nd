@@ -82,18 +82,12 @@ class InterfaceWorkflowExecution:
     affected_switch_ids: tuple[str, ...]
     deployment: dict[str, Any]
     errors: tuple[str, ...] = ()
-    actual_after_by_resource: dict[int, NDConfigCollection] = field(
-        default_factory=dict, repr=False
-    )
+    actual_after_by_resource: dict[int, NDConfigCollection] = field(default_factory=dict, repr=False)
 
     @property
     def message(self) -> str:
         """Return one useful module failure summary."""
-        return (
-            "; ".join(self.errors)
-            if self.errors
-            else "Interface workflow execution failed."
-        )
+        return "; ".join(self.errors) if self.errors else "Interface workflow execution failed."
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize execution details while keeping model collections internal."""
@@ -111,9 +105,7 @@ class InterfaceWorkflowExecution:
 class InterfaceWorkflowExecutor:
     """Execute one precomputed plan using the current develop orchestrators."""
 
-    def __init__(
-        self, *, snapshot: InterfaceStateSnapshot, deploy: bool = True
-    ) -> None:
+    def __init__(self, *, snapshot: InterfaceStateSnapshot, deploy: bool = False) -> None:
         self.snapshot = snapshot
         self.deploy = deploy
         self._items: list[InterfaceExecutionItem] = []
@@ -127,9 +119,7 @@ class InterfaceWorkflowExecutor:
 
     @staticmethod
     def _model_target(resource: InterfaceResourcePlan, model: NDBaseModel) -> Target:
-        switch_id = resource.orchestrator.fabric_context.get_switch_id(
-            getattr(model, "switch_ip")
-        )
+        switch_id = resource.orchestrator.fabric_context.get_switch_id(getattr(model, "switch_ip"))
         return getattr(model, "interface_name"), switch_id
 
     def _build_items(self, plan: InterfaceWorkflowPlan) -> None:
@@ -150,21 +140,13 @@ class InterfaceWorkflowExecutor:
                         interface_name=interface_name,
                     )
                     self._items.append(item)
-                    self._item_by_key[
-                        (resource.resource_index, action, model.get_identifier_value())
-                    ] = item
+                    self._item_by_key[(resource.resource_index, action, model.get_identifier_value())] = item
 
-    def _item(
-        self, resource: InterfaceResourcePlan, action: str, model: NDBaseModel
-    ) -> InterfaceExecutionItem:
-        return self._item_by_key[
-            (resource.resource_index, action, model.get_identifier_value())
-        ]
+    def _item(self, resource: InterfaceResourcePlan, action: str, model: NDBaseModel) -> InterfaceExecutionItem:
+        return self._item_by_key[(resource.resource_index, action, model.get_identifier_value())]
 
     @staticmethod
-    def _write_history(
-        rest_send, response_start: int, result_start: int
-    ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    def _write_history(rest_send, response_start: int, result_start: int) -> list[tuple[dict[str, Any], dict[str, Any]]]:
         responses = rest_send.responses[response_start:]
         results = rest_send.results[result_start:]
         return list(zip(responses, results))
@@ -178,30 +160,18 @@ class InterfaceWorkflowExecutor:
         for key in _OUTCOME_KEYS:
             values = data.get(key)
             if isinstance(values, list):
-                outcomes.extend(
-                    value
-                    for value in values
-                    if isinstance(value, dict) and value.get("status") is not None
-                )
+                outcomes.extend(value for value in values if isinstance(value, dict) and value.get("status") is not None)
         return outcomes
 
     @staticmethod
-    def _outcome_target(
-        outcome: dict[str, Any], targets: Iterable[Target]
-    ) -> Target | None:
+    def _outcome_target(outcome: dict[str, Any], targets: Iterable[Target]) -> Target | None:
         name_value = outcome.get("interfaceName") or outcome.get("name")
         switch_value = outcome.get("switchId") or outcome.get("serialNumber")
         candidates = list(targets)
         if name_value is not None:
-            candidates = [
-                target
-                for target in candidates
-                if target[0].lower() == str(name_value).lower()
-            ]
+            candidates = [target for target in candidates if target[0].lower() == str(name_value).lower()]
         if switch_value is not None:
-            candidates = [
-                target for target in candidates if target[1] == str(switch_value)
-            ]
+            candidates = [target for target in candidates if target[1] == str(switch_value)]
         return candidates[0] if len(candidates) == 1 else None
 
     @classmethod
@@ -266,13 +236,9 @@ class InterfaceWorkflowExecutor:
             operation()
         except Exception as exc:  # pylint: disable=broad-except
             error = f"{context}: {exc}"
-            history = self._write_history(
-                orchestrator.rest_send, response_start, result_start
-            )
+            history = self._write_history(orchestrator.rest_send, response_start, result_start)
             response, result = history[-1] if history else ({}, {})
-            outcomes = self._classify_response(
-                (item.target for item in items), response, result, error
-            )
+            outcomes = self._classify_response((item.target for item in items), response, result, error)
             self._apply_outcomes(items, outcomes)
             self._errors.append(error)
             return False
@@ -311,18 +277,13 @@ class InterfaceWorkflowExecutor:
                 if not self._call_items(
                     orchestrator,
                     items,
-                    lambda orchestrator=orchestrator, models=models: orchestrator.delete_bulk(
-                        models
-                    ),
+                    lambda orchestrator=orchestrator, models=models: orchestrator.delete_bulk(models),
                     f"resources[{resource.resource_index}] {resource.resource_type} delete preparation failed",
                 ):
                     return False
                 for item in items:
                     if isinstance(orchestrator, EthernetBaseOrchestrator):
-                        queued = (
-                            item.target in orchestrator.pending_normalizes
-                            or item.target in orchestrator.pending_resets
-                        )
+                        queued = item.target in orchestrator.pending_normalizes or item.target in orchestrator.pending_resets
                     else:
                         queued = item.target in orchestrator.pending_removes
                     if queued:
@@ -336,9 +297,7 @@ class InterfaceWorkflowExecutor:
                 if not self._call_items(
                     orchestrator,
                     [item],
-                    lambda orchestrator=orchestrator, model=model: orchestrator.delete(
-                        model
-                    ),
+                    lambda orchestrator=orchestrator, model=model: orchestrator.delete(model),
                     f"resources[{resource.resource_index}] {resource.resource_type} delete failed",
                 ):
                     return False
@@ -348,23 +307,14 @@ class InterfaceWorkflowExecutor:
         sources = [
             resource.orchestrator
             for resource in plan.resources
-            if not isinstance(resource.orchestrator, EthernetBaseOrchestrator)
-            and resource.orchestrator.pending_removes
+            if not isinstance(resource.orchestrator, EthernetBaseOrchestrator) and resource.orchestrator.pending_removes
         ]
         if not sources:
             return True
         target = sources[0]
-        targets = tuple(
-            dict.fromkeys(pair for source in sources for pair in source.pending_removes)
-        )
+        targets = tuple(dict.fromkeys(pair for source in sources for pair in source.pending_removes))
         target.queue_remove_targets(targets)
-        items = [
-            item
-            for item in self._items
-            if item.action == "delete"
-            and item.status == "queued"
-            and item.target in targets
-        ]
+        items = [item for item in self._items if item.action == "delete" and item.status == "queued" and item.target in targets]
         return self._call_items(
             target,
             items,
@@ -373,42 +323,16 @@ class InterfaceWorkflowExecutor:
         )
 
     def _flush_ethernet_removes(self, plan: InterfaceWorkflowPlan) -> bool:
-        sources = [
-            resource.orchestrator
-            for resource in plan.resources
-            if isinstance(resource.orchestrator, EthernetBaseOrchestrator)
-        ]
-        normalizes = tuple(
-            dict.fromkeys(
-                pair for source in sources for pair in source.pending_normalizes
-            )
-        )
-        resets = tuple(
-            dict.fromkeys(pair for source in sources for pair in source.pending_resets)
-        )
+        sources = [resource.orchestrator for resource in plan.resources if isinstance(resource.orchestrator, EthernetBaseOrchestrator)]
+        normalizes = tuple(dict.fromkeys(pair for source in sources for pair in source.pending_normalizes))
+        resets = tuple(dict.fromkeys(pair for source in sources for pair in source.pending_resets))
         if not normalizes and not resets:
             return True
-        target = next(
-            source
-            for source in sources
-            if source.pending_normalizes or source.pending_resets
-        )
+        target = next(source for source in sources if source.pending_normalizes or source.pending_resets)
         target.queue_normalize_targets(normalizes)
         target.queue_reset_targets(resets)
-        normalize_items = [
-            item
-            for item in self._items
-            if item.action == "delete"
-            and item.status == "queued"
-            and item.target in normalizes
-        ]
-        reset_items = [
-            item
-            for item in self._items
-            if item.action == "delete"
-            and item.status == "queued"
-            and item.target in resets
-        ]
+        normalize_items = [item for item in self._items if item.action == "delete" and item.status == "queued" and item.target in normalizes]
+        reset_items = [item for item in self._items if item.action == "delete" and item.status == "queued" and item.target in resets]
 
         response_start = len(target.rest_send.responses)
         result_start = len(target.rest_send.results)
@@ -416,14 +340,10 @@ class InterfaceWorkflowExecutor:
             target.remove_pending()
         except Exception as exc:  # pylint: disable=broad-except
             error = f"Consolidated Ethernet normalization/reset failed: {exc}"
-            history = self._write_history(
-                target.rest_send, response_start, result_start
-            )
+            history = self._write_history(target.rest_send, response_start, result_start)
             cursor = 0
             if normalize_items:
-                response, result = (
-                    history[cursor] if cursor < len(history) else ({}, {})
-                )
+                response, result = history[cursor] if cursor < len(history) else ({}, {})
                 cursor += 1 if cursor < len(history) else 0
                 self._apply_outcomes(
                     normalize_items,
@@ -458,9 +378,7 @@ class InterfaceWorkflowExecutor:
                 if not self._call_items(
                     resource.orchestrator,
                     [item],
-                    lambda resource=resource, model=model: resource.orchestrator.update(
-                        model
-                    ),
+                    lambda resource=resource, model=model: resource.orchestrator.update(model),
                     f"resources[{resource.resource_index}] {resource.resource_type} update failed",
                 ):
                     return False
@@ -480,9 +398,7 @@ class InterfaceWorkflowExecutor:
                     if not self._call_items(
                         resource.orchestrator,
                         items,
-                        lambda resource=resource, group=group: resource.orchestrator.create_bulk(
-                            group
-                        ),
+                        lambda resource=resource, group=group: resource.orchestrator.create_bulk(group),
                         f"resources[{resource.resource_index}] {resource.resource_type} bulk create failed on {switch_id}",
                     ):
                         return False
@@ -492,29 +408,17 @@ class InterfaceWorkflowExecutor:
                 if not self._call_items(
                     resource.orchestrator,
                     [item],
-                    lambda resource=resource, model=model: resource.orchestrator.create(
-                        model
-                    ),
+                    lambda resource=resource, model=model: resource.orchestrator.create(model),
                     f"resources[{resource.resource_index}] {resource.resource_type} create failed",
                 ):
                     return False
         return True
 
     def _deploy_pending(self, plan: InterfaceWorkflowPlan) -> bool:
-        targets = tuple(
-            dict.fromkeys(
-                pair
-                for resource in plan.resources
-                for pair in resource.orchestrator.pending_deploys
-            )
-        )
+        targets = tuple(dict.fromkeys(pair for resource in plan.resources for pair in resource.orchestrator.pending_deploys))
         self._deployment = {
             "requested": self.deploy,
-            "status": (
-                "not_needed"
-                if not targets
-                else ("disabled" if not self.deploy else "pending")
-            ),
+            "status": ("not_needed" if not targets else ("disabled" if not self.deploy else "pending")),
             "targets": [
                 {
                     "interface_name": interface_name,
@@ -535,24 +439,16 @@ class InterfaceWorkflowExecutor:
             target.deploy_pending()
         except Exception as exc:  # pylint: disable=broad-except
             error = f"Consolidated interface deployment failed: {exc}"
-            history = self._write_history(
-                target.rest_send, response_start, result_start
-            )
+            history = self._write_history(target.rest_send, response_start, result_start)
             response, result = history[-1] if history else ({}, {})
             outcomes = self._classify_response(targets, response, result, error)
             for entry in self._deployment["targets"]:
-                status, message = outcomes[
-                    (entry["interface_name"], entry["switch_id"])
-                ]
+                status, message = outcomes[(entry["interface_name"], entry["switch_id"])]
                 entry["status"] = status
                 if message:
                     entry["message"] = message
             statuses = {entry["status"] for entry in self._deployment["targets"]}
-            self._deployment["status"] = (
-                "partial_failure"
-                if "succeeded" in statuses or "uncertain" in statuses
-                else "failed"
-            )
+            self._deployment["status"] = "partial_failure" if "succeeded" in statuses or "uncertain" in statuses else "failed"
             self._deployment["message"] = error
             self._errors.append(error)
             return False
@@ -584,24 +480,18 @@ class InterfaceWorkflowExecutor:
                     mutation_changed = mutation_changed or result.get("changed") is True
         return mutation_requests, deploy_requests, mutation_changed
 
-    def _reconcile(
-        self, plan: InterfaceWorkflowPlan, *, wrote: bool
-    ) -> dict[int, NDConfigCollection]:
+    def _reconcile(self, plan: InterfaceWorkflowPlan, *, wrote: bool) -> dict[int, NDConfigCollection]:
         if wrote:
             try:
                 self.snapshot.mark_dirty(plan.target_switch_ids)
                 self.snapshot.refresh(plan.target_switch_ids)
             except Exception as exc:  # pylint: disable=broad-except
-                self._errors.append(
-                    f"Post-mutation interface snapshot refresh failed: {exc}"
-                )
+                self._errors.append(f"Post-mutation interface snapshot refresh failed: {exc}")
                 return {}
         actual: dict[int, NDConfigCollection] = {}
         try:
             for resource in plan.resources:
-                actual[resource.resource_index] = resource.adapter.existing_collection(
-                    resource.orchestrator
-                )
+                actual[resource.resource_index] = resource.adapter.existing_collection(resource.orchestrator)
         except Exception as exc:  # pylint: disable=broad-except
             self._errors.append(f"Post-mutation actual-state selection failed: {exc}")
             return {}
@@ -624,24 +514,16 @@ class InterfaceWorkflowExecutor:
         if phases_ok:
             phases_ok = self._deploy_pending(plan)
 
-        mutation_requests, deploy_requests, mutation_changed = self._write_observations(
-            plan
-        )
+        mutation_requests, deploy_requests, mutation_changed = self._write_observations(plan)
         actual = self._reconcile(plan, wrote=bool(mutation_requests))
         actual_changed = any(
-            resource.before.get_diff_collection(actual[resource.resource_index])
-            for resource in plan.resources
-            if resource.resource_index in actual
+            resource.before.get_diff_collection(actual[resource.resource_index]) for resource in plan.resources if resource.resource_index in actual
         )
         failed = not phases_ok or bool(self._errors)
         changed = mutation_changed or actual_changed
         if failed:
             item_statuses = {item.status for item in self._items}
-            status = (
-                "partial_failure"
-                if changed or item_statuses & {"succeeded", "uncertain"}
-                else "failed"
-            )
+            status = "partial_failure" if changed or item_statuses & {"succeeded", "uncertain"} else "failed"
         elif self.deploy:
             status = "completed"
         else:

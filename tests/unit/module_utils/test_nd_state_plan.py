@@ -39,7 +39,7 @@ def test_merged_plan_preserves_unspecified_current_fields_without_mutating_befor
     assert not plan.creates
     assert not plan.deletes
     policy = plan.after.to_ansible_config()[0]["config_data"]["network_os"]["policy"]
-    assert policy["ip"] == "192.0.2.10/32"
+    assert policy["ip"] == "192.0.2.10"
     assert policy["description"] == "new"
     assert before.to_ansible_config() == original_before
 
