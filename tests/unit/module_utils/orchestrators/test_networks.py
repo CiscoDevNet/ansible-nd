@@ -57,6 +57,24 @@ class _Module:
         raise AssertionError(kwargs)
 
 
+class _NetworkAttachmentCoordinator:
+    def __init__(self):
+        self.traces = []
+
+    def _trace(self, event, **details):
+        self.traces.append((event, details))
+
+
+class _RecordingNetworkAttachmentManager(NetworkAttachmentManager):
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self.posts = []
+
+    def post_network_attachments(self, _module_args, _strategy, payloads, deploy_targets, operation_type):
+        self.posts.append((payloads, deploy_targets, operation_type))
+        return {"changed": True, "payloads": payloads, "deploy_targets": deploy_targets}
+
+
 class _ParentStrategy:
     config_model_cls = NetworkParentConfigModel
     fabric_data = {"members": [{"fabricName": "child1"}]}
@@ -348,6 +366,52 @@ def test_network_attachment_manager_staged_detaches_like_overridden():
     assert manager.planned_detach_payloads("staged", [{"network_name": "BLUE_NET"}], current, desired) == [
         {"networkName": "BLUE_NET", "switchId": "SERIAL2", "attach": False}
     ]
+
+
+def test_network_attachment_manager_staged_pre_phase_posts_detach():
+    coordinator = _NetworkAttachmentCoordinator()
+    manager = _RecordingNetworkAttachmentManager(coordinator)
+
+    trace = manager.apply_phase(
+        {"state": "staged", "config": [{"network_name": "BLUE_NET"}]},
+        StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}),
+        phase="pre",
+        desired={},
+        current_network_names=["BLUE_NET"],
+        current={("BLUE_NET", "SERIAL1"): {"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": True, "vlanId": 100}},
+        attachment_details=[{"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": True, "vlanId": 100}],
+    )
+
+    assert trace["payloads"] == [{"networkName": "BLUE_NET", "switchId": "SERIAL1", "vlanId": 100, "attach": False}]
+    assert manager.posts[0][0] == trace["payloads"]
+    assert ("network_attachment_phase_skip", {"phase": "pre", "reason": "state_not_pre_detach"}) not in coordinator.traces
+
+
+def test_network_attachment_manager_staged_post_phase_posts_attach():
+    coordinator = _NetworkAttachmentCoordinator()
+    manager = _RecordingNetworkAttachmentManager(coordinator)
+    desired = {
+        ("BLUE_NET", "SERIAL1"): {
+            "networkName": "BLUE_NET",
+            "switchId": "SERIAL1",
+            "interfaces": [{"interfaceRange": "Ethernet1/1", "mode": "trunk"}],
+            "attach": True,
+        }
+    }
+
+    trace = manager.apply_phase(
+        {"state": "staged", "config": [{"network_name": "BLUE_NET", "attach": [{"switch_id": "SERIAL1"}]}]},
+        StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}),
+        phase="post",
+        desired=desired,
+        current_network_names=["BLUE_NET"],
+        current={},
+        attachment_details=[{"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": False}],
+    )
+
+    assert trace["payloads"] == [desired[("BLUE_NET", "SERIAL1")]]
+    assert manager.posts[0][0] == trace["payloads"]
+    assert ("network_attachment_phase_skip", {"phase": "post", "reason": "state_not_post_attach"}) not in coordinator.traces
 
 
 def test_network_staged_detaches_omitted_networks_without_running_overridden_crud_delete():

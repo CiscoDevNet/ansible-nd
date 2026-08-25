@@ -99,10 +99,10 @@ class VrfAttachmentManager:
         if not config and state != "overridden":
             self._trace("vrf_attachment_phase_skip", phase=phase, reason="empty_config")
             return {}
-        if phase == "pre" and state not in ("deleted", "replaced", "overridden"):
+        if phase == "pre" and state not in ("deleted", "replaced", "overridden", "staged"):
             self._trace("vrf_attachment_phase_skip", phase=phase, reason="state_not_pre_detach")
             return {}
-        if phase == "post" and state not in ("merged", "replaced", "overridden"):
+        if phase == "post" and state not in ("merged", "replaced", "overridden", "staged"):
             self._trace("vrf_attachment_phase_skip", phase=phase, reason="state_not_post_attach")
             return {}
         if current_vrf_names == []:

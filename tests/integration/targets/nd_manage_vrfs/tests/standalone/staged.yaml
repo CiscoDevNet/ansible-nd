@@ -1,0 +1,212 @@
+---
+- name: Test Entry Point - [nd_manage_vrfs - staged]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Staged Tests - [nd_manage_vrfs]                   +"
+      - "----------------------------------------------------------------"
+  tags: staged
+
+- name: Staged - Build Standalone Attachment Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_standalone_fabric }}"
+    target_vrf_names:
+      - ndvrfstgcreate
+      - ndvrfstgadd
+      - ndvrfstgremove
+      - ndvrfstgomit
+    nd_vrf_staged_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_vrf_standalone_switch
+          }
+        ] if nd_vrf_standalone_switch | length > 0 else []
+      }}
+  delegate_to: localhost
+  tags: staged
+
+- name: Staged - Build Standalone Test Data
+  ansible.builtin.set_fact:
+    nd_vrf_staged_seed:
+      - vrf_name: ndvrfstgadd
+        vrf_id: "{{ nd_vrf_base_id + 70 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 70 }}"
+        vrf_description: Ansible ND staged add seed
+        deploy: false
+      - vrf_name: ndvrfstgremove
+        vrf_id: "{{ nd_vrf_base_id + 71 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 71 }}"
+        vrf_description: Ansible ND staged remove seed
+        attach: "{{ nd_vrf_staged_attach_block }}"
+        deploy: false
+      - vrf_name: ndvrfstgomit
+        vrf_id: "{{ nd_vrf_base_id + 72 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 72 }}"
+        vrf_description: Ansible ND staged omit seed
+        attach: "{{ nd_vrf_staged_attach_block }}"
+        deploy: false
+    nd_vrf_staged_create_config:
+      - vrf_name: ndvrfstgcreate
+        vrf_id: "{{ nd_vrf_base_id + 73 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 73 }}"
+        vrf_description: Ansible ND staged create
+        attach: "{{ nd_vrf_staged_attach_block }}"
+        deploy: true
+    nd_vrf_staged_config:
+      - vrf_name: ndvrfstgcreate
+        vrf_id: "{{ nd_vrf_base_id + 73 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 73 }}"
+        vrf_description: Ansible ND staged create
+        attach: "{{ nd_vrf_staged_attach_block }}"
+        deploy: true
+      - vrf_name: ndvrfstgadd
+        vrf_id: "{{ nd_vrf_base_id + 70 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 70 }}"
+        vrf_description: Ansible ND staged add updated
+        attach: "{{ nd_vrf_staged_attach_block }}"
+        deploy: true
+      - vrf_name: ndvrfstgremove
+        vrf_id: "{{ nd_vrf_base_id + 71 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 71 }}"
+        vrf_description: Ansible ND staged remove updated
+        deploy: true
+  delegate_to: localhost
+  tags: staged
+
+- name: Staged - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged
+
+- name: Staged - Prepare Seed Configuration
+  vars:
+    file: standalone_staged_seed
+    vrf_conf: "{{ nd_vrf_staged_seed }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged
+
+- name: Staged - Prepare Create Configuration
+  vars:
+    file: standalone_staged_create
+    vrf_conf: "{{ nd_vrf_staged_create_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged
+
+- name: Staged - Prepare Configuration
+  vars:
+    file: standalone_staged
+    vrf_conf: "{{ nd_vrf_staged_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged
+
+- name: Staged TC1 - Create VRF With Attachment
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_vrf_standalone_staged_create_conf }}"
+    output_level: debug
+  register: staged_create_result
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged
+
+- name: Staged TC1 - Assert Create Attachment Without Deploy Or Delete
+  ansible.builtin.assert:
+    that:
+      - staged_create_result.changed == true
+      - staged_create_result.api_paths | default([]) | select("search", "/vrfAttachments") | list | length > 0
+      - staged_create_result.api_paths | default([]) | select("search", "deploy") | list | length == 0
+      - staged_create_result.api_paths | default([]) | select("search", "vrfActions/remove") | list | length == 0
+      - (staged_create_result.api_payload | default([]) | to_json) is search("ndvrfstgcreate")
+      - (staged_create_result.api_payload | default([]) | to_json) is search("attach")
+      - (staged_create_result.api_payload | default([]) | to_json) is search("true")
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged
+
+- name: Staged TC2 - Seed Existing VRFs
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_standalone_staged_seed_conf }}"
+    output_level: debug
+  register: staged_seed_result
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged
+
+- name: Staged TC3 - Reconcile Attachments Without Deploy Or Definition Delete
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_vrf_standalone_staged_conf }}"
+    output_level: debug
+  register: staged_result
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged
+
+- name: Staged TC3 - Assert Attachment Reconciliation Without Deploy Or Delete
+  ansible.builtin.assert:
+    that:
+      - staged_result.changed == true
+      - staged_result.api_paths | default([]) | select("search", "/vrfAttachments") | list | length > 0
+      - staged_result.api_paths | default([]) | select("search", "deploy") | list | length == 0
+      - staged_result.api_paths | default([]) | select("search", "vrfActions/remove") | list | length == 0
+      - (staged_result.api_payload | default([]) | to_json) is search("ndvrfstgadd")
+      - (staged_result.api_payload | default([]) | to_json) is search("ndvrfstgremove")
+      - (staged_result.api_payload | default([]) | to_json) is search("ndvrfstgomit")
+      - (staged_result.api_payload | default([]) | to_json) is search("attach")
+      - (staged_result.api_payload | default([]) | to_json) is search("true")
+      - (staged_result.api_payload | default([]) | to_json) is search("false")
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged
+
+- name: Staged TC4 - Gather VRFs
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: []
+  register: staged_gather_result
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged
+
+- name: Staged TC4 - Assert Omitted VRF Definition Remains
+  ansible.builtin.assert:
+    that:
+      - (staged_gather_result.after | default([]) | to_json) is search("ndvrfstgomit")
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged

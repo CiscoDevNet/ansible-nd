@@ -8,18 +8,25 @@ nd_network_standalone_interface: "{{ ansible_network_interface1 | default('') }}
 
 nd_network_msd_parent_fabric: "{{ ansible_msd_parent_fabric | default('') }}"
 nd_network_msd_child_fabric: "{{ ansible_msd_child_fabric | default('') }}"
+nd_network_msd_switch: "{{ ansible_msd_switch1 | default(ansible_switch1 | default('')) }}"
+nd_network_msd_interface: "{{ ansible_msd_network_interface1 | default(ansible_network_interface1 | default('')) }}"
 
 nd_network_mcfg_parent_fabric: "{{ ansible_mcfg_parent_fabric | default('') }}"
 nd_network_mcfg_child_fabric: "{{ ansible_mcfg_child_fabric | default('') }}"
+nd_network_mcfg_switch: "{{ ansible_mcfg_switch1 | default('') }}"
+nd_network_mcfg_interface: "{{ ansible_mcfg_network_interface1 | default(ansible_network_interface1 | default('')) }}"
 
 nd_network_run_standalone: "{{ nd_network_standalone_fabric | length > 0 }}"
 nd_network_run_msd: "{{ nd_network_msd_parent_fabric | length > 0 and nd_network_msd_child_fabric | length > 0 }}"
 nd_network_run_mcfg: "{{ nd_network_mcfg_parent_fabric | length > 0 and nd_network_mcfg_child_fabric | length > 0 }}"
 nd_network_run_overridden: false
+nd_network_run_staged: true
 
 nd_network_l3_vrf_name: "{{ ansible_nd_network_vrf_name | default('') }}"
 nd_network_run_l3: "{{ nd_network_l3_vrf_name | length > 0 }}"
 nd_network_run_attach: "{{ nd_network_standalone_switch | length > 0 and nd_network_standalone_interface | length > 0 }}"
+nd_network_run_msd_attach: "{{ nd_network_msd_switch | length > 0 and nd_network_msd_interface | length > 0 }}"
+nd_network_run_mcfg_attach: "{{ nd_network_mcfg_switch | length > 0 and nd_network_mcfg_interface | length > 0 }}"
 
 nd_network_base_id: 901000
 nd_network_base_vlan: 3100

@@ -1,0 +1,261 @@
+---
+- name: Test Entry Point - [nd_manage_vrfs - mcfg - staged]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MCFG Staged Tests - [nd_manage_vrfs]             +"
+      - "----------------------------------------------------------------"
+  tags:
+    - mcfg
+    - staged
+- name: MCFG Staged - Build Attachment Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    target_vrf_names:
+      - ndvrfmcfgstgcreate
+      - ndvrfmcfgstgadd
+      - ndvrfmcfgstgremove
+      - ndvrfmcfgstgomit
+    nd_vrf_mcfg_staged_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_vrf_mcfg_switch
+          }
+        ] if nd_vrf_mcfg_switch | length > 0 else []
+      }}
+  delegate_to: localhost
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged - Build Parent and Child Test Data
+  ansible.builtin.set_fact:
+    nd_vrf_mcfg_staged_seed:
+      - vrf_name: ndvrfmcfgstgadd
+        vrf_id: "{{ nd_vrf_base_id + 90 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 90 }}"
+        vrf_description: Ansible ND MCFG staged add seed
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: false
+      - vrf_name: ndvrfmcfgstgremove
+        vrf_id: "{{ nd_vrf_base_id + 91 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 91 }}"
+        vrf_description: Ansible ND MCFG staged remove seed
+        attach: "{{ nd_vrf_mcfg_staged_attach_block }}"
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: false
+      - vrf_name: ndvrfmcfgstgomit
+        vrf_id: "{{ nd_vrf_base_id + 92 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 92 }}"
+        vrf_description: Ansible ND MCFG staged omit seed
+        attach: "{{ nd_vrf_mcfg_staged_attach_block }}"
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: false
+    nd_vrf_mcfg_staged_create_config:
+      - vrf_name: ndvrfmcfgstgcreate
+        vrf_id: "{{ nd_vrf_base_id + 93 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 93 }}"
+        vrf_description: Ansible ND MCFG staged create
+        attach: "{{ nd_vrf_mcfg_staged_attach_block }}"
+        deploy: true
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: true
+    nd_vrf_mcfg_staged_config:
+      - vrf_name: ndvrfmcfgstgcreate
+        vrf_id: "{{ nd_vrf_base_id + 93 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 93 }}"
+        vrf_description: Ansible ND MCFG staged create
+        attach: "{{ nd_vrf_mcfg_staged_attach_block }}"
+        deploy: true
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: true
+      - vrf_name: ndvrfmcfgstgadd
+        vrf_id: "{{ nd_vrf_base_id + 90 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 90 }}"
+        vrf_description: Ansible ND MCFG staged add updated
+        attach: "{{ nd_vrf_mcfg_staged_attach_block }}"
+        deploy: true
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: true
+      - vrf_name: ndvrfmcfgstgremove
+        vrf_id: "{{ nd_vrf_base_id + 91 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 91 }}"
+        vrf_description: Ansible ND MCFG staged remove updated
+        deploy: true
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: true
+  delegate_to: localhost
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged - Prepare Seed Configuration
+  vars:
+    file: mcfg_staged_seed
+    vrf_conf: "{{ nd_vrf_mcfg_staged_seed }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged - Prepare Create Configuration
+  vars:
+    file: mcfg_staged_create
+    vrf_conf: "{{ nd_vrf_mcfg_staged_create_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged - Prepare Configuration
+  vars:
+    file: mcfg_staged
+    vrf_conf: "{{ nd_vrf_mcfg_staged_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC1 - Create VRF With Attachment
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_vrf_mcfg_staged_create_conf }}"
+    output_level: debug
+  register: mcfg_staged_create_result
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC1 - Assert Create Attachment Without Deploy Or Delete
+  ansible.builtin.assert:
+    that:
+      - mcfg_staged_create_result.changed == true
+      - mcfg_staged_create_result.fabric_type == "multicluster_parent"
+      - mcfg_staged_create_result.parent_fabric.api_paths | default([]) | select("search", "/vrfAttachments") | list | length > 0
+      - mcfg_staged_create_result.parent_fabric.api_paths | default([]) | select("search", "deploy") | list | length == 0
+      - mcfg_staged_create_result.parent_fabric.api_paths | default([]) | select("search", "vrfActions/remove") | list | length == 0
+      - (mcfg_staged_create_result.parent_fabric.api_payload | default([]) | to_json) is search("ndvrfmcfgstgcreate")
+      - (mcfg_staged_create_result.parent_fabric.api_payload | default([]) | to_json) is search("attach")
+      - (mcfg_staged_create_result.parent_fabric.api_payload | default([]) | to_json) is search("true")
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC2 - Seed Existing VRFs
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_mcfg_staged_seed_conf }}"
+    output_level: debug
+  register: mcfg_staged_seed_result
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC3 - Reconcile Attachments Without Deploy Or Definition Delete
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_vrf_mcfg_staged_conf }}"
+    output_level: debug
+  register: mcfg_staged_result
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC3 - Assert Attachment Reconciliation Without Deploy Or Delete
+  ansible.builtin.assert:
+    that:
+      - mcfg_staged_result.changed == true
+      - mcfg_staged_result.fabric_type == "multicluster_parent"
+      - mcfg_staged_result.parent_fabric.api_paths | default([]) | select("search", "/vrfAttachments") | list | length > 0
+      - mcfg_staged_result.parent_fabric.api_paths | default([]) | select("search", "deploy") | list | length == 0
+      - mcfg_staged_result.parent_fabric.api_paths | default([]) | select("search", "vrfActions/remove") | list | length == 0
+      - (mcfg_staged_result.parent_fabric.api_payload | default([]) | to_json) is search("ndvrfmcfgstgadd")
+      - (mcfg_staged_result.parent_fabric.api_payload | default([]) | to_json) is search("ndvrfmcfgstgremove")
+      - (mcfg_staged_result.parent_fabric.api_payload | default([]) | to_json) is search("ndvrfmcfgstgomit")
+      - (mcfg_staged_result.parent_fabric.api_payload | default([]) | to_json) is search("true")
+      - (mcfg_staged_result.parent_fabric.api_payload | default([]) | to_json) is search("false")
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC4 - Gather Parent VRFs
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: []
+  register: mcfg_staged_gathered
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC4 - Assert Omitted VRF Definition Remains
+  ansible.builtin.assert:
+    that:
+      - (mcfg_staged_gathered.after | default([]) | to_json) is search("ndvrfmcfgstgomit")
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged

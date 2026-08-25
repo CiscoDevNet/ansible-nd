@@ -17,6 +17,7 @@ nd_vrf_run_standalone: "{{ nd_vrf_standalone_fabric | length > 0 }}"
 nd_vrf_run_msd: "{{ nd_vrf_msd_parent_fabric | length > 0 and nd_vrf_msd_child_fabric | length > 0 }}"
 nd_vrf_run_mcfg: "{{ nd_vrf_mcfg_parent_fabric | length > 0 and nd_vrf_mcfg_child_fabric | length > 0 }}"
 nd_vrf_run_overridden: true
+nd_vrf_run_staged: true
 
 nd_vrf_base_id: 9008800
 nd_vrf_base_vlan: 2800
