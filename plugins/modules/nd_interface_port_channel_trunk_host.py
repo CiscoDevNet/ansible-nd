@@ -297,8 +297,9 @@ options:
           execution via the C(interfaceActions/deploy) API. Only the port-channels modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
+        - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
-        default: true
+        default: false
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -342,6 +343,8 @@ EXAMPLES = r"""
               port_channel_mode: active
               lacp_rate: fast
               description: Server trunk bundle
+    config_actions:
+      deploy: true
     state: merged
   register: result
 
@@ -359,6 +362,8 @@ EXAMPLES = r"""
                 - Ethernet1/1
                 - Ethernet1/2
                 - Ethernet1/3
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Configure VLAN mapping with selective dot1q-tunnel
@@ -375,6 +380,8 @@ EXAMPLES = r"""
                 - customer_vlan_id: ["100"]
                   provider_vlan_id: 200
                   dot1q_tunnel: true
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Replace a port-channel configuration
@@ -392,6 +399,8 @@ EXAMPLES = r"""
                 - Ethernet1/1
               port_channel_mode: active
               description: Replaced port-channel configuration
+    config_actions:
+      deploy: true
     state: replaced
 
 - name: Override all port-channels in the fabric to match this configuration
@@ -409,6 +418,8 @@ EXAMPLES = r"""
                 - Ethernet1/1
                 - Ethernet1/2
               port_channel_mode: active
+    config_actions:
+      deploy: true
     state: overridden
 
 - name: Delete a port-channel
@@ -417,6 +428,8 @@ EXAMPLES = r"""
     config:
       - switch_ip: 192.168.1.1
         interface_name: port-channel501
+    config_actions:
+      deploy: true
     state: deleted
 
 - name: Stage port-channel changes without deploying
@@ -562,7 +575,7 @@ def main():
         config_actions={
             "type": "dict",
             "options": {
-                "deploy": {"type": "bool", "default": True},
+                "deploy": {"type": "bool", "default": False},
             },
         },
     )
@@ -585,7 +598,7 @@ def main():
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
         config_actions = module.params.get("config_actions") or {}
-        deploy = config_actions.get("deploy", True)
+        deploy = config_actions.get("deploy", False)
         nd_state_machine.model_orchestrator.deploy = deploy
 
         module_log.debug(
