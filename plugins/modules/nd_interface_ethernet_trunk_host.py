@@ -540,7 +540,6 @@ msg:
   sample: "Configuration error: ..."
 """
 
-import copy
 import logging
 import traceback
 
@@ -548,6 +547,12 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import (
+    expand_ethernet_config as _expand_ethernet_config,
+    validate_ethernet_across_item_duplicates as _validate_ethernet_across_item_duplicates,
+    validate_ethernet_interface_names as _validate_ethernet_interface_names,
+    validate_ethernet_within_item_duplicates as _validate_ethernet_within_item_duplicates,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
@@ -555,130 +560,24 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interf
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceOrchestrator
 
 
-# TODO: When all interface modules using `interface_names: list` are merged, lift
-# `validate_interface_names`, `validate_within_item_duplicates`,
-# `validate_across_item_duplicates`, and `expand_config` into a shared helper module
-# (e.g. `plugins/module_utils/interfaces/config_expansion.py`) and import from there.
 def validate_interface_names(config_list: list[dict]) -> None:
-    """
-    # Summary
-
-    Raise `ValueError` if any element of any `interface_names` list is `None`, an empty string, or not a
-    string. Ansible's `elements="str"` argspec does not reject these (a Jinja loop can easily produce a list
-    with null/empty entries, and a templated value may arrive as a non-string), and downstream `name.lower()`
-    would otherwise raise `AttributeError` / silently insert a blank interface — neither of which is the
-    friendly fail_json the user expects.
-
-    ## Raises
-
-    ### ValueError
-
-    - If any element of `interface_names` is `None`, an empty string, or not a string.
-    """
-    for item_index, group in enumerate(config_list):
-        switch_ip = group.get("switch_ip")
-        interface_names = group.get("interface_names") or []
-        for entry_index, name in enumerate(interface_names):
-            if not isinstance(name, str) or not name:
-                if name is None:
-                    reason = "null"
-                elif not isinstance(name, str):
-                    reason = f"not a string (got {type(name).__name__})"
-                else:
-                    reason = "empty"
-                raise ValueError(
-                    f"interface_names[{entry_index}] for switch '{switch_ip}' (config item {item_index}) is "
-                    f"{reason}. Every entry must be a non-empty interface name."
-                )
+    """Delegate grouped-name validation to the shared workflow normalizer."""
+    _validate_ethernet_interface_names(config_list)
 
 
 def validate_within_item_duplicates(config_list: list[dict]) -> None:
-    """
-    # Summary
-
-    Raise `ValueError` if any single config item lists the same interface name more than once
-    in its `interface_names` list. Comparison is case-insensitive.
-
-    ## Raises
-
-    ### ValueError
-
-    - If an interface name appears more than once within a single config item's `interface_names` list
-    """
-    for item_index, group in enumerate(config_list):
-        switch_ip = group.get("switch_ip")
-        interface_names = group.get("interface_names") or []
-        seen: set[str] = set()
-        for name in interface_names:
-            key = name.lower()
-            if key in seen:
-                raise ValueError(
-                    f"Duplicate interface '{name}' in interface_names for switch '{switch_ip}' "
-                    f"(config item {item_index}). Each interface may appear only once per config item."
-                )
-            seen.add(key)
+    """Delegate within-group duplicate validation to the shared normalizer."""
+    _validate_ethernet_within_item_duplicates(config_list)
 
 
-# TODO: See note above `validate_within_item_duplicates`.
 def validate_across_item_duplicates(config_list: list[dict]) -> None:
-    """
-    # Summary
-
-    Raise `ValueError` if the same `(switch_ip, interface_name)` pair appears in more than one
-    config item. Comparison of interface names is case-insensitive. The error message identifies
-    both offending config item indices so the user can locate them in the playbook.
-
-    ## Raises
-
-    ### ValueError
-
-    - If the same `(switch_ip, interface_name)` pair appears in more than one config item
-    """
-    seen: dict[tuple, int] = {}
-    for item_index, group in enumerate(config_list):
-        switch_ip = group.get("switch_ip")
-        interface_names = group.get("interface_names") or []
-        for name in interface_names:
-            key = (switch_ip, name.lower())
-            if key in seen:
-                raise ValueError(
-                    f"Interface '{name}' on switch '{switch_ip}' is specified in multiple config items "
-                    f"({seen[key]} and {item_index}). Each switch/interface pair may appear only once."
-                )
-            seen[key] = item_index
+    """Delegate cross-group duplicate validation to the shared normalizer."""
+    _validate_ethernet_across_item_duplicates(config_list)
 
 
 def expand_config(config_list: list[dict]) -> list[dict]:
-    """
-    # Summary
-
-    Validate then expand grouped config items (with `interface_names` list) into flat config items
-    (with singular `interface_name`). Each group produces one flat item per interface name, all
-    sharing the same `config_data` and `switch_ip`.
-
-    ## Raises
-
-    ### ValueError
-
-    - If any `interface_names` entry is `None` or an empty string
-    - If an interface name appears more than once within a single config item's `interface_names` list
-    - If the same `(switch_ip, interface_name)` pair appears in more than one config item
-    """
-    validate_interface_names(config_list)
-    validate_within_item_duplicates(config_list)
-    validate_across_item_duplicates(config_list)
-
-    expanded = []
-    for group in config_list:
-        # `or []` (not a `.get` default) so an explicit `interface_names: ~` in YAML,
-        # which yields None, is treated as empty -- consistent with the validators above.
-        interface_names = group.get("interface_names") or []
-        for name in interface_names:
-            item = copy.deepcopy(group)
-            item.pop("interface_names", None)
-            item["interface_name"] = name
-            expanded.append(item)
-    return expanded
+    """Delegate grouped Ethernet expansion to the shared workflow normalizer."""
+    return _expand_ethernet_config(config_list)
 
 
 def main() -> None:

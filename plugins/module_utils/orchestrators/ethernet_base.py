@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import ClassVar
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,16 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         if pair not in self._pending_normalizes:
             self._pending_normalizes.append(pair)
 
+    @property
+    def pending_normalizes(self) -> tuple[tuple[str, str], ...]:
+        """Return an immutable view of physical interfaces queued for normalization."""
+        return tuple(self._pending_normalizes)
+
+    def queue_normalize_targets(self, targets: Sequence[tuple[str, str]]) -> None:
+        """Add pre-resolved physical-interface targets to the normalize queue."""
+        for interface_name, switch_id in targets:
+            self._queue_normalize(interface_name, switch_id)
+
     def _queue_reset(self, interface_name: str, switch_id: str) -> None:
         """
         # Summary
@@ -156,6 +167,16 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         pair = (interface_name, switch_id)
         if pair not in self._pending_resets:
             self._pending_resets.append(pair)
+
+    @property
+    def pending_resets(self) -> tuple[tuple[str, str], ...]:
+        """Return an immutable view of physical interfaces queued for PUT-as-replace reset."""
+        return tuple(self._pending_resets)
+
+    def queue_reset_targets(self, targets: Sequence[tuple[str, str]]) -> None:
+        """Add pre-resolved physical-interface targets to the reset queue."""
+        for interface_name, switch_id in targets:
+            self._queue_reset(interface_name, switch_id)
 
     @staticmethod
     def _has_unresettable_fields(existing_data: dict | None) -> bool:

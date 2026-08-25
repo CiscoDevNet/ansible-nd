@@ -912,6 +912,23 @@ def test_ethernet_access_orchestrator_00610() -> None:
     assert instance._pending_deploys == []
 
 
+def test_ethernet_access_orchestrator_00590() -> None:
+    """Verify public Ethernet queue transfer APIs de-duplicate targets and expose immutable views."""
+
+    def responses():
+        yield {}
+
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    normalize_targets = [("Ethernet1/1", "FDO11111AAA"), ("Ethernet1/2", "FDO22222BBB")]
+    reset_targets = [("Ethernet1/3", "FDO11111AAA")]
+
+    instance.queue_normalize_targets([*normalize_targets, normalize_targets[0]])
+    instance.queue_reset_targets([*reset_targets, reset_targets[0]])
+
+    assert instance.pending_normalizes == tuple(normalize_targets)
+    assert instance.pending_resets == tuple(reset_targets)
+
+
 def test_ethernet_access_orchestrator_00595() -> None:
     """
     # Summary
