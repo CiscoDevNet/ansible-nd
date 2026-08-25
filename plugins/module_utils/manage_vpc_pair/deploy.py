@@ -285,11 +285,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
         # itself, drive module-level changed (otherwise repeated save=true,
         # deploy=false runs report changed=true forever). Only a declarative
         # delta (create/update/delete) or an actual deploy (Step 2) is a change.
-        save_changed = (
-            _has_explicit_diff_changes(result)
-            or bool(nrm.module.params.get("_pending_create"))
-            or bool(nrm.module.params.get("_pending_delete"))
-        )
+        save_changed = _has_explicit_diff_changes(result) or bool(nrm.module.params.get("_pending_create")) or bool(nrm.module.params.get("_pending_delete"))
 
         try:
             response = fabric_utils.save_config(action_payload)
