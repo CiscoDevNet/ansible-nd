@@ -123,7 +123,8 @@
               admin_state: true
               ip: "10.100.103.1"
               description: "No-deploy test loopback103"
-    deploy: false
+    config_actions:
+      deploy: false
     state: merged
   register: nm_merged_no_deploy
 

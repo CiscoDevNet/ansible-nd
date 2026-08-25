@@ -117,7 +117,7 @@ def test_nd_argument_specs_00100() -> None:
     options = spec["config_actions"]["options"]
     assert set(options.keys()) == {"save", "deploy", "type"}
     assert options["save"] == {"type": "bool", "default": True}
-    assert options["deploy"] == {"type": "bool", "default": True}
+    assert options["deploy"] == {"type": "bool", "default": False}
     assert options["type"] == {"type": "str", "default": "switch", "choices": ["resource", "switch", "global"]}
 
 
@@ -139,7 +139,7 @@ def test_nd_argument_specs_00101() -> None:
         "config_actions": {
             "type": "dict",
             "options": {
-                "deploy": {"type": "bool", "default": True},
+                "deploy": {"type": "bool", "default": False},
             },
         },
     }
