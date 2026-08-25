@@ -22,6 +22,8 @@
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: loopback203
       - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback204
+      - switch_ip: "{{ test_switch_ip }}"
         interface_name: loopback299
     state: deleted
   tags: always
