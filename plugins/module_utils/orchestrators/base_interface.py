@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from time import sleep
 from typing import Any, ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_deployment_history import (
     EpManageFabricsSwitchesDeploymentHistoryGet,
 )
@@ -42,6 +43,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
 from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import (
     InterfaceCapabilityPreflight,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     ModelType,
     NDBaseOrchestrator,
@@ -118,6 +120,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     """
 
     deploy: bool = False
+    interface_state_snapshot: InterfaceStateSnapshot | None = Field(default=None, exclude=True, repr=False)
 
     # Subclasses opt in to capability preflight by setting BOTH ClassVars (e.g. loopback sets
     # `interface_type = "loopback"` and `interface_mode = "managed"`). Leaving `interface_type` as ""
@@ -143,8 +146,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         Initialize mutable private state after Pydantic model construction. Pydantic disallows `Field()` on
         underscore-prefixed names, so these are set here to ensure each instance gets its own container: the
-        deploy/remove queues, the `_deploy_attempted` stage flag read by `deploy_accepted_mutations`, and the per-switch interface
-        cache read by `_switch_interfaces`.
+        deploy/remove queues and the `_deploy_attempted` stage flag read by
+        `deploy_accepted_mutations`. Interface inventory is owned by the injected
+        or lazily-created `InterfaceStateSnapshot` provider.
 
         ## Raises
 
@@ -156,6 +160,11 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
         self._deploy_derived_identities: dict[tuple[str, str], set[tuple[str, str]]] = {}
         self._pending_preview_derived_discovery: set[tuple[str, str]] = set()
+        if self.interface_state_snapshot is not None and self.interface_state_snapshot.fabric_name != self.fabric_name:
+            raise ValueError(
+                f"Injected InterfaceStateSnapshot fabric {self.interface_state_snapshot.fabric_name} does not match "
+                f"orchestrator fabric {self.fabric_name}."
+            )
 
     def apply_config_actions(self, params: Mapping[str, Any]) -> bool:
         """
@@ -197,9 +206,22 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         None
         """
+        if self.interface_state_snapshot is not None:
+            return self.interface_state_snapshot.fabric_context
         if self._fabric_context is None:
             self._fabric_context = FabricContext(rest_send=self.rest_send, fabric_name=self.fabric_name)
         return self._fabric_context
+
+    @property
+    def state_snapshot(self) -> InterfaceStateSnapshot:
+        """Return the injected provider or lazily create a standalone provider."""
+        if self.interface_state_snapshot is None:
+            self.interface_state_snapshot = InterfaceStateSnapshot(
+                fabric_name=self.fabric_name,
+                fabric_context=self.fabric_context,
+                request=self._request,
+            )
+        return self.interface_state_snapshot
 
     def _resolve_switch_id(self, switch_ip: str) -> str:
         """
@@ -235,6 +257,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - Via `_request` if the interface-list API request fails with a non-404 status.
         """
         if switch_id not in self._switch_interfaces_cache:
+            if self.interface_state_snapshot is not None:
+                self._switch_interfaces_cache[switch_id] = self.interface_state_snapshot.load_switch(switch_id)
+                return self._switch_interfaces_cache[switch_id]
             paginator = InterfaceOffsetPaginator()
 
             def fetch_page(offset: int, page_size: int):
@@ -456,6 +481,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if names_before is None:
             return []
         self._switch_interfaces_cache.pop(switch_id, None)
+        if self.interface_state_snapshot is not None:
+            self.interface_state_snapshot.invalidate(switch_id)
         try:
             names_now = self._switch_interfaces(switch_id)
         except Exception:  # pylint: disable=broad-exception-caught
@@ -861,6 +888,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if pair not in self._pending_deploys:
             self._pending_deploys.append(pair)
 
+    @property
+    def pending_deploys(self) -> tuple[tuple[str, str], ...]:
+        """Return an immutable view of interfaces queued for deployment."""
+        return tuple(self._pending_deploys)
+
+    def queue_deploy_targets(self, targets: Sequence[tuple[str, str]]) -> None:
+        """Add pre-resolved interface targets to the deployment queue."""
+        for interface_name, switch_id in targets:
+            self._queue_deploy(interface_name, switch_id)
+
     def _queue_remove(self, interface_name: str, switch_id: str) -> None:
         """
         # Summary
@@ -1166,6 +1203,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             if self._can_replay_absent_delete(existing_data):
                 replay_targets.append(model_instance)
         return self._reconcile_deploy_models(replay_targets, empty_preview_is_converged=True)
+
+    @property
+    def pending_removes(self) -> tuple[tuple[str, str], ...]:
+        """Return an immutable view of interfaces queued for removal."""
+        return tuple(self._pending_removes)
+
+    def queue_remove_targets(self, targets: Sequence[tuple[str, str]]) -> None:
+        """Add pre-resolved interface targets to the removal queue."""
+        for interface_name, switch_id in targets:
+            self._queue_remove(interface_name, switch_id)
 
     def deploy_pending(self) -> ResponseType | None:
         """
