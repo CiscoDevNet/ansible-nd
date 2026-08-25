@@ -1,0 +1,192 @@
+---
+# TC9 - Staged-delete flush regression (#467), extracted into its own body file.
+# It drives a real create+deploy convergence, which only succeeds on beds that
+# can bring up the vPC peer-link (it fails as a correct signal on beds that
+# cannot).
+#
+# A staged delete (state=deleted, save=false, deploy=false) removes the pair
+# from the controller inventory but leaves the member switches out-of-sync
+# (configSyncStatus=pending). A later state=deleted with save=true, deploy=true
+# must FLUSH that pending removal (configSave + switchActions/deploy) and
+# converge the switches, even though the pair is already absent from inventory.
+# Before the fix the module early-returned "already unpaired" with changed=false
+# and never pushed the removal, leaving the switches stuck pending.
+#
+# This file is intentionally NOT named nd_vpc_pair_*.yaml so main.yaml does not
+# run it as a standalone test case; it is included by nd_vpc_pair_delete.yaml.
+
+- name: DELETE - TC9 - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
+  tags: delete
+
+- name: DELETE - TC9 - Setup regression config (bed-agnostic peer link)
+  ansible.builtin.set_fact:
+    tc9_conf:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: "{{ nd_vpc_pair_use_virtual_peer_link | default(true) }}"
+  delegate_to: localhost
+  tags: delete
+
+- name: DELETE - TC9 - Ensure clean before regression
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions: {save: true, deploy: true, type: switch}
+    config: "{{ tc9_conf }}"
+  failed_when: false
+  tags: delete
+
+- name: DELETE - TC9 - reset connection
+  ansible.builtin.meta: reset_connection
+  tags: delete
+
+# --- Step 1: create + deploy so the pair is live and inSync on the switches ---
+- name: DELETE - TC9 - Create + deploy pair (save=true, deploy=true)
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions: {save: true, deploy: true, type: switch}
+    config: "{{ tc9_conf }}"
+  register: tc9_create
+  tags: delete
+
+- name: DELETE - TC9 - ASSERT - create+deploy converged
+  ansible.builtin.assert:
+    that:
+      - tc9_create.failed == false
+      - tc9_create.changed == true
+      - tc9_create.deployment is defined
+      - >
+        (tc9_create.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | list | length) > 0
+    fail_msg: "TC9 setup: create+deploy must push the pair to the switches."
+  tags: delete
+
+- name: DELETE - TC9 - reset connection
+  ansible.builtin.meta: reset_connection
+  tags: delete
+
+# --- Step 2: staged delete WITHOUT deploy leaves the switches pending ---
+- name: DELETE - TC9 - Staged delete (save=false, deploy=false)
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions: {save: false, deploy: false, type: switch}
+    config: "{{ tc9_conf }}"
+  register: tc9_staged_delete
+  tags: delete
+
+- name: DELETE - TC9 - ASSERT - staged delete removed inventory without deploy
+  ansible.builtin.assert:
+    that:
+      - tc9_staged_delete.failed == false
+      - tc9_staged_delete.changed == true
+      - tc9_staged_delete.deployment is not defined
+    fail_msg: "Staged delete (save/deploy false) should remove the pair without deploying."
+  tags: delete
+
+- name: DELETE - TC9 - Capture switch sync state after staged delete
+  cisco.nd.nd_rest:
+    method: GET
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches"
+  register: tc9_switches_staged
+  failed_when: false
+  tags: delete
+
+- name: DELETE - TC9 - Show pending member switches left by staged delete
+  ansible.builtin.debug:
+    msg: >-
+      configSyncStatus after staged delete =
+      {{ tc9_switches_staged.current.switches | default([])
+         | map(attribute='additionalData') | map('default', {})
+         | map(attribute='configSyncStatus') | map('default', '') | list }}
+  tags: delete
+
+- name: DELETE - TC9 - reset connection
+  ansible.builtin.meta: reset_connection
+  tags: delete
+
+# --- Step 3: re-delete WITH deploy must flush the pending removal (THE FIX) ---
+- name: DELETE - TC9 - Re-delete with save+deploy flushes the staged removal
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions: {save: true, deploy: true, type: switch}
+    config: "{{ tc9_conf }}"
+  register: tc9_flush
+  tags: delete
+
+- name: DELETE - TC9 - ASSERT - flush fired configSave + switchActions/deploy, changed=true
+  ansible.builtin.assert:
+    that:
+      - tc9_flush.failed == false
+      - tc9_flush.changed == true
+      - tc9_flush.deployment is defined
+      - >
+        (tc9_flush.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+         | list | length) > 0
+      - >
+        (tc9_flush.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | list | length) > 0
+    fail_msg: >-
+      Staged-delete flush regression (#467): a save+deploy delete after a staged
+      delete must call configSave and switchActions/deploy to push the pending
+      removal, even though the pair is already absent from the inventory.
+  tags: delete
+
+- name: DELETE - TC9 - Capture switch sync state after flush
+  cisco.nd.nd_rest:
+    method: GET
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches"
+  register: tc9_switches_flushed
+  failed_when: false
+  tags: delete
+
+- name: DELETE - TC9 - ASSERT - member switches converged (no pending)
+  ansible.builtin.assert:
+    that:
+      - >
+        (tc9_switches_flushed.current.switches | default([])
+         | map(attribute='additionalData') | map('default', {})
+         | map(attribute='configSyncStatus') | map('default', '')
+         | select('equalto', 'pending') | list | length) == 0
+    fail_msg: >-
+      Staged-delete flush regression (#467): after the save+deploy flush, no
+      switch should remain in configSyncStatus=pending.
+  tags: delete
+
+- name: DELETE - TC9 - reset connection
+  ansible.builtin.meta: reset_connection
+  tags: delete
+
+# --- Step 4: once switches are back in sync the flush is idempotent ---
+- name: DELETE - TC9 - Idempotent re-delete once switches are inSync
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions: {save: true, deploy: true, type: switch}
+    config: "{{ tc9_conf }}"
+  register: tc9_idempotent
+  tags: delete
+
+- name: DELETE - TC9 - ASSERT - nothing left to flush (changed=false)
+  ansible.builtin.assert:
+    that:
+      - tc9_idempotent.failed == false
+      - tc9_idempotent.changed == false
+    fail_msg: >-
+      Staged-delete flush regression (#467): once the member switches are back
+      in sync, a repeat save+deploy delete must be idempotent (changed=false).
+  tags: delete
