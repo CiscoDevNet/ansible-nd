@@ -164,7 +164,7 @@ def test_info_output_includes_normalized_proposed_config():
 
 def test_check_mode_run_returns_complete_plan_without_execution(monkeypatch):
     coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
-    monkeypatch.setattr(coordinator, "_build_plan", lambda: plan())
+    monkeypatch.setattr(coordinator, "_build_plan", plan)
     result = coordinator.run()
     assert result["changed"] is True
     assert result["execution"]["status"] == "check_mode"
@@ -236,7 +236,7 @@ def test_normal_execution_failure_preserves_structured_result(monkeypatch):
         executor_factory=lambda **kwargs: FakeExecutor(calls, failed=True, **kwargs),
     )
     coordinator._snapshot = SimpleNamespace(request_stats={"switches": 2, "interface_inventory_gets": 2})
-    monkeypatch.setattr(coordinator, "_build_plan", lambda: plan())
+    monkeypatch.setattr(coordinator, "_build_plan", plan)
 
     with pytest.raises(InterfaceWorkflowExecutionFailed) as exc_info:
         coordinator.run()
