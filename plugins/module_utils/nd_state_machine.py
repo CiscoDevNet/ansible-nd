@@ -12,6 +12,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlan, NDStatePlanner
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
@@ -149,15 +150,20 @@ class NDStateMachine:
         """
         Manage state according to desired configuration.
         """
+        if self.state == "gathered":
+            # Read-only state: __init__ already queried the existing objects and
+            # assigned them as ``after`` in the output, so no plan or mutation is needed.
+            return
+
+        plan = self._build_plan()
         if self.state in ["merged", "replaced", "overridden"]:
             proposed_items = list(self.proposed)
 
             # Policy-required-on-create guard (issue #350) runs FIRST: it is local-only (self.existing is
             # already in memory), so it fails before the API-backed capability preflight below and before
-            # _manage_create_update_state mutates self.existing, which NDOutput aliases as `after`. Create
-            # subset = proposed items not present in the existing inventory -- the same key-membership
-            # criterion get_diff_config uses to classify "new" (PR #362 review).
-            items_to_create = [item for item in proposed_items if self.existing.get(item.get_identifier_value()) is None]
+            # _manage_create_update_state mutates self.existing, which NDOutput aliases as `after`. The shared
+            # planner supplies the exact create subset used by standalone and aggregate workflows.
+            items_to_create = list(plan.creates)
 
             # Normalize preflight failures to NDStateMachineError (PR #362 review, gmicol). Both preflight
             # hooks raise a bare RuntimeError (base_interface.preflight_create / the capability preflight),
@@ -178,21 +184,16 @@ class NDStateMachine:
             except Exception as e:
                 raise NDStateMachineError(f"Preflight failed: {e}") from e
 
-            self._manage_create_update_state()
+            self._manage_create_update_state(plan)
 
             if self.state == "overridden":
-                self._manage_override_deletions()
+                self._manage_override_deletions(plan)
 
         elif self.state == "deleted":
             # Capability preflight intentionally NOT run for deletes: removing configuration does not
             # depend on a switch's capability to host the interface type (PR #275 scope decision).
             # The delete-specific guards run via preflight_delete inside _manage_delete_state.
-            self._manage_delete_state()
-
-        elif self.state == "gathered":
-            # Read-only state: __init__ already queried the existing objects and
-            # assigned them as ``after`` in the output, so no changes are made.
-            pass
+            self._manage_delete_state(plan)
 
         else:
             raise NDStateMachineError(f"Invalid state: {self.state}")
@@ -215,72 +216,31 @@ class NDStateMachine:
                 raise NDStateMachineError(error_msg) from e
         return None
 
-    def _manage_create_update_state(self) -> None:
-        """
-        Handle merged/replaced/overridden states.
-        """
+    def _build_plan(self) -> NDStatePlan:
+        """Calculate all operations without invoking an orchestrator mutation method."""
+        try:
+            return NDStatePlanner.plan(
+                state=self.state,
+                before=self.before,
+                proposed=self.proposed,
+                ignore_errors=self.ignore_errors,
+            )
+        except Exception as e:
+            raise NDStateMachineError(str(e)) from e
+
+    def _manage_create_update_state(self, plan: NDStatePlan | None = None) -> None:
+        """Execute the create/update portion of a precomputed state plan."""
+        plan = plan or self._build_plan()
         execution_baseline = self.existing.copy()
-        items_to_create: list[NDBaseModel] = []
-        items_to_update: list[NDBaseModel] = []
+        items_to_create = list(plan.creates)
+        items_to_update = list(plan.updates)
 
-        for proposed_item in self.proposed:
-            identifier = None
-            try:
-                # Extract identifier
-                identifier = proposed_item.get_identifier_value()
-                # Never modify an existing object this module preserves read-only
-                # (unsupported policy type); fail with a focused message instead of
-                # silently converting it via replace/override.
-                existing_match = self.existing.get(identifier)
-                if existing_match is not None and getattr(existing_match, "is_unsupported_policy", False):
-                    raise NDStateMachineError(existing_match.describe_unsupported_policy() + "; this module cannot modify it.")
-
-                # Full replacement PUTs must retain only those existing values
-                # the model explicitly declares as dynamic or intentionally
-                # unsupported-but-writable. Prepare the same candidate for the
-                # diff and eventual update so an omitted controller-assigned
-                # value cannot cause a perpetual diff or an accidental reset.
-                # Merged state already starts from the existing object.
-                final_candidate = proposed_item
-                if self.state != "merged" and existing_match is not None:
-                    final_candidate = proposed_item.prepare_for_replacement(existing_match)
-
-                # Determine diff status
-                # For merged state, only compare fields explicitly provided by
-                # the user so that Pydantic default values do not trigger false
-                # diffs or overwrite existing configuration.
-                exclude_unset = self.state == "merged"
-                diff_status = self.existing.get_diff_config(final_candidate, exclude_unset=exclude_unset)
-
-                # No changes needed
-                if diff_status == "no_diff":
-                    continue
-
-                # Prepare final config based on state
-                if self.state == "merged":
-                    # Merge with existing
-                    final_item = self.existing.merge(proposed_item)
-                else:
-                    # Replace or creates
-                    if diff_status == "changed":
-                        self.existing.replace(final_candidate)
-                    else:
-                        self.existing.add(final_candidate)
-                    final_item = final_candidate
-
-                # Categorize by operation type
-                if diff_status == "changed":
-                    items_to_update.append(final_item)
-                elif diff_status == "new":
-                    items_to_create.append(final_item)
-
-            except Exception as e:
-                if identifier:
-                    error_msg = f"Failed to process {identifier}: {e}"
-                else:
-                    error_msg = f"Failed to process: {e}"
-                if not self.ignore_errors:
-                    raise NDStateMachineError(error_msg) from e
+        # Preserve the existing state machine's prospective-output timing: it calculated every diff and
+        # updated `existing` before sending the first operation.
+        for item in items_to_update:
+            self.existing.replace(item)
+        for item in items_to_create:
+            self.existing.add(item)
 
         # The policy-required-on-create guard (issue #350) runs in manage_state, before the capability
         # preflight and before this method mutates self.existing (PR #362 review).
@@ -334,32 +294,15 @@ class NDStateMachine:
             if getattr(item, "is_unsupported_policy", False):
                 self.module.warn(item.describe_unsupported_policy() + "; it is read-only and will not be modified or deleted by this module.")
 
-    def _manage_override_deletions(self) -> None:
-        """
-        Delete items not in proposed config (for overridden state).
-        """
-        diff_identifiers = self.before.get_diff_identifiers(self.proposed)
-        # Never implicitly delete an unsupported (opaque) object during reconciliation;
-        # it is absent from the user's proposed config only because it cannot be modeled.
-        items_to_delete = [
-            existing_item
-            for identifier in diff_identifiers
-            if (existing_item := self.existing.get(identifier)) is not None and not getattr(existing_item, "is_unsupported_policy", False)
-        ]
-        self._delete_items(items_to_delete)
+    def _manage_override_deletions(self, plan: NDStatePlan | None = None) -> None:
+        """Delete items not in proposed config for overridden state."""
+        plan = plan or self._build_plan()
+        self._delete_items(list(plan.deletes))
 
-    def _manage_delete_state(self) -> None:
+    def _manage_delete_state(self, plan: NDStatePlan | None = None) -> None:
         """Handle deleted state."""
-        items_to_delete = []
-        for proposed_item in self.proposed:
-            existing_item = self.existing.get(proposed_item.get_identifier_value())
-            if existing_item is None:
-                continue
-            # An explicit delete that resolves to an unsupported object fails with a
-            # focused message rather than blindly removing something we cannot model.
-            if getattr(existing_item, "is_unsupported_policy", False):
-                raise NDStateMachineError(existing_item.describe_unsupported_policy() + "; this module cannot delete it.")
-            items_to_delete.append(existing_item)
+        plan = plan or self._build_plan()
+        items_to_delete = list(plan.deletes)
         # Delete preflight (switch resolution, port-channel membership) runs here -- before _delete_items, whose
         # mutation is skipped in check mode -- so a dry run rejects what a normal run would (PR #550 review).
         # Same error normalization as the create/update preflights in manage_state.
