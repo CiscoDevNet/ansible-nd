@@ -24,9 +24,8 @@ options:
     description:
       - Desired state of Network resources.
       - V(query) is accepted as a compatibility alias for V(gathered).
-      - V(staged) is an internal/private workflow state. It follows
-        V(overridden) attachment handling, suppresses deployment, and does not
-        remove omitted Network definitions.
+      - V(staged) creates or updates Networks and reconciles attachments without
+        deploying changes; omitted Networks are detached but not removed.
     type: str
     choices: [ merged, replaced, overridden, deleted, gathered, query, staged ]
     default: merged
@@ -475,6 +474,19 @@ EXAMPLES = r"""
     config:
       - network_name: Network_BLUE
         is_l2only: true
+
+- name: Stage Network attachment changes
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: staged
+    config:
+      - network_name: Network_BLUE
+        is_l2only: true
+        network_id: 50010
+        vlan_id: 2001
+        attach:
+          - ip_address: 192.0.2.10
+            interfaces: []
 """
 RETURN = r"""
 changed:

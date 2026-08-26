@@ -41,9 +41,8 @@ options:
       - V(deleted) removes specified VRFs (or all if config is empty).
       - V(gathered) returns current VRF state (the only state allowed on child
         fabrics when targeted directly).
-      - V(staged) is an internal/private workflow state. It follows
-        V(overridden) attachment handling, suppresses deployment, and does not
-        remove omitted VRF definitions.
+      - V(staged) creates or updates VRFs and reconciles attachments without
+        deploying changes; omitted VRFs are detached but not removed.
     type: str
     choices: [ merged, replaced, overridden, deleted, gathered, staged ]
     default: merged
@@ -630,6 +629,17 @@ EXAMPLES = r"""
         vrf_description: "Updated Blue VRF"
         max_bgp_paths: 4
         max_ibgp_paths: 4
+
+# ── Stage VRF changes without deployment ───────────────────────────────────
+- name: Stage VRF attachment changes
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: fab1
+    state: staged
+    config:
+      - vrf_name: VRF_BLUE
+        vrf_id: 50010
+        attach:
+          - ip_address: 192.0.2.10
 """
 
 RETURN = r"""

@@ -12,9 +12,9 @@ This wrapper owns the VRF-specific workflow around that CRUD phase:
   - post-attach for merged/replaced/overridden
   - deploy of pending attachment changes
 
-The private ``staged`` state follows overridden attachment handling but maps
-the CRUD phase to replaced and suppresses deploy so omitted VRFs are detached
-without deploy or delete calls.
+The ``staged`` state follows overridden attachment handling but maps the CRUD
+phase to replaced and suppresses deploy so omitted VRFs are detached without
+deploy or delete calls.
 
 It deliberately composes the generic NDStateMachine through the workflow
 coordinator helpers instead of changing the shared state-machine contract.
@@ -157,8 +157,8 @@ class VrfStateMachine:
 
         The pre-detach phase must only query attachments for VRFs that already
         exist. First-create ``state=replaced`` tasks can then create the VRF
-        before the post-attach phase runs. The private ``staged`` state uses
-        overridden detach scope but runs CRUD as replaced to suppress deletes.
+        before the post-attach phase runs. The ``staged`` state uses overridden
+        detach scope but runs CRUD as replaced to suppress deletes.
         """
         state = module_args.get("state", "merged")
         config = module_args.get("config") or []
@@ -305,7 +305,7 @@ class VrfStateMachine:
 
     @staticmethod
     def _prepare_crud_state(sm: Any, requested_state: str) -> None:
-        """Switch private staged workflows to replacement CRUD after query."""
+        """Switch staged workflows to replacement CRUD after query."""
         if requested_state != "staged":
             return
         sm.state = "replaced"
