@@ -37,16 +37,12 @@
       output_level: '{{ api_key_output_level | default("debug") }}'
 
 - name: Run nd_interface_ethernet_access state tests with optional logging env
-  # The `timeout` module arg propagates via sender_nd.set_params() into the
-  # httpapi plugin, which calls connection.set_option("persistent_command_timeout", ...).
-  # The module arg's default (30s) overrides any inventory-level ansible_command_timeout
-  # on every task, and a multi-switch bulk interfaceActions/deploy (e.g. the overridden
-  # phase) can exceed 30s on slow testbeds (e.g. 9000v). 300s matches the port-channel
-  # targets, scoped to this test target via module_defaults so we don't modify shared
-  # argspec defaults.
-  module_defaults:
-    cisco.nd.nd_interface_ethernet_access:
-      timeout: 300
+  # 300s gives ND enough time to complete a multi-switch bulk interfaceActions/deploy
+  # (e.g. the overridden phase) on slow testbeds (e.g. 9000v) where the default 30s is
+  # too short. The native Ansible connection variable is scoped to this block, matching
+  # the port-channel targets.
+  vars:
+    ansible_command_timeout: 300
   block:
     - name: Pre-test cleanup
       ansible.builtin.include_tasks: setup.yaml
