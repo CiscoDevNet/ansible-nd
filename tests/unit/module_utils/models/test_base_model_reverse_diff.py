@@ -869,3 +869,27 @@ def test_base_model_reverse_diff_00610() -> None:
     assert "adminState" not in policy  # reverse_diff_defaults: adminState True stripped
     assert "routeMapTag" not in policy  # reverse_diff_defaults: "12345" (dumped form) stripped
     assert policy["description"] == "kept"
+
+
+@pytest.mark.parametrize("exclude_unset", [False, True])
+def test_base_model_reverse_diff_00620(exclude_unset: bool) -> None:
+    """
+    # Summary
+
+    `get_diff` rejects a model of a different type with `TypeError`, mirroring `merge` (PR #422 review). The reverse
+    pass calls `other._apply_reverse_diff_scope`, which assumes `other` carries this model's `reverse_diff_*`
+    declarations, so a cross-type comparison is a programming error rather than a "changed" classification.
+
+    ## Test
+
+    - A loopback policy model compared against an SVI policy model, on both the merged and replaced/overridden paths.
+    - `TypeError` is raised naming both types; a same-type comparison still returns a bool.
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    """
+    existing = LoopbackPolicyModel(description="kept")
+    with pytest.raises(TypeError, match=r"Cannot diff SviPolicyModel against LoopbackPolicyModel"):
+        existing.get_diff(SviPolicyModel(), exclude_unset=exclude_unset)
+    assert existing.get_diff(LoopbackPolicyModel(description="kept"), exclude_unset=exclude_unset) is True

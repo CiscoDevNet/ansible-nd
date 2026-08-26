@@ -332,7 +332,16 @@ class NDBaseModel(BaseModel, ABC):
                 difference. Empty existing values (``""``, ``[]``, ``{}``) are
                 normalized to absent so ND-echoed empty markers keep runs
                 idempotent.
+
+        Raises:
+            TypeError: If ``other`` is not an instance of this model's type
+                (same contract as ``merge``). The reverse pass applies
+                ``other``'s own ``reverse_diff_*`` declarations, so a
+                cross-type comparison is a programming error, not a diff.
         """
+        if not isinstance(other, type(self)):
+            raise TypeError(f"Cannot diff {type(other).__name__} against {type(self).__name__}. Both must be the same type.")
+
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
         is_subset = issubset(other_data, self_data)
