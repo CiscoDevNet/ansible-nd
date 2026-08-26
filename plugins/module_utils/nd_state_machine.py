@@ -5,16 +5,40 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
+import time
 from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import (
+    NDStatePlan,
+    NDStatePlanner,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_reconciliation import (
+    DeferredMutation,
+    MutationCheckpoint,
+    MutationEffect,
+    MutationJournal,
+    MutationOperation,
+    MutationOutcome,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
+    NDBaseOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    FinalizationContext,
+    ResponseType,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
@@ -25,7 +49,11 @@ class NDStateMachine:
     Generic State Machine for Nexus Dashboard (Bulk Support).
     """
 
-    def __init__(self, module: AnsibleModule, model_orchestrator: type[NDBaseOrchestrator] | NDBaseOrchestrator):
+    def __init__(
+        self,
+        module: AnsibleModule,
+        model_orchestrator: type[NDBaseOrchestrator] | NDBaseOrchestrator,
+    ):
         """
         Initialize the ND State Machine.
         """
@@ -48,13 +76,19 @@ class NDStateMachine:
 
         # Configuration
         # Accept either an orchestrator instance or a class.
-        if isinstance(model_orchestrator, type) and issubclass(model_orchestrator, NDBaseOrchestrator):
-            self.model_orchestrator = model_orchestrator(rest_send=self.rest_send, results=self.results)
+        if isinstance(model_orchestrator, type) and issubclass(
+            model_orchestrator, NDBaseOrchestrator
+        ):
+            self.model_orchestrator = model_orchestrator(
+                rest_send=self.rest_send, results=self.results
+            )
         elif isinstance(model_orchestrator, NDBaseOrchestrator):
             self.model_orchestrator = model_orchestrator
             self.model_orchestrator.results = self.results
         else:
-            raise NDStateMachineError(f"model_orchestrator must be an NDBaseOrchestrator class or instance. Got: {type(model_orchestrator)}")
+            raise NDStateMachineError(
+                f"model_orchestrator must be an NDBaseOrchestrator class or instance. Got: {type(model_orchestrator)}"
+            )
 
         self.model_class = self.model_orchestrator.model_class
         self.state = self.module.params["state"]
@@ -64,14 +98,25 @@ class NDStateMachine:
         self.ignore_errors = self.module.params.get("ignore_errors", False)
         self.supports_bulk_create = self.model_orchestrator.supports_bulk_create
         self.supports_bulk_delete = self.model_orchestrator.supports_bulk_delete
+        self.journal = MutationJournal()
+        self.plan: NDStatePlan | None = None
+        self.observed: NDConfigCollection | None = None
+        self._finalized = False
+        self._verify_settings = self._verification_settings()
 
         # Initialize collections
         try:
             response_data = self.model_orchestrator.query_all()
             # State of configuration objects in ND before change execution
-            self.before = NDConfigCollection.from_api_response(response_data=response_data, model_class=self.model_class)
-            # State of current configuration objects in ND during change execution
-            self.existing = self.before.copy()
+            self.before = NDConfigCollection.from_api_response(
+                response_data=response_data, model_class=self.model_class
+            )
+            # Planned and confirmed state must never alias each other.  The
+            # legacy ``existing`` name remains a compatibility alias for the
+            # evidence-backed confirmed collection.
+            self.planned = self.before.copy()
+            self.confirmed = self.before.copy()
+            self.existing = self.confirmed
             # Ongoing collection of configuration objects that were changed
             self.sent = NDConfigCollection(model_class=self.model_class)
             # Collection of configuration objects given by user.
@@ -79,181 +124,411 @@ class NDStateMachine:
             # state-aware validation (e.g. require certain fields for write states while accepting
             # identifier-only items for ``deleted``). Models that do not read the context ignore it.
             self.proposed = NDConfigCollection.from_ansible_config(
-                data=self.module.params.get("config", []), model_class=self.model_class, context={"state": self.state}
+                data=self.module.params.get("config", []),
+                model_class=self.model_class,
+                context={"state": self.state},
             )
 
-            self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
+            self.output.assign(before=self.before, proposed=self.proposed)
+            self.output.set_after_state(self.confirmed, status="confirmed")
 
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}") from e
 
     # State Management (core function)
     def manage_state(self) -> None:
-        """
-        Manage state according to desired configuration.
-        """
-        if self.state in ["merged", "replaced", "overridden"]:
+        """Plan first, then apply only controller effects supported by evidence."""
+        if self.state not in {"merged", "replaced", "overridden", "deleted"}:
+            raise NDStateMachineError(f"Invalid state: {self.state}")
+
+        if self.state in {"merged", "replaced", "overridden"}:
             proposed_items = list(self.proposed)
-
-            # Policy-required-on-create guard (issue #350) runs FIRST: it is local-only (self.existing is
-            # already in memory), so it fails before the API-backed capability preflight below and before
-            # _manage_create_update_state mutates self.existing, which NDOutput aliases as `after`. Create
-            # subset = proposed items not present in the existing inventory -- the same key-membership
-            # criterion get_diff_config uses to classify "new" (PR #362 review).
-            items_to_create = [item for item in proposed_items if self.existing.get(item.get_identifier_value()) is None]
-
-            # Normalize preflight failures to NDStateMachineError (PR #362 review, gmicol). Both preflight
-            # hooks raise a bare RuntimeError (base_interface.preflight_create / the capability preflight),
-            # but nd_interface_svi and nd_interface_subinterface_managed/_unmanaged catch only
-            # NDStateMachineError at their entrypoint. Without this wrap a policy-less (or capability) preflight
-            # failure in those modules escapes as an unhandled RuntimeError, bypassing fail_json and losing the
-            # structured before/after/changed output the guard exists to provide. This wrap deliberately does
-            # NOT route through _execute_operation: both preflights must run in check mode too, and
-            # _execute_operation skips execution during a dry-run.
+            items_to_create = [
+                item
+                for item in proposed_items
+                if self.before.get(item.get_identifier_value()) is None
+            ]
             try:
                 self.model_orchestrator.preflight_create(items_to_create)
-
-                # Capability preflight runs here -- before _manage_create_update_state, whose mutations are
-                # skipped in check mode -- so dry-runs surface incapable switches (PR #275 / issue #273).
                 self.model_orchestrator.preflight(proposed_items)
             except NDStateMachineError:
                 raise
             except Exception as e:
                 raise NDStateMachineError(f"Preflight failed: {e}") from e
 
-            self._manage_create_update_state()
+        try:
+            self.plan = NDStatePlanner.plan(
+                state=self.state,
+                before=self.before,
+                proposed=self.proposed,
+                ignore_errors=self.ignore_errors,
+            )
+        except Exception as e:
+            raise NDStateMachineError(f"Planning failed: {e}") from e
 
-            if self.state == "overridden":
-                self._manage_override_deletions()
+        self.planned = self.plan.after
+        if self.check_mode:
+            self._preview_plan()
+            return
 
-        elif self.state == "deleted":
-            # Capability preflight intentionally NOT run for deletes: removing configuration does not
-            # depend on a switch's capability to host the interface type (PR #275 scope decision).
-            self._manage_delete_state()
+        self._execute_plan()
+        self._update_output_from_journal()
 
+    def _preview_plan(self) -> None:
+        """Expose the prospective plan without executing controller writes."""
+        if self.plan is None:
+            raise NDStateMachineError("State plan is not available")
+        for item in (*self.plan.updates, *self.plan.creates, *self.plan.deletes):
+            self._add_sent(item)
+        self.output.set_changed(self.plan.changed)
+        self.output.set_after_state(self.planned, status="planned")
+
+    def _effect(
+        self, operation: MutationOperation, item: NDBaseModel
+    ) -> MutationEffect:
+        """Build a resource transition from one planned operation model."""
+        identifier = item.get_identifier_value()
+        before = self.before.get(identifier)
+        after = None if operation is MutationOperation.DELETE else item
+        return MutationEffect(
+            operation=operation, identifier=identifier, before=before, after=after
+        )
+
+    def _execute_plan(self) -> None:
+        """Execute the plan in the state machine's established operation order."""
+        if self.plan is None:
+            raise NDStateMachineError("State plan is not available")
+
+        execution_steps: list[
+            tuple[
+                MutationCheckpoint,
+                Callable[..., ResponseType | DeferredMutation],
+                tuple[Any, ...],
+                str,
+            ]
+        ] = []
+
+        for item in self.plan.updates:
+            checkpoint = self.journal.open(
+                phase="update", effects=(self._effect(MutationOperation.UPDATE, item),)
+            )
+            execution_steps.append(
+                (
+                    checkpoint,
+                    self.model_orchestrator.update,
+                    (item,),
+                    f"Failed to update {item.get_identifier_value()}",
+                )
+            )
+
+        creates = list(self.plan.creates)
+        if creates and self.supports_bulk_create:
+            checkpoint = self.journal.open(
+                phase="create",
+                effects=(
+                    self._effect(MutationOperation.CREATE, item) for item in creates
+                ),
+            )
+            execution_steps.append(
+                (
+                    checkpoint,
+                    self.model_orchestrator.create_bulk,
+                    (creates,),
+                    "Failed to create in bulk",
+                )
+            )
         else:
-            raise NDStateMachineError(f"Invalid state: {self.state}")
+            for item in creates:
+                checkpoint = self.journal.open(
+                    phase="create",
+                    effects=(self._effect(MutationOperation.CREATE, item),),
+                )
+                execution_steps.append(
+                    (
+                        checkpoint,
+                        self.model_orchestrator.create,
+                        (item,),
+                        f"Failed to create {item.get_identifier_value()}",
+                    )
+                )
+
+        deletes = list(self.plan.deletes)
+        if deletes and self.supports_bulk_delete:
+            checkpoint = self.journal.open(
+                phase="delete",
+                effects=(
+                    self._effect(MutationOperation.DELETE, item) for item in deletes
+                ),
+            )
+            execution_steps.append(
+                (
+                    checkpoint,
+                    self.model_orchestrator.delete_bulk,
+                    (deletes,),
+                    "Failed to delete in bulk",
+                )
+            )
+        else:
+            for item in deletes:
+                checkpoint = self.journal.open(
+                    phase="delete",
+                    effects=(self._effect(MutationOperation.DELETE, item),),
+                )
+                execution_steps.append(
+                    (
+                        checkpoint,
+                        self.model_orchestrator.delete,
+                        (item,),
+                        f"Failed to delete {item.get_identifier_value()}",
+                    )
+                )
+
+        for checkpoint, operation, args, error_msg_prefix in execution_steps:
+            self._execute_operation(
+                checkpoint,
+                operation,
+                *args,
+                error_msg_prefix=error_msg_prefix,
+            )
+
+    @staticmethod
+    def _is_write_verb(verb: str) -> bool:
+        return verb.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+
+    @staticmethod
+    def _proves_no_change(call) -> bool:
+        """Require explicit endpoint certainty; aggregate changed=False is insufficient."""
+        return call.failed and call.result.get("outcome_certainty") == "no_change"
+
+    def _classify_operation(
+        self,
+        *,
+        result_sequence: int,
+        attempt_sequence: int,
+        raised: bool,
+        returned: ResponseType | DeferredMutation,
+    ) -> tuple[MutationOutcome, bool, bool, tuple[int, ...]]:
+        """Classify one logical operation from request-attempt and response evidence."""
+        calls = self.results.calls_since(result_sequence)
+        attempts = self.results.attempts_since(attempt_sequence)
+        write_calls = tuple(call for call in calls if self._is_write_verb(call.verb))
+        write_attempts = tuple(
+            attempt for attempt in attempts if self._is_write_verb(attempt.verb)
+        )
+        incomplete_attempt = any(not attempt.completed for attempt in write_attempts)
+        failed_calls = tuple(
+            call
+            for call in write_calls
+            if call.failed or call.result.get("success") is False
+        )
+        successful_calls = tuple(
+            call
+            for call in write_calls
+            if not call.failed and call.result.get("success") is True
+        )
+        changed = bool(successful_calls) or any(
+            call.changed or call.result.get("changed") is True for call in write_calls
+        )
+        call_sequences = tuple(call.sequence_number for call in calls)
+
+        if isinstance(returned, DeferredMutation) and not raised:
+            return MutationOutcome.QUEUED, False, False, call_sequences
+
+        if incomplete_attempt:
+            return MutationOutcome.UNKNOWN, changed, not changed, call_sequences
+
+        if failed_calls:
+            no_change_is_proven = not successful_calls and all(
+                self._proves_no_change(call) for call in failed_calls
+            )
+            if no_change_is_proven:
+                return MutationOutcome.FAILED, False, False, call_sequences
+            return MutationOutcome.UNKNOWN, changed, not changed, call_sequences
+
+        if raised:
+            if write_calls or write_attempts:
+                return MutationOutcome.UNKNOWN, changed, not changed, call_sequences
+            return MutationOutcome.FAILED, False, False, call_sequences
+
+        return MutationOutcome.SUCCEEDED, True, False, call_sequences
 
     def _execute_operation(
         self,
-        operation: Callable[..., ResponseType],
+        checkpoint: MutationCheckpoint,
+        operation: Callable[..., ResponseType | DeferredMutation],
         *args: Any,
         error_msg_prefix: str = "Operation failed",
         **kwargs: Any,
-    ) -> ResponseType | None:
-        """Execute an API operation with standardized error handling."""
+    ) -> MutationOutcome:
+        """Execute, classify, journal, and reconcile one logical mutation."""
+        result_sequence = self.results.task_sequence_number
+        attempt_sequence = self.results.api_attempt_sequence_number
+        returned: ResponseType | DeferredMutation = None
+        caught: Exception | None = None
+
         try:
-            if not self.check_mode:
-                return operation(*args, **kwargs)
-            return None
-        except Exception as e:
-            error_msg = f"{error_msg_prefix}: {e}"
-            if not self.ignore_errors:
-                raise NDStateMachineError(error_msg) from e
-        return None
+            returned = operation(*args, **kwargs)
+        except Exception as e:  # outcome must be journaled before propagation
+            caught = e
 
-    def _manage_create_update_state(self) -> None:
-        """
-        Handle merged/replaced/overridden states.
-        """
-        items_to_create: list[NDBaseModel] = []
-        items_to_update: list[NDBaseModel] = []
+        outcome, changed, may_have_changed, call_sequences = self._classify_operation(
+            result_sequence=result_sequence,
+            attempt_sequence=attempt_sequence,
+            raised=caught is not None,
+            returned=returned,
+        )
+        error_msg = f"{error_msg_prefix}: {caught}" if caught is not None else None
+        if error_msg is None and outcome in {
+            MutationOutcome.FAILED,
+            MutationOutcome.UNKNOWN,
+        }:
+            error_msg = f"{error_msg_prefix}: controller outcome is {outcome.value}"
+        checkpoint.resolve(
+            outcome,
+            changed=changed,
+            may_have_changed=may_have_changed,
+            error=error_msg,
+            api_call_sequences=call_sequences,
+        )
 
-        for proposed_item in self.proposed:
-            identifier = None
-            try:
-                # Extract identifier
-                identifier = proposed_item.get_identifier_value()
-                # Determine diff status
-                # For merged state, only compare fields explicitly provided by
-                # the user so that Pydantic default values do not trigger false
-                # diffs or overwrite existing configuration.
-                exclude_unset = self.state == "merged"
-                diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset)
+        if outcome is MutationOutcome.SUCCEEDED:
+            self._apply_confirmed_effects(checkpoint.effects)
+        self._update_output_from_journal()
 
-                # No changes needed
-                if diff_status == "no_diff":
-                    continue
+        if caught is not None and not self.ignore_errors:
+            raise NDStateMachineError(error_msg or error_msg_prefix) from caught
+        if (
+            outcome in {MutationOutcome.FAILED, MutationOutcome.UNKNOWN}
+            and not self.ignore_errors
+        ):
+            raise NDStateMachineError(error_msg or error_msg_prefix)
+        return outcome
 
-                # Prepare final config based on state
-                if self.state == "merged":
-                    # Merge with existing
-                    final_item = self.existing.merge(proposed_item)
-                else:
-                    # Replace or creates
-                    if diff_status == "changed":
-                        self.existing.replace(proposed_item)
-                    else:
-                        self.existing.add(proposed_item)
-                    final_item = proposed_item
+    def _apply_confirmed_effects(self, effects: tuple[MutationEffect, ...]) -> None:
+        """Apply proven transitions immediately and populate sent from them only."""
+        for effect in effects:
+            if effect.operation is MutationOperation.DELETE:
+                self.confirmed.delete(effect.identifier)
+                if effect.before is not None:
+                    self._add_sent(effect.before)
+                continue
 
-                # Categorize by operation type
-                if diff_status == "changed":
-                    items_to_update.append(final_item)
-                elif diff_status == "new":
-                    items_to_create.append(final_item)
-
-            except Exception as e:
-                if identifier:
-                    error_msg = f"Failed to process {identifier}: {e}"
-                else:
-                    error_msg = f"Failed to process: {e}"
-                if not self.ignore_errors:
-                    raise NDStateMachineError(error_msg) from e
-
-        # The policy-required-on-create guard (issue #350) runs in manage_state, before the capability
-        # preflight and before this method mutates self.existing (PR #362 review).
-
-        # Execute updates (always individual)
-        for item in items_to_update:
-            self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}")
-
-        # Execute creates (bulk or individual)
-        if items_to_create:
-            if self.supports_bulk_create:
-                self._execute_operation(self.model_orchestrator.create_bulk, items_to_create, error_msg_prefix="Failed to create in bulk")
+            if effect.after is None:
+                raise NDStateMachineError(
+                    f"Missing final model for {effect.operation.value} {effect.identifier}"
+                )
+            if self.confirmed.get(effect.identifier) is None:
+                self.confirmed.add(effect.after)
             else:
-                for item in items_to_create:
-                    self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}")
+                self.confirmed.replace(effect.after)
+            self._add_sent(effect.after)
 
-        # Mark as sent only after successful API operations
-        successfully_sent = items_to_update + items_to_create
-        if successfully_sent:
-            self.sent.add_many(successfully_sent)
+    def _add_sent(self, item: NDBaseModel) -> None:
+        """Upsert one confirmed or check-mode-preview item into sent."""
+        identifier = item.get_identifier_value()
+        if self.sent.get(identifier) is None:
+            self.sent.add(item)
+        else:
+            self.sent.replace(item)
 
-        # Log operation
-        self.output.assign(after=self.existing)
+    def _update_output_from_journal(self) -> None:
+        """Keep output truthful after every checkpoint, including failures."""
+        self.output.set_changed(self.journal.changed)
+        if self.journal.has_unknown:
+            self.output.mark_after_unknown(
+                affected_identifiers=list(self.journal.unknown_identifiers),
+                may_have_changed=self.journal.may_have_changed,
+            )
+            return
+        self.output.set_after_state(self.confirmed, status="confirmed")
 
-    def _manage_override_deletions(self) -> None:
-        """
-        Delete items not in proposed config (for overridden state).
-        """
-        diff_identifiers = self.before.get_diff_identifiers(self.proposed)
-        items_to_delete = [existing_item for identifier in diff_identifiers if (existing_item := self.existing.get(identifier)) is not None]
-        self._delete_items(items_to_delete)
+    @staticmethod
+    def _positive_int_setting(settings: dict[str, Any], name: str, default: int) -> int:
+        value = settings.get(name, default)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise NDStateMachineError(f"verify.{name} must be a positive integer")
+        return value
 
-    def _manage_delete_state(self) -> None:
-        """Handle deleted state."""
-        items_to_delete = [
-            existing_item for proposed_item in self.proposed if (existing_item := self.existing.get(proposed_item.get_identifier_value())) is not None
-        ]
-        self._delete_items(items_to_delete)
+    def _verification_settings(self) -> dict[str, int] | None:
+        """Validate the opt-in unknown-state readback settings before writes."""
+        raw_verify = self.module.params.get("verify")
+        if raw_verify in (None, False):
+            return None
+        if raw_verify is True:
+            raw_verify = {}
+        if not isinstance(raw_verify, dict):
+            raise NDStateMachineError("verify must be a boolean or dictionary")
+        enabled = raw_verify.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise NDStateMachineError("verify.enabled must be a boolean")
+        if not enabled:
+            return None
+        delay = raw_verify.get("delay", 1)
+        if isinstance(delay, bool) or not isinstance(delay, int) or delay < 0:
+            raise NDStateMachineError("verify.delay must be a non-negative integer")
+        return {
+            "retries": self._positive_int_setting(raw_verify, "retries", 5),
+            "timeout": self._positive_int_setting(raw_verify, "timeout", 10),
+            "delay": delay,
+        }
 
-    def _delete_items(self, items: list[NDBaseModel]) -> None:
-        """Delete a list of items individually or in bulk."""
-        if not items:
+    def finalize(self, *, primary_error: Exception | None = None) -> None:
+        """Resolve output once at the outer workflow boundary."""
+        if self._finalized:
+            return
+        if self.check_mode:
+            self.output.set_changed(bool(self.plan and self.plan.changed))
+            self.output.set_after_state(self.planned, status="planned")
+            self._finalized = True
+            return
+        if not self.journal.has_unknown:
+            self._update_output_from_journal()
+            self._finalized = True
+            return
+        if self._verify_settings is None:
+            self._update_output_from_journal()
+            self._finalized = True
             return
 
-        # Execute deletes (bulk or individual)
-        if self.supports_bulk_delete:
-            self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
-        else:
-            for item in items:
-                self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}")
+        context = FinalizationContext(
+            state=self.state,
+            affected_identifiers=self.journal.unknown_identifiers,
+            confirmed_identifiers=tuple(self.confirmed.keys()),
+        )
+        settings = self._verify_settings
+        rest_send = self.model_orchestrator.rest_send
+        original_timeout = rest_send.timeout
+        errors: list[str] = []
+        try:
+            rest_send.timeout = settings["timeout"]
+            for attempt in range(1, settings["retries"] + 1):
+                try:
+                    response_data = self.model_orchestrator.query_final_state(context)
+                    self.observed = NDConfigCollection.from_api_response(
+                        response_data=response_data, model_class=self.model_class
+                    )
+                    self.existing = self.confirmed
+                    self.output.set_changed(self.journal.changed)
+                    self.output.set_after_state(
+                        self.observed, status="observed", verification_performed=True
+                    )
+                    self._finalized = True
+                    return
+                except Exception as e:
+                    errors.append(str(e))
+                    if attempt < settings["retries"] and settings["delay"]:
+                        time.sleep(settings["delay"])
+        finally:
+            rest_send.timeout = original_timeout
 
-        # Batch remove from collection (single index rebuild)
-        keys_to_delete = [item.get_identifier_value() for item in items]
-        self.existing.delete_many(keys_to_delete)
-
-        # Log deletion
-        self.output.assign(after=self.existing)
+        verification_error = f"Final-state verification failed after {settings['retries']} attempts: {'; '.join(errors)}"
+        self.output.set_changed(self.journal.changed)
+        self.output.mark_after_unknown(
+            affected_identifiers=list(self.journal.unknown_identifiers),
+            may_have_changed=self.journal.may_have_changed,
+            verification_performed=True,
+            verification_error=verification_error,
+        )
+        self._finalized = True
+        if primary_error is None:
+            raise NDStateMachineError(verification_error)

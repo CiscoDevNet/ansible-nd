@@ -147,6 +147,10 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             self._switch_interfaces_cache[switch_id] = {iface["interfaceName"].lower(): iface for iface in interfaces if iface.get("interfaceName")}
         return self._switch_interfaces_cache[switch_id]
 
+    def invalidate_query_cache(self) -> None:
+        """Discard the initialization inventory before forced reconciliation."""
+        self._switch_interfaces_cache.clear()
+
     def _switches_to_query(self) -> dict[str, str]:
         """
         # Summary

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -27,6 +28,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+
+
+@dataclass(frozen=True)
+class ApiCallAttempt:
+    """Request attempt recorded before controller delivery is known."""
+
+    sequence_number: int
+    path: str
+    verb: str
+    completed: bool = False
 
 
 class ApiCallResult(BaseModel):
@@ -386,6 +397,12 @@ class Results:
         # Task sequence tracking
         self.task_sequence_number: int = 0
 
+        # Request attempts are recorded before RestSend.commit().  A request can
+        # therefore be classified as delivery-unknown even when commit raises
+        # before a normal ApiCallResult can be registered.
+        self.api_attempt_sequence_number: int = 0
+        self._api_attempts: list[ApiCallAttempt] = []
+
         # Registered tasks (immutable after registration)
         self._tasks: list[ApiCallResult] = []
 
@@ -411,6 +428,39 @@ class Results:
         self.task_sequence_number += 1
         msg = f"self.task_sequence_number: {self.task_sequence_number}"
         self.log.debug(msg)
+
+    def begin_api_call(self, path: str, verb: HttpVerbEnum) -> int:
+        """Record an API attempt before the request is sent and return its id."""
+        if not isinstance(path, str):
+            raise TypeError(f"path must be a string. Got {type(path).__name__}.")
+        if not isinstance(verb, HttpVerbEnum):
+            raise TypeError(f"verb must be an HttpVerbEnum. Got {type(verb).__name__}.")
+
+        self.api_attempt_sequence_number += 1
+        self._api_attempts.append(
+            ApiCallAttempt(
+                sequence_number=self.api_attempt_sequence_number,
+                path=path,
+                verb=verb.value,
+            )
+        )
+        return self.api_attempt_sequence_number
+
+    def complete_api_call(self, sequence_number: int) -> None:
+        """Mark an attempt complete after its ApiCallResult is registered."""
+        for index, attempt in enumerate(self._api_attempts):
+            if attempt.sequence_number == sequence_number:
+                self._api_attempts[index] = replace(attempt, completed=True)
+                return
+        raise ValueError(f"Unknown API attempt sequence number: {sequence_number}")
+
+    def attempts_since(self, sequence_number: int) -> tuple[ApiCallAttempt, ...]:
+        """Return attempts recorded after ``sequence_number``."""
+        return tuple(attempt for attempt in self._api_attempts if attempt.sequence_number > sequence_number)
+
+    def calls_since(self, sequence_number: int) -> tuple[ApiCallResult, ...]:
+        """Return defensive copies of completed calls after ``sequence_number``."""
+        return tuple(copy.deepcopy(task) for task in self._tasks if task.sequence_number > sequence_number)
 
     def _determine_if_changed(self) -> bool:
         """
@@ -552,6 +602,9 @@ class Results:
 
         # Register the task
         self._tasks.append(task_data)
+
+        # A later API call must invalidate any previously-built aggregation.
+        self._final_result = None
 
         # Reset current task for next task
         self._current = PendingApiCall()
