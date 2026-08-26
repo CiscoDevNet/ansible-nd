@@ -16,6 +16,8 @@ DEFAULT_VERIFY_TIMEOUT = 10
 DEFAULT_VERIFY_RETRIES = 5
 DEFAULT_CONFIG_ACTION_TYPE = "switch"
 CONFIG_ACTION_TYPE_CHOICES = ("resource", "switch", "global")
+# Action types whose deploy is scoped per-switch via .../switchActions/deploy.
+SWITCH_DEPLOY_ACTION_TYPES = ("switch", "resource")
 
 
 def _collection_to_list_flex(collection: Any) -> list[dict[str, Any]]:

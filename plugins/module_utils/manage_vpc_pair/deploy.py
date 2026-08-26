@@ -11,6 +11,7 @@ from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
     _raise_vpc_error,
     get_config_actions,
+    SWITCH_DEPLOY_ACTION_TYPES,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.query import (
     _is_switch_config_in_sync,
@@ -136,27 +137,16 @@ def _get_switches_needing_deploy(nd_v2: Any, fabric_name: str) -> list[str]:
     return sorted(set(switch_ids))
 
 
-def _pair_identifiers(config_entry: dict[str, Any]) -> list[str]:
-    """
-    Return the peer serial numbers for one managed vPC pair config entry.
-
-    Deploy runs after custom_vpc_query_all -> normalize_vpc_playbook_switch_identifiers
-    has rewritten module.params["config"], so entries carry runtime keys
-    (switch_id/peer_switch_id) with any management IPs already resolved to serials.
-    """
-    peer1 = config_entry.get("switch_id")
-    peer2 = config_entry.get("peer_switch_id")
-    return [identifier for identifier in (peer1, peer2) if identifier]
-
-
-def _get_managed_pair_switches_needing_deploy(nd_v2: Any, fabric_name: str, config_entries: Any) -> list[str]:
+def _get_managed_pair_switches_needing_deploy(nd_v2: Any, fabric_name: str, config_entries: list[dict[str, Any]]) -> list[str]:
     """
     Return serials of the managed vPC pairs' peer switches that need deployment.
 
     Scopes the switch-level deploy to only the switches that form the vPC pairs
     named in the playbook config (config_actions.type == "resource"), rather than
     every out-of-sync switch in the fabric. Nexus Dashboard has no vPC-pair-level
-    deploy primitive, so a vPC pair resource maps to its two peer switches.
+    deploy primitive, so a vPC pair resource maps to its two peer switches
+    (switch_id/peer_switch_id), which the model requires as distinct, non-empty
+    serials, so both keys are always present at deploy time.
 
     Peer identifiers are already serial numbers at deploy time (management IPs are
     resolved upstream in custom_vpc_query_all -> normalize_vpc_playbook_switch_identifiers),
@@ -181,16 +171,22 @@ def _get_managed_pair_switches_needing_deploy(nd_v2: Any, fabric_name: str, conf
     for config_entry in config_entries or []:
         if not isinstance(config_entry, dict):
             continue
-        identifiers = _pair_identifiers(config_entry)
-        unresolved = [identifier for identifier in identifiers if identifier not in switches]
-        if unresolved:
+        unresolved_serials: list[str] = []
+        for identifier in (config_entry["switch_id"], config_entry["peer_switch_id"]):
+            if identifier in switches:
+                managed_serials.add(identifier)
+            else:
+                unresolved_serials.append(identifier)
+        if unresolved_serials:
             nd_v2.module.warn(
-                f"config_actions.type=resource: vPC pair peer(s) {unresolved} not found in fabric "
+                f"config_actions.type=resource: vPC pair peer(s) {unresolved_serials} not found in fabric "
                 f"'{fabric_name}' inventory; skipping switch-scoped deploy for those switches."
             )
-        managed_serials.update(identifier for identifier in identifiers if identifier in switches)
-    needing = [serial_number for serial_number in managed_serials if _is_switch_config_in_sync(switches.get(serial_number)) is not True]
-    return sorted(needing)
+    return sorted(
+        serial_number
+        for serial_number in managed_serials
+        if _is_switch_config_in_sync(switches[serial_number]) is not True
+    )
 
 
 def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -258,7 +254,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
             save_path = FabricUtils.build_config_save_path(fabric_name)
             planned_actions.append(f"POST {save_path} payload={action_payload}")
         if deploy_enabled:
-            if action_type in ("switch", "resource"):
+            if action_type in SWITCH_DEPLOY_ACTION_TYPES:
                 deploy_path = FabricUtils.build_switch_deploy_path(fabric_name)
                 planned_actions.append(f'POST {deploy_path} payload={{"switchIds": [switches needing deployment]}}')
             else:
@@ -352,13 +348,13 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
     #   - "resource": deploy only the managed pair's out-of-sync peer switches,
     #     via .../switchActions/deploy.
     if deploy_enabled:
-        if action_type in ("switch", "resource"):
+        if action_type in SWITCH_DEPLOY_ACTION_TYPES:
             deploy_path = fabric_utils.switch_deploy_path
         else:
             deploy_path = fabric_utils.config_deploy_path(force_show_run=True)
 
         try:
-            if action_type in ("switch", "resource"):
+            if action_type in SWITCH_DEPLOY_ACTION_TYPES:
                 if action_type == "resource":
                     switch_ids = _get_managed_pair_switches_needing_deploy(nd_v2, fabric_name, nrm.module.params.get("config"))
                 else:
@@ -401,7 +397,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 )
 
         except NDModuleError as error:
-            error_payload = {"switchIds": []} if action_type in ("switch", "resource") else action_payload
+            error_payload = {"switchIds": []} if action_type in SWITCH_DEPLOY_ACTION_TYPES else action_payload
             register_action_api_call(
                 results=results,
                 request_path=deploy_path,
