@@ -7,6 +7,10 @@ on:
         required: false
         default: develop
         type: string
+      target_version:
+        description: Optional manual override for the release version (e.g. 2.0.0). If omitted, the version is calculated automatically from the commit types.
+        required: false
+        type: string
 jobs:
   generate-changelog:
     name: Run automation script
@@ -20,7 +24,7 @@ jobs:
         with:
           repository: ciscoecosystem/release_script
           path: ./release_script
-          ref: c3405128f9ff87cf5231cf2aac8e03424921b1a6
+          ref: edd5e186aff0e854dbe128209624c11e5db15bb2
 
       - name: Check out collection code
         uses: actions/checkout@v6
@@ -41,3 +45,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMPARE_REF: ${{ inputs.compare_ref }}
+          TARGET_VERSION: ${{ inputs.target_version }}
