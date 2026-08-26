@@ -16,6 +16,7 @@
       - ndnetmcfgstgcreate
       - ndnetmcfgstgadd
       - ndnetmcfgstgremove
+      - ndnetmcfgstgdetach
       - ndnetmcfgstgomit
     target_network_delete_config:
       - network_name: ndnetmcfgstgcreate
@@ -24,9 +25,11 @@
         is_l2only: true
       - network_name: ndnetmcfgstgremove
         is_l2only: true
+      - network_name: ndnetmcfgstgdetach
+        is_l2only: true
       - network_name: ndnetmcfgstgomit
         is_l2only: true
-    nd_network_mcfg_staged_attach_block: >-
+    nd_network_mcfg_staged_primary_attach_block: >-
       {{
         [
           {
@@ -41,6 +44,48 @@
           }
         ] if nd_network_run_mcfg_attach | bool else []
       }}
+    nd_network_mcfg_staged_secondary_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_network_mcfg_switch2,
+            'interfaces': [
+              {
+                'mode': 'trunk',
+                'interface_range': nd_network_mcfg_interface2
+              }
+            ],
+            'deploy': true
+          }
+        ] if nd_network_mcfg_switch2 | length > 0 and nd_network_mcfg_interface2 | length > 0 else []
+      }}
+    nd_network_mcfg_staged_create_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_network_mcfg_switch2,
+            'interfaces': [
+              {
+                'mode': 'trunk',
+                'interface_range': nd_network_mcfg_interface2
+              }
+            ],
+            'deploy': true
+          }
+        ] if nd_network_mcfg_switch2 | length > 0 and nd_network_mcfg_interface2 | length > 0 else [
+          {
+            'ip_address': nd_network_mcfg_switch,
+            'interfaces': [
+              {
+                'mode': 'trunk',
+                'interface_range': nd_network_mcfg_interface
+              }
+            ],
+            'deploy': true
+          }
+        ]
+      }}
+    nd_network_mcfg_staged_both_attach_count: "{{ 2 if nd_network_mcfg_switch2 | length > 0 and nd_network_mcfg_interface2 | length > 0 else 1 }}"
   delegate_to: localhost
   tags:
     - mcfg
@@ -54,6 +99,7 @@
         network_id: "{{ nd_network_base_id + 290 }}"
         vlan_id: "{{ nd_network_base_vlan + 290 }}"
         vlan_name: ndnetmcfgstgadd_vlan
+        attach: "{{ nd_network_mcfg_staged_primary_attach_block }}"
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
@@ -62,7 +108,16 @@
         network_id: "{{ nd_network_base_id + 291 }}"
         vlan_id: "{{ nd_network_base_vlan + 291 }}"
         vlan_name: ndnetmcfgstgremove_vlan
-        attach: "{{ nd_network_mcfg_staged_attach_block }}"
+        attach: "{{ nd_network_mcfg_staged_primary_attach_block + nd_network_mcfg_staged_secondary_attach_block }}"
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+      - network_name: ndnetmcfgstgdetach
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 294 }}"
+        vlan_id: "{{ nd_network_base_vlan + 294 }}"
+        vlan_name: ndnetmcfgstgdetach_vlan
+        attach: "{{ nd_network_mcfg_staged_primary_attach_block }}"
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
@@ -71,7 +126,7 @@
         network_id: "{{ nd_network_base_id + 292 }}"
         vlan_id: "{{ nd_network_base_vlan + 292 }}"
         vlan_name: ndnetmcfgstgomit_vlan
-        attach: "{{ nd_network_mcfg_staged_attach_block }}"
+        attach: "{{ nd_network_mcfg_staged_primary_attach_block }}"
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
@@ -81,7 +136,7 @@
         network_id: "{{ nd_network_base_id + 293 }}"
         vlan_id: "{{ nd_network_base_vlan + 293 }}"
         vlan_name: ndnetmcfgstgcreate_vlan
-        attach: "{{ nd_network_mcfg_staged_attach_block }}"
+        attach: "{{ nd_network_mcfg_staged_create_attach_block }}"
         deploy: true
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
@@ -91,7 +146,7 @@
         network_id: "{{ nd_network_base_id + 293 }}"
         vlan_id: "{{ nd_network_base_vlan + 293 }}"
         vlan_name: ndnetmcfgstgcreate_vlan
-        attach: "{{ nd_network_mcfg_staged_attach_block }}"
+        attach: "{{ nd_network_mcfg_staged_create_attach_block }}"
         deploy: true
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
@@ -100,7 +155,7 @@
         network_id: "{{ nd_network_base_id + 290 }}"
         vlan_id: "{{ nd_network_base_vlan + 290 }}"
         vlan_name: ndnetmcfgstgadd_vlan
-        attach: "{{ nd_network_mcfg_staged_attach_block }}"
+        attach: "{{ nd_network_mcfg_staged_primary_attach_block + nd_network_mcfg_staged_secondary_attach_block }}"
         deploy: true
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
@@ -109,6 +164,16 @@
         network_id: "{{ nd_network_base_id + 291 }}"
         vlan_id: "{{ nd_network_base_vlan + 291 }}"
         vlan_name: ndnetmcfgstgremove_vlan
+        attach: "{{ nd_network_mcfg_staged_primary_attach_block }}"
+        deploy: true
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
+      - network_name: ndnetmcfgstgdetach
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 294 }}"
+        vlan_id: "{{ nd_network_base_vlan + 294 }}"
+        vlan_name: ndnetmcfgstgdetach_vlan
+        attach: []
         deploy: true
         child_fabric_config:
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
@@ -233,6 +298,12 @@
         | selectattr("networkName", "equalto", "ndnetmcfgstgcreate")
         | selectattr("attach", "equalto", true)
         | list | length > 0
+      - >-
+        mcfg_staged_create_attachment_rows
+        | selectattr("networkName", "equalto", "ndnetmcfgstgcreate")
+        | selectattr("attach", "equalto", true)
+        | rejectattr("status", "equalto", "pending")
+        | list | length == 0
   when:
     - nd_network_run_mcfg | bool
     - nd_network_run_staged | bool
@@ -276,6 +347,21 @@
     that:
       - mcfg_staged_result.changed == true
       - mcfg_staged_result.fabric_type == "multicluster_parent"
+  when:
+    - nd_network_run_mcfg | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_mcfg_attach | bool
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC3 - Repeat Reconcile For Controller-State Idempotency
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_network_mcfg_staged_conf }}"
+    output_level: debug
+  register: mcfg_staged_repeat_result
   when:
     - nd_network_run_mcfg | bool
     - nd_network_run_staged | bool
@@ -333,9 +419,23 @@
     that:
       - (mcfg_staged_gathered.after | default([]) | to_json) is search("ndnetmcfgstgomit")
       - mcfg_staged_attachment_rows | selectattr("networkName", "equalto", "ndnetmcfgstgcreate") | selectattr("attach", "equalto", true) | list | length > 0
-      - mcfg_staged_attachment_rows | selectattr("networkName", "equalto", "ndnetmcfgstgadd") | selectattr("attach", "equalto", true) | list | length > 0
-      - mcfg_staged_attachment_rows | selectattr("networkName", "equalto", "ndnetmcfgstgremove") | selectattr("attach", "equalto", true) | list | length == 0
+      - >-
+        (
+          mcfg_staged_attachment_rows
+          | selectattr("networkName", "equalto", "ndnetmcfgstgadd")
+          | selectattr("attach", "equalto", true)
+          | list
+          | length
+        ) == (nd_network_mcfg_staged_both_attach_count | int)
+      - mcfg_staged_attachment_rows | selectattr("networkName", "equalto", "ndnetmcfgstgremove") | selectattr("attach", "equalto", true) | list | length == 1
+      - mcfg_staged_attachment_rows | selectattr("networkName", "equalto", "ndnetmcfgstgdetach") | selectattr("attach", "equalto", true) | list | length == 0
       - mcfg_staged_attachment_rows | selectattr("networkName", "equalto", "ndnetmcfgstgomit") | selectattr("attach", "equalto", true) | list | length == 0
+      - mcfg_staged_repeat_result.changed == false
+      - >-
+        mcfg_staged_attachment_rows
+        | selectattr("networkName", "in", target_network_names)
+        | rejectattr("status", "equalto", "pending")
+        | list | length == 0
   when:
     - nd_network_run_mcfg | bool
     - nd_network_run_staged | bool

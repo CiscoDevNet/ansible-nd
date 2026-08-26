@@ -4,17 +4,23 @@ nd_network_test_topology: ""
 
 nd_network_standalone_fabric: "{{ ansible_it_fabric | default(nd_test_fabric_name | default('')) }}"
 nd_network_standalone_switch: "{{ ansible_switch1 | default(nd_test_switch_ip | default('')) }}"
+nd_network_standalone_switch2: "{{ ansible_switch2 | default('') }}"
 nd_network_standalone_interface: "{{ ansible_network_interface1 | default('') }}"
+nd_network_standalone_interface2: "{{ ansible_network_interface2 | default(nd_network_standalone_interface) }}"
 
 nd_network_msd_parent_fabric: "{{ ansible_msd_parent_fabric | default('') }}"
 nd_network_msd_child_fabric: "{{ ansible_msd_child_fabric | default('') }}"
 nd_network_msd_switch: "{{ ansible_msd_switch1 | default(ansible_switch1 | default('')) }}"
+nd_network_msd_switch2: "{{ ansible_msd_switch2 | default(ansible_switch2 | default('')) }}"
 nd_network_msd_interface: "{{ ansible_msd_network_interface1 | default(ansible_network_interface1 | default('')) }}"
+nd_network_msd_interface2: "{{ ansible_msd_network_interface2 | default(ansible_network_interface2 | default(nd_network_msd_interface)) }}"
 
 nd_network_mcfg_parent_fabric: "{{ ansible_mcfg_parent_fabric | default('') }}"
 nd_network_mcfg_child_fabric: "{{ ansible_mcfg_child_fabric | default('') }}"
 nd_network_mcfg_switch: "{{ ansible_mcfg_switch1 | default('') }}"
+nd_network_mcfg_switch2: "{{ ansible_mcfg_switch2 | default('') }}"
 nd_network_mcfg_interface: "{{ ansible_mcfg_network_interface1 | default(ansible_network_interface1 | default('')) }}"
+nd_network_mcfg_interface2: "{{ ansible_mcfg_network_interface2 | default(ansible_network_interface2 | default(nd_network_mcfg_interface)) }}"
 
 nd_network_run_standalone: "{{ nd_network_standalone_fabric | length > 0 }}"
 nd_network_run_msd: "{{ nd_network_msd_parent_fabric | length > 0 and nd_network_msd_child_fabric | length > 0 }}"

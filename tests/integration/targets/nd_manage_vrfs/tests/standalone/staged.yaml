@@ -14,8 +14,9 @@
       - ndvrfstgcreate
       - ndvrfstgadd
       - ndvrfstgremove
+      - ndvrfstgdetach
       - ndvrfstgomit
-    nd_vrf_staged_attach_block: >-
+    nd_vrf_staged_primary_attach_block: >-
       {{
         [
           {
@@ -23,6 +24,27 @@
           }
         ] if nd_vrf_standalone_switch | length > 0 else []
       }}
+    nd_vrf_staged_secondary_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_vrf_standalone_switch2
+          }
+        ] if nd_vrf_standalone_switch2 | length > 0 else []
+      }}
+    nd_vrf_staged_create_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_vrf_standalone_switch2
+          }
+        ] if nd_vrf_standalone_switch2 | length > 0 else [
+          {
+            'ip_address': nd_vrf_standalone_switch
+          }
+        ]
+      }}
+    nd_vrf_staged_both_attach_count: "{{ 2 if nd_vrf_standalone_switch2 | length > 0 else 1 }}"
   delegate_to: localhost
   tags: staged
 
@@ -33,43 +55,57 @@
         vrf_id: "{{ nd_vrf_base_id + 70 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 70 }}"
         vrf_description: Ansible ND staged add seed
+        attach: "{{ nd_vrf_staged_primary_attach_block }}"
         deploy: false
       - vrf_name: ndvrfstgremove
         vrf_id: "{{ nd_vrf_base_id + 71 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 71 }}"
         vrf_description: Ansible ND staged remove seed
-        attach: "{{ nd_vrf_staged_attach_block }}"
+        attach: "{{ nd_vrf_staged_primary_attach_block + nd_vrf_staged_secondary_attach_block }}"
+        deploy: false
+      - vrf_name: ndvrfstgdetach
+        vrf_id: "{{ nd_vrf_base_id + 74 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 74 }}"
+        vrf_description: Ansible ND staged detach seed
+        attach: "{{ nd_vrf_staged_primary_attach_block }}"
         deploy: false
       - vrf_name: ndvrfstgomit
         vrf_id: "{{ nd_vrf_base_id + 72 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 72 }}"
         vrf_description: Ansible ND staged omit seed
-        attach: "{{ nd_vrf_staged_attach_block }}"
+        attach: "{{ nd_vrf_staged_primary_attach_block }}"
         deploy: false
     nd_vrf_staged_create_config:
       - vrf_name: ndvrfstgcreate
         vrf_id: "{{ nd_vrf_base_id + 73 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 73 }}"
         vrf_description: Ansible ND staged create
-        attach: "{{ nd_vrf_staged_attach_block }}"
+        attach: "{{ nd_vrf_staged_create_attach_block }}"
         deploy: true
     nd_vrf_staged_config:
       - vrf_name: ndvrfstgcreate
         vrf_id: "{{ nd_vrf_base_id + 73 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 73 }}"
         vrf_description: Ansible ND staged create
-        attach: "{{ nd_vrf_staged_attach_block }}"
+        attach: "{{ nd_vrf_staged_create_attach_block }}"
         deploy: true
       - vrf_name: ndvrfstgadd
         vrf_id: "{{ nd_vrf_base_id + 70 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 70 }}"
         vrf_description: Ansible ND staged add updated
-        attach: "{{ nd_vrf_staged_attach_block }}"
+        attach: "{{ nd_vrf_staged_primary_attach_block + nd_vrf_staged_secondary_attach_block }}"
         deploy: true
       - vrf_name: ndvrfstgremove
         vrf_id: "{{ nd_vrf_base_id + 71 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 71 }}"
         vrf_description: Ansible ND staged remove updated
+        attach: "{{ nd_vrf_staged_primary_attach_block }}"
+        deploy: true
+      - vrf_name: ndvrfstgdetach
+        vrf_id: "{{ nd_vrf_base_id + 74 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 74 }}"
+        vrf_description: Ansible ND staged detach updated
+        attach: []
         deploy: true
   delegate_to: localhost
   tags: staged
@@ -173,6 +209,12 @@
         | selectattr("vrfName", "equalto", "ndvrfstgcreate")
         | selectattr("attach", "equalto", true)
         | list | length > 0
+      - >-
+        staged_create_attachment_rows
+        | selectattr("vrfName", "equalto", "ndvrfstgcreate")
+        | selectattr("attach", "equalto", true)
+        | rejectattr("status", "equalto", "pending")
+        | list | length == 0
   when:
     - nd_vrf_run_standalone | bool
     - nd_vrf_run_staged | bool
@@ -209,6 +251,19 @@
   ansible.builtin.assert:
     that:
       - staged_result.changed == true
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_standalone_switch | length > 0
+  tags: staged
+
+- name: Staged TC3 - Repeat Reconcile For Controller-State Idempotency
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_vrf_standalone_staged_conf }}"
+    output_level: debug
+  register: staged_repeat_result
   when:
     - nd_vrf_run_standalone | bool
     - nd_vrf_run_staged | bool
@@ -258,9 +313,23 @@
     that:
       - (staged_gather_result.after | default([]) | to_json) is search("ndvrfstgomit")
       - staged_attachment_rows | selectattr("vrfName", "equalto", "ndvrfstgcreate") | selectattr("attach", "equalto", true) | list | length > 0
-      - staged_attachment_rows | selectattr("vrfName", "equalto", "ndvrfstgadd") | selectattr("attach", "equalto", true) | list | length > 0
-      - staged_attachment_rows | selectattr("vrfName", "equalto", "ndvrfstgremove") | selectattr("attach", "equalto", true) | list | length == 0
+      - >-
+        (
+          staged_attachment_rows
+          | selectattr("vrfName", "equalto", "ndvrfstgadd")
+          | selectattr("attach", "equalto", true)
+          | list
+          | length
+        ) == (nd_vrf_staged_both_attach_count | int)
+      - staged_attachment_rows | selectattr("vrfName", "equalto", "ndvrfstgremove") | selectattr("attach", "equalto", true) | list | length == 1
+      - staged_attachment_rows | selectattr("vrfName", "equalto", "ndvrfstgdetach") | selectattr("attach", "equalto", true) | list | length == 0
       - staged_attachment_rows | selectattr("vrfName", "equalto", "ndvrfstgomit") | selectattr("attach", "equalto", true) | list | length == 0
+      - staged_repeat_result.changed == false
+      - >-
+        staged_attachment_rows
+        | selectattr("vrfName", "in", target_vrf_names)
+        | rejectattr("status", "equalto", "pending")
+        | list | length == 0
   when:
     - nd_vrf_run_standalone | bool
     - nd_vrf_run_staged | bool
