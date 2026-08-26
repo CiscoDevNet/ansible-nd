@@ -124,6 +124,33 @@ FABRIC_SUPPORTED_POOLS: dict[FabricTypeEnum, frozenset[str]] = {
             "vrfVlan",
         }
     ),
+    FabricTypeEnum.ROUTED: frozenset(
+        {
+            "ANYCAST_RP_IP_POOL",
+            "DCI subnet pool",
+            "DEVICE_BGP_ASN",
+            "HYPERSHIELD_HA_PEER_LINK_SUBNET_POOL",
+            "HYPERSHIELD_HA_SOURCE_IP_POOL",
+            "IPv6 DCI subnet pool",
+            "L2_VNI",
+            "L3_VNI",
+            "LOOPBACK0_IP_POOL",
+            "LOOPBACK1_IP_POOL",
+            "MCAST_IP_POOL",
+            "ROUTER_ID_POOL",
+            "ROUTE_MAP_SEQUENCE_NUMBER_POOL",
+            "SUBNET",
+            "VPC_DOMAIN_ID",
+            "fexId",
+            "loopbackId",
+            "networkVlan",
+            "portChannelId",
+            "topDownL3Dot1q",
+            "vpcId",
+            "vpcPeerLinkVlan",
+            "vrfVlan",
+        }
+    ),
     FabricTypeEnum.EXTERNAL_CONNECTIVITY: frozenset(
         {
             "DCI subnet pool",
@@ -168,6 +195,10 @@ FABRIC_DYNAMIC_POOL_PATTERNS: dict[FabricTypeEnum, tuple[re.Pattern[str], ...]] 
         _IPV4_CIDR_RE,
         _IPV6_CIDR_RE,
     ),
+    FabricTypeEnum.ROUTED: (
+        _IPV4_CIDR_RE,
+        _IPV6_CIDR_RE,
+    ),
     FabricTypeEnum.EXTERNAL_CONNECTIVITY: (),
 }
 
@@ -180,6 +211,7 @@ FABRIC_TYPE_STRING_MAP: dict[str, FabricTypeEnum] = {
     "vxlanIbgp": FabricTypeEnum.VXLAN_IBGP,
     "vxlanEbgp": FabricTypeEnum.VXLAN_EBGP,
     "externalConnectivity": FabricTypeEnum.EXTERNAL_CONNECTIVITY,
+    "routed": FabricTypeEnum.ROUTED,
 }
 
 
