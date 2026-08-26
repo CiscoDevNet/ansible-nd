@@ -15,6 +15,8 @@ Enum definitions for VXLAN Fabric Group (MSD) modules.
 - CloudSecAlgorithmEnum: CloudSec encryption algorithm options.
 - CloudSecEnforcementEnum: CloudSec enforcement type options.
 - SecurityGroupTagEnum: Security Group Tag enforcement options.
+- VxlanAciOverlayInterConnectTypeEnum: Overlay Interconnect type options for VXLAN-to-ACI fabric groups.
+- VxlanAciSecurityGroupTagEnum: Security Group Tag enforcement options for VXLAN-to-ACI fabric groups.
 """
 
 from __future__ import annotations
@@ -33,9 +35,11 @@ class FabricGroupTypeEnum(str, Enum):
     ## Values
 
     - `VXLAN` - VXLAN fabric group (MSD)
+    - `VXLAN_ACI` - VXLAN-to-ACI fabric group (contains both ACI and VXLAN EVPN fabrics)
     """
 
     VXLAN = "vxlan"
+    VXLAN_ACI = "vxlanAci"
 
 
 class MultisiteOverlayInterConnectTypeEnum(str, Enum):
@@ -80,5 +84,32 @@ class SecurityGroupTagEnum(str, Enum):
     """
 
     OFF = "off"
+    LOOSE = "loose"
+    STRICT = "strict"
+
+
+class VxlanAciOverlayInterConnectTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Multi-Site Overlay Interconnect type options for VXLAN-to-ACI fabric groups.
+
+    Unlike the standard VXLAN fabric group, the VXLAN-to-ACI type does not
+    support the ``routeServer`` interconnect option.
+    """
+
+    MANUAL = "manual"
+    DIRECT_PEERING = "directPeering"
+
+
+class VxlanAciSecurityGroupTagEnum(str, Enum):
+    """
+    # Summary
+
+    Security Group Tag enforcement options for VXLAN-to-ACI fabric groups.
+
+    The VXLAN-to-ACI type only supports ``loose`` and ``strict`` enforcement.
+    """
+
     LOOSE = "loose"
     STRICT = "strict"
