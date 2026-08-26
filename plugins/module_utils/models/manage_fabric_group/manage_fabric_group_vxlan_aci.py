@@ -88,9 +88,7 @@ class VxlanAciFabricGroupManagementModel(NDNestedModel):
     _argspec_exclude_fields: ClassVar[set[str]] = {"name", "security_group_status"}
 
     # Fabric Group Type (required for discriminated union)
-    type: Literal[FabricGroupTypeEnum.VXLAN_ACI] = Field(
-        description="Type of the fabric group", default=FabricGroupTypeEnum.VXLAN_ACI
-    )
+    type: Literal[FabricGroupTypeEnum.VXLAN_ACI] = Field(description="Type of the fabric group", default=FabricGroupTypeEnum.VXLAN_ACI)
 
     # VNI Ranges
     l2_vni_range: str = Field(
