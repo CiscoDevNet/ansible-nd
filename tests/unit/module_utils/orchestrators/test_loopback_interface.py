@@ -109,7 +109,7 @@ def test_loopback_interface_00010() -> None:
     - `model_class` is `LoopbackInterfaceModel`
     - `supports_bulk_create` and `supports_bulk_delete` are True
     - `_pending_deploys` and `_pending_removes` start empty
-    - `deploy` defaults to True
+    - `deploy` defaults to False
 
     ## Classes and Methods
 
@@ -130,7 +130,7 @@ def test_loopback_interface_00010() -> None:
     assert instance.supports_bulk_delete is True
     assert instance._pending_deploys == []
     assert instance._pending_removes == []
-    assert instance.deploy is True
+    assert instance.deploy is False
 
 
 def test_loopback_interface_00020() -> None:

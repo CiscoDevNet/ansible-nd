@@ -52,8 +52,7 @@
 
     - name: Run nd_interface_loopback deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
-  module_defaults:
-    cisco.nd.nd_interface_loopback:
-      timeout: 300
+  vars:
+    ansible_command_timeout: 300
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"

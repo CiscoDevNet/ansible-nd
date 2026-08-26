@@ -130,7 +130,7 @@ def register_action_api_call(
 
 class FabricUtils:
     """
-    Shared helper for fabric-level config save/deploy actions.
+    Shared helper for generic fabric-level metadata and config actions.
     """
 
     def __init__(self, nd_module: Any, fabric_name: str) -> None:

@@ -45,7 +45,7 @@ SAMPLE_API_RESPONSE = {
             "networkOSType": "nx-os",
             "policy": {
                 "adminState": True,
-                "ip": "10.1.1.1/32",
+                "ip": "10.1.1.1",
                 "vrfInterface": "management",
                 "policyType": "loopback",
                 "routeMapTag": "12345",
@@ -65,7 +65,7 @@ SAMPLE_ANSIBLE_CONFIG = {
             "network_os_type": "nx-os",
             "policy": {
                 "admin_state": True,
-                "ip": "10.1.1.1/32",
+                "ip": "10.1.1.1",
                 "vrf": "management",
                 "policy_type": "loopback",
                 "route_map_tag": "12345",
@@ -127,14 +127,14 @@ def test_loopback_interface_00020():
     with does_not_raise():
         instance = LoopbackPolicyModel(
             admin_state=True,
-            ip="10.1.1.1/32",
+            ip="10.1.1.1",
             vrf="management",
             policy_type="loopback",
             route_map_tag="100",
             description="test",
         )
     assert instance.admin_state is True
-    assert instance.ip == "10.1.1.1/32"
+    assert instance.ip == "10.1.1.1"
     assert instance.vrf == "management"
     assert instance.policy_type == "loopback"
     assert instance.route_map_tag == "100"
@@ -159,13 +159,13 @@ def test_loopback_interface_00030():
     with does_not_raise():
         instance = LoopbackPolicyModel(
             adminState=False,
-            ip="10.2.2.2/32",
+            ip="10.2.2.2",
             vrfInterface="default",
             policyType="loopback",
             routeMapTag="200",
         )
     assert instance.admin_state is False
-    assert instance.ip == "10.2.2.2/32"
+    assert instance.ip == "10.2.2.2"
     assert instance.vrf == "default"
     assert instance.policy_type == "loopback"
     assert instance.route_map_tag == "200"
@@ -463,40 +463,42 @@ def test_loopback_interface_00080():
     """
     # Summary
 
-    Verify `ip` accepts a valid IPv4 address in CIDR notation.
+    Verify `ip` accepts a valid IPv4 address in CIDR notation and normalizes it to the bare host form (ND rejects
+    CIDR notation on the wire).
 
     ## Test
 
     - Construct with ip="10.1.1.1/32"
-    - Value is accepted
+    - Value is normalized to "10.1.1.1" (bare, no prefix)
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
+    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with does_not_raise():
         instance = LoopbackPolicyModel(ip="10.1.1.1/32")
-    assert instance.ip == "10.1.1.1/32"
+    assert instance.ip == "10.1.1.1"
 
 
 def test_loopback_interface_00081():
     """
     # Summary
 
-    Verify `ip` accepts a valid IPv4 address with a non-/32 prefix.
+    Verify `ip` accepts a valid IPv4 address with a non-/32 prefix and normalizes it to the bare host form (the
+    prefix is not preserved; ND's loopback `ip` field always wants a bare host address).
 
     ## Test
 
     - Construct with ip="10.1.1.0/24"
-    - Value is accepted
+    - Value is normalized to "10.1.1.0" (bare, no prefix)
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
+    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with does_not_raise():
         instance = LoopbackPolicyModel(ip="10.1.1.0/24")
-    assert instance.ip == "10.1.1.0/24"
+    assert instance.ip == "10.1.1.0"
 
 
 def test_loopback_interface_00082():
@@ -512,9 +514,9 @@ def test_loopback_interface_00082():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
+    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
-    with pytest.raises(ValidationError, match="Invalid IPv4 address"):
+    with pytest.raises(ValidationError, match="is not a valid IPv4 address"):
         LoopbackPolicyModel(ip="999.999.999.999/32")
 
 
@@ -522,16 +524,16 @@ def test_loopback_interface_00083():
     """
     # Summary
 
-    Verify `ip` rejects a bare IPv4 address without prefix length.
+    Verify `ip` accepts a bare IPv4 address (no prefix) and returns it unchanged in the bare host form.
 
     ## Test
 
     - Construct with ip="10.1.1.1" (no CIDR prefix)
-    - Value is accepted (ipaddress.IPv4Interface accepts bare addresses, defaulting to /32)
+    - Value is accepted and returned as the bare host form "10.1.1.1"
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
+    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
     with does_not_raise():
         instance = LoopbackPolicyModel(ip="10.1.1.1")
@@ -551,9 +553,9 @@ def test_loopback_interface_00084():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
+    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
-    with pytest.raises(ValidationError, match="Invalid IPv4 address"):
+    with pytest.raises(ValidationError, match="is not a valid IPv4 address"):
         LoopbackPolicyModel(ip="not-an-ip")
 
 
@@ -570,9 +572,9 @@ def test_loopback_interface_00085():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
+    - LoopbackPolicyModel.ip (IPv4Host Annotated type)
     """
-    with pytest.raises(ValidationError, match="Invalid IPv4 address"):
+    with pytest.raises(ValidationError, match="is not a valid IPv4 address"):
         LoopbackPolicyModel(ip="2001:db8::1/128")
 
 
@@ -803,7 +805,7 @@ def test_loopback_interface_00160():
             ),
         )
     assert instance.mode == "managed"
-    assert instance.network_os.policy.ip == "10.1.1.1/32"
+    assert instance.network_os.policy.ip == "10.1.1.1"
     assert instance.network_os.policy.admin_state is True
 
 
@@ -1123,7 +1125,7 @@ def test_loopback_interface_00400():
     assert instance.interface_name == "loopback0"
     assert instance.interface_type == "loopback"
     assert instance.config_data.mode == "managed"
-    assert instance.config_data.network_os.policy.ip == "10.1.1.1/32"
+    assert instance.config_data.network_os.policy.ip == "10.1.1.1"
     assert instance.config_data.network_os.policy.vrf == "management"
     assert instance.config_data.network_os.policy.admin_state is True
 
@@ -1217,7 +1219,7 @@ def test_loopback_interface_00450():
     assert instance.interface_name == "loopback0"
     assert instance.interface_type == "loopback"
     assert instance.config_data.mode == "managed"
-    assert instance.config_data.network_os.policy.ip == "10.1.1.1/32"
+    assert instance.config_data.network_os.policy.ip == "10.1.1.1"
     assert instance.config_data.network_os.policy.vrf == "management"
 
 
@@ -1463,7 +1465,7 @@ def test_loopback_interface_00650():
     instance = LoopbackInterfaceModel.from_config(config_base)
     other = LoopbackInterfaceModel.from_config(config_other)
     instance.merge(other)
-    assert instance.config_data.network_os.policy.ip == "10.1.1.1/32"
+    assert instance.config_data.network_os.policy.ip == "10.1.1.1"
 
 
 def test_loopback_interface_00660():
@@ -1484,7 +1486,7 @@ def test_loopback_interface_00660():
     instance = LoopbackInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
     other = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
     instance.merge(other)
-    assert instance.config_data.network_os.policy.ip == "10.1.1.1/32"
+    assert instance.config_data.network_os.policy.ip == "10.1.1.1"
 
 
 def test_loopback_interface_00670():

@@ -52,7 +52,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     - Via `remove_pending` if the bulk remove API request fails.
     """
 
-    deploy: bool = True
+    deploy: bool = False
 
     # Subclasses opt in to capability preflight by setting BOTH ClassVars (e.g. loopback sets
     # `interface_type = "loopback"` and `interface_mode = "managed"`). Leaving `interface_type` as ""
