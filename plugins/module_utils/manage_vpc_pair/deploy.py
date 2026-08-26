@@ -137,29 +137,43 @@ def _get_switches_needing_deploy(nd_v2: Any, fabric_name: str) -> list[str]:
     return sorted(set(switch_ids))
 
 
-def _get_managed_pair_switches_needing_deploy(nd_v2: Any, fabric_name: str, config_entries: list[dict[str, Any]]) -> list[str]:
+def _get_managed_pair_switches_needing_deploy(
+    nd_v2: Any,
+    fabric_name: str,
+    config_entries: list[dict[str, Any]],
+    class_diff: dict[str, Any] | None = None,
+) -> list[str]:
     """
     Return serials of the managed vPC pairs' peer switches that need deployment.
 
-    Scopes the switch-level deploy to only the switches that form the vPC pairs
-    named in the playbook config (config_actions.type == "resource"), rather than
-    every out-of-sync switch in the fabric. Nexus Dashboard has no vPC-pair-level
-    deploy primitive, so a vPC pair resource maps to its two peer switches
-    (switch_id/peer_switch_id), which the model requires as distinct, non-empty
-    serials, so both keys are always present at deploy time.
+    Scopes the switch-level deploy to only the switches forming the vPC pairs
+    changed by this run (config_actions.type == "resource"), rather than every
+    out-of-sync switch in the fabric. Nexus Dashboard has no vPC-pair-level deploy
+    primitive, so a vPC pair maps to its two peer switches.
 
-    Peer identifiers are already serial numbers at deploy time (management IPs are
-    resolved upstream in custom_vpc_query_all -> normalize_vpc_playbook_switch_identifiers),
-    so they are matched directly against fabric inventory. A peer absent from
-    inventory (mistyped serial, wrong fabric) is reported via module.warn rather
-    than silently skipped, so a resource deploy never becomes a silent no-op.
-    Only switches not confirmed in-sync are returned so an already deployed pair
-    is a no-op.
+    The affected set is the union of two sources:
+      * config_entries (module.params["config"]): the desired pairs, covering
+        create/update/unchanged. Peers are already serials at deploy time
+        (management IPs are resolved upstream in custom_vpc_query_all ->
+        normalize_vpc_playbook_switch_identifiers), with switch_id and
+        peer_switch_id present as distinct, non-empty serials.
+      * class_diff["deleted"]: pairs removed this run (e.g. state=overridden
+        omissions, config: []) are absent from config, yet their peers still need
+        the removal deployed. Deleted identifiers are (switch_id, peer_switch_id)
+        serial tuples from controller state.
+
+    A config peer absent from inventory (mistyped serial, wrong fabric) is warned
+    rather than silently skipped, so a resource deploy never becomes a silent
+    no-op. A deleted peer already gone from inventory needs no deploy and is
+    skipped quietly. Only switches not confirmed in-sync are returned so an
+    already deployed pair is a no-op.
 
     Args:
         nd_v2: NDModuleV2 instance for RestSend
         fabric_name: Fabric name to query
         config_entries: Managed vPC pair config entries (module.params["config"])
+        class_diff: Run diff with created/updated/deleted identifiers; deleted
+            pairs recover peers removed this run that no longer appear in config
 
     Returns:
         Sorted list of unique switch serial numbers needing deployment
@@ -182,11 +196,12 @@ def _get_managed_pair_switches_needing_deploy(nd_v2: Any, fabric_name: str, conf
                 f"config_actions.type=resource: vPC pair peer(s) {unresolved_serials} not found in fabric "
                 f"'{fabric_name}' inventory; skipping switch-scoped deploy for those switches."
             )
-    return sorted(
-        serial_number
-        for serial_number in managed_serials
-        if _is_switch_config_in_sync(switches[serial_number]) is not True
-    )
+    # Pairs removed this run are absent from config; recover their peers so the
+    # removal is deployed. A peer already gone from inventory needs no deploy.
+    for identifier in (class_diff or {}).get("deleted") or []:
+        peers = identifier if isinstance(identifier, (tuple, list)) else (identifier,)
+        managed_serials.update(serial for serial in peers if serial in switches)
+    return sorted(serial_number for serial_number in managed_serials if _is_switch_config_in_sync(switches[serial_number]) is not True)
 
 
 def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -356,7 +371,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
         try:
             if action_type in SWITCH_DEPLOY_ACTION_TYPES:
                 if action_type == "resource":
-                    switch_ids = _get_managed_pair_switches_needing_deploy(nd_v2, fabric_name, nrm.module.params.get("config"))
+                    switch_ids = _get_managed_pair_switches_needing_deploy(nd_v2, fabric_name, nrm.module.params.get("config"), result.get("class_diff"))
                 else:
                     switch_ids = _get_switches_needing_deploy(nd_v2, fabric_name)
                 deploy_payload = {"switchIds": switch_ids}

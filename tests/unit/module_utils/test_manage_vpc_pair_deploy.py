@@ -86,9 +86,9 @@ def _make_nrm(action_type, save=True, deploy_flag=True, check_mode=False):
     return _FakeNrm(params, check_mode=check_mode)
 
 
-def _run_deploy(nrm, fake_nd):
+def _run_deploy(nrm, fake_nd, result=None):
     with patch.object(deploy, "NDModuleV2", lambda module: fake_nd):
-        return deploy.custom_vpc_deploy(nrm, "fab1", {"changed": True})
+        return deploy.custom_vpc_deploy(nrm, "fab1", result if result is not None else {"changed": True})
 
 
 def test_manage_vpc_pair_deploy_00010_global_scope_uses_fabric_deploy():
@@ -355,4 +355,73 @@ def test_manage_vpc_pair_deploy_00150_get_managed_pair_switches_scopes_and_filte
 
     # FOXAAA out-of-sync -> included; FOXBBB in-sync -> excluded; FOXCCC unrelated -> excluded
     assert result == ["FOXAAA"]
+    assert module.warnings == []
+
+
+def test_manage_vpc_pair_deploy_00160_resource_scope_deploys_overridden_deleted_pair_peers():
+    # Regression: state=overridden removes a pair by omitting it from config. The
+    # kept pair is in-sync, but the removed pair's peers are out-of-sync and must
+    # still be deployed. Deleted peers come from class_diff, not config.
+    nrm = _make_resource_nrm(config=[{"switch_id": "KEEP1AAA", "peer_switch_id": "KEEP2AAA"}])
+    switches_response = {
+        "switches": [
+            {"serialNumber": "KEEP1AAA", "configSyncStatus": "In-Sync"},
+            {"serialNumber": "KEEP2AAA", "configSyncStatus": "In-Sync"},
+            {"serialNumber": "DROP1AAA", "configSyncStatus": "Out-of-Sync"},
+            {"serialNumber": "DROP2AAA", "configSyncStatus": "Out-of-Sync"},
+        ]
+    }
+    fake_nd = _FakeNDModuleV2(nrm.module, switches_response=switches_response)
+    result = {"changed": True, "class_diff": {"created": [], "updated": [], "deleted": [("DROP1AAA", "DROP2AAA")]}}
+
+    _run_deploy(nrm, fake_nd, result)
+
+    paths = fake_nd.paths()
+    assert SAVE_PATH in paths
+    assert SWITCHES_PATH in paths
+    assert SWITCH_DEPLOY_PATH in paths
+    # Only the removed pair's out-of-sync peers deploy; the in-sync kept pair does not.
+    assert fake_nd.payloads_for(SWITCH_DEPLOY_PATH) == [{"switchIds": ["DROP1AAA", "DROP2AAA"]}]
+
+
+def test_manage_vpc_pair_deploy_00170_resource_scope_purge_all_deploys_deleted_pair_peers():
+    # Regression: state=overridden with config: [] removes every pair. With no
+    # desired config, the deploy target comes entirely from class_diff.deleted.
+    nrm = _make_resource_nrm(config=[])
+    switches_response = {
+        "switches": [
+            {"serialNumber": "DROP1AAA", "configSyncStatus": "Out-of-Sync"},
+            {"serialNumber": "DROP2AAA", "configSyncStatus": "Out-of-Sync"},
+        ]
+    }
+    fake_nd = _FakeNDModuleV2(nrm.module, switches_response=switches_response)
+    result = {"changed": True, "class_diff": {"created": [], "updated": [], "deleted": [("DROP1AAA", "DROP2AAA")]}}
+
+    _run_deploy(nrm, fake_nd, result)
+
+    assert SWITCH_DEPLOY_PATH in fake_nd.paths()
+    assert fake_nd.payloads_for(SWITCH_DEPLOY_PATH) == [{"switchIds": ["DROP1AAA", "DROP2AAA"]}]
+
+
+def test_manage_vpc_pair_deploy_00180_get_managed_pair_switches_merges_deleted_from_class_diff():
+    # Direct helper: target unions config peers and class_diff deleted peers,
+    # filtered to out-of-sync. A deleted peer already gone from inventory is
+    # skipped without warning; config peers still resolve cleanly.
+    switches_response = {
+        "switches": [
+            {"serialNumber": "KEEP1AAA", "configSyncStatus": "In-Sync"},
+            {"serialNumber": "KEEP2AAA", "configSyncStatus": "Out-of-Sync"},
+            {"serialNumber": "DROP1AAA", "configSyncStatus": "Out-of-Sync"},
+        ]
+    }
+    module = _FakeModule({})
+    fake_nd = _FakeNDModuleV2(module, switches_response=switches_response)
+    config_entries = [{"switch_id": "KEEP1AAA", "peer_switch_id": "KEEP2AAA"}]
+    class_diff = {"deleted": [("DROP1AAA", "DROP2GONE")]}  # DROP2GONE absent from inventory
+
+    result = deploy._get_managed_pair_switches_needing_deploy(fake_nd, "fab1", config_entries, class_diff)
+
+    # KEEP2AAA (config, out-of-sync) + DROP1AAA (deleted, out-of-sync); KEEP1AAA in-sync
+    # excluded; DROP2GONE absent from inventory skipped; no spurious warning.
+    assert result == ["DROP1AAA", "KEEP2AAA"]
     assert module.warnings == []
