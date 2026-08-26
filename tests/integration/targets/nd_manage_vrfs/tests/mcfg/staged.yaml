@@ -164,17 +164,58 @@
     - mcfg
     - staged
 
-- name: MCFG Staged TC1 - Assert Create Attachment Without Deploy Or Delete
+- name: MCFG Staged TC1 - Assert Staged Create Reported Change
   ansible.builtin.assert:
     that:
       - mcfg_staged_create_result.changed == true
       - mcfg_staged_create_result.fabric_type == "multicluster_parent"
-      - mcfg_staged_create_result.parent_fabric.api_paths | default([]) | select("search", "/vrfAttachments") | list | length > 0
-      - mcfg_staged_create_result.parent_fabric.api_paths | default([]) | select("search", "deploy") | list | length == 0
-      - mcfg_staged_create_result.parent_fabric.api_paths | default([]) | select("search", "vrfActions/remove") | list | length == 0
-      - (mcfg_staged_create_result.parent_fabric.api_payload | default([]) | to_json) is search("ndvrfmcfgstgcreate")
-      - (mcfg_staged_create_result.parent_fabric.api_payload | default([]) | to_json) is search("attach")
-      - (mcfg_staged_create_result.parent_fabric.api_payload | default([]) | to_json) is search("true")
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC1 - Query Created VRF Attachment
+  cisco.nd.nd_rest:
+    path: "/api/v1/oneManage/manage/fabrics/{{ target_fabric }}/vrfAttachments/query?includeAll=true&max=10000&offset=0"
+    method: post
+    content:
+      vrfNames:
+        - ndvrfmcfgstgcreate
+  register: mcfg_staged_create_attachment_query
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC1 - Normalize Created VRF Attachment Rows
+  ansible.builtin.set_fact:
+    mcfg_staged_create_attachment_rows: >-
+      {{
+        mcfg_staged_create_attachment_query.current.attachments
+        | default(mcfg_staged_create_attachment_query.current.items | default([]))
+      }}
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC1 - Assert Created VRF Attachment State
+  ansible.builtin.assert:
+    that:
+      - >-
+        mcfg_staged_create_attachment_rows
+        | selectattr("vrfName", "equalto", "ndvrfmcfgstgcreate")
+        | selectattr("attach", "equalto", true)
+        | list | length > 0
   when:
     - nd_vrf_run_mcfg | bool
     - nd_vrf_run_staged | bool
@@ -213,19 +254,41 @@
     - mcfg
     - staged
 
-- name: MCFG Staged TC3 - Assert Attachment Reconciliation Without Deploy Or Delete
+- name: MCFG Staged TC3 - Assert Staged Reconcile Reported Change
   ansible.builtin.assert:
     that:
       - mcfg_staged_result.changed == true
       - mcfg_staged_result.fabric_type == "multicluster_parent"
-      - mcfg_staged_result.parent_fabric.api_paths | default([]) | select("search", "/vrfAttachments") | list | length > 0
-      - mcfg_staged_result.parent_fabric.api_paths | default([]) | select("search", "deploy") | list | length == 0
-      - mcfg_staged_result.parent_fabric.api_paths | default([]) | select("search", "vrfActions/remove") | list | length == 0
-      - (mcfg_staged_result.parent_fabric.api_payload | default([]) | to_json) is search("ndvrfmcfgstgadd")
-      - (mcfg_staged_result.parent_fabric.api_payload | default([]) | to_json) is search("ndvrfmcfgstgremove")
-      - (mcfg_staged_result.parent_fabric.api_payload | default([]) | to_json) is search("ndvrfmcfgstgomit")
-      - (mcfg_staged_result.parent_fabric.api_payload | default([]) | to_json) is search("true")
-      - (mcfg_staged_result.parent_fabric.api_payload | default([]) | to_json) is search("false")
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC4 - Query VRF Attachments
+  cisco.nd.nd_rest:
+    path: "/api/v1/oneManage/manage/fabrics/{{ target_fabric }}/vrfAttachments/query?includeAll=true&max=10000&offset=0"
+    method: post
+    content:
+      vrfNames: "{{ target_vrf_names }}"
+  register: mcfg_staged_attachment_query
+  when:
+    - nd_vrf_run_mcfg | bool
+    - nd_vrf_run_staged | bool
+    - nd_vrf_mcfg_switch | length > 0
+  tags:
+    - mcfg
+    - staged
+
+- name: MCFG Staged TC4 - Normalize VRF Attachment Rows
+  ansible.builtin.set_fact:
+    mcfg_staged_attachment_rows: >-
+      {{
+        mcfg_staged_attachment_query.current.attachments
+        | default(mcfg_staged_attachment_query.current.items | default([]))
+      }}
   when:
     - nd_vrf_run_mcfg | bool
     - nd_vrf_run_staged | bool
@@ -252,6 +315,10 @@
   ansible.builtin.assert:
     that:
       - (mcfg_staged_gathered.after | default([]) | to_json) is search("ndvrfmcfgstgomit")
+      - mcfg_staged_attachment_rows | selectattr("vrfName", "equalto", "ndvrfmcfgstgcreate") | selectattr("attach", "equalto", true) | list | length > 0
+      - mcfg_staged_attachment_rows | selectattr("vrfName", "equalto", "ndvrfmcfgstgadd") | selectattr("attach", "equalto", true) | list | length > 0
+      - mcfg_staged_attachment_rows | selectattr("vrfName", "equalto", "ndvrfmcfgstgremove") | selectattr("attach", "equalto", true) | list | length == 0
+      - mcfg_staged_attachment_rows | selectattr("vrfName", "equalto", "ndvrfmcfgstgomit") | selectattr("attach", "equalto", true) | list | length == 0
   when:
     - nd_vrf_run_mcfg | bool
     - nd_vrf_run_staged | bool

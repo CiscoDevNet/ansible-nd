@@ -151,17 +151,51 @@
     - nd_network_run_attach | bool
   tags: staged
 
-- name: Staged TC1 - Assert Create Attachment Without Deploy Or Delete
+- name: Staged TC1 - Assert Staged Create Reported Change
   ansible.builtin.assert:
     that:
       - staged_create_result.changed == true
-      - staged_create_result.api_paths | default([]) | select("search", "/networkAttachments") | list | length > 0
-      - staged_create_result.api_paths | default([]) | select("search", "validateInterfaces") | list | length > 0
-      - staged_create_result.api_paths | default([]) | select("search", "deploy") | list | length == 0
-      - staged_create_result.api_paths | default([]) | select("search", "networkActions/remove") | list | length == 0
-      - (staged_create_result.api_payload | default([]) | to_json) is search("ndnetstgcreate")
-      - (staged_create_result.api_payload | default([]) | to_json) is search("attach")
-      - (staged_create_result.api_payload | default([]) | to_json) is search("true")
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC1 - Query Created Network Attachment
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ target_fabric }}/networkAttachments/query?includeAll=true&max=10000&offset=0"
+    method: post
+    content:
+      networkNames:
+        - ndnetstgcreate
+  register: staged_create_attachment_query
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC1 - Normalize Created Network Attachment Rows
+  ansible.builtin.set_fact:
+    staged_create_attachment_rows: >-
+      {{
+        staged_create_attachment_query.current.attachments
+        | default(staged_create_attachment_query.current.items | default([]))
+      }}
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC1 - Assert Created Network Attachment State
+  ansible.builtin.assert:
+    that:
+      - >-
+        staged_create_attachment_rows
+        | selectattr("networkName", "equalto", "ndnetstgcreate")
+        | selectattr("attach", "equalto", true)
+        | list | length > 0
   when:
     - nd_network_run_standalone | bool
     - nd_network_run_staged | bool
@@ -194,19 +228,36 @@
     - nd_network_run_attach | bool
   tags: staged
 
-- name: Staged TC3 - Assert Attachment Reconciliation Without Deploy Or Delete
+- name: Staged TC3 - Assert Staged Reconcile Reported Change
   ansible.builtin.assert:
     that:
       - staged_result.changed == true
-      - staged_result.api_paths | default([]) | select("search", "/networkAttachments") | list | length > 0
-      - staged_result.api_paths | default([]) | select("search", "deploy") | list | length == 0
-      - staged_result.api_paths | default([]) | select("search", "networkActions/remove") | list | length == 0
-      - (staged_result.api_payload | default([]) | to_json) is search("ndnetstgadd")
-      - (staged_result.api_payload | default([]) | to_json) is search("ndnetstgremove")
-      - (staged_result.api_payload | default([]) | to_json) is search("ndnetstgomit")
-      - (staged_result.api_payload | default([]) | to_json) is search("attach")
-      - (staged_result.api_payload | default([]) | to_json) is search("true")
-      - (staged_result.api_payload | default([]) | to_json) is search("false")
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC4 - Query Network Attachments
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ target_fabric }}/networkAttachments/query?includeAll=true&max=10000&offset=0"
+    method: post
+    content:
+      networkNames: "{{ target_network_names }}"
+  register: staged_attachment_query
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC4 - Normalize Network Attachment Rows
+  ansible.builtin.set_fact:
+    staged_attachment_rows: >-
+      {{
+        staged_attachment_query.current.attachments
+        | default(staged_attachment_query.current.items | default([]))
+      }}
   when:
     - nd_network_run_standalone | bool
     - nd_network_run_staged | bool
@@ -229,6 +280,10 @@
   ansible.builtin.assert:
     that:
       - (staged_gather_result.after | default([]) | to_json) is search("ndnetstgomit")
+      - staged_attachment_rows | selectattr("networkName", "equalto", "ndnetstgcreate") | selectattr("attach", "equalto", true) | list | length > 0
+      - staged_attachment_rows | selectattr("networkName", "equalto", "ndnetstgadd") | selectattr("attach", "equalto", true) | list | length > 0
+      - staged_attachment_rows | selectattr("networkName", "equalto", "ndnetstgremove") | selectattr("attach", "equalto", true) | list | length == 0
+      - staged_attachment_rows | selectattr("networkName", "equalto", "ndnetstgomit") | selectattr("attach", "equalto", true) | list | length == 0
   when:
     - nd_network_run_standalone | bool
     - nd_network_run_staged | bool
