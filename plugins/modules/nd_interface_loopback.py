@@ -96,7 +96,8 @@ options:
                     description:
                     - The IPv4 address of the loopback interface.
                     - Accepts bare (C(10.1.1.1)) or CIDR (C(10.1.1.1/32)) input. CIDR input is normalized to the bare address, which is
-                      what is sent to the controller and returned in module output, because ND rejects CIDR notation for this field.
+                      what is sent to the controller and returned in module output.
+                    - When policy_type is C(iosXeInternalLoopback), the value is not validated or normalized and is sent to the controller as-is.
                     - Applies to all policy_type values except C(iosXeLoopbackShutNoshut) and C(csr1kvLoopback).
                     type: str
                   description:
@@ -119,6 +120,8 @@ options:
                   ipv6:
                     description:
                     - The IPv6 address of the loopback interface.
+                    - When policy_type is C(loopback), CIDR notation is required (for example C(2001:db8::1/128)).
+                    - When policy_type is C(iosXeInternalLoopback), the value is not validated and is sent to the controller as-is.
                     - Applies when policy_type is C(loopback) or C(iosXeInternalLoopback).
                     type: str
                   route_map_tag:
@@ -205,9 +208,13 @@ options:
     - Use O(state=merged) to create new resources and update existing ones as defined in your configuration.
       Resources on ND that are not specified in the configuration will be left unchanged.
     - Use O(state=replaced) to replace the resources specified in the configuration.
-    - Use O(state=overridden) to enforce the configuration as the single source of truth.
-      The resources on ND will be modified to exactly match the configuration.
-      Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
+    - Use O(state=overridden) to enforce the configuration as the single source of truth for the loopback interfaces managed by this module.
+      The scope is fabric-wide, covering every switch in the fabric rather than only the switches named in the configuration.
+      Managed loopback interfaces on ND will be modified to exactly match the configuration, and any managed loopback interface existing
+      on ND but not present in the configuration will be deleted. Use with extra caution.
+    - A managed loopback interface is one whose policy type is among the O(config[].config_data.network_os.policy.policy_type) choices.
+      Loopback interfaces with any other policy type, such as the system-provisioned NX-OS C(underlayLoopback) or C(userDefined),
+      are never modified or deleted by this module.
     - Use O(state=deleted) to remove the resources specified in the configuration from the Cisco Nexus Dashboard.
     type: str
     default: merged
@@ -396,6 +403,8 @@ EXAMPLES = r"""
               secondary_ip_list:
                 - ip: 10.2.2.3
                   prefix: 32
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Create an MPLS loopback
@@ -413,6 +422,8 @@ EXAMPLES = r"""
               dci_routing_protocol: ospf
               dci_routing_tag: "200"
               ospf_area_id: "0.0.0.0"
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Merge an IOS-XE loopback
@@ -430,6 +441,8 @@ EXAMPLES = r"""
               ip: "10.200.100.1"
               description: "XE loopback100"
               vrf: blue
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Replace an IOS-XE loopback (full desired state)
@@ -446,6 +459,8 @@ EXAMPLES = r"""
               admin_state: true
               ip: "10.200.100.2"
               description: "XE loopback100 replaced"
+    config_actions:
+      deploy: true
     state: replaced
 
 - name: Override all managed loopbacks (mixed NX-OS and IOS-XE desired state)
@@ -470,6 +485,8 @@ EXAMPLES = r"""
               policy_type: iosXeLoopback
               admin_state: true
               ip: "10.200.100.1"
+    config_actions:
+      deploy: true
     state: overridden
 
 - name: Delete an IOS-XE loopback
@@ -478,6 +495,8 @@ EXAMPLES = r"""
     config:
       - switch_ip: 192.168.2.1
         interface_name: loopback100
+    config_actions:
+      deploy: true
     state: deleted
 
 - name: Merge a CSR loopback
@@ -493,6 +512,81 @@ EXAMPLES = r"""
               policy_type: csrLoopback
               admin_state: true
               ip: "10.200.101.1"
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Manage only the admin state of an IOS-XE loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback102
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeLoopbackShutNoshut
+              admin_state: false
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Merge an IOS-XE underlay loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback103
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeUnderlayLoopback
+              admin_state: true
+              ip: "10.200.103.1"
+              secondary_ip: "10.200.103.2"
+              description: "XE underlay loopback103"
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Merge an IOS-XE internal loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback104
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeInternalLoopback
+              admin_state: true
+              ip: "10.200.104.1"
+              ipv6: "2001:db8:104::1/128"
+              vrf: blue
+              enable_pim: true
+              description: "XE internal loopback104"
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Merge a CSR1kv loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.2
+        interface_name: loopback105
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: csr1kvLoopback
+              admin_state: true
+              extra_config: "ip ospf network point-to-point"
+    config_actions:
+      deploy: true
     state: merged
 """
 
@@ -517,7 +611,9 @@ before:
   sample:
   - switch_ip: 192.168.1.1
     interface_name: loopback10
+    interface_type: loopback
     config_data:
+      mode: managed
       network_os:
         network_os_type: nx-os
         policy:
@@ -535,7 +631,9 @@ after:
   sample:
   - switch_ip: 192.168.1.1
     interface_name: loopback10
+    interface_type: loopback
     config_data:
+      mode: managed
       network_os:
         network_os_type: nx-os
         policy:
@@ -563,7 +661,9 @@ proposed:
   sample:
   - switch_ip: 192.168.1.1
     interface_name: loopback10
+    interface_type: loopback
     config_data:
+      mode: managed
       network_os:
         network_os_type: nx-os
         policy:
