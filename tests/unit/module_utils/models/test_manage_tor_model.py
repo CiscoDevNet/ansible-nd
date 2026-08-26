@@ -81,6 +81,13 @@ def test_gathered_skips_vpc_validation():
         ManageTorModel.from_config(_cfg(access_or_tor_peer_switch_id="T2"), context={"state": "gathered"})
 
 
+def test_overridden_accepts_vpc_without_resources():
+    """overridden is a write state; a vPC item without resources is accepted
+    (ND defaults the VPC/PO IDs), matching merged behavior."""
+    with does_not_raise():
+        ManageTorModel.from_config(_cfg(aggregation_or_leaf_peer_switch_id="L2"), context={"state": "overridden"})
+
+
 def test_flatten_resources_from_response():
     """resources sub-dict from an API response is flattened to top-level fields."""
     model = ManageTorModel.from_response(
@@ -93,3 +100,30 @@ def test_flatten_resources_from_response():
     )
     assert model.access_or_tor_port_channel_id == 501
     assert model.aggregation_or_leaf_port_channel_id == 502
+
+
+def test_identity_is_order_independent_for_vpc_pairs():
+    """The identity is invariant to which vPC pair member is primary vs peer, so
+    a user config matches the same association ND stores with the pair normalized
+    to a different primary. Regression: delete matched only associations whose
+    member order happened to match ND's."""
+    user = ManageTorModel.from_config(
+        _cfg(aggregation_or_leaf_switch_id="L_A", aggregation_or_leaf_peer_switch_id="L_B"),
+        context={"state": "deleted"},
+    )
+    nd = ManageTorModel.from_response(
+        {
+            "fabricName": "fab1",
+            "accessOrTorSwitchId": "T1",
+            "aggregationOrLeafSwitchId": "L_B",
+            "aggregationOrLeafPeerSwitchId": "L_A",
+        }
+    )
+    assert user.get_identifier_value() == nd.get_identifier_value()
+
+
+def test_identity_distinguishes_different_pairs():
+    """Different aggregation pairs still yield different identities."""
+    a = ManageTorModel.from_config(_cfg(aggregation_or_leaf_switch_id="L1"), context={"state": "deleted"})
+    b = ManageTorModel.from_config(_cfg(aggregation_or_leaf_switch_id="L2"), context={"state": "deleted"})
+    assert a.get_identifier_value() != b.get_identifier_value()

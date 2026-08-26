@@ -231,6 +231,11 @@ class NDStateMachine:
         diff_identifiers = self.before.get_diff_identifiers(self.proposed)
         items_to_delete = [existing_item for identifier in diff_identifiers if (existing_item := self.existing.get(identifier)) is not None]
         self._delete_items(items_to_delete)
+        # Record removals as sent so save/deploy gates that fire on len(sent)
+        # trigger when an overridden run only removes items (a disassociate
+        # stages config that must be pushed), mirroring _manage_delete_state.
+        if items_to_delete:
+            self.sent.add_many(items_to_delete)
 
     def _manage_delete_state(self) -> None:
         """Handle deleted state."""

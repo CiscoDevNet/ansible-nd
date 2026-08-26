@@ -4,7 +4,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import List, Dict, Any, Optional, ClassVar, Literal, Set
+from typing import List, Dict, Any, Optional, ClassVar, Literal, Set, Tuple
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -103,6 +103,17 @@ class ManageTorModel(NDBaseModel):
 
         return data
 
+    # --- Identity ---
+
+    def get_identifier_value(self) -> Tuple[Any, ...]:
+        # ND treats the access and aggregation vPC pair members as unordered and
+        # may store a different primary/peer than the user supplied. Sort each
+        # pair so user config and the ND response yield the same key, keeping
+        # delete and idempotency matching order-independent.
+        access_pair = tuple(sorted(v for v in (self.access_or_tor_switch_id, self.access_or_tor_peer_switch_id) if v is not None))
+        aggregation_pair = tuple(sorted(v for v in (self.aggregation_or_leaf_switch_id, self.aggregation_or_leaf_peer_switch_id) if v is not None))
+        return (self.fabric_name, access_pair, aggregation_pair)
+
     # --- Argument Spec ---
 
     @classmethod
@@ -131,7 +142,7 @@ class ManageTorModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "deleted", "gathered"],
+                choices=["merged", "overridden", "deleted", "gathered"],
             ),
             config_actions=dict(
                 type="dict",

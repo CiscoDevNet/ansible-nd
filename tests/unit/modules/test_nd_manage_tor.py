@@ -120,3 +120,12 @@ def test_documentation_suboptions_match_argument_spec():
     doc_subs = set(doc["options"]["config"]["suboptions"].keys())
     spec_subs = set(ManageTorModel.get_argument_spec()["config"]["options"].keys())
     assert doc_subs == spec_subs, {"doc_only": sorted(doc_subs - spec_subs), "spec_only": sorted(spec_subs - doc_subs)}
+
+
+def test_state_choices_match_and_include_overridden():
+    """DOCUMENTATION state choices == argument spec choices and include overridden."""
+    doc = yaml.safe_load(nd_manage_tor.DOCUMENTATION)
+    doc_choices = doc["options"]["state"]["choices"]
+    spec_choices = ManageTorModel.get_argument_spec()["state"]["choices"]
+    assert doc_choices == spec_choices
+    assert "overridden" in spec_choices

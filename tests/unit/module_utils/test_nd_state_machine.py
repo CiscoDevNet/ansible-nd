@@ -278,6 +278,37 @@ def test_nd_state_machine_00130() -> None:
     assert len(calls[1][1]) == 1
 
 
+def test_nd_state_machine_00135() -> None:
+    """
+    # Summary
+
+    Verify an `overridden` run that only removes items records those removals
+    into `sent`, so save/deploy gates that fire on `len(sent) > 0` (e.g.
+    nd_manage_tor) trigger on override deletions -- not just create/update.
+
+    ## Test
+
+    - Seed an existing association absent from the (empty) proposed config
+    - `_manage_override_deletions` deletes it and records it in `sent`
+
+    ## Classes and Methods
+
+    - NDStateMachine._manage_override_deletions()
+    """
+    donor = _build_state_machine(state="deleted", check_mode=False, config=_CONFIG)
+    instance = _build_state_machine(state="overridden", check_mode=False, config=[])
+    # before/existing hold an association that is not in the (empty) proposed.
+    instance.existing = donor.proposed.copy()
+    instance.before = donor.proposed.copy()
+
+    with does_not_raise():
+        instance._manage_override_deletions()
+
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert "delete_bulk" in names
+    assert len(instance.sent) == 1
+
+
 class _ExistingLoopbackSpy(_SpyLoopbackOrchestrator):
     """Spy whose inventory already contains loopback10, so a re-submitted policy-less item is not a create."""
 

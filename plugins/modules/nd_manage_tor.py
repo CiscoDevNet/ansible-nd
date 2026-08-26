@@ -92,18 +92,21 @@ options:
     - The desired state of the access or ToR switch associations on the Cisco Nexus Dashboard.
     - Use O(state=merged) to associate access or ToR switches with aggregation or leaf switches.
       Existing associations not specified in the configuration will be left unchanged.
+    - Use O(state=overridden) to make the fabric's access or ToR switch associations match O(config) exactly.
+      Associations in O(config) are created or updated and any existing association in the fabric that is
+      not in O(config) is disassociated. An empty or omitted O(config) removes every association in the fabric.
     - Use O(state=deleted) to disassociate the access or ToR switches specified in the configuration.
     - Use O(state=gathered) to retrieve current access or ToR switch associations from the fabric without making changes.
       O(config) is not required and is ignored; every association in the fabric is returned in a single query.
     type: str
     default: merged
-    choices: [ merged, deleted, gathered ]
+    choices: [ merged, overridden, deleted, gathered ]
   config_actions:
     description:
     - Controls saving and deploying the fabric configuration after ToR associations are
       staged. Associate and disassociate only stage pending intent; a save and deploy are
       required to realize (or remove) the configuration on the switches.
-    - Applied for O(state=merged) and O(state=deleted), only when a real change is made.
+    - Applied for O(state=merged), O(state=overridden) and O(state=deleted), only when a real change is made.
     - Not used when O(state=gathered).
     type: dict
     suboptions:
@@ -190,6 +193,22 @@ EXAMPLES = r"""
       - access_or_tor_switch: "98AFDSD8V0"
         aggregation_or_leaf_switch: "98AM4FFFFV0"
     state: deleted
+
+- name: Override the fabric to a single ToR association and stage the removal of the rest
+  cisco.nd.nd_manage_tor:
+    fabric_name: my-fabric
+    config:
+      - access_or_tor_switch: "98AFDSD8V0"
+        aggregation_or_leaf_switch: "98AM4FFFFV0"
+    state: overridden
+    config_actions:
+      save: true
+      deploy: false
+
+- name: Remove every ToR association in the fabric
+  cisco.nd.nd_manage_tor:
+    fabric_name: my-fabric
+    state: overridden
 
 - name: Gather all ToR associations for a fabric
   cisco.nd.nd_manage_tor:
@@ -399,7 +418,7 @@ def main():
     # state machine builds the proposed collection so the composite identity is
     # serial-based and matches the existing associations read from ND.
     config = module.params.get("config") or []
-    if state in ("merged", "deleted"):
+    if state in ("merged", "overridden", "deleted"):
         for item in config:
             if not item.get("access_or_tor_switch"):
                 module.fail_json(msg="config[].access_or_tor_switch is required when state is '{0}'.".format(state))
@@ -444,9 +463,10 @@ def main():
         nd_state_machine.manage_state()
 
         # Execute config save/deploy only on real changes. Unlike the fabric
-        # modules, ToR gates on len(sent) for BOTH merged AND deleted: an
-        # associate stages pending config that a disassociate must also push
-        # (save+deploy) to remove from the switches.
+        # modules, ToR gates on len(sent) for merged, overridden AND deleted: an
+        # associate stages pending config that a disassociate (including an
+        # overridden removal) must also push (save+deploy) to realize on the
+        # switches.
         if len(nd_state_machine.sent) > 0:
             nd_state_machine.model_orchestrator.execute_config_actions(
                 fabric_names=[fabric_name],
