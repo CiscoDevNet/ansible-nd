@@ -585,6 +585,94 @@ def _filter_vpc_pairs_by_requested_config(
     return filtered_pairs
 
 
+def _vpc_pair_identity_key(item: dict[str, Any]) -> tuple[str, str] | None:
+    """Return the order-independent (switch_id, peer_switch_id) key for a pair."""
+    switch_id = item.get("switch_id") or item.get(VpcFieldNames.SWITCH_ID)
+    peer_switch_id = item.get("peer_switch_id") or item.get(VpcFieldNames.PEER_SWITCH_ID)
+    if switch_id and peer_switch_id:
+        return tuple(sorted([switch_id, peer_switch_id]))
+    return None
+
+
+def _reconstruct_requested_delete_pairs(
+    config: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Rebuild existing-pair dicts from the requested delete config.
+
+    Used when a requested pair is no longer returned by /vpcPairs (already
+    unpaired but not yet saved/deployed) so the delete state machine still has an
+    existing entry to act on and trigger pending-member recovery.
+
+    Args:
+        config: User-requested delete pairs from the playbook.
+
+    Returns:
+        List of reconstructed pair dicts. Items without a complete switch pair
+        are skipped.
+    """
+    reconstructed_pairs = []
+    for item in config:
+        switch_id_val = item.get("switch_id") or item.get(VpcFieldNames.SWITCH_ID)
+        peer_switch_id_val = item.get("peer_switch_id") or item.get(VpcFieldNames.PEER_SWITCH_ID)
+        if not switch_id_val or not peer_switch_id_val:
+            continue
+
+        use_vpl_val = item.get("use_virtual_peer_link")
+        if use_vpl_val is None:
+            use_vpl_val = item.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False)
+
+        reconstructed_pair = {
+            VpcFieldNames.SWITCH_ID: switch_id_val,
+            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id_val,
+            VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl_val,
+            VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
+        }
+        if VpcFieldNames.VPC_PAIR_DETAILS in item:
+            reconstructed_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(VpcFieldNames.VPC_PAIR_DETAILS)
+        reconstructed_pairs.append(reconstructed_pair)
+
+    return reconstructed_pairs
+
+
+def _build_delete_existing_pairs(
+    pairs: list[dict[str, Any]],
+    config: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Build the existing-pair set for delete reconciliation from requested config.
+
+    Requested pairs (config) are the source of truth so a staged deletion is
+    handled deterministically even when the fabric still hosts unrelated vPC
+    pairs:
+    - Requested pairs still present in /vpcPairs are kept with their real details.
+    - Requested pairs already absent are reconstructed so the pending-member
+      recovery path can run and push the removal.
+    - Unrelated pairs (not in config) are excluded from delete reconciliation.
+
+    When config has no complete pairs the queried pairs are returned unchanged,
+    preserving prior behavior.
+
+    Args:
+        pairs: Discovered pair dicts from the /vpcPairs list query.
+        config: User-requested delete pairs from the playbook.
+
+    Returns:
+        List of pair dicts to seed the delete state machine's existing set.
+    """
+    present_pairs = _filter_vpc_pairs_by_requested_config(pairs, config)
+    reconstructed_pairs = _reconstruct_requested_delete_pairs(config)
+    if not reconstructed_pairs:
+        return present_pairs
+
+    present_keys = {key for key in (_vpc_pair_identity_key(pair) for pair in present_pairs) if key is not None}
+    merged_pairs = list(present_pairs)
+    for reconstructed_pair in reconstructed_pairs:
+        if _vpc_pair_identity_key(reconstructed_pair) not in present_keys:
+            merged_pairs.append(reconstructed_pair)
+    return merged_pairs
+
+
 def _is_ip_literal(value: Any) -> bool:
     """
     Return True when value is a valid IPv4/IPv6 literal string.
@@ -869,7 +957,7 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
                         return _set_lightweight_context(lightweight_have=have)
                     nrm.module.warn("vPC list query returned no active pairs for gathered workflow. Falling back to switch-level discovery.")
                 elif have:
-                    return _set_lightweight_context(have)
+                    return _set_lightweight_context(_build_delete_existing_pairs(have, config))
                 elif config and list_query_succeeded:
                     nrm.module.warn("vPC list query returned no pairs for delete workflow. Falling back to switch-level discovery.")
 
@@ -882,26 +970,7 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
             else:
                 # Preserve explicit delete intent without full-fabric discovery.
                 # This keeps delete deterministic and avoids expensive inventory calls.
-                fallback_have = []
-                for item in config:
-                    switch_id_val = item.get("switch_id") or item.get(VpcFieldNames.SWITCH_ID)
-                    peer_switch_id_val = item.get("peer_switch_id") or item.get(VpcFieldNames.PEER_SWITCH_ID)
-                    if not switch_id_val or not peer_switch_id_val:
-                        continue
-
-                    use_vpl_val = item.get("use_virtual_peer_link")
-                    if use_vpl_val is None:
-                        use_vpl_val = item.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False)
-
-                    fallback_pair = {
-                        VpcFieldNames.SWITCH_ID: switch_id_val,
-                        VpcFieldNames.PEER_SWITCH_ID: peer_switch_id_val,
-                        VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl_val,
-                        VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
-                    }
-                    if VpcFieldNames.VPC_PAIR_DETAILS in item:
-                        fallback_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(VpcFieldNames.VPC_PAIR_DETAILS)
-                    fallback_have.append(fallback_pair)
+                fallback_have = _reconstruct_requested_delete_pairs(config)
 
                 if fallback_have:
                     nrm.module.warn("Using requested delete config as fallback existing set because vPC list query failed.")
@@ -1239,3 +1308,41 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
         raise
     except Exception as e:
         _raise_vpc_error(msg=f"Failed to query VPC pairs: {str(e)}", fabric=fabric_name, exception_type=type(e).__name__)
+
+
+def _build_delete_existing_pairs(
+    pairs: list[dict[str, Any]],
+    config: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Build the existing-pair set for delete reconciliation from requested config.
+
+    Requested pairs (config) are the source of truth so a staged deletion is
+    handled deterministically even when the fabric still hosts unrelated vPC
+    pairs:
+    - Requested pairs still present in /vpcPairs are kept with their real details.
+    - Requested pairs already absent are reconstructed so the pending-member
+      recovery path can run and push the removal.
+    - Unrelated pairs (not in config) are excluded from delete reconciliation.
+
+    When config has no complete pairs the queried pairs are returned unchanged,
+    preserving prior behavior.
+
+    Args:
+        pairs: Discovered pair dicts from the /vpcPairs list query.
+        config: User-requested delete pairs from the playbook.
+
+    Returns:
+        List of pair dicts to seed the delete state machine's existing set.
+    """
+    present_pairs = _filter_vpc_pairs_by_requested_config(pairs, config)
+    reconstructed_pairs = _reconstruct_requested_delete_pairs(config)
+    if not reconstructed_pairs:
+        return present_pairs
+
+    present_keys = {key for key in (_vpc_pair_identity_key(pair) for pair in present_pairs) if key is not None}
+    merged_pairs = list(present_pairs)
+    for reconstructed_pair in reconstructed_pairs:
+        if _vpc_pair_identity_key(reconstructed_pair) not in present_keys:
+            merged_pairs.append(reconstructed_pair)
+    return merged_pairs
