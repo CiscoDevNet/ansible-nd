@@ -97,7 +97,6 @@ options:
                     - The IPv4 address of the loopback interface.
                     - Accepts bare (C(10.1.1.1)) or CIDR (C(10.1.1.1/32)) input. CIDR input is normalized to the bare address, which is
                       what is sent to the controller and returned in module output.
-                    - When policy_type is C(iosXeInternalLoopback), the value is not validated or normalized and is sent to the controller as-is.
                     - Applies to all policy_type values except C(iosXeLoopbackShutNoshut) and C(csr1kvLoopback).
                     type: str
                   description:
@@ -120,8 +119,8 @@ options:
                   ipv6:
                     description:
                     - The IPv6 address of the loopback interface.
-                    - When policy_type is C(loopback), CIDR notation is required (for example C(2001:db8::1/128)).
-                    - When policy_type is C(iosXeInternalLoopback), the value is not validated and is sent to the controller as-is.
+                    - Accepts bare (C(2001:db8::1)) or CIDR (C(2001:db8::1/128)) input. CIDR input is normalized to the bare address, which is
+                      what is sent to the controller and returned in module output. The controller applies the C(/128) prefix length.
                     - Applies when policy_type is C(loopback) or C(iosXeInternalLoopback).
                     type: str
                   route_map_tag:
@@ -162,7 +161,9 @@ options:
                         type: int
                   secondary_ip:
                     description:
-                    - Secondary IP address of the NVE interface loopback.
+                    - Secondary IPv4 address of the NVE interface loopback.
+                    - Accepts bare (C(10.1.1.2)) or CIDR (C(10.1.1.2/32)) input. CIDR input is normalized to the bare address, which is
+                      what is sent to the controller and returned in module output.
                     - Applies when policy_type is C(iosXeUnderlayLoopback).
                     type: str
                   enable_pim:

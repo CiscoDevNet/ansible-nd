@@ -145,10 +145,10 @@
         interface_name: loopback203
     state: deleted
 
-# --- MERGED WITH CIDR-format ip ---
-# Regression guard for #401: live ND 4.2.1 rejects a CIDR ip on a loopback create (400) and stores/returns the bare
-# host form. The model normalizes CIDR input to bare before the wire, so a CIDR ip must (a) create successfully with a
-# bare ip in the after-state and (b) be idempotent on re-apply against ND's bare wire form.
+# --- MERGED WITH CIDR-format ip and ipv6 ---
+# Regression guard for #401 (ip) and #529 (ipv6): live ND 4.2.1 rejects a CIDR ip or ipv6 on a loopback create (400) and
+# stores/returns the bare host form. The model normalizes CIDR input to bare before the wire, so CIDR input must (a) create
+# successfully with bare addresses in the after-state and (b) be idempotent on re-apply against ND's bare wire form.
 
 - name: "MERGED CIDR: Create loopback204 with a CIDR-format ip (normal mode)"
   cisco.nd.nd_interface_loopback: &merge_lb204_cidr
@@ -164,23 +164,25 @@
               policy_type: loopback
               admin_state: true
               ip: "10.100.104.1/32"
+              ipv6: "2001:db8:204::1/128"
               description: "CIDR normalization test loopback204"
     state: merged
   register: nm_merged_cidr
 
-- name: "MERGED CIDR: Verify create succeeded and the ip was normalized to bare in the after state"
+- name: "MERGED CIDR: Verify create succeeded and the ip and ipv6 were normalized to bare in the after state"
   vars:
     lb204_after: "{{ nm_merged_cidr.after | selectattr('interface_name', 'equalto', 'loopback204') | first }}"
   ansible.builtin.assert:
     that:
       - nm_merged_cidr is changed
       - lb204_after.config_data.network_os.policy.ip == "10.100.104.1"
+      - lb204_after.config_data.network_os.policy.ipv6 == "2001:db8:204::1"
 
 - name: "MERGED CIDR: Re-apply the same CIDR ip for idempotency"
   cisco.nd.nd_interface_loopback: *merge_lb204_cidr
   register: nm_merged_cidr_idem
 
-- name: "MERGED CIDR: Verify idempotency (CIDR input normalizes to ND's bare wire form)"
+- name: "MERGED CIDR: Verify idempotency (CIDR ip and ipv6 input normalize to ND's bare wire form)"
   ansible.builtin.assert:
     that:
       - nm_merged_cidr_idem is not changed

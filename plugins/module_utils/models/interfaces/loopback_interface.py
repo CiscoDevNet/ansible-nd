@@ -41,7 +41,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv4HostStrict, IPv6CIDR
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv4HostStrict, IPv6Host
 
 
 class LoopbackPolicyStrictBase(NDNestedModel):
@@ -138,7 +138,9 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
     }
 
     policy_type: Literal["loopback"] = Field(alias="policyType", description="Loopback policy template discriminator")
-    ipv6: IPv6CIDR = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
+    ipv6: IPv6Host = Field(
+        default=None, alias="ipv6", description="Loopback IPv6 address (bare host form, e.g. 2001:db8::1; CIDR input is accepted and normalized)"
+    )
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
     route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
 
@@ -266,15 +268,21 @@ class XeUnderlayLoopbackPolicyModel(LoopbackPolicyStrictBase):
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
     ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
-    secondary_ip: str | None = Field(default=None, alias="secondaryIp", description="Secondary IP address of the NVE interface loopback")
+    secondary_ip: IPv4Host = Field(
+        default=None,
+        alias="secondaryIp",
+        description="Secondary IPv4 address of the NVE interface loopback (bare host form; CIDR input is accepted and normalized)",
+    )
 
 
 class XeInternalLoopbackPolicyModel(LoopbackPolicyStrictBase):
     """
     # Summary
 
-    Policy fields for the IOS-XE `iosXeInternalLoopback` template (`ios_xe_int_loopback_internal`). `ip` and `ipv6` are plain strings —
-    the ND 4.2.1 schema deliberately leaves them unvalidated for this template (no `format: ipv4`), so the model matches the schema.
+    Policy fields for the IOS-XE `iosXeInternalLoopback` template (`ios_xe_int_loopback_internal`). The ND 4.2.1 OpenAPI schema leaves
+    `ip` and `ipv6` as untyped strings for this template, but the ND template itself declares them `ipV4Address` / `ipV6Address` and the
+    controller rejects CIDR or non-address input with HTTP 400 (lab-verified 2026-08-27), so the model validates and normalizes both to
+    the bare host form like every other loopback policy branch.
 
     ## Raises
 
@@ -285,8 +293,8 @@ class XeInternalLoopbackPolicyModel(LoopbackPolicyStrictBase):
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
     enable_pim: bool | None = Field(default=None, alias="enablePim", description="Enable PIM")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    ip: str | None = Field(default=None, alias="ip", description="Loopback IP address (unvalidated string per the ND schema for this template)")
-    ipv6: str | None = Field(default=None, alias="ipv6", description="Loopback IPv6 address (unvalidated string per the ND schema for this template)")
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
+    ipv6: IPv6Host = Field(default=None, alias="ipv6", description="Loopback IPv6 address (bare host form; CIDR input is accepted and normalized)")
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
 
 

@@ -595,40 +595,41 @@ def test_loopback_interface_00086():
     """
     # Summary
 
-    Verify `ipv6` accepts a valid IPv6 address in CIDR notation.
+    Verify `ipv6` accepts a valid IPv6 address in CIDR notation and normalizes it to the bare host form (ND 4.2.1 rejects a
+    CIDR `ipv6` on the wire and applies the /128 prefix itself).
 
     ## Test
 
     - Construct with ipv6="2001:db8::1/128"
-    - Value is accepted
+    - Value is normalized to "2001:db8::1"
 
     ## Classes and Methods
 
-    - NexusLoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
+    - NexusLoopbackPolicyModel.ipv6 (IPv6Host Annotated type)
     """
     with does_not_raise():
         instance = NexusLoopbackPolicyModel(ipv6="2001:db8::1/128", policy_type="loopback")
-    assert instance.ipv6 == "2001:db8::1/128"
+    assert instance.ipv6 == "2001:db8::1"
 
 
 def test_loopback_interface_00087():
     """
     # Summary
 
-    Verify `ipv6` accepts a valid IPv6 address with a non-/128 prefix.
+    Verify `ipv6` accepts a valid IPv6 address with a non-/128 prefix and normalizes it to the bare host form.
 
     ## Test
 
     - Construct with ipv6="2001:db8::/64"
-    - Value is accepted
+    - Value is normalized to "2001:db8::"
 
     ## Classes and Methods
 
-    - NexusLoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
+    - NexusLoopbackPolicyModel.ipv6 (IPv6Host Annotated type)
     """
     with does_not_raise():
         instance = NexusLoopbackPolicyModel(ipv6="2001:db8::/64", policy_type="loopback")
-    assert instance.ipv6 == "2001:db8::/64"
+    assert instance.ipv6 == "2001:db8::"
 
 
 def test_loopback_interface_00088():
@@ -644,9 +645,9 @@ def test_loopback_interface_00088():
 
     ## Classes and Methods
 
-    - NexusLoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
+    - NexusLoopbackPolicyModel.ipv6 (IPv6Host Annotated type)
     """
-    with pytest.raises(ValidationError, match="Invalid IPv6 address"):
+    with pytest.raises(ValidationError, match="is not a valid IPv6 address"):
         NexusLoopbackPolicyModel(ipv6="not-an-ipv6")
 
 
@@ -663,9 +664,9 @@ def test_loopback_interface_00089():
 
     ## Classes and Methods
 
-    - NexusLoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
+    - NexusLoopbackPolicyModel.ipv6 (IPv6Host Annotated type)
     """
-    with pytest.raises(ValidationError, match="Invalid IPv6 address"):
+    with pytest.raises(ValidationError, match="is not a valid IPv6 address"):
         NexusLoopbackPolicyModel(ipv6="10.1.1.1/32")
 
 
@@ -678,11 +679,11 @@ def test_loopback_interface_00090():
     ## Test
 
     - Construct with ipv6="2001:db8::1" (no CIDR prefix)
-    - Value is accepted (ipaddress.IPv6Interface accepts bare addresses, defaulting to /128)
+    - Value is accepted unchanged (the bare form is what ND 4.2.1 accepts on the wire)
 
     ## Classes and Methods
 
-    - NexusLoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
+    - NexusLoopbackPolicyModel.ipv6 (IPv6Host Annotated type)
     """
     with does_not_raise():
         instance = NexusLoopbackPolicyModel(ipv6="2001:db8::1", policy_type="loopback")
@@ -2314,25 +2315,149 @@ def test_xe_underlay_accepts_secondary_ip_rejects_vrf() -> None:
         result = XeUnderlayLoopbackPolicyModel(policyType="iosXeUnderlayLoopback", vrfInterface="blue")  # pylint: disable=unused-variable
 
 
-def test_xe_internal_ip_and_ipv6_are_unvalidated_strings() -> None:
+def test_xe_underlay_secondary_ip_normalizes_cidr() -> None:
     """
     # Summary
 
-    Verify `XeInternalLoopbackPolicyModel` accepts `enablePim`/`ipv6` and leaves `ip` unvalidated (the `ios_xe_int_loopback_internal`
-    template deliberately declares `ip` as a bare string in the ND 4.2.1 schema).
+    Verify `XeUnderlayLoopbackPolicyModel.secondary_ip` accepts CIDR input and normalizes it to the bare host form. ND 4.2.1
+    validates `secondaryIp` as a bare IPv4 address (template `ipV4Address SECONDARY_IP`) and rejects CIDR with HTTP 400, even
+    though the OpenAPI schema leaves the field untyped.
 
     ## Test
 
-    - Construct with a non-IPv4 `ip` string, `ipv6`, and `enablePim` succeeds
+    - Construct with secondaryIp="10.3.3.4/32"
+    - Value is normalized to "10.3.3.4"
+
+    ## Classes and Methods
+
+    - XeUnderlayLoopbackPolicyModel.secondary_ip (IPv4Host Annotated type)
+    """
+    with does_not_raise():
+        instance = XeUnderlayLoopbackPolicyModel(policyType="iosXeUnderlayLoopback", ip="10.3.3.3", secondaryIp="10.3.3.4/32")
+    assert instance.secondary_ip == "10.3.3.4"
+
+
+def test_xe_underlay_secondary_ip_rejects_non_ip() -> None:
+    """
+    # Summary
+
+    Verify `XeUnderlayLoopbackPolicyModel.secondary_ip` rejects a value that is not an IPv4 address.
+
+    ## Test
+
+    - Construct with secondaryIp="garbage"
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - XeUnderlayLoopbackPolicyModel.secondary_ip (IPv4Host Annotated type)
+    """
+    with pytest.raises(ValidationError, match="is not a valid IPv4 address"):
+        XeUnderlayLoopbackPolicyModel(policyType="iosXeUnderlayLoopback", ip="10.3.3.3", secondaryIp="garbage")
+
+
+def test_xe_internal_accepts_enable_pim_and_bare_addresses() -> None:
+    """
+    # Summary
+
+    Verify `XeInternalLoopbackPolicyModel` accepts `enablePim` and bare `ip` / `ipv6` addresses unchanged (the bare form is what
+    ND 4.2.1 accepts on the wire for the `ios_xe_int_loopback_internal` template).
+
+    ## Test
+
+    - Construct with bare ip, bare ipv6, and enablePim succeeds
+    - Values are unchanged
 
     ## Classes and Methods
 
     - XeInternalLoopbackPolicyModel.__init__()
     """
     with does_not_raise():
-        instance = XeInternalLoopbackPolicyModel(policyType="iosXeInternalLoopback", ip="not-an-ip", ipv6="2001:db8::1/128", enablePim=True)
-    assert instance.ip == "not-an-ip"
+        instance = XeInternalLoopbackPolicyModel(policyType="iosXeInternalLoopback", ip="10.4.4.4", ipv6="2001:db8::1", enablePim=True)
+    assert instance.ip == "10.4.4.4"
+    assert instance.ipv6 == "2001:db8::1"
     assert instance.enable_pim is True
+
+
+def test_xe_internal_ip_normalizes_cidr() -> None:
+    """
+    # Summary
+
+    Verify `XeInternalLoopbackPolicyModel.ip` accepts CIDR input and normalizes it to the bare host form. The ND 4.2.1 OpenAPI
+    schema leaves this field untyped, but the ND template declares it `ipV4Address` and the controller rejects CIDR with HTTP 400.
+
+    ## Test
+
+    - Construct with ip="10.4.4.4/32"
+    - Value is normalized to "10.4.4.4"
+
+    ## Classes and Methods
+
+    - XeInternalLoopbackPolicyModel.ip (IPv4Host Annotated type)
+    """
+    with does_not_raise():
+        instance = XeInternalLoopbackPolicyModel(policyType="iosXeInternalLoopback", ip="10.4.4.4/32")
+    assert instance.ip == "10.4.4.4"
+
+
+def test_xe_internal_ip_rejects_non_ip() -> None:
+    """
+    # Summary
+
+    Verify `XeInternalLoopbackPolicyModel.ip` rejects a value that is not an IPv4 address (ND 4.2.1 rejects it server-side
+    with HTTP 400 despite the untyped OpenAPI schema).
+
+    ## Test
+
+    - Construct with ip="not-an-ip"
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - XeInternalLoopbackPolicyModel.ip (IPv4Host Annotated type)
+    """
+    with pytest.raises(ValidationError, match="is not a valid IPv4 address"):
+        XeInternalLoopbackPolicyModel(policyType="iosXeInternalLoopback", ip="not-an-ip")
+
+
+def test_xe_internal_ipv6_normalizes_cidr() -> None:
+    """
+    # Summary
+
+    Verify `XeInternalLoopbackPolicyModel.ipv6` accepts CIDR input and normalizes it to the bare host form (the ND template
+    declares `ipV6Address IPv6` and renders the /128 prefix itself; CIDR input is rejected with HTTP 400).
+
+    ## Test
+
+    - Construct with ipv6="2001:db8::1/128"
+    - Value is normalized to "2001:db8::1"
+
+    ## Classes and Methods
+
+    - XeInternalLoopbackPolicyModel.ipv6 (IPv6Host Annotated type)
+    """
+    with does_not_raise():
+        instance = XeInternalLoopbackPolicyModel(policyType="iosXeInternalLoopback", ipv6="2001:db8::1/128")
+    assert instance.ipv6 == "2001:db8::1"
+
+
+def test_xe_internal_ipv6_rejects_non_ip() -> None:
+    """
+    # Summary
+
+    Verify `XeInternalLoopbackPolicyModel.ipv6` rejects a value that is not an IPv6 address.
+
+    ## Test
+
+    - Construct with ipv6="not-an-ipv6"
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - XeInternalLoopbackPolicyModel.ipv6 (IPv6Host Annotated type)
+    """
+    with pytest.raises(ValidationError, match="is not a valid IPv6 address"):
+        XeInternalLoopbackPolicyModel(policyType="iosXeInternalLoopback", ipv6="not-an-ipv6")
 
 
 def test_csr_loopback_rejects_read_schema_alias() -> None:
