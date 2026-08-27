@@ -1883,49 +1883,37 @@ def test_mcfg_parent_network_create_uses_onemanage_manage_schema_payload():
     }
 
 
-def test_mcfg_parent_private_secondary_network_create_omits_layer2_compat_l3_data():
+@pytest.mark.parametrize("vlan_network_type", ["primary", "community", "isolated"])
+def test_mcfg_parent_pvlan_network_create_is_rejected(vlan_network_type):
     orchestrator = _mcfg_parent_orchestrator()
-    requests = []
+    config = {
+        "network_name": f"PVLAN_{vlan_network_type.upper()}",
+        "network_id": 901031,
+        "vlan_id": 3131,
+        "vlan_network_type": vlan_network_type,
+        "layer": "layer2",
+        "vrf_name": "NA",
+    }
+    if vlan_network_type in ("community", "isolated"):
+        config["primary_network_id"] = 901030
 
-    def request(**kwargs):
-        requests.append(kwargs)
-        return {"results": [{"networkName": "PVLAN_COMMUNITY", "status": "success"}]}
+    with pytest.raises(ValueError, match="primary, community, and isolated are not supported on Multicluster parent fabrics"):
+        orchestrator.prepare_config_data([config])
 
-    object.__setattr__(orchestrator, "_request", request)
-    model = NDNetworkOrchestrator.model_class.from_config(
-        orchestrator.prepare_config_data(
+
+def test_mcfg_parent_workflow_rejects_pvlan_networks_before_requests():
+    module = _Module({"fabric_name": "MCFG_FAB", "state": "merged", "config": []})
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=_mcfg_parent_orchestrator().strategy)
+
+    with pytest.raises(AssertionError, match="primary, community, and isolated are not supported on Multicluster parent fabrics"):
+        coordinator._validate_parent_network_capabilities(
             [
                 {
-                    "network_name": "PVLAN_COMMUNITY",
-                    "network_id": 901031,
-                    "vlan_id": 3131,
-                    "vlan_network_type": "community",
-                    "primary_network_id": 901030,
-                    "layer": "layer2",
-                    "vrf_name": "NA",
+                    "network_name": "PVLAN_PRIMARY",
+                    "vlan_network_type": "privatePrimary",
                 }
             ]
-        )[0]
-    )
-
-    result = orchestrator.create_bulk([model])
-
-    assert result == {"results": [{"networkName": "PVLAN_COMMUNITY", "status": "success"}]}
-    assert requests[0]["path"] == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks"
-    payload = requests[0]["data"]["networks"][0]
-    assert payload["networkName"] == "PVLAN_COMMUNITY"
-    assert payload["fabricName"] == "MCFG_FAB"
-    assert payload["networkType"] == "userDefined"
-    assert payload["networkMode"] == "layer2"
-    assert payload["vlanNetworkType"] == "privateSecondaryCommunity"
-    assert payload["primaryNetworkId"] == 901030
-    assert "vlanId" not in payload
-    assert "l3Data" not in payload
-    assert payload["networkTemplateName"] == "Pvlan_Secondary_Network"
-    assert payload["networkExtensionTemplateName"] == "Pvlan_Secondary_Network"
-    assert payload["networkTemplateConfig"]["type"] == "Community"
-    assert payload["networkTemplateConfig"]["segmentId"] == "901031"
-    assert payload["networkTemplateConfig"]["vlanId"] == "3131"
+        )
 
 
 def test_mcfg_parent_network_create_keeps_onemanage_netflow_monitor_fields():

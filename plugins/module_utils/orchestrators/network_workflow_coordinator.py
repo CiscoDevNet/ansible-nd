@@ -341,6 +341,7 @@ class NetworkWorkflowCoordinator:
         state = module_args.get("state", "merged")
         self._trace("parent_workflow_start", state=state, parent_fabric=parent_fabric, fabric_type=fabric_type)
         config: list[dict] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
+        self._validate_parent_network_capabilities(config)
         self._trace("parent_config_parsed", parsed_count=len(config))
 
         # Collect member fabric names for relationship validation
@@ -436,6 +437,17 @@ class NetworkWorkflowCoordinator:
     def _has_child_network_options(child_cfg: dict[str, Any]) -> bool:
         """Return True when a child_fabric_config entry contains fabric-data options."""
         return any(key != "fabric_name" and value is not None for key, value in child_cfg.items())
+
+    def _validate_parent_network_capabilities(self, config: list[dict]) -> None:
+        """Validate parent-fabric Network options that depend on resolved topology."""
+        if not (getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False)):
+            return
+
+        for idx, network in enumerate(config):
+            if NDNetworkOrchestrator.is_pvlan_network_type(network.get("vlan_network_type")):
+                self.module.fail_json(
+                    msg="config[{idx}].vlan_network_type primary, community, and isolated are not supported on Multicluster parent fabrics.".format(idx=idx)
+                )
 
     def _accumulate_child_task(
         self,

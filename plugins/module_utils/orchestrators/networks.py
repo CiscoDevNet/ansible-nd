@@ -56,6 +56,7 @@ _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE = {
     "privateSecondaryCommunity": "Community",
     "privateSecondaryIsolated": "Isolated",
 }
+_PVLAN_NETWORK_TYPES = frozenset({"privatePrimary", "privateSecondaryCommunity", "privateSecondaryIsolated"})
 
 
 class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
@@ -316,6 +317,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             return transformed
 
         vlan_network_type = self._normalize_vlan_network_type(transformed.get("vlan_network_type"))
+        if self.is_pvlan_network_type(vlan_network_type) and self._is_mcfg_parent():
+            raise ValueError("vlan_network_type primary, community, and isolated are not supported on Multicluster parent fabrics")
         if vlan_network_type in _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE:
             return self._private_secondary_payload_model_data(config, fabric_name, vlan_network_type, transformed)
         transformed["vlan_network_type"] = vlan_network_type
@@ -341,6 +344,11 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if normalized is None:
             raise ValueError("vlan_network_type must be one of: " + ", ".join(sorted(_VLAN_NETWORK_TYPE_ALIASES)))
         return normalized
+
+    @staticmethod
+    def is_pvlan_network_type(value: Any) -> bool:
+        """Return True when the normalized VLAN network type is PVLAN-specific."""
+        return value in _PVLAN_NETWORK_TYPES
 
     def _private_secondary_payload_model_data(
         self,

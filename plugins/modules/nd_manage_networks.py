@@ -8,27 +8,53 @@ DOCUMENTATION = r"""
 ---
 module: nd_manage_networks
 version_added: "2.0.0"
-short_description: Manage Network definitions on Cisco Nexus Dashboard
+short_description: Manages Network definitions on Cisco Nexus Dashboard.
 description:
-  - Manage Network definitions across standalone, Multisite, and Multicluster fabric topologies.
-  - The module resolves fabric topology, selects the appropriate workflow, and supports parent/child Network coordination.
+  - Manages Network definitions on Cisco Nexus Dashboard across standalone,
+    Multisite (MSD), and Multicluster (MCFG) fabric topologies.
+  - This module manages Network definitions, parent or standalone Network switch
+    attachments, and optional deployment of pending Network changes.
+  - Supported Network definition properties include identity, custom templates,
+    VLAN, gateway, PVLAN, TRM, netflow, and route targets.
+  - Automatically detects fabric type from the ND API and routes to the
+    appropriate workflow without requiring extra user input.
+  - For parent fabrics (MSD / MCFG), supports child-fabric coordination via the
+    C(child_fabric_config) parameter inside each Network definition.
+  - Child fabrics only permit C(state=gathered) when targeted directly; all
+    write operations must be driven through the parent fabric.
 author:
   - Akshayanat C S (@achengam)
 options:
   fabric_name:
     description:
       - Name of the fabric to operate on.
+      - The module auto-detects whether this is a standalone, parent, or child
+        fabric and routes accordingly.
     type: str
     required: true
   state:
     description:
-      - Desired state of Network resources.
+      - Desired state of the Network resources.
+      - V(merged) creates or updates Networks that do not match the desired config.
+      - V(replaced) replaces existing Networks that match the desired config.
+      - V(overridden) replaces all Networks; removes any not in config.
+      - V(deleted) removes specified Networks (or all if config is empty).
+      - V(gathered) returns current Network state.
     type: str
     choices: [ merged, replaced, overridden, deleted, gathered ]
     default: merged
   config:
     description:
-      - List of Network definitions to manage.
+      - List of Network definition configurations to manage.
+      - Each element defines a Network with identity, template, VLAN, gateway,
+        PVLAN, attachment, deployment, and other settings.
+      - On standalone fabrics, all Network definition, attachment, and deployment
+        options are applied directly to the target fabric.
+      - For parent fabrics, each item may include a C(child_fabric_config) list
+        to provide per-child-fabric overrides. The parent-level C(attach),
+        C(deploy), and C(deploy_type) options are applied only on the parent
+        fabric and are not sent to child fabrics.
+      - For child fabrics targeted directly, only C(state=gathered) is supported.
     type: list
     elements: dict
     default: []
@@ -52,34 +78,60 @@ options:
       network_template_name:
         description:
           - Custom Network template name.
-          - Supplying custom template fields makes the module use the user-defined Network schema internally.
+          - Supplying custom template fields makes the module use the
+            user-defined Network schema.
         type: str
       network_extension_template_name:
         description:
           - Custom Network extension template name.
-          - Supplying custom template fields makes the module use the user-defined Network schema internally.
+          - Supplying custom template fields makes the module use the
+            user-defined Network schema.
         type: str
       service_network_template_name:
         description:
           - Custom service Network template name.
-          - Supplying custom template fields makes the module use the user-defined Network schema internally.
+          - Supplying custom template fields makes the module use the
+            user-defined Network schema.
         type: str
       network_template_config:
         description:
           - Custom Network template configuration values.
-          - Supplying custom template fields makes the module use the user-defined Network schema internally.
+          - Supplying custom template fields makes the module use the
+            user-defined Network schema.
         type: dict
       deploy:
-        description: Deploy pending changes for this Network.
+        description:
+          - Deploy pending Network attachment changes for this Network.
+          - For parent fabrics, deployment is performed once after all child
+            fabric tasks complete.
+          - Applies only to parent/standalone Network attachments, not child
+            fabric override entries.
+          - For C(state=deleted), the C(deploy) value is ignored; the module
+            deattaches existing attachments, deploys the detach using
+            C(deploy_type), and then removes the Network.
         type: bool
         default: true
       deploy_type:
-        description: Deployment scope for this Network.
+        description:
+          - Scope of the deploy operation when C(deploy=true).
+          - C(switch) deploys only the switches affected by this Network
+            attachment operation when switch identifiers are available.
+          - C(network) deploys the pending Network changes for this Network.
         type: str
         choices: [ switch, network ]
         default: switch
       attach:
-        description: Switch attachment entries for this Network.
+        description:
+          - Parent/standalone switch attachment entries for this Network.
+          - Switches are identified by management IP address and resolved before
+            attachment changes are applied.
+          - If C(attach) entries are present, the module attaches the Network to
+            those switches.
+          - In C(state=replaced), omitting C(attach) deattaches existing
+            attachments for the matching Network.
+          - In C(state=overridden), attachments not specified in the desired
+            configuration are deattached.
+          - Not supported under C(child_fabric_config).
         type: list
         elements: dict
         suboptions:
@@ -163,9 +215,8 @@ options:
                 description: Mark this attachment as active.
                 type: bool
           freeform_config:
-            description: Additional free-form CLI configuration mapped to API C(extraConfig).
+            description: Additional free-form CLI configuration for this attachment.
             type: str
-
       network_id:
         description: Network segment ID.
         type: int
@@ -177,6 +228,7 @@ options:
           - VLAN network type.
           - C(primary) is mapped to the ND private primary Network type.
           - C(community) and C(isolated) are mapped to private secondary Network templates and require O(config.primary_network_id).
+          - C(primary), C(community), and C(isolated) are not supported on MCFG parent fabrics.
           - C(normal) Networks allow C(access), C(dot1qTunnel), and C(trunk) attachment interface modes.
           - C(primary) Networks allow C(promiscuous) and C(trunkPromiscuous) attachment interface modes.
           - C(community) and C(isolated) Networks allow C(host) and C(trunkSecondary) attachment interface modes.
@@ -191,7 +243,6 @@ options:
       route_target_both:
         description:
           - Enable automatic L2VNI route-target import/export assignment.
-          - Maps to the ND C(rtAuto) API field.
         type: bool
       gateway_ipv4_address:
         description: IPv4 gateway address and prefix.
@@ -270,9 +321,15 @@ options:
         type: bool
       child_fabric_config:
         description:
-          - Per-child-fabric instance options for parent fabrics.
-          - Parent fabrics own Network creation, deletion, identity, VLAN, gateway,
-            attachment, and deployment fields.
+          - Per-child-fabric override entries for MSD and MCFG parent fabrics.
+          - Each entry targets a child member fabric and may override multicast,
+            DHCP, TRM, netflow, gateway, and route-target settings.
+          - Omitted fields inherit the parent Network setting.
+          - C(attach), C(deploy), C(deploy_type), Network identity, VLAN,
+            gateway, custom template fields, and PVLAN fields are not valid
+            inside C(child_fabric_config).
+          - Ignored when C(state=deleted); child fabric tasks are not executed
+            for delete operations.
         type: list
         elements: dict
         suboptions:
@@ -314,7 +371,6 @@ options:
           route_target_both:
             description:
               - Enable automatic L2VNI route-target import/export assignment on the child fabric.
-              - Maps to the ND C(rtAuto) API field.
             type: bool
           netflow_enable:
             description: Enable netflow.
@@ -336,6 +392,7 @@ extends_documentation_fragment:
   - cisco.nd.check_mode
 """
 EXAMPLES = r"""
+# Standalone fabric - create an L2 Network
 - name: Create an L2-only Network on a standalone fabric
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
@@ -348,6 +405,7 @@ EXAMPLES = r"""
         vlan_name: Network_BLUE_VLAN
         deploy: false
 
+# Standalone fabric - create a Network and attach it to a switch
 - name: Create a Network and attach it to a switch interface
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
@@ -367,6 +425,7 @@ EXAMPLES = r"""
         deploy: true
         deploy_type: switch
 
+# Standalone fabric - create an L3 Network
 - name: Create an L3 Network associated with a VRF
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
@@ -384,6 +443,7 @@ EXAMPLES = r"""
         routing_tag: 12345
         deploy: false
 
+# Standalone fabric - create a private primary Network
 - name: Create a private primary Network
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
@@ -396,6 +456,7 @@ EXAMPLES = r"""
         vlan_id: 2100
         deploy: false
 
+# Standalone fabric - create a private secondary community Network
 - name: Create a private secondary community Network
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
@@ -411,6 +472,7 @@ EXAMPLES = r"""
         multicast_group_address: 239.1.1.101
         deploy: false
 
+# Standalone fabric - create a private secondary isolated Network
 - name: Create a private secondary isolated Network
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
@@ -423,6 +485,7 @@ EXAMPLES = r"""
         vlan_id: 2102
         deploy: false
 
+# MSD parent fabric - create Network with child fabric overrides
 - name: Create Network on a parent fabric with child fabric overrides
   cisco.nd.nd_manage_networks:
     fabric_name: msd_parent
@@ -437,12 +500,14 @@ EXAMPLES = r"""
           - fabric_name: child_fabric_1
             multicast_group_address: 239.1.1.30
 
+# Child fabric - gathered only
 - name: Gather Networks on a child fabric
   cisco.nd.nd_manage_networks:
     fabric_name: child_fabric_1
     state: gathered
     config: []
 
+# Delete Networks
 - name: Delete a Network
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
@@ -450,6 +515,29 @@ EXAMPLES = r"""
     config:
       - network_name: Network_BLUE
         layer: layer2
+
+# Replace Network configuration
+- name: Replace Network configuration
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: replaced
+    config:
+      - network_name: Network_BLUE
+        layer: layer2
+        network_id: 50010
+        vlan_id: 2001
+        vlan_name: Network_BLUE_REPLACED
+
+# Override Network configuration
+- name: Override Network configuration
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: overridden
+    config:
+      - network_name: Network_BLUE
+        layer: layer2
+        network_id: 50010
+        vlan_id: 2001
 """
 RETURN = r"""
 changed:

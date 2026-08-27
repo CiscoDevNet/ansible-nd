@@ -70,22 +70,22 @@ options:
       vrf_template_name:
         description:
           - Custom VRF template name.
-          - Supplying custom template fields makes the module use the user-defined VRF schema internally.
+          - Supplying custom template fields makes the module use the user-defined VRF schema.
         type: str
       vrf_extension_template_name:
         description:
           - Custom VRF extension template name.
-          - Supplying custom template fields makes the module use the user-defined VRF schema internally.
+          - Supplying custom template fields makes the module use the user-defined VRF schema.
         type: str
       service_vrf_template_name:
         description:
           - Custom service VRF template name.
-          - Supplying custom template fields makes the module use the user-defined VRF schema internally.
+          - Supplying custom template fields makes the module use the user-defined VRF schema.
         type: str
       vrf_template_config:
         description:
           - Custom VRF template parameters.
-          - Supplying custom template fields makes the module use the user-defined VRF schema internally.
+          - Supplying custom template fields makes the module use the user-defined VRF schema.
           - Values must be strings as required by the ND schema.
         type: dict
       default_security_action:
@@ -304,8 +304,8 @@ options:
       attach:
         description:
           - Parent/standalone switch attachment entries for this VRF.
-          - Switches are identified by management IP address and resolved to
-            ND C(switchId) values before the attachment payload is sent.
+          - Switches are identified by management IP address and resolved before
+            attachment changes are applied.
           - If C(attach) entries are present, the module attaches the VRF to
             those switches.
           - In C(state=replaced), omitting C(attach) deattaches existing
@@ -327,15 +327,11 @@ options:
           attachment_options:
             description:
               - Attachment-specific options for this switch.
-              - These fields are translated to the Manage API
-                C(instanceValues) payload internally.
             type: dict
             suboptions:
               dpu_secure:
                 description:
                   - Enable DPU secure mode for this attachment.
-                  - Translated to C(instanceValues.dpuSecure) in the Manage API
-                    payload.
                 type: bool
               dpu_affinity:
                 description:
@@ -453,7 +449,7 @@ extends_documentation_fragment:
 """
 
 EXAMPLES = r"""
-# ── Standalone fabric — create a VRF and attach it to a switch ───────────────
+# Standalone fabric - create a VRF and attach it to a switch
 - name: Create VRF on standalone fabric and deploy by switch
   cisco.nd.nd_manage_vrfs:
     fabric_name: fab1
@@ -494,7 +490,7 @@ EXAMPLES = r"""
         deploy: true
         deploy_type: switch
 
-# ── Standalone fabric — create VRF with TRM ──────────────────────────────────
+# Standalone fabric - create VRF with TRM
 - name: Create VRF with Tenant Routed Multicast enabled
   cisco.nd.nd_manage_vrfs:
     fabric_name: fab1
@@ -509,7 +505,7 @@ EXAMPLES = r"""
         underlay_mcast_ip: 239.1.1.1
         overlay_mcast_group: 239.1.1.2
 
-# ── Standalone fabric — create user-defined VRF template payload ─────────────
+# Standalone fabric - create user-defined VRF
 - name: Create user-defined VRF
   cisco.nd.nd_manage_vrfs:
     fabric_name: fab1
@@ -523,7 +519,7 @@ EXAMPLES = r"""
           VRF_NAME: VRF_CUSTOM
           VRF_ID: "50030"
 
-# ── MSD parent fabric — create VRF with child fabric-instance overrides ──────
+# MSD parent fabric - create VRF with child fabric-instance overrides
 - name: Create VRF on MSD parent with per-child fabric-instance overrides
   cisco.nd.nd_manage_vrfs:
     fabric_name: msd_parent
@@ -556,7 +552,7 @@ EXAMPLES = r"""
             bgp_password: abcdef12
             bgp_passwd_encrypt: 3
 
-# ── MCFG parent fabric — create VRF with child fabric-instance overrides ─────
+# MCFG parent fabric - create VRF with child fabric-instance overrides
 - name: Create VRF on MCFG parent with child fabric overrides
   cisco.nd.nd_manage_vrfs:
     fabric_name: mcfg_parent
@@ -580,14 +576,14 @@ EXAMPLES = r"""
             netflow_enable: true
             nf_monitor: MON1
 
-# ── Child fabric — gathered only ────────────────────────────────────────────────
+# Child fabric - gathered only
 - name: Gathered VRFs on a child fabric (write ops must go through parent)
   cisco.nd.nd_manage_vrfs:
     fabric_name: child_fabric_1
     state: gathered
     config: []
 
-# ── Delete VRFs ──────────────────────────────────────────────────────────────
+# Delete VRFs
 - name: Delete a VRF
   cisco.nd.nd_manage_vrfs:
     fabric_name: fab1
@@ -595,7 +591,7 @@ EXAMPLES = r"""
     config:
       - vrf_name: VRF_BLUE
 
-# ── Replace VRF configuration ───────────────────────────────────────────────
+# Replace VRF configuration
 - name: Replace VRF configuration (full replace)
   cisco.nd.nd_manage_vrfs:
     fabric_name: fab1
@@ -607,6 +603,16 @@ EXAMPLES = r"""
         vrf_description: "Updated Blue VRF"
         max_bgp_paths: 4
         max_ibgp_paths: 4
+
+# Override VRF configuration
+- name: Override VRF configuration
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: fab1
+    state: overridden
+    config:
+      - vrf_name: VRF_BLUE
+        vrf_id: 50010
+        vlan_id: 2001
 """
 
 RETURN = r"""
