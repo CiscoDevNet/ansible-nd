@@ -200,7 +200,7 @@
         "TEST_NOTES": [
             "Switch list with additionalData.platformType for get_platform_type / switches.",
             "sw1: nx-os, sw2: ios-xe, sw3: no additionalData (platform_type -> None), sw4: sonic.",
-            "sw4 guards the SONIC member: PlatformTypeEnum originally omitted it, so get_platform_type resolved a",
+            "sw4 guards the SONIC member: the read-side enum this PR originally added omitted it, so get_platform_type resolved a",
             "SONiC switch to None (the try/except ValueError fall-through) instead of its platform."
         ],
         "RETURN_CODE": 200,

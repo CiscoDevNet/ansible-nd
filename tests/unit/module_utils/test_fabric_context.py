@@ -20,7 +20,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext, _Sentinel
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -595,15 +595,15 @@ def test_fabric_context_00230() -> None:
     # Summary
 
     Verify `switches` retains the raw switch records and `get_platform_type` resolves each switch's `platformType`
-    (nested under `additionalData`) to a `PlatformTypeEnum`.
+    (nested under `additionalData`) to a `PlatformType`.
 
     ## Test
 
     - GET (switches) returns four switches: nx-os, ios-xe, one with no `additionalData`, and sonic
     - `switches` returns the raw four-record list
-    - `get_platform_type` returns `PlatformTypeEnum.NX_OS` / `PlatformTypeEnum.IOS_XE` for the first two
+    - `get_platform_type` returns `PlatformType.NX_OS` / `PlatformType.IOS_XE` for the first two
     - `get_platform_type` returns `None` for the switch that reports no `platformType`
-    - `get_platform_type` returns `PlatformTypeEnum.SONIC` for the sonic switch (guards the omitted-member defect:
+    - `get_platform_type` returns `PlatformType.SONIC` for the sonic switch (guards the omitted-member defect:
       an unrecognized value falls through `try/except ValueError` to `None`, silently hiding the platform)
     - `get_platform_type` raises `RuntimeError` for an IP not in the fabric
 
@@ -631,12 +631,12 @@ def test_fabric_context_00230() -> None:
     # `switches` returns a shallow copy: mutating it must not corrupt the cache.
     switches.append({"fabricManagementIp": "10.0.0.9", "switchId": "BOGUS"})
     assert len(instance.switches) == 4
-    assert instance.get_platform_type("192.168.12.151") == PlatformTypeEnum.NX_OS
-    assert instance.get_platform_type("192.168.12.152") == PlatformTypeEnum.IOS_XE
+    assert instance.get_platform_type("192.168.12.151") == PlatformType.NX_OS
+    assert instance.get_platform_type("192.168.12.152") == PlatformType.IOS_XE
     # Switch exists but reports no platformType -> None (not a raise).
     assert instance.get_platform_type("192.168.12.153") is None
     # SONIC must resolve rather than falling through to None (omitted-member defect).
-    assert instance.get_platform_type("192.168.12.154") == PlatformTypeEnum.SONIC
+    assert instance.get_platform_type("192.168.12.154") == PlatformType.SONIC
 
     match = r"No switch found with fabricManagementIp '10\.0\.0\.1' in fabric 'fabric_1'"
     with pytest.raises(RuntimeError, match=match):

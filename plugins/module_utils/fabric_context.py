@@ -19,7 +19,7 @@ from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsSummaryGet
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
 
@@ -372,15 +372,15 @@ class FabricContext:
         except KeyError as e:
             raise RuntimeError(f"No switch found with switchId '{switch_id}' in fabric '{self._fabric_name}'.") from e
 
-    def get_platform_type(self, switch_ip: str) -> PlatformTypeEnum | None:
+    def get_platform_type(self, switch_ip: str) -> PlatformType | None:
         """
         # Summary
 
-        Resolve a switch management IP address to its `platformType` (as a `PlatformTypeEnum`) via the cached switch
+        Resolve a switch management IP address to its `platformType` (as a `PlatformType`) via the cached switch
         inventory. Callers use this to select the platform-appropriate feature model (e.g. `loopback` vs `iosXeLoopback`).
 
         Returns `None` when the switch exists in the fabric but reports no recognizable `platformType` (the field is
-        nested under a `oneOf` variant and may be absent, or ND may report a value newer than `PlatformTypeEnum`).
+        nested under a `oneOf` variant and may be absent, or ND may report a value newer than `PlatformType`).
 
         ## Raises
 
@@ -397,9 +397,9 @@ class FabricContext:
             if switch.get("fabricManagementIp") == switch_ip:
                 raw = (switch.get("additionalData") or {}).get("platformType")
                 try:
-                    return PlatformTypeEnum(raw)
+                    return PlatformType(raw)
                 except ValueError:
-                    # Absent (None) or a value newer than PlatformTypeEnum -> no recognizable platform type.
+                    # Absent (None) or a value newer than PlatformType -> no recognizable platform type.
                     return None
         return None
 
