@@ -1,8 +1,150 @@
+import groovy.transform.Field
+
+// ============================================================================
+// COMBINED DRAFT FOR REVIEW 
+//
+// Baseline retained from Pipeline1:
+//   * staged integration-module list and smoke gap-fillers
+//   * one ansible-playbook invocation per target
+//   * fabric reset, ansible-lint summary, and Webex presentation
+//
+// SOURCE ATTRIBUTION -- TAKEN FROM MY CODE
+// Source: nd-pipeline-review/Jenkinsfile (plus the newer nd_pipeline.groovy
+// draft where it contains the ND 4.2 environment corrections).
+//
+// The following behaviors can be taken from, my code:
+//   1. Workspace-local runtime:
+//        BASE_DIRECTORY=$WORKSPACE/.jenkins-runtime
+//        COLLECTIONS_DIRECTORY=$WORKSPACE/nd
+//   2. Jenkins safety and retention options:
+//        skipDefaultCheckout, disableConcurrentBuilds, pipeline timeout,
+//        timestamps, and build/artifact retention.
+//   3. Validated Consul downloads using curl --fail, connection/request
+//        timeouts, a temporary file, and an atomic move.
+//   4. An ND precheck before any integration or smoke target is executed.
+//   5. One independently tracked execution per target, with its own output,
+//        timeout, duration, result parsing, and archived Jenkins artifact.
+//   6. Capturing the real ansible-playbook return code through tee by using
+//        PIPESTATUS[0], so tee cannot hide an Ansible failure.
+//   7. Continuing with later targets while accumulating all earlier failures;
+//        a later success never resets an earlier failure.
+//   8. Strict PLAY RECAP parsing and accumulation of ok/failed/skipped counts.
+//   9. Recording a visible synthetic failure when execution stops before an
+//        Ansible PLAY RECAP is produced.
+//  10. Running nd_cleanup_verify.yaml after each integration target and
+//        excluding its separate PLAY RECAP from the target's test totals.
+//  11. Creating a protected temporary inventory, setting mode 0600, and
+//        deleting it from post/always processing.
+//  12. Direct Webex API delivery with a masked bearer token, rather than
+//        downloading and executing webex-notification-jenkins.py from Consul.
+//  13. Building detailed per-target Webex lines containing fabric, ND version,
+//        passed, failed, skipped, and duration values.
+//
+// EXTENSIONS MADE WHILE COMBINING :
+//   * unreachable counts and explicit PASSED/FAILED/UNREACHABLE/ERROR/
+//     CLEANUP_FAILED statuses
+//   * cleanup failures separated from normal failed-task counts
+//   * compact failure reasons in the Webex notification
+//   * configurable smoke execution, lint gating, and final fabric reset
+//   * separate Consul prefixes for Pipeline1 assets and newer safety assets
+//   * JSON inventory generation to avoid interpolating credentials in Groovy
+//
+// ============================================================================
+
+@Field
+def PLAYBOOK_FILES = [
+    // Smoke gap-fillers not duplicated by INTEGRATION_MODULES.
+    'nd_manage_fabric_external.yaml',
+    'nd_manage_fabric_ebgp_vxlan.yaml',
+    'nd_manage_fabric_ibgp_vxlan.yaml',
+    'nd_manage_fabric_ai_ebgp_vxlan.yaml',
+    'nd_manage_fabric_ai_ibgp_vxlan.yaml',
+    'nd_manage_prefix_list.yaml'
+]
+
+@Field
+def INTEGRATION_MODULES = [
+    // Pipeline1's currently staged first batch.
+    'nd_manage_policy',
+    'nd_manage_policy_group',
+    'nd_manage_networks',
+    'nd_manage_vrfs',
+    'nd_vpc_pair'
+
+    // Deferred until their testbed variables and cleanup verification are ready:
+    // 'nd_manage_route_map',
+    // 'nd_manage_acl',
+    // 'nd_manage_l3out',
+    // 'nd_interface_vpc_access',
+    // 'nd_interface_vpc_trunk_host',
+    // 'nd_manage_switches',
+    // 'nd_manage_fabric',
+    // 'nd_resource_manager'
+]
+
+@Field
+def PIPELINE1_CONFIG_FILES = [
+    'requirements.txt',
+    'requirements.yaml',
+    'ansible.cfg',
+    'reset_fabric.yaml'
+]
+
+@Field
+def SAFETY_CONFIG_FILES = [
+    'nd_precheck.yaml',
+    'nd_cleanup_verify.yaml'
+]
+
+@Field
+def INTEGRATION_TIMEOUT_MINUTES = 120
+
+@Field
+def SMOKE_TIMEOUT_MINUTES = 45
+
+@Field
+def RUN_INTEGRATION_MODULE_YAML = '''---
+- name: "cisco.nd integration suite for {{ test_module }}"
+  hosts: nd
+  gather_facts: false
+  connection: ansible.netcommon.httpapi
+  vars:
+    testcase: "*"
+  tasks:
+    - name: "[{{ test_module }}] Discover optional cleanup.yaml"
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tasks/cleanup.yaml"
+      register: cleanup_file
+      delegate_to: localhost
+
+    - name: "[{{ test_module }}] Pre-clean stale objects when supported"
+      ansible.builtin.include_role:
+        name: "{{ test_module }}"
+        tasks_from: cleanup.yaml
+      when: cleanup_file.stat.exists
+      ignore_errors: true
+
+    - name: "[{{ test_module }}] Run the full integration suite"
+      block:
+        - name: "[{{ test_module }}] Include the collection integration target"
+          ansible.builtin.include_role:
+            name: "{{ test_module }}"
+          vars:
+            testcase: "*"
+      always:
+        - name: "[{{ test_module }}] Post-clean when supported"
+          ansible.builtin.include_role:
+            name: "{{ test_module }}"
+            tasks_from: cleanup.yaml
+          when: cleanup_file.stat.exists
+          ignore_errors: true
+'''
+
 pipeline {
     agent {
         docker {
             image 'ansible_nd_setup'
-            args "--user root"
+            args '--user root'
         }
     }
 
@@ -10,42 +152,64 @@ pipeline {
         booleanParam(
             name: 'DEBUG',
             defaultValue: false,
-            description: 'Enable additional non-sensitive logging'
+            description: 'Reserved for additional non-sensitive diagnostics'
         )
-
-        choice(
-            name: 'TARGET_SET',
-            choices: [
-                'both',
-                'nd_interface_loopback',
-                'nd_interface_ethernet_access'
-            ],
-            description: 'Run both supported suites or select one suite'
+        booleanParam(
+            name: 'RUN_SMOKE',
+            defaultValue: true,
+            description: 'Run Pipeline1 smoke gap-fillers after integration modules'
+        )
+        booleanParam(
+            name: 'LINT_GATES_BUILD',
+            defaultValue: false,
+            description: 'Fail the build when ansible-lint reports violations'
+        )
+        booleanParam(
+            name: 'RESET_FABRIC_AFTER_RUN',
+            defaultValue: false,
+            description: 'Run reset_fabric.yaml after all test targets finish'
         )
     }
 
     environment {
+        // FROM MY CODE: Jenkins credential binding and direct Webex API
+        // credentials. Pipeline1's ND 4.2 host/fabric values are retained.
         WEBEX_TOKEN = credentials('ANSIBLE_WEBEX_TOKEN')
-        WEBEX_ROOM_ID = "61f7d4c0-9566-11f0-b070-451eba08616c" // private test space
+        WEBEX_ROOM_ID = '61f7d4c0-9566-11f0-b070-451eba08616c'
+
         ND_USER = credentials('ANSIBLE_NDFC_USERNAME')
         ND_PASSWORD = credentials('ANSIBLE_NDFC_41_117_PASSWORD')
-        ANSIBLE_HOST = "10.122.84.112"
-        ND_SWITCH_IP = '10.122.84.71'
-        BASE_DIR = "$WORKSPACE/.jenkins-runtime"
-        COLLECTIONS_DIR = "$WORKSPACE/nd"
+        ANSIBLE_HOST = '10.122.84.112'
+
+        ND_SWITCH_IP_1 = '10.122.84.71'
+        ND_SWITCH_IP_2 = '10.122.84.63'
+        ND_SWITCH_SERIAL_1 = '99WMIU1JLQ3'
+        ND_SWITCH_SERIAL_2 = '9484O9IOVJK'
+        ND_SWITCH_SERIAL_3 = '9484O9IOVJK'
+
+        // FROM MY CODE: keep the clone and Python runtime inside this build's
+        // workspace rather than under the persistent $HOME/ansible directory.
+        BASE_DIRECTORY = "$WORKSPACE/.jenkins-runtime"
+        COLLECTIONS_DIRECTORY = "$WORKSPACE/nd"
         COLL_DIR = "$WORKSPACE"
-        CONSUL_URL = "http://10.78.210.155:8500"
-        CONSUL_PREFIX = "ansible/nd4x-nightly"
-        ND_BRANCH = 'develop'
-        FABRIC = 'VXLAN_Fabric'
+        CONSUL_URL = 'http://10.78.210.155:8500'
+        // Pipeline1 and the newer safety assets currently use different KV paths.
+        CONSUL_PREFIX_PIPELINE1 = 'ansible-nd'
+        CONSUL_PREFIX_SAFETY = 'ansible/nd4x-nightly'
+        ND_GIT_BRANCH = 'develop'
+        FABRIC_NAME = 'VXLAN_Fabric'
+        REQUIRED_PYTHON_SERIES = '3.12'
+
         PIPELINE_FAILED = 'false'
         TEST_RESULT_SUMMARY = ''
         BUILD_FAILURE_REASON = ''
         TOTAL_PASSED_COUNT = '0'
         TOTAL_FAILED_COUNT = '0'
         TOTAL_SKIPPED_COUNT = '0'
-        RECORDED_SUITES = ''
+        TOTAL_UNREACHABLE_COUNT = '0'
+        TOTAL_ERROR_COUNT = '0'
         CURRENT_ND_INVENTORY = ''
+        LINT_STATUS = 'NOT_RUN'
     }
 
     triggers {
@@ -53,6 +217,8 @@ pipeline {
     }
 
     options {
+        // FROM MY CODE: workspace checkout control, concurrency protection,
+        // timestamps, timeout, and build/artifact retention.
         skipDefaultCheckout(true)
         disableConcurrentBuilds()
         timeout(time: 10, unit: 'HOURS')
@@ -70,79 +236,121 @@ pipeline {
         stage('Environment Setup') {
             steps {
                 sh '''#!/bin/bash
-                set -euo pipefail
-                mkdir -p "${BASE_DIR}"
-                cd "${BASE_DIR}"
-                export PATH="${BASE_DIR}:$PATH"
+set -euo pipefail
 
-                # Create or verify the Python virtual environment.
-                if [ -d "${BASE_DIR}/venv" ]; then
-                    VENV_PYTHON=$(${BASE_DIR}/venv/bin/python --version 2>&1 | awk '{print $2}')
-                    if [[ "$VENV_PYTHON" != 3.12.* ]]; then
-                        echo "Python version mismatch, recreating venv..."
-                        rm -rf ${BASE_DIR}/venv
-                        python3.12 -m venv ${BASE_DIR}/venv
-                    fi
-                else
-                    echo "Creating venv with Python 3.12.3..."
-                    python3.12 -m venv ${BASE_DIR}/venv
-                fi
+mkdir -p "${BASE_DIRECTORY}"
+cd "${BASE_DIRECTORY}"
 
-                source ${BASE_DIR}/venv/bin/activate
-                echo "Python: $(python --version)"
-                '''
+if [ -d "${BASE_DIRECTORY}/venv" ]; then
+    VENV_PYTHON=$("${BASE_DIRECTORY}/venv/bin/python" --version 2>&1 | awk '{print $2}')
+    if [[ "${VENV_PYTHON}" != "${REQUIRED_PYTHON_SERIES}".* ]]; then
+        echo "Python version mismatch; recreating the Jenkins virtual environment"
+        rm -rf -- "${BASE_DIRECTORY}/venv"
+        python3.12 -m venv "${BASE_DIRECTORY}/venv"
+    fi
+else
+    python3.12 -m venv "${BASE_DIRECTORY}/venv"
+fi
+
+source "${BASE_DIRECTORY}/venv/bin/activate"
+echo "Python: $(python --version)"
+'''
             }
         }
 
         stage('Clone Repository') {
             steps {
                 sh '''#!/bin/bash
-                set -e
-                cd "${COLL_DIR}"
+set -euo pipefail
+cd "${COLL_DIR}"
 
-                if [ -d "nd/.git" ]; then
-                    cd nd
-                    LOCAL_COMMIT=$(git rev-parse HEAD)
-                    REMOTE_COMMIT=$(git ls-remote https://github.com/CiscoDevNet/ansible-nd.git refs/heads/${ND_BRANCH} | awk '{print $1}')
+if [ -d "nd/.git" ]; then
+    LOCAL_COMMIT=$(git -C nd rev-parse HEAD)
+    REMOTE_COMMIT=$(git ls-remote \
+        https://github.com/CiscoDevNet/ansible-nd.git \
+        "refs/heads/${ND_GIT_BRANCH}" | awk '{print $1}')
 
-                    if [ "${LOCAL_COMMIT}" == "${REMOTE_COMMIT}" ]; then
-                        echo "Repository is up-to-date"
-                        exit 0
-                    fi
-                    cd "${COLL_DIR}"
-                    rm -rf -- nd
-                fi
+    if [ "${LOCAL_COMMIT}" = "${REMOTE_COMMIT}" ]; then
+        echo "Repository is up-to-date at ${LOCAL_COMMIT}"
+        exit 0
+    fi
 
-                git clone --branch "${ND_BRANCH}" --single-branch https://github.com/CiscoDevNet/ansible-nd.git nd
-                cd nd
-                echo "Cloned at: $(git rev-parse HEAD)"
-                source "${BASE_DIR}/venv/bin/activate"
-                '''
+    rm -rf -- nd
+elif [ -e nd ]; then
+    echo "${COLL_DIR}/nd exists but is not a Git repository"
+    exit 1
+fi
+
+git clone \
+    --branch "${ND_GIT_BRANCH}" \
+    --single-branch \
+    https://github.com/CiscoDevNet/ansible-nd.git \
+    nd
+
+git -C nd rev-parse HEAD
+'''
             }
         }
 
-        stage('Download ND Assets from Consul') {
+        stage('Download and Materialize Test Assets') {
             steps {
                 script {
-                    dir(env.COLLECTIONS_DIR) {
-                        // Download the manifest first.
-                        downloadFromConsul('nd_suite_manifest.yaml')
-
-                        // Download common support files.
-                        [
-                            'ansible.cfg',
-                            'requirements.txt',
-                            'requirements.yaml',
-                            'nd_precheck.yaml',
-                            'nd_cleanup_verify.yaml'
-                        ].each { fileName ->
-                            downloadFromConsul(fileName)
+                    // Downloaded files are written by shell commands inside the
+                    // root Docker container.
+                    dir(env.COLLECTIONS_DIRECTORY) {
+                        // FROM MY CODE: retrieve only known pipeline assets;
+                        // downloadFromConsul validates names and writes atomically.
+                        PIPELINE1_CONFIG_FILES.each { fileName ->
+                            downloadFromConsul(
+                                env.CONSUL_PREFIX_PIPELINE1,
+                                fileName
+                            )
                         }
 
-                        // Download only the wrappers selected for this build.
-                        getRequestedSuiteNames().each { suiteName ->
-                            downloadFromConsul("${suiteName}.yaml")
+                        SAFETY_CONFIG_FILES.each { fileName ->
+                            downloadFromConsul(
+                                env.CONSUL_PREFIX_SAFETY,
+                                fileName
+                            )
                         }
+
+                        if (params.RUN_SMOKE) {
+                            PLAYBOOK_FILES.each { fileName ->
+                                downloadFromConsul(
+                                    env.CONSUL_PREFIX_PIPELINE1,
+                                    fileName
+                                )
+                            }
+                        }
+                    }
+
+                    // Jenkins writeFile runs as the Jenkins agent user. Write the
+                    // embedded runner into a Jenkins-owned temporary directory first.
+                    def runnerDirectory = pwd(tmp: true)
+
+                    dir(runnerDirectory) {
+                        writeFile(
+                            file: 'run_integration_module.yaml',
+                            text: RUN_INTEGRATION_MODULE_YAML
+                        )
+                    }
+
+                    // The shell runs as root inside the Docker container, so it can
+                    // safely install the file into the root-owned cloned repository.
+                    withEnv([
+                        "RUNNER_SOURCE=${runnerDirectory}/run_integration_module.yaml"
+                    ]) {
+                        sh '''#!/bin/bash
+        set -euo pipefail
+
+        install \
+            -m 0644 \
+            "${RUNNER_SOURCE}" \
+            "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml"
+
+        test -s "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml"
+        echo "Materialized run_integration_module.yaml successfully"
+        '''
                     }
                 }
             }
@@ -151,61 +359,96 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 sh '''#!/bin/bash
-                set -euo pipefail
-                cd "${COLLECTIONS_DIR}"
-                source "${BASE_DIR}/venv/bin/activate"
+set -euo pipefail
+cd "${COLLECTIONS_DIRECTORY}"
+source "${BASE_DIRECTORY}/venv/bin/activate"
 
-                for required_file in \
-                    ansible.cfg \
-                    requirements.txt \
-                    requirements.yaml \
-                    nd_suite_manifest.yaml \
-                    nd_precheck.yaml \
-                    nd_cleanup_verify.yaml; do
-                    if [ ! -f "$required_file" ]; then
-                        echo "Required support file is missing: $required_file"
-                        exit 1
-                    fi
-                done
+for required_file in \
+    requirements.txt \
+    requirements.yaml \
+    ansible.cfg \
+    nd_precheck.yaml \
+    nd_cleanup_verify.yaml \
+    reset_fabric.yaml \
+    run_integration_module.yaml; do
+    if [ ! -f "${required_file}" ]; then
+        echo "Required pipeline asset is missing: ${required_file}"
+        exit 1
+    fi
+done
 
-                python -m pip install --disable-pip-version-check \
-                  "ansible-core>=2.19,<2.20"
-                python -m pip install --disable-pip-version-check \
-                  -r requirements.txt
-                ansible-galaxy collection install -r requirements.yaml
-                python -c 'import yaml; print("PyYAML: " + yaml.__version__)'
+python -m pip install --disable-pip-version-check \
+    "ansible-core>=2.19,<2.20"
+python -m pip install --disable-pip-version-check \
+    -r requirements.txt
+ansible-galaxy collection install -r requirements.yaml
 
-                echo "Python: $(python --version)"
-                echo "Ansible: $(ansible --version | head -1)"
-                '''
+echo "Python: $(python --version)"
+echo "Ansible: $(ansible --version | head -1)"
+if command -v ansible-lint >/dev/null 2>&1; then
+    echo "Ansible-lint: $(ansible-lint --version | head -1)"
+else
+    echo "Ansible-lint is not installed; the lint stage will report an infrastructure error"
+fi
+'''
             }
         }
 
-        stage('Run Integration Tests') {
+        stage('Run ND 4.2 Tests') {
             steps {
-                script {
-                    def ndConfig = [
-                        version: '4.1',
-                        versionId: 'ND41',
-                        server: 'ANSIBLE_HOST',
-                        fabric_name: 'cisco_test_fabric',
-                    ]
+                // FROM MY CODE: mark the stage/build failed but still allow
+                // lint, reset, and the post-build notification to execute.
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    script {
+                        initializeResultState()
 
-                    env.PIPELINE_FAILED = 'false'
-                    env.TEST_RESULT_SUMMARY = ''
-                    env.BUILD_FAILURE_REASON = ''
-                    env.TOTAL_PASSED_COUNT = '0'
-                    env.TOTAL_FAILED_COUNT = '0'
-                    env.TOTAL_SKIPPED_COUNT = '0'
-                    env.RECORDED_SUITES = ''
+                        def ndConfig = [
+                            version: '4.2',
+                            versionId: 'ND42',
+                            fabric_name: env.FABRIC_NAME
+                        ]
 
-                    try {
                         runNDTests(ndConfig)
-                    } catch (Exception e) {
-                        echo "ND tests failed: ${e.getMessage()}"
-                        env.PIPELINE_FAILED = 'true'
-                        currentBuild.result = 'FAILURE'
-                        throw e
+                    }
+                }
+            }
+        }
+
+        stage('Run Ansible Lint') {
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    script {
+                        try {
+                            def lintPassed = runLintCheck()
+
+                            if (!lintPassed && params.LINT_GATES_BUILD) {
+                                env.PIPELINE_FAILED = 'true'
+                                appendFailureReason(
+                                    'ansible-lint failed and LINT_GATES_BUILD is enabled'
+                                )
+                                error('ansible-lint reported violations or could not run')
+                            }
+                        } catch (Exception lintError) {
+                            if (!env.BUILD_FAILURE_REASON?.contains('ansible-lint')) {
+                                appendFailureReason(
+                                    "ansible-lint stage error: ${compactReason(lintError.getMessage())}"
+                                )
+                            }
+                            throw lintError
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Reset Fabric') {
+            when {
+                expression { return params.RESET_FABRIC_AFTER_RUN }
+            }
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    script {
+                        resetFabricAfterRun()
                     }
                 }
             }
@@ -216,67 +459,762 @@ pipeline {
         always {
             script {
                 try {
+                    sendWebexSummary()
+                } catch (Exception notificationError) {
+                    echo "Webex notification failed: ${notificationError.getMessage()}"
+                } finally {
                     if (env.CURRENT_ND_INVENTORY?.trim()) {
-                        sh returnStatus: true, script: '''#!/bin/bash
-                            rm -f -- "${CURRENT_ND_INVENTORY}"
-                            '''
+                        sh(
+                            returnStatus: true,
+                            script: '''#!/bin/bash
+rm -f -- "${CURRENT_ND_INVENTORY}"
+'''
+                        )
                     }
-
-                    def message = "ND NIGHTLY NOTIFICATION\n"
-                    message += (
-                        "📊 Pipeline completed for the ND Nightly run - " +
-                        "Build ${BUILD_NUMBER}\n\n"
-                    )
-                    message += "Total Passed: ${env.TOTAL_PASSED_COUNT ?: '0'}\n"
-                    message += "Total Failed: ${env.TOTAL_FAILED_COUNT ?: '0'}\n\n"
-                    message += "📝 DETAILED TEST RESULTS:\n"
-                    message += "${env.TEST_RESULT_SUMMARY ?: 'No results'}\n\n"
-                    message += "🔗 Build: ${BUILD_URL}console\n"
-
-                    def webexPayload = createWebexPayload(message)
-
-                    httpRequest(
-                        url: 'https://webexapis.com/v1/messages',
-                        httpMode: 'POST',
-                        acceptType: 'APPLICATION_JSON',
-                        contentType: 'APPLICATION_JSON',
-                        customHeaders: [[
-                            name: 'Authorization',
-                            value: "Bearer ${env.WEBEX_TOKEN}",
-                            maskValue: true
-                        ]],
-                        requestBody: webexPayload,
-                        validResponseCodes: '200:299',
-                        consoleLogResponseBody: false
-                    )
-                } catch (Exception e) {
-                    echo "Webex notification failed: ${e.getMessage()}"
                 }
             }
         }
     }
 }
 
-def getRequestedSuiteNames() {
-    def supportedTargets = [
-        'nd_interface_loopback',
-        'nd_interface_ethernet_access'
-    ]
+def initializeResultState() {
+    env.PIPELINE_FAILED = 'false'
+    env.TEST_RESULT_SUMMARY = ''
+    env.BUILD_FAILURE_REASON = ''
+    env.TOTAL_PASSED_COUNT = '0'
+    env.TOTAL_FAILED_COUNT = '0'
+    env.TOTAL_SKIPPED_COUNT = '0'
+    env.TOTAL_UNREACHABLE_COUNT = '0'
+    env.TOTAL_ERROR_COUNT = '0'
+}
 
-    if (params.TARGET_SET == 'both') {
-        return supportedTargets
+def downloadFromConsul(String consulPrefix, String fileName) {
+    // FROM MY CODE: validate remote/local names and use curl timeouts plus a
+    // temporary file so a failed download cannot replace a valid asset.
+    if (!(consulPrefix ==~ /[A-Za-z0-9._\/-]+/)) {
+        error("Unsafe Consul prefix: ${consulPrefix}")
     }
 
-    def requestedTarget = params.TARGET_SET?.toString()
-
-    if (!supportedTargets.contains(requestedTarget)) {
-        error("Unsupported TARGET_SET: ${requestedTarget}")
+    if (!(fileName ==~ /[A-Za-z0-9._-]+/)) {
+        error("Unsafe Consul filename: ${fileName}")
     }
 
-    return [requestedTarget]
+    def consulUrl = (
+        "${env.CONSUL_URL}/v1/kv/${consulPrefix}/${fileName}?raw"
+    )
+
+    withEnv([
+        "CONSUL_DOWNLOAD_URL=${consulUrl}",
+        "CONSUL_TARGET_FILE=${fileName}"
+    ]) {
+        sh '''#!/bin/bash
+set -euo pipefail
+
+temporary_file=$(mktemp ".${CONSUL_TARGET_FILE}.XXXXXX")
+trap 'rm -f -- "${temporary_file}"' EXIT
+
+curl \
+    --fail \
+    --silent \
+    --show-error \
+    --connect-timeout 10 \
+    --max-time 60 \
+    --output "${temporary_file}" \
+    "${CONSUL_DOWNLOAD_URL}"
+
+mv -- "${temporary_file}" "${CONSUL_TARGET_FILE}"
+trap - EXIT
+'''
+    }
+
+    echo "Downloaded ${fileName} from Consul prefix ${consulPrefix}"
+}
+
+def runNDTests(ndConfig) {
+    generateInventory(ndConfig)
+
+    // FROM MY CODE: fail early when credentials, connectivity, or the ND
+    // platform version do not satisfy the testbed requirements.
+    try {
+        timeout(time: 10, unit: 'MINUTES') {
+            sh '''#!/bin/bash
+set -euo pipefail
+cd "${COLLECTIONS_DIRECTORY}"
+source "${BASE_DIRECTORY}/venv/bin/activate"
+
+ansible-playbook \
+    -i "${CURRENT_ND_INVENTORY}" \
+    nd_precheck.yaml
+'''
+        }
+    } catch (Exception precheckError) {
+        env.PIPELINE_FAILED = 'true'
+        appendFailureReason(
+            "ND precheck failed: ${compactReason(precheckError.getMessage())}"
+        )
+        throw precheckError
+    }
+
+    def targetPlan = []
+    INTEGRATION_MODULES.each { targetName ->
+        targetPlan << [name: targetName, type: 'integration']
+    }
+
+    if (params.RUN_SMOKE) {
+        PLAYBOOK_FILES.each { targetName ->
+            targetPlan << [name: targetName, type: 'smoke']
+        }
+    }
+
+    // FROM MY CODE: collect every failed target and raise one aggregate error
+    // only after the remaining targets have had an opportunity to execute.
+    def failedTargets = []
+
+    targetPlan.each { target ->
+        def outcome = runTarget(ndConfig, target.name, target.type)
+        if (!outcome.success) {
+            failedTargets << "${target.name}: ${outcome.status}"
+        }
+    }
+
+    if (failedTargets) {
+        env.PIPELINE_FAILED = 'true'
+        error("One or more ND targets failed: ${failedTargets.join('; ')}")
+    }
+}
+
+def runTarget(ndConfig, String targetName, String targetType) {
+    // FROM MY CODE: every target owns its output file, timeout, duration,
+    // parsed result, cleanup verification, and Jenkins artifact.
+    validateTargetName(targetName, targetType)
+
+    int targetTimeout = targetType == 'integration' ?
+        INTEGRATION_TIMEOUT_MINUTES : SMOKE_TIMEOUT_MINUTES
+    def outputFileName = (
+        "test_output_${ndConfig.fabric_name}_${ndConfig.versionId}_${targetName}.txt"
+    )
+    def outputFile = "${env.COLLECTIONS_DIRECTORY}/${outputFileName}"
+
+    int executionRc = -1
+    boolean executionInterrupted = false
+    boolean cleanupFailed = false
+    def executionReason = ''
+    def cleanupReason = ''
+
+    withEnv([
+        "ND_CURRENT_TARGET=${targetName}",
+        "ND_TARGET_TYPE=${targetType}",
+        "ND_OUTPUT_FILE=${outputFile}"
+    ]) {
+        try {
+            executionRc = timeout(time: targetTimeout, unit: 'MINUTES') {
+                sh(
+                    returnStatus: true,
+                    script: '''#!/bin/bash
+set -euo pipefail
+cd "${COLLECTIONS_DIRECTORY}"
+source "${BASE_DIRECTORY}/venv/bin/activate"
+
+: > "${ND_OUTPUT_FILE}"
+START_TIME=$(date +%s)
+echo "[TARGET: ${ND_CURRENT_TARGET}] Starting" | tee -a "${ND_OUTPUT_FILE}"
+echo "[TIMESTAMP_START: ${START_TIME}]" >> "${ND_OUTPUT_FILE}"
+
+set +e
+if [ "${ND_TARGET_TYPE}" = "integration" ]; then
+    ansible-playbook \
+        -i "${CURRENT_ND_INVENTORY}" \
+        run_integration_module.yaml \
+        -e "test_module=${ND_CURRENT_TARGET}" 2>&1 | tee -a "${ND_OUTPUT_FILE}"
+else
+    ansible-playbook \
+        -i "${CURRENT_ND_INVENTORY}" \
+        "${ND_CURRENT_TARGET}" 2>&1 | tee -a "${ND_OUTPUT_FILE}"
+fi
+# FROM MY CODE: preserve ansible-playbook's status; tee's zero status must not
+# turn a failed Ansible invocation into a successful Jenkins shell step.
+TARGET_RC=${PIPESTATUS[0]}
+set -e
+
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+echo "[TIMESTAMP_END: ${END_TIME}]" >> "${ND_OUTPUT_FILE}"
+echo "[DURATION_SECONDS: ${DURATION}]" >> "${ND_OUTPUT_FILE}"
+echo "[EXIT_CODE: ${TARGET_RC}]" >> "${ND_OUTPUT_FILE}"
+echo "[TARGET: ${ND_CURRENT_TARGET}] Completed with rc=${TARGET_RC}" | tee -a "${ND_OUTPUT_FILE}"
+
+exit "${TARGET_RC}"
+'''
+                )
+            }
+
+            if (executionRc != 0) {
+                executionReason = "ansible-playbook exited with code ${executionRc}"
+            }
+        } catch (Exception executionError) {
+            executionInterrupted = true
+            executionReason = compactReason(executionError.getMessage())
+        }
+
+        // FROM MY CODE: cleanup verification is attempted even after the main
+        // target fails, and its outcome is retained independently.
+        if (targetType == 'integration') {
+            try {
+                int cleanupRc = timeout(time: 15, unit: 'MINUTES') {
+                    sh(
+                        returnStatus: true,
+                        script: '''#!/bin/bash
+set -euo pipefail
+cd "${COLLECTIONS_DIRECTORY}"
+source "${BASE_DIRECTORY}/venv/bin/activate"
+
+echo "[CLEANUP VERIFY: ${ND_CURRENT_TARGET}] Starting" | tee -a "${ND_OUTPUT_FILE}"
+ansible-playbook \
+    -i "${CURRENT_ND_INVENTORY}" \
+    -e "nd_suite=${ND_CURRENT_TARGET}" \
+    nd_cleanup_verify.yaml 2>&1 | tee -a "${ND_OUTPUT_FILE}"
+'''
+                    )
+                }
+
+                if (cleanupRc != 0) {
+                    cleanupFailed = true
+                    cleanupReason = "cleanup verification exited with code ${cleanupRc}"
+                }
+            } catch (Exception cleanupError) {
+                cleanupFailed = true
+                cleanupReason = compactReason(cleanupError.getMessage())
+            }
+        }
+    }
+
+    def outcome
+    if (fileExists(outputFile)) {
+        try {
+            outcome = parseTestResults(
+                ndConfig,
+                targetName,
+                targetType,
+                outputFile,
+                executionRc != 0 || executionInterrupted,
+                executionReason,
+                cleanupFailed,
+                cleanupReason
+            )
+        } catch (Exception parseError) {
+            def reason = "result parsing failed: ${compactReason(parseError.getMessage())}"
+            recordTestResult(
+                ndConfig,
+                targetName,
+                targetType,
+                0,
+                1,
+                0,
+                0,
+                'N/A',
+                'ERROR',
+                reason
+            )
+            outcome = [success: false, status: 'ERROR']
+        }
+
+        archiveTargetOutput(outputFileName)
+    } else {
+        def reason = executionReason ?
+            "no output file; ${executionReason}" : 'no output file was produced'
+        recordTestResult(
+            ndConfig,
+            targetName,
+            targetType,
+            0,
+            1,
+            0,
+            0,
+            'N/A',
+            'ERROR',
+            reason
+        )
+        outcome = [success: false, status: 'ERROR']
+    }
+
+    return outcome
+}
+
+def validateTargetName(String targetName, String targetType) {
+    if (targetType == 'integration') {
+        if (!(targetName ==~ /nd_[a-z0-9_]+/)) {
+            error("Unsafe integration target name: ${targetName}")
+        }
+        return
+    }
+
+    if (targetType == 'smoke') {
+        if (!(targetName ==~ /nd_[a-z0-9_]+[.]yaml/)) {
+            error("Unsafe smoke playbook name: ${targetName}")
+        }
+        return
+    }
+
+    error("Unsupported target type: ${targetType}")
+}
+
+def parseTestResults(
+    ndConfig,
+    String targetName,
+    String targetType,
+    String outputFile,
+    boolean executionFailed,
+    String executionReason,
+    boolean cleanupFailed,
+    String cleanupReason
+) {
+    // FROM MY CODE: parse each target's own saved output instead of trying to
+    // infer the complete build result from one combined console stream.
+    def output = readFile(outputFile)
+    def duration = extractDuration(output)
+
+    // FROM MY CODE: the cleanup verifier is a separate health check. Its PLAY
+    // RECAP must not inflate the target's passed/failed/skipped totals.
+    def suiteOutput = output
+    def cleanupIndex = output.indexOf('[CLEANUP VERIFY:')
+    if (cleanupIndex >= 0) {
+        suiteOutput = output.substring(0, cleanupIndex)
+    }
+
+    int passedCount = 0
+    int failedCount = 0
+    int skippedCount = 0
+    int unreachableCount = 0
+    boolean hasRecap = false
+
+    suiteOutput.split('\n').each { line ->
+        if (isRecapLine(line)) {
+            hasRecap = true
+            passedCount += extractRecapValue(line, 'ok')
+            failedCount += extractRecapValue(line, 'failed')
+            skippedCount += extractRecapValue(line, 'skipped')
+            unreachableCount += extractRecapValue(line, 'unreachable')
+        }
+    }
+
+    def statusParts = []
+    def reasons = []
+
+    if (failedCount > 0) {
+        statusParts << 'FAILED'
+        reasons << "${failedCount} failed Ansible task(s)"
+    }
+
+    if (unreachableCount > 0) {
+        statusParts << 'UNREACHABLE'
+        reasons << "${unreachableCount} unreachable host result(s)"
+    }
+
+    // FROM MY CODE: preserve a visible failure when setup, timeout, or another
+    // infrastructure error prevents Ansible from writing a PLAY RECAP.
+    if (executionFailed) {
+        if (!hasRecap && failedCount == 0 && unreachableCount == 0) {
+            // Preserve a visible failure even when setup/timeout prevents a recap.
+            failedCount = 1
+            statusParts << 'ERROR'
+        }
+        if (!statusParts) {
+            statusParts << 'ERROR'
+        }
+        reasons << (executionReason ?: 'target execution failed')
+    }
+
+    if (!hasRecap && !executionFailed) {
+        failedCount = 1
+        statusParts << 'ERROR'
+        reasons << 'no PLAY RECAP was found'
+    }
+
+    if (cleanupFailed) {
+        statusParts << 'CLEANUP_FAILED'
+        reasons << (cleanupReason ?: 'cleanup verification failed')
+    }
+
+    def status = statusParts ? statusParts.unique().join('+') : 'PASSED'
+    def reason = reasons.collect { compactReason(it) }.unique().join('; ')
+
+    recordTestResult(
+        ndConfig,
+        targetName,
+        targetType,
+        passedCount,
+        failedCount,
+        skippedCount,
+        unreachableCount,
+        duration,
+        status,
+        reason
+    )
+
+    return [success: status == 'PASSED', status: status]
+}
+
+def isRecapLine(String line) {
+    return (
+        line.contains('ok=') &&
+        line.contains('changed=') &&
+        line.contains('unreachable=') &&
+        line.contains('failed=') &&
+        line.contains('skipped=')
+    )
+}
+
+def extractRecapValue(String line, String fieldName) {
+    def marker = "${fieldName}="
+    def markerIndex = line.indexOf(marker)
+
+    if (markerIndex < 0) {
+        return 0
+    }
+
+    def remainder = line.substring(markerIndex + marker.length()).trim()
+    int valueEnd = 0
+
+    while (
+        valueEnd < remainder.length() &&
+        Character.isDigit(remainder.charAt(valueEnd))
+    ) {
+        valueEnd++
+    }
+
+    def digits = remainder.substring(0, valueEnd)
+    return digits ? digits as Integer : 0
+}
+
+def extractDuration(String output) {
+    def marker = '[DURATION_SECONDS:'
+    def markerIndex = output.indexOf(marker)
+
+    if (markerIndex < 0) {
+        return 'N/A'
+    }
+
+    def remainder = output.substring(markerIndex + marker.length())
+    def markerEnd = remainder.indexOf(']')
+
+    if (markerEnd <= 0) {
+        return 'N/A'
+    }
+
+    try {
+        int totalSeconds = remainder.substring(0, markerEnd).trim() as Integer
+        return "${(int) (totalSeconds / 60)}m ${totalSeconds % 60}s"
+    } catch (Exception ignored) {
+        return 'N/A'
+    }
+}
+
+def recordTestResult(
+    ndConfig,
+    String targetName,
+    String targetType,
+    int passedCount,
+    int failedCount,
+    int skippedCount,
+    int unreachableCount,
+    String duration,
+    String status,
+    String reason
+) {
+    env.TOTAL_PASSED_COUNT = (
+        (env.TOTAL_PASSED_COUNT as Integer) + passedCount
+    ).toString()
+    env.TOTAL_FAILED_COUNT = (
+        (env.TOTAL_FAILED_COUNT as Integer) + failedCount
+    ).toString()
+    env.TOTAL_SKIPPED_COUNT = (
+        (env.TOTAL_SKIPPED_COUNT as Integer) + skippedCount
+    ).toString()
+    env.TOTAL_UNREACHABLE_COUNT = (
+        (env.TOTAL_UNREACHABLE_COUNT as Integer) + unreachableCount
+    ).toString()
+
+    if (status.contains('ERROR') || status.contains('CLEANUP_FAILED')) {
+        env.TOTAL_ERROR_COUNT = (
+            (env.TOTAL_ERROR_COUNT as Integer) + 1
+        ).toString()
+    }
+
+    def displayName = targetName.endsWith('.yaml') ?
+        targetName.substring(0, targetName.length() - 5) : targetName
+    def resultLine = (
+        "📋 Playbook: ${displayName} | Type: ${targetType} | " +
+        "Fabric: ${ndConfig.fabric_name} | ND: ${ndConfig.version} | " +
+        "Passed: ${passedCount} | Failed: ${failedCount} | " +
+        "Skipped: ${skippedCount} | Unreachable: ${unreachableCount} | " +
+        "Duration: ${duration} | Status: ${status}"
+    )
+
+    env.TEST_RESULT_SUMMARY = env.TEST_RESULT_SUMMARY?.trim() ?
+        "${env.TEST_RESULT_SUMMARY}\n${resultLine}" : resultLine
+
+    if (status != 'PASSED') {
+        env.PIPELINE_FAILED = 'true'
+        appendFailureReason(
+            "${displayName} (${targetType}) ${status}: ${reason ?: 'no reason recorded'}"
+        )
+    }
+}
+
+def appendFailureReason(String reason) {
+    def safeReason = compactReason(reason)
+    env.BUILD_FAILURE_REASON = env.BUILD_FAILURE_REASON?.trim() ?
+        "${env.BUILD_FAILURE_REASON}\n❌ ${safeReason}" : "❌ ${safeReason}"
+}
+
+def compactReason(def reason) {
+    def value = reason?.toString()?.replaceAll(/\s+/, ' ')?.trim()
+    if (!value) {
+        return 'unspecified error'
+    }
+    return value.length() > 300 ? "${value.substring(0, 297)}..." : value
+}
+
+def archiveTargetOutput(String outputFileName) {
+    // FROM MY CODE: retain each target's raw output as a Jenkins artifact so
+    // the Webex summary can be traced back to its source evidence.
+    try {
+        archiveArtifacts(
+            artifacts: "nd/${outputFileName}",
+            allowEmptyArchive: true,
+            fingerprint: true
+        )
+    } catch (Exception archiveError) {
+        echo "Could not archive ${outputFileName}: ${archiveError.getMessage()}"
+    }
+}
+
+def generateInventory(ndConfig) {
+    // FROM MY CODE: create a temporary inventory with restrictive permissions
+    // and remove it in post/always. JSON generation is a combined-draft safety
+    // extension that avoids placing secrets inside a Groovy-interpolated string.
+    def inventoryDirectory = pwd(tmp: true)
+    def inventoryName = "inventory_${ndConfig.versionId}.json"
+    def inventoryFile = "${inventoryDirectory}/${inventoryName}"
+
+    env.CURRENT_ND_INVENTORY = inventoryFile
+
+    withEnv(["ND_INVENTORY_FILE=${inventoryFile}"]) {
+        sh '''#!/bin/bash
+set -euo pipefail
+
+python3.12 - <<'PY'
+import json
+import os
+
+inventory = {
+    "nd": {
+        "hosts": {
+            "nd": {
+                "ansible_host": os.environ["ANSIBLE_HOST"]
+            }
+        },
+        "vars": {
+            "ansible_connection": "ansible.netcommon.httpapi",
+            "ansible_python_interpreter": "{{ ansible_playbook_python }}",
+            "ansible_network_os": "cisco.nd.nd",
+            "ansible_httpapi_validate_certs": False,
+            "ansible_httpapi_use_ssl": True,
+            "ansible_httpapi_use_proxy": False,
+            "ansible_httpapi_login_domain": "local",
+            "ansible_command_timeout": 600,
+            "ansible_connect_timeout": 60,
+            "ansible_user": os.environ["ND_USER"],
+            "ansible_password": os.environ["ND_PASSWORD"],
+            "fabric_name": os.environ["FABRIC_NAME"],
+            "ansible_it_fabric": os.environ["FABRIC_NAME"],
+            "nd_test_fabric_name": os.environ["FABRIC_NAME"],
+            "nd_test_vpc_access_fabric_name": os.environ["FABRIC_NAME"],
+            "nd_test_vpc_trunk_host_fabric_name": os.environ["FABRIC_NAME"],
+            "nd_test_switch_ip": os.environ["ND_SWITCH_IP"],
+            "switch_serial_1": os.environ["ND_SWITCH_SERIAL_1"],
+            "switch_serial_2": os.environ["ND_SWITCH_SERIAL_2"],
+            "switch_serial_3": os.environ["ND_SWITCH_SERIAL_3"],
+            "ansible_switch1": os.environ["ND_SWITCH_SERIAL_1"],
+            "ansible_switch2": os.environ["ND_SWITCH_SERIAL_2"],
+            "ansible_switch3": os.environ["ND_SWITCH_SERIAL_3"],
+            "ansible_sno_1": os.environ["ND_SWITCH_SERIAL_1"],
+            "ansible_sno_2": os.environ["ND_SWITCH_SERIAL_2"],
+            "ansible_sno_3": os.environ["ND_SWITCH_SERIAL_3"],
+            "nd_test_vpc_peer1_ip": os.environ["ND_SWITCH_SERIAL_1"],
+            "nd_test_vpc_peer2_ip": os.environ["ND_SWITCH_SERIAL_2"],
+            "nd_test_route_map_enable_overridden": False
+        }
+    }
+}
+
+with open(os.environ["ND_INVENTORY_FILE"], "w", encoding="utf-8") as inventory_file:
+    json.dump(inventory, inventory_file)
+PY
+
+chmod 600 "${ND_INVENTORY_FILE}"
+'''
+    }
+
+    echo 'Generated protected temporary ND inventory'
+}
+
+def runLintCheck() {
+    def lintOutput = "${env.BASE_DIRECTORY}/ansible-lint-output.txt"
+    def lintSummary = "${env.BASE_DIRECTORY}/lint_summary.txt"
+    int lintRc
+
+    withEnv([
+        "LINT_OUTPUT_FILE=${lintOutput}",
+        "LINT_SUMMARY_FILE=${lintSummary}"
+    ]) {
+        lintRc = sh(
+            returnStatus: true,
+            script: '''#!/bin/bash
+set -uo pipefail
+mkdir -p "${BASE_DIRECTORY}"
+cd "${COLLECTIONS_DIRECTORY}"
+source "${BASE_DIRECTORY}/venv/bin/activate"
+
+if ! command -v ansible-lint >/dev/null 2>&1; then
+    echo "ansible-lint is not installed" | tee "${LINT_OUTPUT_FILE}"
+    echo "Infrastructure error: ansible-lint is not installed" > "${LINT_SUMMARY_FILE}"
+    exit 127
+fi
+
+set +e
+ansible-lint --profile=production > "${LINT_OUTPUT_FILE}" 2>&1
+LINT_RC=$?
+set -e
+
+cat "${LINT_OUTPUT_FILE}"
+
+if [ "${LINT_RC}" -eq 0 ]; then
+    echo "Passed: ansible-lint found no violations" > "${LINT_SUMMARY_FILE}"
+    exit 0
+fi
+
+CONDENSED_RULES=$(awk '
+    /^# Rule Violation Summary/{found=1; next}
+    /^Failed:/{exit}
+    found && $1 ~ /^[0-9]+$/ {counts[$2]+=$1}
+    END {for (rule in counts) print counts[rule], rule}
+' "${LINT_OUTPUT_FILE}" | sort -rn | awk '{printf "%s%d %s", (NR > 1 ? ", " : ""), $1, $2}')
+
+FAILED_LINE=$(grep '^Failed:' "${LINT_OUTPUT_FILE}" | head -1 | sed 's/ Profile.*$//' || true)
+
+{
+    if [ -n "${CONDENSED_RULES}" ]; then
+        echo "cisco.nd: ${CONDENSED_RULES}"
+    fi
+    if [ -n "${FAILED_LINE}" ]; then
+        echo "${FAILED_LINE}"
+    else
+        echo "ansible-lint exited with code ${LINT_RC}"
+    fi
+} > "${LINT_SUMMARY_FILE}"
+
+exit "${LINT_RC}"
+'''
+        )
+    }
+
+    env.LINT_STATUS = lintRc == 0 ? 'PASSED' : 'FAILED'
+
+    archiveArtifacts(
+        artifacts: '.jenkins-runtime/ansible-lint-output.txt',
+        allowEmptyArchive: true
+    )
+
+    return lintRc == 0
+}
+
+def resetFabricAfterRun() {
+    if (!env.CURRENT_ND_INVENTORY?.trim()) {
+        env.PIPELINE_FAILED = 'true'
+        appendFailureReason('fabric reset skipped because no generated inventory exists')
+        error('Cannot reset fabric without an inventory')
+    }
+
+    def resetPlaybook = "${env.COLLECTIONS_DIRECTORY}/reset_fabric.yaml"
+    if (!fileExists(resetPlaybook)) {
+        env.PIPELINE_FAILED = 'true'
+        appendFailureReason('fabric reset playbook is missing')
+        error("Missing reset playbook: ${resetPlaybook}")
+    }
+
+    int resetRc = sh(
+        returnStatus: true,
+        script: '''#!/bin/bash
+set -euo pipefail
+cd "${COLLECTIONS_DIRECTORY}"
+source "${BASE_DIRECTORY}/venv/bin/activate"
+
+ansible-playbook \
+    -i "${CURRENT_ND_INVENTORY}" \
+    reset_fabric.yaml
+'''
+    )
+
+    if (resetRc != 0) {
+        env.PIPELINE_FAILED = 'true'
+        appendFailureReason("fabric reset failed with exit code ${resetRc}")
+        error("Fabric reset failed with exit code ${resetRc}")
+    }
+}
+
+def sendWebexSummary() {
+    // FROM MY CODE: build the notification from accumulated per-target
+    // counters and detailed results, then send it directly to the Webex API.
+    def message = 'ND NIGHTLY NOTIFICATION\n'
+    message += (
+        "📊 Pipeline completed for the ND Nightly run - Build ${env.BUILD_NUMBER}\n"
+    )
+    message += "Result: ${currentBuild.currentResult}\n\n"
+    message += "Total Passed: ${env.TOTAL_PASSED_COUNT ?: '0'}\n"
+    message += "Total Failed: ${env.TOTAL_FAILED_COUNT ?: '0'}\n"
+    message += "Total Skipped: ${env.TOTAL_SKIPPED_COUNT ?: '0'}\n"
+    message += "Total Unreachable: ${env.TOTAL_UNREACHABLE_COUNT ?: '0'}\n"
+    message += "Suite/Cleanup Errors: ${env.TOTAL_ERROR_COUNT ?: '0'}\n\n"
+    message += '📝 DETAILED TEST RESULTS:\n'
+    message += "${env.TEST_RESULT_SUMMARY?.trim() ?: 'No target results were recorded'}\n"
+
+    def lintSummaryFile = "${env.BASE_DIRECTORY}/lint_summary.txt"
+    if (fileExists(lintSummaryFile)) {
+        def lintSummary = readFile(lintSummaryFile).trim()
+        if (lintSummary) {
+            message += "\n🧹 Ansible-lint Results (${env.LINT_STATUS}):\n"
+            message += "${lintSummary}\n"
+        }
+    }
+
+    if (env.BUILD_FAILURE_REASON?.trim()) {
+        message += "\n⚠️ FAILURE DETAILS:\n${env.BUILD_FAILURE_REASON.trim()}\n"
+    }
+
+    message += "\n🔗 Results: ${env.BUILD_URL}console"
+
+    def webexPayload = createWebexPayload(message)
+
+    httpRequest(
+        url: 'https://webexapis.com/v1/messages',
+        httpMode: 'POST',
+        acceptType: 'APPLICATION_JSON',
+        contentType: 'APPLICATION_JSON',
+        customHeaders: [[
+            name: 'Authorization',
+            value: 'Bearer ' + env.WEBEX_TOKEN,
+            maskValue: true
+        ]],
+        requestBody: webexPayload,
+        validResponseCodes: '200:299',
+        consoleLogResponseBody: false
+    )
 }
 
 def createWebexPayload(String message) {
+    // FROM MY CODE: locally generate valid JSON instead of depending on the
+    // Pipeline Utility Steps writeJSON operation or a downloaded helper script.
     def payload
 
     withEnv(["WEBEX_MESSAGE=${message}"]) {
@@ -296,525 +1234,4 @@ python3.12 -c \
     }
 
     return payload
-}
-
-def downloadFromConsul(fileName, localFileName = null) {
-    if (!(fileName ==~ /[A-Za-z0-9._-]+/)) {
-        error("Unsafe Consul filename: ${fileName}")
-    }
-
-    def targetFileName = localFileName ?: fileName
-
-    if (!(targetFileName ==~ /[A-Za-z0-9._-]+/)) {
-        error("Unsafe local filename: ${targetFileName}")
-    }
-
-    def consulUrl =
-        "${env.CONSUL_URL}/v1/kv/${env.CONSUL_PREFIX}/${fileName}?raw"
-
-    echo "Downloading ${fileName} from Consul prefix ${env.CONSUL_PREFIX}"
-
-    withEnv([
-        "CONSUL_DOWNLOAD_URL=${consulUrl}",
-        "CONSUL_TARGET_FILE=${targetFileName}"
-    ]) {
-        sh '''#!/bin/bash
-            set -euo pipefail
-
-            temporary_file="$(mktemp ".${CONSUL_TARGET_FILE}.XXXXXX")"
-            trap 'rm -f -- "$temporary_file"' EXIT
-
-            curl --fail \
-                --silent \
-                --show-error \
-                --connect-timeout 10 \
-                --max-time 60 \
-                --output "$temporary_file" \
-                "$CONSUL_DOWNLOAD_URL"
-
-            mv -- "$temporary_file" "$CONSUL_TARGET_FILE"
-            trap - EXIT
-            '''
-    }
-
-    echo "Downloaded ${fileName}"
-}
-
-def loadSuiteConfiguration(String suiteName) {
-    if (!(suiteName ==~ /nd_[a-z0-9_]+/)) {
-        error("Unsafe suite name: ${suiteName}")
-    }
-
-    def manifestRecord
-
-    dir(env.COLLECTIONS_DIR) {
-        withEnv(["ND_REQUESTED_SUITE=${suiteName}"]) {
-            manifestRecord = sh(
-                returnStdout: true,
-                script: '''#!/bin/bash
-set -euo pipefail
-source "${BASE_DIR}/venv/bin/activate"
-
-python - <<'PY'
-import os
-import re
-
-import yaml
-
-
-with open("nd_suite_manifest.yaml", encoding="utf-8") as manifest_file:
-    manifest = yaml.safe_load(manifest_file)
-
-if not isinstance(manifest, dict):
-    raise SystemExit("nd_suite_manifest.yaml must contain a YAML mapping")
-
-if manifest.get("schema_version") != 1:
-    raise SystemExit(
-        "Unsupported manifest schema_version: "
-        f"{manifest.get('schema_version')}"
-    )
-
-suites = manifest.get("suites")
-if not isinstance(suites, dict) or not suites:
-    raise SystemExit("nd_suite_manifest.yaml contains no suites")
-
-suite_name = os.environ["ND_REQUESTED_SUITE"]
-suite = suites.get(suite_name)
-if not isinstance(suite, dict):
-    raise SystemExit(f"Suite is not present in the manifest: {suite_name}")
-
-testbed = suite.get("testbed")
-timeout_minutes = suite.get("timeout_minutes")
-local_status = suite.get("local_status")
-tags = suite.get("tags", [])
-
-if not isinstance(testbed, str) or not re.fullmatch(r"[a-z0-9_-]+", testbed):
-    raise SystemExit(f"Suite {suite_name} has an invalid testbed value")
-
-if (
-    not isinstance(timeout_minutes, int)
-    or isinstance(timeout_minutes, bool)
-):
-    raise SystemExit(f"Suite {suite_name} has no valid timeout_minutes value")
-
-if (
-    not isinstance(local_status, str)
-    or not re.fullmatch(r"[a-z0-9_-]+", local_status)
-):
-    raise SystemExit(f"Suite {suite_name} has an invalid local_status value")
-
-if not isinstance(tags, list):
-    raise SystemExit(f"Suite {suite_name} tags must be a YAML list")
-
-for tag in tags:
-    if not isinstance(tag, str) or not re.fullmatch(r"[a-zA-Z0-9_:-]+", tag):
-        raise SystemExit(f"Suite {suite_name} contains an unsafe tag: {tag}")
-
-tags_record = ",".join(tags) if tags else "-"
-print(
-    "\t".join(
-        [testbed, str(timeout_minutes), local_status, tags_record]
-    )
-)
-PY
-'''
-            ).trim()
-        }
-    }
-
-    def fields = manifestRecord.split('\t', -1)
-
-    if (fields.size() != 4) {
-        error("Unable to parse manifest configuration for ${suiteName}")
-    }
-
-    def tags = fields[3] == '-' ? [] : fields[3].split(',').toList()
-
-    return [
-        testbed: fields[0],
-        timeout_minutes: fields[1] as Integer,
-        local_status: fields[2],
-        tags: tags
-    ]
-}
-
-def runNDTests(ndConfig) {
-    echo "Running ND ${ndConfig.version} tests..."
-
-    generateInventory(ndConfig)
-
-    timeout(time: 10, unit: 'MINUTES') {
-        sh '''#!/bin/bash
-        set -euo pipefail
-        cd "${COLLECTIONS_DIR}"
-        source "${BASE_DIR}/venv/bin/activate"
-
-        ansible-playbook \
-          -i "${CURRENT_ND_INVENTORY}" \
-          nd_precheck.yaml
-        '''
-    }
-
-    def requestedSuiteNames = getRequestedSuiteNames()
-
-    def selectedSuites = [:]
-
-    requestedSuiteNames.each { requestedSuite ->
-        def requestedConfig = loadSuiteConfiguration(requestedSuite)
-
-        if (requestedConfig.local_status != 'passed') {
-            error(
-                "Suite ${requestedSuite} is not approved: " +
-                "local_status=${requestedConfig.local_status}"
-            )
-        }
-
-        selectedSuites[requestedSuite] = requestedConfig
-    }
-
-    if (!selectedSuites) {
-        error('No manifest-approved suites were selected')
-    }
-
-    env.TOTAL_PASSED_COUNT = '0'
-    env.TOTAL_FAILED_COUNT = '0'
-    env.TOTAL_SKIPPED_COUNT = '0'
-    env.TEST_RESULT_SUMMARY = ''
-    env.RECORDED_SUITES = ''
-
-    def suiteFailures = []
-
-    selectedSuites.each { suiteName, suiteConfig ->
-        try {
-            validateSuiteConfiguration(suiteName, suiteConfig)
-            runSuiteWithVerification(ndConfig, suiteName, suiteConfig)
-        } catch (Exception suiteError) {
-            env.PIPELINE_FAILED = 'true'
-            if (!hasRecordedTestResult(suiteName)) {
-                recordTestResult(
-                    ndConfig,
-                    suiteName,
-                    0,
-                    1,
-                    0,
-                    '0m 0s'
-                )
-            }
-            suiteFailures << "${suiteName}: ${suiteError.getMessage()}"
-            echo "Suite execution failed: ${suiteName}"
-        }
-    }
-
-    if (suiteFailures) {
-        error("One or more suites failed: ${suiteFailures.join('; ')}")
-    }
-}
-
-def validateSuiteConfiguration(String suiteName, suiteConfig) {
-    if (!suiteName.matches('^nd_[a-z0-9_]+$')) {
-        error("Unsafe suite name in manifest: ${suiteName}")
-    }
-
-    if (suiteConfig.testbed != 'primary') {
-        error(
-            "Suite ${suiteName} uses unsupported testbed: " +
-            "${suiteConfig.testbed}"
-        )
-    }
-
-    if (suiteConfig.timeout_minutes == null) {
-        error("Suite ${suiteName} has no timeout_minutes value")
-    }
-
-    int timeoutMinutes = suiteConfig.timeout_minutes as Integer
-    if (timeoutMinutes <= 0) {
-        error("Suite ${suiteName} has an invalid timeout: ${timeoutMinutes}")
-    }
-
-    def tags = suiteConfig.tags ?: []
-    if (!(tags instanceof List)) {
-        error("Suite ${suiteName} tags must be a YAML list")
-    }
-
-    tags.each { tag ->
-        if (!tag.toString().matches('^[a-zA-Z0-9_:-]+$')) {
-            error("Suite ${suiteName} contains an unsafe tag: ${tag}")
-        }
-    }
-
-    def wrapperFile = "${env.COLLECTIONS_DIR}/${suiteName}.yaml"
-    if (!fileExists(wrapperFile)) {
-        error("Suite wrapper is missing: ${suiteName}.yaml")
-    }
-}
-
-def runSuiteWithVerification(ndConfig, String suiteName, suiteConfig) {
-    int timeoutMinutes = suiteConfig.timeout_minutes as Integer
-    def tags = (suiteConfig.tags ?: []).collect { it.toString() }
-    def outputFile = "${env.COLLECTIONS_DIR}/test_output_${suiteName}.txt"
-    def failureMessages = []
-
-    withEnv([
-        "ND_CURRENT_SUITE=${suiteName}",
-        "ND_SUITE_TAGS=${tags.join(',')}",
-        "ND_OUTPUT_FILE=${outputFile}"
-    ]) {
-        try {
-            timeout(time: timeoutMinutes, unit: 'MINUTES') {
-                sh '''#!/bin/bash
-                set -euo pipefail
-                cd "${COLLECTIONS_DIR}"
-                source "${BASE_DIR}/venv/bin/activate"
-
-                : > "${ND_OUTPUT_FILE}"
-                echo "[TARGET: ${ND_CURRENT_SUITE}] Starting..." | tee -a "${ND_OUTPUT_FILE}"
-                START_TIME=$(date +%s)
-                echo "[TIMESTAMP_START: ${START_TIME}]" >> "${ND_OUTPUT_FILE}"
-
-                set +e
-                if [ -n "${ND_SUITE_TAGS}" ]; then
-                    ansible-playbook \
-                      -i "${CURRENT_ND_INVENTORY}" \
-                      --tags "${ND_SUITE_TAGS}" \
-                      "${ND_CURRENT_SUITE}.yaml" 2>&1 | tee -a "${ND_OUTPUT_FILE}"
-                else
-                    ansible-playbook \
-                      -i "${CURRENT_ND_INVENTORY}" \
-                      "${ND_CURRENT_SUITE}.yaml" 2>&1 | tee -a "${ND_OUTPUT_FILE}"
-                fi
-                SUITE_RC=${PIPESTATUS[0]}
-                set -e
-
-                END_TIME=$(date +%s)
-                DURATION=$((END_TIME - START_TIME))
-                echo "[TIMESTAMP_END: ${END_TIME}]" >> "${ND_OUTPUT_FILE}"
-                echo "[DURATION_SECONDS: ${DURATION}]" >> "${ND_OUTPUT_FILE}"
-                echo "[TARGET: ${ND_CURRENT_SUITE}] Done with rc=${SUITE_RC}." | tee -a "${ND_OUTPUT_FILE}"
-                exit "${SUITE_RC}"
-                '''
-            }
-        } catch (Exception suiteError) {
-            failureMessages << "suite failed: ${suiteError.getMessage()}"
-            env.PIPELINE_FAILED = 'true'
-        } finally {
-            try {
-                timeout(time: 10, unit: 'MINUTES') {
-                    sh '''#!/bin/bash
-                    set -euo pipefail
-                    cd "${COLLECTIONS_DIR}"
-                    source "${BASE_DIR}/venv/bin/activate"
-
-                    echo "[CLEANUP VERIFY: ${ND_CURRENT_SUITE}] Starting..." | tee -a "${ND_OUTPUT_FILE}"
-                    ansible-playbook \
-                      -i "${CURRENT_ND_INVENTORY}" \
-                      -e "nd_suite=${ND_CURRENT_SUITE}" \
-                      nd_cleanup_verify.yaml 2>&1 | tee -a "${ND_OUTPUT_FILE}"
-                    echo "[CLEANUP VERIFY: ${ND_CURRENT_SUITE}] Passed." | tee -a "${ND_OUTPUT_FILE}"
-                    '''
-                }
-            } catch (Exception verificationError) {
-                failureMessages << (
-                    "cleanup verification failed: " +
-                    verificationError.getMessage()
-                )
-                env.PIPELINE_FAILED = 'true'
-            }
-        }
-    }
-
-    if (fileExists(outputFile)) {
-        parseTestResults(
-            ndConfig,
-            suiteName,
-            outputFile,
-            !failureMessages.isEmpty()
-        )
-        def timestamp = new Date().format('yyyyMMdd_HHmmss')
-        def artifactName = "test_output_${suiteName}_${timestamp}.txt"
-        sh "cp '${outputFile}' '${env.WORKSPACE}/${artifactName}'"
-        archiveArtifacts artifacts: artifactName, allowEmptyArchive: true
-        sh "rm -f '${env.WORKSPACE}/${artifactName}'"
-    } else {
-        failureMessages << 'no output file was produced'
-        env.PIPELINE_FAILED = 'true'
-        recordTestResult(ndConfig, suiteName, 0, 1, 0, 'N/A')
-    }
-
-    if (failureMessages) {
-        error("${suiteName}: ${failureMessages.join('; ')}")
-    }
-}
-
-def generateInventory(ndConfig) {
-    if (!env.ND_SWITCH_IP?.trim()) {
-        error('ND_SWITCH_IP is not configured')
-    }
-
-    def inv = """[nd]
-nd ansible_host=${env.ANSIBLE_HOST}
-
-[nd:vars]
-ansible_connection=ansible.netcommon.httpapi
-ansible_python_interpreter={{ ansible_playbook_python }}
-ansible_network_os=cisco.nd.nd
-ansible_httpapi_validate_certs=False
-ansible_httpapi_use_ssl=True
-ansible_httpapi_use_proxy=False
-ansible_httpapi_login_domain=local
-ansible_command_timeout=600
-ansible_connect_timeout=60
-ansible_user=${env.ND_USER}
-ansible_password=${env.ND_PASSWORD}
-nd_test_fabric_name=${env.FABRIC}
-nd_test_switch_ip=${env.ND_SWITCH_IP}
-"""
-
-    def inventoryDirectory = pwd(tmp: true)
-    def inventoryName = "inventory_${ndConfig.versionId}.networking"
-    def inventoryFile = "${inventoryDirectory}/${inventoryName}"
-
-    dir(inventoryDirectory) {
-        writeFile file: inventoryName, text: inv
-        sh "chmod 600 '${inventoryName}'"
-    }
-
-    env.CURRENT_ND_INVENTORY = inventoryFile
-    echo 'Generated temporary ND inventory'
-}
-
-
-def parseTestResults(
-    ndConfig,
-    String targetName,
-    String outputFile,
-    boolean executionFailed
-) {
-    def output = readFile(outputFile)
-
-    // Extract duration
-    def durationStr = 'N/A'
-    if (output.contains('[DURATION_SECONDS:')) {
-        def idx = output.indexOf('[DURATION_SECONDS:')
-        def after = output.substring(idx + '[DURATION_SECONDS:'.length())
-        def end = after.indexOf(']')
-        if (end > 0) {
-            def secs = after.substring(0, end).trim() as Integer
-            durationStr = "${secs / 60}m ${secs % 60}s"
-        }
-    }
-
-    // Exclude the cleanup verification recap from the suite's own result.
-    def suiteOutput = output
-    def cleanupIndex = output.indexOf('[CLEANUP VERIFY:')
-    if (cleanupIndex >= 0) {
-        suiteOutput = output.substring(0, cleanupIndex)
-    }
-
-    // Parse the suite PLAY RECAP lines.
-    def okCount = 0
-    def failedCount = 0
-    def skippedCount = 0
-
-    suiteOutput.split('\n').each { line ->
-        if (
-            line.contains('ok=') &&
-            line.contains('changed=') &&
-            line.contains('unreachable=') &&
-            line.contains('failed=') &&
-            line.contains('skipped=')
-        ) {
-            okCount += extractRecapValue(line, 'ok')
-            failedCount += extractRecapValue(line, 'failed')
-            skippedCount += extractRecapValue(line, 'skipped')
-        }
-    }
-
-    // A wrapper/setup/timeout failure may occur before Ansible emits a recap.
-    if (executionFailed && failedCount == 0) {
-        failedCount = 1
-    }
-
-    recordTestResult(
-        ndConfig,
-        targetName,
-        okCount,
-        failedCount,
-        skippedCount,
-        durationStr
-    )
-
-    if (failedCount > 0) {
-        env.PIPELINE_FAILED = 'true'
-        echo "Failures detected in ${targetName}: ${failedCount} tasks failed"
-    }
-}
-
-def extractRecapValue(String line, String fieldName) {
-    def marker = "${fieldName}="
-    def markerIndex = line.indexOf(marker)
-
-    if (markerIndex < 0) {
-        return 0
-    }
-
-    def valueStart = markerIndex + marker.length()
-    def remainder = line.substring(valueStart).trim()
-    def valueEnd = 0
-
-    while (
-        valueEnd < remainder.length() &&
-        Character.isDigit(remainder.charAt(valueEnd))
-    ) {
-        valueEnd++
-    }
-
-    def digits = remainder.substring(0, valueEnd)
-
-    return digits ? digits as Integer : 0
-}
-
-def recordTestResult(
-    ndConfig,
-    String targetName,
-    int passedCount,
-    int failedCount,
-    int skippedCount,
-    String duration
-) {
-    env.TOTAL_PASSED_COUNT = (
-        (env.TOTAL_PASSED_COUNT as Integer) + passedCount
-    ).toString()
-    env.TOTAL_FAILED_COUNT = (
-        (env.TOTAL_FAILED_COUNT as Integer) + failedCount
-    ).toString()
-    env.TOTAL_SKIPPED_COUNT = (
-        (env.TOTAL_SKIPPED_COUNT as Integer) + skippedCount
-    ).toString()
-
-    def resultLine = (
-        "📋 Playbook: ${targetName} | Fabric: ${env.FABRIC} | " +
-        "ND: ${ndConfig.version} | Passed: ${passedCount} | " +
-        "Failed: ${failedCount} | Skipped: ${skippedCount} | " +
-        "Duration: ${duration}"
-    )
-
-    env.TEST_RESULT_SUMMARY = env.TEST_RESULT_SUMMARY?.trim() ?
-        "${env.TEST_RESULT_SUMMARY}\n${resultLine}" :
-        resultLine
-
-    def recordedSuites = env.RECORDED_SUITES?.trim() ?
-        env.RECORDED_SUITES.split(',').toList() :
-        []
-    if (!recordedSuites.contains(targetName)) {
-        recordedSuites << targetName
-    }
-    env.RECORDED_SUITES = recordedSuites.join(',')
-}
-
-def hasRecordedTestResult(String targetName) {
-    if (!env.RECORDED_SUITES?.trim()) {
-        return false
-    }
-
-    return env.RECORDED_SUITES.split(',').contains(targetName)
 }
