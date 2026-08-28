@@ -542,10 +542,11 @@ class TrunkVpcHostInterfaceModel(NDBaseModel):
 
     vPC `trunkVpcHost` interface configuration for Nexus Dashboard.
 
-    The nested model structure mirrors the ND Manage Interfaces API payload, so `to_payload()` and `from_response()`
-    work via standard Pydantic serialization. The `interface_name` is the vPC's own name (e.g. `vpc100`), not a member
-    interface. Member interfaces are listed per-peer in `config_data.network_os.policy.peer1_member_ports` and
-    `peer2_member_ports`.
+    Uses a composite identifier (`switch_ip`, `interface_name`). The nested model structure mirrors the ND Manage
+    Interfaces API payload, so `to_payload()` and `from_response()` work via standard Pydantic serialization.
+
+    The `interface_name` is the vPC's own name (e.g. `vpc100`), not a member interface. Member interfaces are listed
+    per-peer in `config_data.network_os.policy.peer1_member_ports` and `peer2_member_ports`.
 
     ## Raises
 
@@ -554,14 +555,15 @@ class TrunkVpcHostInterfaceModel(NDBaseModel):
 
     # --- Identifier Configuration ---
     # TODO(4.2.1) vpc-interface-dual-peer-duplicate
-    # A vPC interface is a single fabric-level resource, but ND echoes it from BOTH peer switches in
-    # the per-switch `/interfaces` GET (with identical `configData` and only `switchId` / `peerSwitchId` swapping).
-    # Using a composite (switch_ip, interface_name) identifier caused `_manage_override_deletions` to delete the
-    # peer-side duplicate. The identifier is therefore `interface_name` only; `switch_ip` is kept as a field for
-    # routing (URL-path resolution + peer-resolution) but is excluded from diff and dedup'd in `query_all`.
+    # A vPC interface is a single fabric-level resource, but ND echoes it from BOTH peer switches in the per-switch
+    # `/interfaces` GET (identical `configData`; only `switchId` / `peerSwitchId` swap). That echo is deduped in
+    # `VpcInterfaceBaseOrchestrator.query_all`, keyed on `interfaceName` + the unordered `{switchId, peerSwitchId}` pair
+    # set, so the composite identifier below stays safe: two vPC pairs in one fabric may legally reuse the same vPC id
+    # (ND's `vpcId` resource pool is devicePair-scoped; issue #356), which a name-only identity cannot represent.
+    # `switch_ip` remains excluded from payload and diff (routing-only on the wire).
 
-    identifiers: ClassVar[list[str] | None] = ["interface_name"]
-    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
 
     # --- Serialization Configuration ---
 
