@@ -1,0 +1,427 @@
+##############################################
+##                 SETUP                    ##
+##############################################
+
+- name: Import nd_manage_vrf_lite Base Tasks
+  ansible.builtin.import_tasks: base_tasks.yaml
+  tags: replace
+
+- name: REPLACE - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vrf_lite_module_timeout | default(600) }}"
+  tags: replace
+
+##############################################
+##      Setup Replace TestCase Variables   ##
+##############################################
+
+- name: REPLACE - Setup initial config
+  ansible.builtin.set_fact:
+    vrf_lite_conf:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "{{ test_ipv4_addr }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+                peer_vrf: "{{ test_peer_vrf }}"
+  delegate_to: localhost
+  tags: replace
+
+- name: Import Configuration Prepare Tasks - replace_initial
+  vars:
+    file: replace_initial
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: replace
+
+- name: REPLACE - Setup replaced config (changed IP address)
+  ansible.builtin.set_fact:
+    vrf_lite_conf:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "10.33.0.20/24"
+                neighbor_ipv4: "10.33.0.19"
+                peer_vrf: "{{ test_peer_vrf }}"
+  delegate_to: localhost
+  tags: replace
+
+- name: Import Configuration Prepare Tasks - replace_replaced
+  vars:
+    file: replace_replaced
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: replace
+
+##############################################
+##                REPLACE                  ##
+##############################################
+
+# TC1 - Create initial VRF Lite using replace state
+- name: REPLACE - TC1 - REPLACE - Create VRF Lite using replace state
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_replace_initial_conf }}"
+  register: result
+  tags: replace
+
+- name: REPLACE - TC1 - ASSERT - Check if changed flag is true
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: replace
+
+- name: REPLACE - TC1 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: replace
+
+- name: REPLACE - TC1 - ASSERT - Verify VRF Lite state in ND
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: replace
+
+# TC2 - Replace VRF Lite configuration
+- name: REPLACE - TC2 - REPLACE - Replace VRF Lite configuration
+  cisco.nd.nd_manage_vrf_lite: &conf_replaced
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_replace_replaced_conf }}"
+  register: result
+  tags: replace
+
+- name: REPLACE - TC2 - ASSERT - Check if changed flag is true
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: replace
+
+- name: REPLACE - TC2 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: replace
+
+- name: REPLACE - TC2 - ASSERT - Verify replaced VRF Lite state
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "10.33.0.20/24"
+    vrf_lite_assert_neighbor_ipv4: "10.33.0.19"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: replace
+
+# TC3 - Idempotence test
+- name: REPLACE - TC3 - conf - Idempotence
+  cisco.nd.nd_manage_vrf_lite: *conf_replaced
+  register: result
+  tags: replace
+
+- name: REPLACE - TC3 - ASSERT - Check if changed flag is false
+  ansible.builtin.assert:
+    that:
+      - result.changed == false
+      - result.failed == false
+  tags: replace
+
+# TC4 - Replace with deploy enabled
+- name: REPLACE - TC4 - DELETE - Ensure VRF Lite absent before deploy test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  tags: replace
+
+- name: REPLACE - TC4 - REPLACE - Create VRF Lite with deploy true
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config: "{{ nd_manage_vrf_lite_replace_initial_conf }}"
+  register: result
+  tags: replace
+
+- name: REPLACE - TC4 - ASSERT - Verify deploy path execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
+  tags: replace
+
+- name: REPLACE - TC4 - ASSERT - Verify config-save and deploy API traces
+  ansible.builtin.assert:
+    that:
+      - result.deployment.response is defined
+      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'config_save')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'vrf_deploy')
+          | list
+          | length
+        ) > 0
+  tags: replace
+
+- name: REPLACE - TC4 - GATHER - Verify VRF Lite exists after deploy flow
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: replace
+
+- name: REPLACE - TC4 - ASSERT - Verify deployed replace config
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: replace
+
+# TC5 - Replace with config_actions save+deploy
+- name: REPLACE - TC5 - DELETE - Ensure VRF Lite absent before config_actions test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  tags: replace
+
+- name: REPLACE - TC5 - REPLACE - Create VRF Lite with config_actions save+deploy
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config: "{{ nd_manage_vrf_lite_replace_initial_conf }}"
+  register: result
+  tags: replace
+
+- name: REPLACE - TC5 - ASSERT - Verify config_actions save+deploy execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+      - result.deployment.config_actions is defined
+      - result.deployment.config_actions.save == true
+      - result.deployment.config_actions.deploy == true
+      - result.deployment.config_actions.type == "switch"
+      - result.deployment.response is defined
+      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'config_save')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'vrf_deploy')
+          | list
+          | length
+        ) > 0
+      # type=switch scopes the VRF deploy to only the affected switches (switchIds present).
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'vrf_deploy')
+          | map(attribute='payload')
+          | selectattr('switchIds', 'defined')
+          | list
+          | length
+        ) > 0
+      # config save is a body-less fabric trigger; it must not carry a deploy-scope 'type'.
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'config_save')
+          | map(attribute='payload')
+          | selectattr('type', 'defined')
+          | list
+          | length
+        ) == 0
+  tags: replace
+
+# TC6 - check_mode should not apply replace configuration changes
+- name: REPLACE - TC6 - DELETE - Ensure VRF Lite is absent before check_mode test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  tags: replace
+
+- name: REPLACE - TC6 - REPLACE - Run check_mode create for VRF Lite
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_replace_initial_conf }}"
+  check_mode: true
+  register: result
+  tags: replace
+
+- name: REPLACE - TC6 - ASSERT - Verify check_mode invocation succeeded
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is not defined
+  tags: replace
+
+- name: REPLACE - TC6 - GATHER - Verify check_mode flow did not create VRF Lite
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: replace
+
+- name: REPLACE - TC6 - ASSERT - Verify gathered after check_mode
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+      - verify_result.gathered | length == 1
+      - verify_result.gathered[0].vrf_name == test_vrf
+      - verify_result.gathered[0].attach | default([]) | length == 0
+  tags: replace
+
+##############################################
+##                 CLEAN-UP                 ##
+##############################################
+
+- name: REPLACE - END - ensure clean state
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  when: cleanup_at_end | default(true)
+  tags: replace

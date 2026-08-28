@@ -1,0 +1,73 @@
+---
+# This nd_manage_vrf_lite test data structure is auto-generated
+# DO NOT EDIT MANUALLY
+#
+# Template: nd_manage_vrf_lite_conf.j2
+# Variables: vrf_lite_conf (list of dicts)
+
+{% if vrf_lite_conf is iterable %}
+{% set vrf_list = [] %}
+{% for vrf in vrf_lite_conf %}
+{% set vrf_item = {} %}
+{% if vrf.vrf_name is defined %}
+{% set _ = vrf_item.update({'vrf_name': vrf.vrf_name}) %}
+{% endif %}
+{% if vrf.vlan_id is defined %}
+{% set _ = vrf_item.update({'vlan_id': vrf.vlan_id}) %}
+{% endif %}
+{% if vrf.deploy is defined %}
+{% set _ = vrf_item.update({'deploy': vrf.deploy}) %}
+{% endif %}
+{% if vrf.attach is defined %}
+{% set attach_list = [] %}
+{% for att in vrf.attach %}
+{% set att_item = {} %}
+{% if att.ip_address is defined %}
+{% set _ = att_item.update({'ip_address': att.ip_address}) %}
+{% endif %}
+{% if att.deploy is defined %}
+{% set _ = att_item.update({'deploy': att.deploy}) %}
+{% endif %}
+{% if att.import_evpn_rt is defined %}
+{% set _ = att_item.update({'import_evpn_rt': att.import_evpn_rt}) %}
+{% endif %}
+{% if att.export_evpn_rt is defined %}
+{% set _ = att_item.update({'export_evpn_rt': att.export_evpn_rt}) %}
+{% endif %}
+{% if att.vrf_lite is defined %}
+{% set lite_list = [] %}
+{% for lite in att.vrf_lite %}
+{% set lite_item = {} %}
+{% if lite.interface is defined %}
+{% set _ = lite_item.update({'interface': lite.interface}) %}
+{% endif %}
+{% if lite.dot1q is defined %}
+{% set _ = lite_item.update({'dot1q': lite.dot1q}) %}
+{% endif %}
+{% if lite.ipv4_addr is defined %}
+{% set _ = lite_item.update({'ipv4_addr': lite.ipv4_addr}) %}
+{% endif %}
+{% if lite.neighbor_ipv4 is defined %}
+{% set _ = lite_item.update({'neighbor_ipv4': lite.neighbor_ipv4}) %}
+{% endif %}
+{% if lite.ipv6_addr is defined %}
+{% set _ = lite_item.update({'ipv6_addr': lite.ipv6_addr}) %}
+{% endif %}
+{% if lite.neighbor_ipv6 is defined %}
+{% set _ = lite_item.update({'neighbor_ipv6': lite.neighbor_ipv6}) %}
+{% endif %}
+{% if lite.peer_vrf is defined %}
+{% set _ = lite_item.update({'peer_vrf': lite.peer_vrf}) %}
+{% endif %}
+{% set _ = lite_list.append(lite_item) %}
+{% endfor %}
+{% set _ = att_item.update({'vrf_lite': lite_list}) %}
+{% endif %}
+{% set _ = attach_list.append(att_item) %}
+{% endfor %}
+{% set _ = vrf_item.update({'attach': attach_list}) %}
+{% endif %}
+{% set _ = vrf_list.append(vrf_item) %}
+{% endfor %}
+{{ vrf_list | to_nice_yaml(indent=2) | trim }}
+{% endif %}

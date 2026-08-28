@@ -50,6 +50,19 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     model_class: ClassVar[type[NDBaseModel]] = NDBaseModel
     supports_bulk_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = False
+    # When True, items removed during deleted/overridden states are also added
+    # to the state machine's ``sent`` collection. Off by default so the
+    # generic ``sent`` keeps its "created/updated only" meaning for modules
+    # that do not opt in.
+    track_deletes_in_sent: ClassVar[bool] = False
+    # When True, merged-state diffing matches list elements one-directionally
+    # (``allow_superset``) so an existing item with extra list entries is not
+    # seen as changed. Off by default: enabling it globally would silently
+    # change idempotency results for shipped modules whose ``merge`` replaces
+    # list fields wholesale, making diff and merge disagree (PR #281 review).
+    # Only orchestrators whose models override ``merge`` with element-wise list
+    # merging (e.g. vrf_lite) should opt in, so diff and merge stay consistent.
+    merge_allow_list_superset: ClassVar[bool] = False
 
     # NOTE: if not defined by subclasses, return an error as they are required
     create_endpoint: type[NDEndpointBaseModel]
