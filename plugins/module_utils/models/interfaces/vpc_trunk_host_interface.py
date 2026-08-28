@@ -38,7 +38,7 @@ use the ND-native `peer1_*` / `peer2_*` naming where `peer1` corresponds to `swi
 from __future__ import annotations
 
 import re
-from typing import Annotated, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
+from typing import Annotated, Any, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
@@ -222,6 +222,46 @@ class TrunkVpcHostPolicyModel(StormControlMutexMixin):
 
     - If `allowed_vlans` is set and does not match `none`, `all`, or comma-separated VLAN ranges.
     """
+
+    # `peerSwitchId` is orchestrator-injected (resolved from the vPC pair record; not in the argspec), so the
+    # proposed config can never express it. ND echoes it on reads; without this exclusion the reverse pass of
+    # `get_diff` would count it as a removal on every replaced/overridden run, breaking idempotency.
+    reverse_diff_exclude: ClassVar[set[str]] = {"peerSwitchId"}
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_vpc_trunk_host` template defaults (schema-sourced via nd-openapi `intVpcTrunkHostTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        # Dumped-form keys: the write-side dump fans the single user-facing `allowed_vlans` out to the per-peer
+        # wire keys (vpc-interface-peer-vlan-collapse), so the reverse pass sees peer1/peer2AllowedVlans, never
+        # the collapsed `allowedVlans` that ND echoes on GET.
+        "peer1AllowedVlans": "none",
+        "peer2AllowedVlans": "none",
+        "bpduFilter": "default",
+        "bpduGuard": "enable",
+        "cdp": True,
+        "copyDescription": False,
+        "duplexMode": "auto",
+        "lacpPortPriority": 32768,
+        "lacpRate": "normal",
+        "lacpSuspend": False,
+        "lacpVpcConvergence": False,
+        "linkType": "auto",
+        "mirrorConfig": False,
+        "mtu": "jumbo",
+        "negotiateAuto": True,
+        "netflow": False,
+        "pfc": False,
+        "portChannelMode": "active",
+        "portTypeEdgeTrunk": True,
+        "qos": False,
+        "speed": "auto",
+        "stormControl": False,
+        "stormControlAction": "default",
+        "vlanMapping": False,
+    }
 
     # --- Policy Discriminator ---
 

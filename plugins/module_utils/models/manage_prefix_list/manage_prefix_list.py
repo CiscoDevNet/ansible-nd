@@ -61,12 +61,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.enums import (
     IpVersionEnum,
     PrefixListActionEnum,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
 # Allowed characters for prefix list / tenant names (from OpenAPI pattern)
 _NAME_RE = re.compile(r"^[a-zA-Z0-9~_-]+$")
@@ -356,21 +356,6 @@ class PrefixListModel(NDBaseModel):
     def get_identifier_value(self) -> tuple[str, str | None, str]:
         """Return the tenant-aware composite identifier."""
         return (str(self.ip_version), self.tenant_name, self.name)
-
-    def get_diff(self, other: NDBaseModel, exclude_unset: bool = False) -> bool:
-        """
-        Compare prefix-list config, treating omitted description as empty in replace-style states.
-
-        ``NDStateMachine`` calls this with ``exclude_unset=True`` for ``merged``,
-        where omitted fields must be left untouched. For ``replaced`` and
-        ``overridden`` it passes ``exclude_unset=False``; in that path an omitted
-        description means the desired value is empty/absent, so a stale controller
-        description must trigger an update.
-        """
-        if not exclude_unset and isinstance(other, PrefixListModel):
-            if other.description is None and self.description not in (None, ""):
-                return False
-        return super().get_diff(other, exclude_unset=exclude_unset)
 
     @classmethod
     def validate_config_for_state(cls, config: list[dict[str, Any]], state: str) -> None:

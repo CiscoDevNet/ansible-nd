@@ -1404,12 +1404,15 @@ def test_loopback_interface_00620():
     """
     # Summary
 
-    Verify other with fewer fields (None excluded) -> True (subset).
+    Verify other with fewer fields (None excluded) is a difference on the default `exclude_unset=False`
+    (replaced/overridden) path -- the reverse pass detects the removed fields (issue #410) -- while the
+    `exclude_unset=True` (merged) path still treats the subset as no difference.
 
     ## Test
 
     - other has fewer fields than self
-    - get_diff returns True (other is subset of self)
+    - get_diff returns False by default (removals must trigger the resetting update)
+    - get_diff with exclude_unset=True returns True (merged leaves omitted fields untouched)
 
     ## Classes and Methods
 
@@ -1417,7 +1420,8 @@ def test_loopback_interface_00620():
     """
     instance_full = LoopbackInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
     instance_minimal = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
-    assert instance_full.get_diff(instance_minimal) is True
+    assert instance_full.get_diff(instance_minimal) is False
+    assert instance_full.get_diff(instance_minimal, exclude_unset=True) is True
 
 
 # =============================================================================
