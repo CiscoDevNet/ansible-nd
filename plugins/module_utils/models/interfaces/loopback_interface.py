@@ -62,7 +62,11 @@ class LoopbackPolicyStrictBase(NDNestedModel):
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 echoes schema-declared template defaults for every field the user never set; the reverse pass of
     # `get_diff` normalizes existing-side matches to absent so replaced/overridden removal detection (issue #410)
-    # stays idempotent against default echoes. `adminState` defaults to true on every loopback template.
+    # stays idempotent against default echoes. `adminState: true` is the one default shared by all nine loopback
+    # templates (nd-openapi `int*LoopbackTemplate`, `iosXeInt*LoopbackTemplate`, `csr*LoopbackTemplate`), so it lives
+    # here; templates declaring no other default for a field their model exposes (`iosXeLoopback`,
+    # `iosXeLoopbackShutNoshut`, `iosXeUnderlayLoopback`, `csrLoopback`, `csr1kvLoopback`) inherit this table as-is.
+    # A ClassVar override REPLACES this table rather than merging with it, so per-policy tables spread it back in.
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {
         "adminState": True,
     }
@@ -131,10 +135,9 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `int_loopback` template defaults (schema-sourced via nd-openapi `intLoopbackTemplate`). Values must be in
     # the model's DUMPED form: the schema declares routeMapTag as integer 12345, but `coerce_route_map_tag` stores it as
-    # a string (ND 4.2.1 GET-side type drift), so the table holds "12345". ClassVar overrides replace the base table,
-    # so `adminState` is restated here.
+    # a string (ND 4.2.1 GET-side type drift), so the table holds "12345".
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {
-        "adminState": True,
+        **LoopbackPolicyStrictBase.reverse_diff_defaults,
         "routeMapTag": "12345",
     }
 
@@ -192,6 +195,16 @@ class IpfmLoopbackPolicyModel(NexusLoopbackPolicyBase):
     None
     """
 
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_ipfm_loopback` template defaults (schema-sourced via nd-openapi `intIpfmLoopbackTemplate`), in the
+    # model's dumped form. `routingTag` and `secondaryIpList` declare no default.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        **LoopbackPolicyStrictBase.reverse_diff_defaults,
+        "advertiseLoopback": True,
+        "isServiceReflect": False,
+        "vrfInterface": "default",
+    }
+
     policy_type: Literal["ipfmLoopback"] = Field(alias="policyType", description="IPFM loopback policy template discriminator")
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
     advertise_loopback: bool | None = Field(default=None, alias="advertiseLoopback", description="Advertise loopback via OSPF/IS-IS")
@@ -212,6 +225,15 @@ class MplsLoopbackPolicyModel(NexusLoopbackPolicyBase):
 
     None
     """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_mpls_loopback` template defaults (schema-sourced via nd-openapi `intMplsLoopbackTemplate`), in the
+    # model's dumped form. `ospfAreaId` declares no default.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        **LoopbackPolicyStrictBase.reverse_diff_defaults,
+        "dciRoutingProtocol": "isis",
+        "dciRoutingTag": "MPLS_UNDERLAY",
+    }
 
     policy_type: Literal["mplsLoopback"] = Field(alias="policyType", description="MPLS loopback policy template discriminator")
     dci_routing_protocol: Literal["ospf", "isis"] | None = Field(default=None, alias="dciRoutingProtocol", description="DCI link-state routing protocol")
@@ -289,6 +311,14 @@ class XeInternalLoopbackPolicyModel(LoopbackPolicyStrictBase):
 
     None
     """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 IOS-XE internal loopback template defaults (schema-sourced via nd-openapi `iosXeIntLoopbackInternalTemplate`);
+    # `enablePim` is the only field beyond `adminState` that declares one.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        **LoopbackPolicyStrictBase.reverse_diff_defaults,
+        "enablePim": False,
+    }
 
     policy_type: Literal["iosXeInternalLoopback"] = Field(alias="policyType", description="IOS-XE internal loopback policy template discriminator")
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")

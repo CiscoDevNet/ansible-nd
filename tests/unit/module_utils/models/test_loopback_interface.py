@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 from contextlib import contextmanager
+from typing import Any
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
@@ -22,6 +23,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopbac
     IpfmLoopbackPolicyModel,
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
+    LoopbackPolicyStrictBase,
+    MplsLoopbackPolicyModel,
     NexusLoopbackNetworkOSModel,
     NexusLoopbackPolicyModel,
     XeInternalLoopbackPolicyModel,
@@ -2043,10 +2046,6 @@ def test_network_os_discriminator_selects_branch():
 
     - NexusLoopbackNetworkOSModel.__init__()
     """
-    from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
-        IpfmLoopbackPolicyModel,
-        MplsLoopbackPolicyModel,
-    )
 
     lo = NexusLoopbackNetworkOSModel(networkOSType="nx-os", policy={"policyType": "loopback", "ip": "10.1.1.1/32"})
     assert isinstance(lo.policy, NexusLoopbackPolicyModel)
@@ -2643,3 +2642,138 @@ def test_loopback_interface_00740():
     assert policy.vrf == "blue"
     assert policy.admin_state is True
     assert policy.ip == "10.1.1.1"
+
+
+# =============================================================================
+# Test: reverse_diff_defaults per loopback policy_type (issue #410 / PR #422 rebase)
+# =============================================================================
+
+# ND 4.2.1 template-default echoes per loopback `policyType`, restricted to the fields each policy model declares
+# (undeclared echoes such as the `loopback` template's `linkStateRoutingTag` are dropped on read). Values are in WIRE
+# form, sourced from the ND 4.2.1 OpenAPI template schemas: `intLoopbackTemplate`, `intIpfmLoopbackTemplate`,
+# `intMplsLoopbackTemplate`, `iosXeIntLoopbackTemplate`, `iosXeIntLoopbackAdminStateTemplate`,
+# `iosXeIntUnderlayLoopbackTemplate`, `iosXeIntLoopbackInternalTemplate`, `csrIntLoopbackTemplate`, `csr1kvLoopbackTemplate`.
+# Held literally (not derived from the models' tables) so a wrong or missing table entry fails here.
+LOOPBACK_TEMPLATE_DEFAULT_ECHOES: dict[str, tuple[type[LoopbackPolicyStrictBase], dict[str, Any]]] = {
+    "loopback": (NexusLoopbackPolicyModel, {"adminState": True, "routeMapTag": 12345}),
+    "ipfmLoopback": (IpfmLoopbackPolicyModel, {"adminState": True, "advertiseLoopback": True, "isServiceReflect": False, "vrfInterface": "default"}),
+    "mplsLoopback": (MplsLoopbackPolicyModel, {"adminState": True, "dciRoutingProtocol": "isis", "dciRoutingTag": "MPLS_UNDERLAY"}),
+    "iosXeLoopback": (XeLoopbackPolicyModel, {"adminState": True}),
+    "iosXeLoopbackShutNoshut": (XeLoopbackShutNoshutPolicyModel, {"adminState": True}),
+    "iosXeUnderlayLoopback": (XeUnderlayLoopbackPolicyModel, {"adminState": True}),
+    "iosXeInternalLoopback": (XeInternalLoopbackPolicyModel, {"adminState": True, "enablePim": False}),
+    "csrLoopback": (CsrLoopbackPolicyModel, {"adminState": True}),
+    "csr1kvLoopback": (Csr1kvLoopbackPolicyModel, {"adminState": True}),
+}
+
+# One declared, non-default existing-side value per policy type that an admin_state-only proposed config must be
+# seen to remove (or, for the admin-state-only `iosXeLoopbackShutNoshut` template, to reset).
+LOOPBACK_NON_DEFAULT_OVERRIDES: dict[str, dict[str, Any]] = {
+    "loopback": {"routeMapTag": 54321},
+    "ipfmLoopback": {"vrfInterface": "blue"},
+    "mplsLoopback": {"dciRoutingProtocol": "ospf"},
+    "iosXeLoopback": {"extraConfig": "no shutdown"},
+    "iosXeLoopbackShutNoshut": {"adminState": False},
+    "iosXeUnderlayLoopback": {"secondaryIp": "10.9.9.9"},
+    "iosXeInternalLoopback": {"enablePim": True},
+    "csrLoopback": {"vrfInterface": "blue"},
+    "csr1kvLoopback": {"extraConfig": "no shutdown"},
+}
+
+
+@pytest.mark.parametrize("policy_type", sorted(LOOPBACK_TEMPLATE_DEFAULT_ECHOES))
+def test_reverse_diff_defaults_every_policy_type_is_replaced_idempotent(policy_type: str) -> None:
+    """
+    # Summary
+
+    Every loopback policy model (3 NX-OS + 6 IOS-XE) normalizes its ND 4.2.1 template-default echo to absent on the
+    reverse pass of `get_diff`, so a replaced/overridden run against an interface the user never customized is
+    idempotent (issue #410), and an ND-injected undeclared key is never counted as a pending removal.
+
+    ## Test
+
+    - An existing policy model built via `from_response` from the schema-sourced default echo plus an undeclared key
+    - A proposed model carrying only `policy_type` and `admin_state`
+    - `to_reverse_diff_dict()` retains only `policyType`; `get_diff(proposed, exclude_unset=False)` reports no difference
+
+    ## Classes and Methods
+
+    - LoopbackPolicyStrictBase.reverse_diff_defaults (and per-policy overrides)
+    - NDBaseModel.to_reverse_diff_dict()
+    - NDBaseModel.get_diff()
+    """
+    policy_cls, echo = LOOPBACK_TEMPLATE_DEFAULT_ECHOES[policy_type]
+    existing = policy_cls.from_response({"policyType": policy_type, **echo, "ndInjectedKey": "x"})
+    proposed = policy_cls.from_config({"policy_type": policy_type, "admin_state": True})
+    assert existing.to_reverse_diff_dict() == {"policyType": policy_type}
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+@pytest.mark.parametrize("policy_type", sorted(LOOPBACK_NON_DEFAULT_OVERRIDES))
+def test_reverse_diff_defaults_every_policy_type_still_detects_removals(policy_type: str) -> None:
+    """
+    # Summary
+
+    The default-normalization of the previous test does not mask real removals: for every loopback policy model, an
+    existing-side value that differs from the template default is still reported as a difference against an
+    admin_state-only proposed config on the replaced/overridden path.
+
+    ## Test
+
+    - An existing policy model built from the default echo with one declared field set to a non-default value
+    - A proposed model carrying only `policy_type` and `admin_state`
+    - `get_diff(proposed, exclude_unset=False)` reports a difference
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    """
+    policy_cls, echo = LOOPBACK_TEMPLATE_DEFAULT_ECHOES[policy_type]
+    existing = policy_cls.from_response({"policyType": policy_type, **echo, **LOOPBACK_NON_DEFAULT_OVERRIDES[policy_type]})
+    proposed = policy_cls.from_config({"policy_type": policy_type, "admin_state": True})
+    assert existing.get_diff(proposed, exclude_unset=False) is False
+
+
+def test_reverse_diff_defaults_apply_through_xe_interface_union() -> None:
+    """
+    # Summary
+
+    The reverse pass recurses through the outer `network_os_type` union into an IOS-XE policy model, so a full
+    `LoopbackInterfaceModel` pair (ND response vs Ansible config) is replaced-idempotent when the response carries only
+    template defaults plus an ND-injected key.
+
+    ## Test
+
+    - `LoopbackInterfaceModel.from_response()` on an `ios-xe` / `iosXeInternalLoopback` response echoing `adminState`
+      and `enablePim` defaults plus an undeclared key
+    - `LoopbackInterfaceModel.from_config()` on the matching config that sets only `ip`
+    - `get_diff(proposed, exclude_unset=False)` reports no difference
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceModel.from_response()
+    - LoopbackInterfaceModel.from_config()
+    - NDBaseModel.get_diff()
+    """
+    existing = LoopbackInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.1.2",
+            "interfaceName": "loopback205",
+            "interfaceType": "loopback",
+            "configData": {
+                "mode": "managed",
+                "networkOS": {
+                    "networkOSType": "ios-xe",
+                    "policy": {"policyType": "iosXeInternalLoopback", "adminState": True, "enablePim": False, "ip": "10.2.2.2", "ndInjectedKey": "x"},
+                },
+            },
+        }
+    )
+    proposed = LoopbackInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.1.2",
+            "interface_name": "loopback205",
+            "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"policy_type": "iosXeInternalLoopback", "ip": "10.2.2.2"}}},
+        }
+    )
+    assert existing.get_diff(proposed, exclude_unset=False) is True

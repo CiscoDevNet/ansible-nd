@@ -27,7 +27,18 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostPolicyModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel, NexusLoopbackPolicyModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    Csr1kvLoopbackPolicyModel,
+    CsrLoopbackPolicyModel,
+    IpfmLoopbackPolicyModel,
+    LoopbackInterfaceModel,
+    MplsLoopbackPolicyModel,
+    NexusLoopbackPolicyModel,
+    XeInternalLoopbackPolicyModel,
+    XeLoopbackPolicyModel,
+    XeLoopbackShutNoshutPolicyModel,
+    XeUnderlayLoopbackPolicyModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_access_interface import PortChannelAccessPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_trunk_host_interface import PortChannelTrunkHostPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.subinterface_managed_interface import SubinterfaceManagedPolicyModel
@@ -424,6 +435,14 @@ def test_base_model_reverse_diff_00420() -> None:
 # non-empty assertion preventing a trivially passing empty table.
 POLICY_MODELS_WITH_DEFAULTS = [
     NexusLoopbackPolicyModel,
+    IpfmLoopbackPolicyModel,
+    MplsLoopbackPolicyModel,
+    XeLoopbackPolicyModel,
+    XeLoopbackShutNoshutPolicyModel,
+    XeUnderlayLoopbackPolicyModel,
+    XeInternalLoopbackPolicyModel,
+    CsrLoopbackPolicyModel,
+    Csr1kvLoopbackPolicyModel,
     EthernetAccessPolicyModel,
     EthernetTrunkHostPolicyModel,
     PortChannelAccessPolicyModel,
@@ -898,7 +917,7 @@ def test_base_model_reverse_diff_00620(exclude_unset: bool) -> None:
 
     - NDBaseModel.get_diff()
     """
-    existing = NexusLoopbackPolicyModel(policyType="loopback", description="kept")
+    existing = NexusLoopbackPolicyModel(policy_type="loopback", description="kept")
     with pytest.raises(TypeError, match=r"Cannot diff SviPolicyModel against NexusLoopbackPolicyModel"):
         existing.get_diff(SviPolicyModel(), exclude_unset=exclude_unset)
-    assert existing.get_diff(NexusLoopbackPolicyModel(policyType="loopback", description="kept"), exclude_unset=exclude_unset) is True
+    assert existing.get_diff(NexusLoopbackPolicyModel(policy_type="loopback", description="kept"), exclude_unset=exclude_unset) is True
