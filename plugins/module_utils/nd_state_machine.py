@@ -25,6 +25,21 @@ class NDStateMachine:
     Generic State Machine for Nexus Dashboard (Bulk Support).
     """
 
+    WRITE_STATES_REQUIRING_CONFIG = frozenset({"merged", "replaced", "overridden"})
+
+    @classmethod
+    def validate_config_presence(cls, state: str, config: Any) -> None:
+        """
+        Reject omitted or null config before production wrappers normalize it.
+
+        An explicit empty list remains valid because it can represent an
+        intentional empty desired set.
+        """
+        if state in cls.WRITE_STATES_REQUIRING_CONFIG and config is None:
+            raise NDStateMachineError(
+                f"config must be provided and cannot be null for state '{state}'. " "Use config: [] only when intentionally managing an explicit empty set."
+            )
+
     def __init__(self, module: AnsibleModule, model_orchestrator: type[NDBaseOrchestrator] | NDBaseOrchestrator):
         """
         Initialize the ND State Machine.
@@ -58,6 +73,8 @@ class NDStateMachine:
 
         self.model_class = self.model_orchestrator.model_class
         self.state = self.module.params["state"]
+        raw_config = self.module.params.get("config")
+        self.validate_config_presence(self.state, raw_config)
 
         # Cached flags
         self.check_mode = self.module.check_mode
@@ -79,7 +96,9 @@ class NDStateMachine:
             # state-aware validation (e.g. require certain fields for write states while accepting
             # identifier-only items for ``deleted``). Models that do not read the context ignore it.
             self.proposed = NDConfigCollection.from_ansible_config(
-                data=self.module.params.get("config", []), model_class=self.model_class, context={"state": self.state}
+                data=raw_config,
+                model_class=self.model_class,
+                context={"state": self.state},
             )
 
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
@@ -140,17 +159,27 @@ class NDStateMachine:
         *args: Any,
         error_msg_prefix: str = "Operation failed",
         **kwargs: Any,
-    ) -> ResponseType | None:
-        """Execute an API operation with standardized error handling."""
+    ) -> bool:
+        """Execute an API operation with standardized error handling.
+
+        Returns True if the operation completed without raising. In check mode
+        the API call is skipped but still reported as completed (True) so that
+        the previewed 'after' state can be built. Returns False only when the
+        operation raised and the error was suppressed via ``ignore_errors``.
+
+        The orchestrator's return value is deliberately not used as the success
+        signal: some orchestrators defer the actual API call (queue-and-deploy)
+        and legitimately return None on success.
+        """
         try:
             if not self.check_mode:
-                return operation(*args, **kwargs)
-            return None
+                operation(*args, **kwargs)
+            return True
         except Exception as e:
             error_msg = f"{error_msg_prefix}: {e}"
             if not self.ignore_errors:
                 raise NDStateMachineError(error_msg) from e
-        return None
+        return False
 
     def _manage_create_update_state(self) -> None:
         """
@@ -167,9 +196,11 @@ class NDStateMachine:
                 # Determine diff status
                 # For merged state, only compare fields explicitly provided by
                 # the user so that Pydantic default values do not trigger false
-                # diffs or overwrite existing configuration.
+                # diffs or overwrite existing configuration. Merged also matches
+                # list elements one-directionally (allow_superset) so an
+                # existing item with extra list entries is not seen as changed.
                 exclude_unset = self.state == "merged"
-                diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset)
+                diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset, allow_superset=exclude_unset)
 
                 # No changes needed
                 if diff_status == "no_diff":
@@ -204,20 +235,29 @@ class NDStateMachine:
         # The policy-required-on-create guard (issue #350) runs in manage_state, before the capability
         # preflight and before this method mutates self.existing (PR #362 review).
 
-        # Execute updates (always individual)
+        # Execute updates (always individual). An operation that does not fail
+        # is counted as sent; check mode skips the API call but returns True.
+        successfully_sent: list[NDBaseModel] = []
         for item in items_to_update:
-            self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}")
+            if self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}"):
+                successfully_sent.append(item)
 
         # Execute creates (bulk or individual)
         if items_to_create:
             if self.supports_bulk_create:
-                self._execute_operation(self.model_orchestrator.create_bulk, items_to_create, error_msg_prefix="Failed to create in bulk")
+                if self._execute_operation(self.model_orchestrator.create_bulk, items_to_create, error_msg_prefix="Failed to create in bulk"):
+                    successfully_sent.extend(items_to_create)
             else:
                 for item in items_to_create:
-                    self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}")
+                    if self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}"):
+                        successfully_sent.append(item)
 
-        # Mark as sent only after successful API operations
-        successfully_sent = items_to_update + items_to_create
+        # Mark successfully-processed items as sent. This stays populated in
+        # check mode (PR #225) so downstream config-save/deploy consumers that
+        # gate on len(sent) > 0 can still preview what a real run would send;
+        # execute_config_actions() is itself check-mode-safe (it simulates
+        # rather than sends). Per-item gating keeps items whose operation raised
+        # under ignore_errors out of 'sent'.
         if successfully_sent:
             self.sent.add_many(successfully_sent)
 
@@ -244,16 +284,28 @@ class NDStateMachine:
         if not items:
             return
 
-        # Execute deletes (bulk or individual)
+        # Execute deletes (bulk or individual). An item is counted as deleted
+        # when the operation does not fail; check mode skips the API call but
+        # returns True so the deletion is still previewed. Items whose delete
+        # failed under ignore_errors are left in 'existing' so the reported
+        # 'after' state stays accurate.
+        deleted: list[NDBaseModel] = []
         if self.supports_bulk_delete:
-            self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
+            if self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk"):
+                deleted.extend(items)
         else:
             for item in items:
-                self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}")
+                if self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}"):
+                    deleted.append(item)
 
-        # Batch remove from collection (single index rebuild)
-        keys_to_delete = [item.get_identifier_value() for item in items]
-        self.existing.delete_many(keys_to_delete)
+        # Batch remove from collection (single index rebuild).
+        self.existing.delete_many([item.get_identifier_value() for item in deleted])
+
+        # Mark successfully-deleted items as sent. Stays populated in check mode
+        # (PR #225) so downstream config-save/deploy previews are not skipped;
+        # per-item gating keeps failed deletes (under ignore_errors) out of 'sent'.
+        if deleted:
+            self.sent.add_many(deleted)
 
         # Log deletion
         self.output.assign(after=self.existing)

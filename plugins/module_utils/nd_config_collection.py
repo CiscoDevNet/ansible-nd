@@ -2,7 +2,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 from copy import deepcopy
 from typing import Any, Dict, List, Literal, Optional
@@ -150,7 +150,7 @@ class NDConfigCollection:
 
     # Diff Operations
 
-    def get_diff_config(self, new_item: NDBaseModel, exclude_unset: bool = False) -> Literal["new", "no_diff", "changed"]:
+    def get_diff_config(self, new_item: NDBaseModel, exclude_unset: bool = False, allow_superset: bool = False) -> Literal["new", "no_diff", "changed"]:
         """
         Compare single item against collection.
 
@@ -159,6 +159,14 @@ class NDConfigCollection:
             exclude_unset: When True, only compare fields explicitly set in
                 ``new_item``. Useful for merge operations where unspecified
                 fields should not trigger a diff.
+            allow_superset: When True, list elements are matched
+                one-directionally so an existing item carrying extra list
+                elements (or extra dict keys) is not flagged as changed.
+
+        Both ``exclude_unset`` and ``allow_superset`` are forwarded to the
+        concrete model's ``get_diff``. Any model that overrides ``get_diff``
+        must accept these keywords; see the subclass contract on
+        ``NDBaseModel.get_diff``.
         """
         try:
             key = self._extract_key(new_item)
@@ -170,7 +178,11 @@ class NDConfigCollection:
         if existing is None:
             return "new"
 
-        is_subset = existing.get_diff(new_item, exclude_unset=exclude_unset)
+        # ``get_diff`` is dispatched to the concrete model, so every override
+        # must accept ``exclude_unset`` and ``allow_superset`` (see the subclass
+        # contract on ``NDBaseModel.get_diff``). A non-conforming override raises
+        # TypeError here by design; do not catch it or inspect the signature.
+        is_subset = existing.get_diff(new_item, exclude_unset=exclude_unset, allow_superset=allow_superset)
 
         return "no_diff" if is_subset else "changed"
 
@@ -240,11 +252,16 @@ class NDConfigCollection:
         return [item.to_payload(**kwargs) for item in self._items]
 
     @staticmethod
-    def from_ansible_config(data: List[Dict], model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
+    def from_ansible_config(data: list[dict] | None, model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
         """
         Create collection from Ansible config.
+
+        ``data`` may be ``None`` for callers that intentionally treat absent
+        config as an empty collection. Callers whose state semantics distinguish
+        omitted/null config from an explicit empty list must validate that
+        before calling this helper.
         """
-        items = [model_class.from_config(item_data, **kwargs) for item_data in data]
+        items = [model_class.from_config(item_data, **kwargs) for item_data in (data or [])]
         return NDConfigCollection(model_class=model_class, items=items)
 
     @staticmethod

@@ -30,9 +30,10 @@ options:
   config:
     description:
       - List of Network definitions to manage.
+      - Required and must not be null for states V(merged), V(replaced), and V(overridden).
+      - With state V(overridden), an explicit empty list removes all managed Networks in scope.
     type: list
     elements: dict
-    default: []
     suboptions:
       network_name:
         description: Name of the Network.
@@ -586,7 +587,6 @@ def main():
             type="list",
             elements="dict",
             required=False,
-            default=[],
             options=network_parent_argument_spec(),
         ),
     )

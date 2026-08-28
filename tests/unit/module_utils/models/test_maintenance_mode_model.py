@@ -234,6 +234,32 @@ def test_maintenance_mode_model_00070() -> None:
     assert snapshot.get_diff(proposed) is True
 
 
+def test_maintenance_mode_model_00075() -> None:
+    """
+    # Summary
+
+    Verify the custom `get_diff` accepts NDConfigCollection's shared diff
+    keyword arguments.
+
+    ## Classes and Methods
+
+    - MaintenanceModeModel.get_diff
+    """
+    snapshot = MaintenanceModeModel.from_response(
+        {
+            "switches": [{"switch_ip": "192.168.12.131"}],
+            "switch_modes": {"192.168.12.131": "maintenance"},
+        }
+    )
+    proposed = MaintenanceModeModel.from_config(
+        {
+            "mode": "maintenance",
+            "switches": [{"switch_ip": "192.168.12.131"}],
+        }
+    )
+    assert snapshot.get_diff(proposed, exclude_unset=True, allow_superset=True) is True
+
+
 def test_maintenance_mode_model_00080() -> None:
     """
     # Summary

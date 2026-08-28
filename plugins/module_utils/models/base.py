@@ -221,23 +221,42 @@ class NDBaseModel(BaseModel, ABC):
             **kwargs,
         )
 
-    def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
+    def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False, allow_superset: bool = False) -> bool:
         """Diff comparison.
+
+        Subclass contract:
+            Any subclass that overrides ``get_diff`` MUST accept both the
+            ``exclude_unset`` and ``allow_superset`` keyword arguments.
+            ``NDConfigCollection.get_diff_config`` always forwards them to the
+            concrete model, and Python dispatches to the subclass override
+            rather than to this base method. An override may ignore
+            ``allow_superset`` when its comparison does not need superset
+            semantics (see ``MaintenanceModeModel``), but it must still accept
+            the keyword. A non-conforming override raises ``TypeError`` at diff
+            time; that failure is intentional and must not be masked by catching
+            ``TypeError`` or inspecting the method signature at runtime.
 
         Args:
             other: The model to compare against.
             exclude_unset: When True, only compare fields explicitly set in
                 ``other`` (via Pydantic's ``exclude_unset``). This prevents
                 default values from triggering false diffs during merge
-                operations. This is the merge-path comparison, so a subset
-                match is additionally cross-checked with ``merge_would_change``
-                to catch merge side effects the one-way subset test cannot see
-                (e.g. mutually exclusive counterpart fields that the merge
-                would clear).
+                operations.
+            allow_superset: When True, list elements are matched
+                one-directionally so that an existing item with extra fields
+                (e.g. ``deploy``) does not trigger a spurious diff when the
+                proposed item omits those fields. This is independent of
+                ``exclude_unset``: the former controls which of ``other``'s
+                fields are compared, while this controls how list elements are
+                matched.
+
+        This is also the merge-path comparison, so a subset match is
+        additionally cross-checked with ``merge_would_change`` to catch merge
+        side effects the one-way subset test cannot see.
         """
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
-        is_subset = issubset(other_data, self_data)
+        is_subset = issubset(other_data, self_data, allow_superset=allow_superset)
         if is_subset and exclude_unset and self.merge_would_change(other):
             return False
         return is_subset

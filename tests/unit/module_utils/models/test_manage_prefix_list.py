@@ -23,6 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list
     PrefixListEntryModel,
     PrefixListModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 SAMPLE_IPV4_CONFIG = {
@@ -773,3 +774,101 @@ def test_manage_prefix_list_00210() -> None:
     bad_config["name"] = "P" * 107
     with pytest.raises(ValidationError, match="combined tenant-qualified"):
         PrefixListModel.from_config(bad_config)
+
+
+# =============================================================================
+# Test: NDConfigCollection contract (regression)
+# =============================================================================
+
+
+def test_manage_prefix_list_00220() -> None:
+    """
+    # Summary
+
+    Reconcile the real ``PrefixListModel`` through ``NDConfigCollection`` to lock
+    in the shared ``get_diff`` signature contract.
+
+    ``NDConfigCollection.get_diff_config`` always forwards ``allow_superset`` to
+    the concrete model's ``get_diff``. Before ``PrefixListModel.get_diff`` adopted
+    the shared signature this raised
+    ``TypeError: get_diff() got an unexpected keyword argument 'allow_superset'``
+    whenever an existing prefix list was compared, breaking idempotency and
+    replace/override checks. This drives the real production model (not a fake
+    override) through the collection so the incompatibility cannot regress.
+
+    ## Classes and Methods
+
+    - PrefixListModel.get_diff
+    - NDConfigCollection.get_diff_config
+    """
+    existing = PrefixListModel.from_response(copy.deepcopy(SAMPLE_IPV4_API_RESPONSE))
+    collection = NDConfigCollection(model_class=PrefixListModel, items=[existing])
+
+    # Idempotency check on an existing prefix list must not raise and is "no_diff".
+    idempotent = PrefixListModel.from_config(
+        {
+            "ip_version": "ipv4",
+            "tenant_name": "TENANT1",
+            "name": "PL-IPV4-BORDERS",
+            "entries": copy.deepcopy(SAMPLE_IPV4_CONFIG["entries"]),
+        }
+    )
+    assert collection.get_diff_config(idempotent, exclude_unset=True, allow_superset=True) == "no_diff"
+
+    # Prefix-list entries are authoritative even for merged. The shared state
+    # machine requests allow_superset=True for merged resources, but this model
+    # must still detect an existing entry omitted from the desired list.
+    missing_existing_entry = PrefixListModel.from_config(
+        {
+            "ip_version": "ipv4",
+            "tenant_name": "TENANT1",
+            "name": "PL-IPV4-BORDERS",
+            "entries": copy.deepcopy(SAMPLE_IPV4_CONFIG["entries"][:1]),
+        }
+    )
+    assert collection.get_diff_config(missing_existing_entry, exclude_unset=True, allow_superset=True) == "changed"
+
+    # Default-expanded equality remains idempotent: omitting action means the
+    # documented default "permit", not a request to change an existing permit.
+    default_action_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    default_action_config["entries"][0].pop("action")
+    default_action = PrefixListModel.from_config(default_action_config)
+    assert collection.get_diff_config(default_action, exclude_unset=True, allow_superset=True) == "no_diff"
+
+    # Entry order is not semantic; sequence numbers identify the entries.
+    reordered_config = copy.deepcopy(SAMPLE_IPV4_CONFIG)
+    reordered_config["entries"].reverse()
+    reordered = PrefixListModel.from_config(reordered_config)
+    assert collection.get_diff_config(reordered, exclude_unset=True, allow_superset=True) == "no_diff"
+
+    # Conversely, omitting a controller-side length constraint from the
+    # authoritative desired entry requests its removal.
+    constrained_response = copy.deepcopy(SAMPLE_IPV4_API_RESPONSE)
+    constrained_response["entries"][0]["exactLength"] = 24
+    constrained_existing = PrefixListModel.from_response(constrained_response)
+    constrained_collection = NDConfigCollection(model_class=PrefixListModel, items=[constrained_existing])
+    clear_constraint = PrefixListModel.from_config(copy.deepcopy(SAMPLE_IPV4_CONFIG))
+    assert constrained_collection.get_diff_config(clear_constraint, exclude_unset=True, allow_superset=True) == "changed"
+
+    # Replace-style comparison of the same prefix list with a stale controller
+    # description (config omits description) reaches the override and is "changed".
+    stale_description = PrefixListModel.from_config(
+        {
+            "ip_version": "ipv4",
+            "tenant_name": "TENANT1",
+            "name": "PL-IPV4-BORDERS",
+            "entries": copy.deepcopy(SAMPLE_IPV4_CONFIG["entries"]),
+        }
+    )
+    assert collection.get_diff_config(stale_description, exclude_unset=False, allow_superset=True) == "changed"
+
+    # A different composite key short-circuits to "new" before get_diff runs.
+    different_name = PrefixListModel.from_config(
+        {
+            "ip_version": "ipv4",
+            "tenant_name": "TENANT1",
+            "name": "PL-IPV4-OTHER",
+            "entries": copy.deepcopy(SAMPLE_IPV4_CONFIG["entries"]),
+        }
+    )
+    assert collection.get_diff_config(different_name, allow_superset=True) == "new"

@@ -118,7 +118,7 @@ class MaintenanceModeModel(NDBaseModel):
 
     # --- Custom Diff (per-switch mode comparison) ---
 
-    def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
+    def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False, allow_superset: bool = False) -> bool:
         """
         # Summary
 
@@ -127,6 +127,8 @@ class MaintenanceModeModel(NDBaseModel):
 
         `self` is the snapshot (existing); `other` is the proposed config. Default `NDBaseModel.get_diff`
         does a generic subset check that does not understand the per-switch mode comparison we need.
+        ``exclude_unset`` and ``allow_superset`` are accepted for NDConfigCollection compatibility;
+        this custom per-switch comparison intentionally ignores both.
 
         ## Raises
 

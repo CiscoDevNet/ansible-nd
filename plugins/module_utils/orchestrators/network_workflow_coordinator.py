@@ -109,6 +109,10 @@ class NetworkWorkflowCoordinator:
         Returns a result dict suitable for module.exit_json(**result).
         """
         module_args: dict = dict(self.module.params)
+        NDStateMachine.validate_config_presence(
+            module_args.get("state", "merged"),
+            module_args.get("config"),
+        )
         if self.strategy is None:
             self.strategy = self._resolve_strategy(module_args)
         self._trace(

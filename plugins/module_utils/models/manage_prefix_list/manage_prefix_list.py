@@ -67,6 +67,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list
     IpVersionEnum,
     PrefixListActionEnum,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 # Allowed characters for prefix list / tenant names (from OpenAPI pattern)
 _NAME_RE = re.compile(r"^[a-zA-Z0-9~_-]+$")
@@ -357,7 +358,7 @@ class PrefixListModel(NDBaseModel):
         """Return the tenant-aware composite identifier."""
         return (str(self.ip_version), self.tenant_name, self.name)
 
-    def get_diff(self, other: NDBaseModel, exclude_unset: bool = False) -> bool:
+    def get_diff(self, other: NDBaseModel, exclude_unset: bool = False, allow_superset: bool = False) -> bool:
         """
         Compare prefix-list config, treating omitted description as empty in replace-style states.
 
@@ -366,11 +367,32 @@ class PrefixListModel(NDBaseModel):
         ``overridden`` it passes ``exclude_unset=False``; in that path an omitted
         description means the desired value is empty/absent, so a stale controller
         description must trigger an update.
+
+        ``allow_superset`` is part of the ``NDBaseModel.get_diff`` subclass
+        contract and must be forwarded. Authoritative entry-list changes that
+        superset matching would otherwise hide are detected by
+        ``merge_would_change`` below.
         """
         if not exclude_unset and isinstance(other, PrefixListModel):
             if other.description is None and self.description not in (None, ""):
                 return False
-        return super().get_diff(other, exclude_unset=exclude_unset)
+        return super().get_diff(other, exclude_unset=exclude_unset, allow_superset=allow_superset)
+
+    def merge_would_change(self, other: NDBaseModel) -> bool:
+        """
+        Detect authoritative prefix-list entry changes during merged comparison.
+
+        Entry models are serialized with defaults included so an omitted
+        ``action`` remains equivalent to its documented ``permit`` default.
+        List matching remains order-independent but requires the same entries
+        and fields in both directions.
+        """
+        if isinstance(other, PrefixListModel) and "entries" in other.model_fields_set:
+            current_entries = [entry.to_diff_dict() for entry in self.entries or []]
+            proposed_entries = [entry.to_diff_dict() for entry in other.entries or []]
+            if not issubset(proposed_entries, current_entries, allow_superset=False):
+                return True
+        return super().merge_would_change(other)
 
     @classmethod
     def validate_config_for_state(cls, config: list[dict[str, Any]], state: str) -> None:
