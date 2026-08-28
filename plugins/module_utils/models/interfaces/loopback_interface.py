@@ -82,9 +82,10 @@ class LoopbackPolicyStrictBase(NDNestedModel):
         declared field dropped here vanishes from the rebuilt `__dict__`, making the next `getattr` raise
         `AttributeError` mid-merge (found live by the nd_interface_ethernet_routed integration run, 2026-07-27).
 
-        On the read path (validation `context={"mode": "read"}`, set by `from_response`), also drop keys not declared on
-        this model regardless of value, so ND-injected read-only keys (e.g. `linkStateRoutingTag`) do not trip
-        `extra="forbid"` while write-side input stays strict.
+        On the read path (validation `context={"mode": "response"}`, set by `NDBaseModel.from_response` on the interface
+        model and on any policy model read directly), also drop keys not declared on this model regardless of value, so
+        ND-injected read-only keys (e.g. `linkStateRoutingTag`) do not trip `extra="forbid"` while write-side input stays
+        strict.
 
         ## Raises
 
@@ -94,7 +95,7 @@ class LoopbackPolicyStrictBase(NDNestedModel):
             return data
         allowed = set(cls.model_fields) | {field.alias for field in cls.model_fields.values() if field.alias}
         data = {key: value for key, value in data.items() if value is not None or key in allowed}
-        if info.context and info.context.get("mode") == "read":
+        if info.context and info.context.get("mode") == "response":
             data = {key: value for key, value in data.items() if key in allowed}
         return data
 
@@ -438,20 +439,6 @@ class LoopbackInterfaceModel(NDBaseModel):
         if self.config_data is None or self.config_data.network_os.policy is None:
             return None
         return self.config_data.network_os.policy.policy_type
-
-    @classmethod
-    def from_response(cls, response, **kwargs):
-        """
-        # Summary
-
-        Build a `LoopbackInterfaceModel` from an ND GET response, tagging validation `context={"mode": "read"}` so branch
-        models tolerate ND-injected read-only policy keys (see `LoopbackPolicyStrictBase.strip_none_valued_keys`).
-
-        ## Raises
-
-        None
-        """
-        return cls.model_validate(response, by_alias=True, context={"mode": "read"}, **kwargs)
 
     @field_validator("interface_name", mode="before")
     @classmethod
