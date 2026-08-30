@@ -1,0 +1,68 @@
+---
+- name: "PAIR SETUP: Require pair-reset opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_vpc_access_pair_reset_enabled | bool
+    fail_msg: >-
+      This workflow deletes and recreates the selected vPC pair. Set
+      nd_vpc_access_pair_reset_enabled=true only on the dedicated test fabric.
+
+- name: "PAIR SETUP: Remove current vPC pair"
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
+        peer2_switch_id: "{{ test_switch_ip_peer2 }}"
+    state: deleted
+  ignore_errors: true
+
+- name: "PAIR SETUP: Wait for unpair convergence"
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: "PAIR SETUP: Create configured test vPC pair"
+  cisco.nd.nd_manage_vpc_pair:
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_pair_setup }}"
+    state: merged
+  register: nd4x_pair_setup_result
+
+- name: "PAIR SETUP: Wait for pair discovery"
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: "PAIR SETUP: Query peer-1 pair record"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ test_switch_id_peer1 }}/vpcPair
+    method: get
+  register: nd4x_peer1_pair_record
+  changed_when: false
+
+- name: "PAIR SETUP: Query peer-2 pair record"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ test_switch_id_peer2 }}/vpcPair
+    method: get
+  register: nd4x_peer2_pair_record
+  changed_when: false
+
+- name: "PAIR SETUP: Verify reciprocal pair discovery"
+  ansible.builtin.assert:
+    that:
+      - not nd4x_pair_setup_result.failed | default(false) | bool
+      - nd4x_peer1_pair_record.current.peerSwitchId == test_switch_id_peer2
+      - nd4x_peer2_pair_record.current.peerSwitchId == test_switch_id_peer1
+    fail_msg: >-
+      Nexus Dashboard did not report the expected reciprocal vPC relationship
+      between {{ test_switch_ip_peer1 }} ({{ test_switch_id_peer1 }}) and
+      {{ test_switch_ip_peer2 }} ({{ test_switch_id_peer2 }}).

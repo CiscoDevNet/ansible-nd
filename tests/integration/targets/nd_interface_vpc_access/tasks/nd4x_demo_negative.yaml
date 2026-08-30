@@ -1,0 +1,29 @@
+---
+- name: "NEGATIVE: Reject configuration without interface_name"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_interface_vpc_access
+    state: merged
+    check_mode: false
+    idempotency: false
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+    expected:
+      apply:
+        failed: true
+  register: nd4x_negative_missing_interface_name
+
+- name: "NEGATIVE: Verify the intended validation failure"
+  ansible.builtin.assert:
+    that:
+      - nd4x_negative_missing_interface_name.first_run_result.failed | bool
+      - >-
+        nd4x_negative_missing_interface_name.first_run_result.msg
+        is search('missing required arguments')
+      - >-
+        nd4x_negative_missing_interface_name.first_run_result.msg
+        is search('interface_name')
+      - nd4x_negative_missing_interface_name.idempotency_attempts == 0
+      - nd4x_negative_missing_interface_name.nd_query_results | length == 0

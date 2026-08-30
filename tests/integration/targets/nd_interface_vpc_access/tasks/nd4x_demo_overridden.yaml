@@ -1,0 +1,399 @@
+---
+- name: "OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_vpc_access_destructive_tests_enabled | bool
+    fail_msg: >-
+      state=overridden is fabric-wide for accessVpcHost vPC interfaces. Run
+      this workflow only on a dedicated test fabric and set
+      nd_vpc_access_destructive_tests_enabled=true.
+
+- name: "OVERRIDDEN PREFLIGHT: Query interfaces on every fabric switch"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ item.switchId }}/interfaces
+    method: get
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: >-
+      {{ item.fabricManagementIp | default(item.switchId) }}
+  register: nd4x_fabric_interface_inventory
+  changed_when: false
+
+- name: "OVERRIDDEN PREFLIGHT: Initialize managed access-vPC scope"
+  ansible.builtin.set_fact:
+    nd4x_existing_managed_access_vpcs: []
+
+- name: "OVERRIDDEN PREFLIGHT: Collect managed access-vPC interfaces"
+  ansible.builtin.set_fact:
+    nd4x_existing_managed_access_vpcs: >-
+      {{
+        nd4x_existing_managed_access_vpcs
+        + [
+            {
+              'switch_id': fabric_interface.0.item.switchId,
+              'switch_ip': (
+                fabric_interface.0.item.fabricManagementIp
+                | default('unknown-management-ip')
+              ),
+              'interface_name': fabric_interface.1.interfaceName
+            }
+          ]
+      }}
+  loop: >-
+    {{
+      query(
+        'ansible.builtin.subelements',
+        nd4x_fabric_interface_inventory.results,
+        'current.interfaces',
+        {'skip_missing': True}
+      )
+    }}
+  loop_control:
+    loop_var: fabric_interface
+    label: >-
+      {{
+        fabric_interface.0.item.fabricManagementIp
+        | default(fabric_interface.0.item.switchId)
+      }}
+      {{ fabric_interface.1.interfaceName | default('unknown') }}
+  when:
+    - fabric_interface.1.interfaceType | default('') == 'vpc'
+    - >-
+      fabric_interface.1.get('configData', {})
+      .get('networkOS', {})
+      .get('policy', {})
+      .get('policyType', '') == 'accessVpcHost'
+
+- name: "OVERRIDDEN PREFLIGHT: Reject access-vPCs outside test scope"
+  vars:
+    existing_access_vpc_names: >-
+      {{
+        nd4x_existing_managed_access_vpcs
+        | map(attribute='interface_name')
+        | unique
+        | list
+      }}
+    existing_access_vpc_switch_ids: >-
+      {{
+        nd4x_existing_managed_access_vpcs
+        | map(attribute='switch_id')
+        | unique
+        | list
+      }}
+    allowed_peer_switch_ids:
+      - "{{ test_switch_id_peer1 }}"
+      - "{{ test_switch_id_peer2 }}"
+  ansible.builtin.assert:
+    that:
+      - >-
+        existing_access_vpc_names
+        | difference(nd4x_vpc_access_reserved_interfaces)
+        | length == 0
+      - >-
+        existing_access_vpc_switch_ids
+        | difference(allowed_peer_switch_ids)
+        | length == 0
+    fail_msg: >-
+      Unsafe overridden testbed. Managed accessVpcHost interfaces exist
+      outside vpc100-vpc101 or outside the selected peer pair:
+      {{ nd4x_existing_managed_access_vpcs }}. No override was applied.
+
+- name: "OVERRIDDEN VALIDATION: Initialize post-apply queries"
+  ansible.builtin.set_fact:
+    nd4x_overridden_validation_queries:
+      - name: Validate vpc101 on peer 1
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id_peer1 }}/interfaces/vpc101
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: "$.current.interfaceName"
+            equals: vpc101
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.policyType
+            equals: accessVpcHost
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.accessVlan
+            equals: 30
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.peer1PortChannelId
+            equals: 101
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.peer2PortChannelId
+            equals: 101
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.peer1MemberPorts
+            equals:
+              - Ethernet1/7
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.peer2MemberPorts
+            equals:
+              - Ethernet1/7
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.portChannelMode
+            equals: active
+      - name: Validate vpc101 on peer 2
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id_peer2 }}/interfaces/vpc101
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: "$.current.interfaceName"
+            equals: vpc101
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.policyType
+            equals: accessVpcHost
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.accessVlan
+            equals: 30
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.peer1PortChannelId
+            equals: 101
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.peer2PortChannelId
+            equals: 101
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.peer1MemberPorts
+            equals:
+              - Ethernet1/7
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.peer2MemberPorts
+            equals:
+              - Ethernet1/7
+          - jsonpath: >-
+              $.current.configData.networkOS.policy.portChannelMode
+            equals: active
+
+- name: "OVERRIDDEN VALIDATION: Add fabric-wide vpc100 absence queries"
+  ansible.builtin.set_fact:
+    nd4x_overridden_validation_queries: >-
+      {{
+        nd4x_overridden_validation_queries
+        + [
+            {
+              'name': (
+                'Validate vpc100 absence on switch '
+                ~ (
+                    item.fabricManagementIp
+                    | default(item.switchId)
+                  )
+              ),
+              'path': (
+                '/api/v1/manage/fabrics/'
+                ~ test_fabric_name
+                ~ '/switches/'
+                ~ item.switchId
+                ~ '/interfaces'
+              ),
+              'method': 'get',
+              'expected_status': 200,
+              'expect': [
+                {
+                  'jsonpath': (
+                    "$.current.interfaces[?(@.interfaceName == 'vpc100' & "
+                    ~ "@.interfaceType == 'vpc' & "
+                    ~ "@.configData.networkOS.policy.policyType == "
+                    ~ "'accessVpcHost')]"
+                  ),
+                  'exists': false
+                }
+              ]
+            }
+          ]
+      }}
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: >-
+      {{ item.fabricManagementIp | default(item.switchId) }}
+
+- name: Run nd_interface_vpc_access overridden harness tests
+  block:
+    - name: "OVERRIDDEN SETUP: Reset and verify the test vPC pair"
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_pair_setup.yaml
+        apply:
+          tags:
+            - always
+      tags:
+        - always
+
+    - name: "OVERRIDDEN SETUP: Remove reserved vPC interfaces"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_vpc_access_cleanup_config }}"
+        state: deleted
+
+    - name: "OVERRIDDEN SETUP: Create baseline vpc100"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_baseline }}"
+        state: merged
+
+    - name: "OVERRIDDEN SETUP: Wait for baseline convergence"
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: "OVERRIDDEN SETUP: Recreate post-replaced vpc100 state"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_updated }}"
+        state: replaced
+      register: nd4x_overridden_prestate
+
+    - name: "OVERRIDDEN SETUP: Wait for replaced-state convergence"
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: "OVERRIDDEN SETUP: Reapply and verify exact pre-override state"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_updated }}"
+        state: replaced
+      register: nd4x_overridden_prestate_idempotent
+
+    - name: "OVERRIDDEN SETUP: Assert exact pre-override state"
+      vars:
+        vpc100_before_override: >-
+          {{
+            nd4x_overridden_prestate_idempotent.after
+            | selectattr('interface_name', 'equalto', 'vpc100')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_overridden_prestate.changed | bool
+          - not nd4x_overridden_prestate_idempotent.changed | bool
+          - >-
+            nd4x_overridden_prestate_idempotent.after
+            | selectattr('interface_name', 'equalto', 'vpc101')
+            | list
+            | length == 0
+          - >-
+            vpc100_before_override.config_data.network_os.policy.access_vlan
+            == 20
+          - >-
+            vpc100_before_override.config_data.network_os.policy.peer1_member_ports
+            == ['Ethernet1/5', 'Ethernet1/8']
+          - >-
+            vpc100_before_override.config_data.network_os.policy.peer2_member_ports
+            == ['Ethernet1/5']
+
+    - name: "OVERRIDDEN REPLACE SET: Retain only vpc101"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: overridden
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_overridden }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+      register: nd4x_overridden_apply
+
+    - name: "OVERRIDDEN REPLACE SET: Verify returned state"
+      vars:
+        vpc101_after: >-
+          {{
+            nd4x_overridden_apply.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vpc101')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_overridden_apply.check_mode_result.changed | bool
+          - nd4x_overridden_apply.first_run_result.changed | bool
+          - >-
+            nd4x_overridden_apply.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vpc100')
+            | list
+            | length == 0
+          - vpc101_after.config_data.network_os.policy.access_vlan == 30
+          - >-
+            vpc101_after.config_data.network_os.policy.peer1_port_channel_id
+            == 101
+          - >-
+            vpc101_after.config_data.network_os.policy.peer2_port_channel_id
+            == 101
+          - >-
+            vpc101_after.config_data.network_os.policy.peer1_member_ports
+            == ['Ethernet1/7']
+          - >-
+            vpc101_after.config_data.network_os.policy.peer2_member_ports
+            == ['Ethernet1/7']
+
+    - name: "OVERRIDDEN IDEMPOTENT: Wait for convergence"
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: "OVERRIDDEN IDEMPOTENT: Reapply vpc101 in normal mode"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: overridden
+        check_mode: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_overridden }}"
+        expected:
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        nd_queries: "{{ nd4x_overridden_validation_queries }}"
+      register: nd4x_overridden_idempotent
+
+    - name: "OVERRIDDEN IDEMPOTENT: Verify real no-change result"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_overridden_idempotent.first_run_result.changed | bool
+          - not nd4x_overridden_idempotent.second_run_result.changed | bool
+          - nd4x_overridden_idempotent.check_mode_result is none
+          - nd4x_overridden_idempotent.idempotency_attempts == 1
+          - >-
+            nd4x_overridden_idempotent.nd_query_results | length
+            == nd4x_switch_inventory.current.switches | length + 2
+
+  always:
+    - name: "OVERRIDDEN CLEANUP: Remove reserved vPC interfaces"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_vpc_access_cleanup_config }}"
+        state: deleted
+      ignore_errors: true
+      tags:
+        - always
+
+    - name: "OVERRIDDEN CLEANUP: Remove test vPC pair"
+      cisco.nd.nd_manage_vpc_pair:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
+            peer2_switch_id: "{{ test_switch_ip_peer2 }}"
+        state: deleted
+      ignore_errors: true
+      tags:
+        - always
