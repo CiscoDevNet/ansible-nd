@@ -253,8 +253,8 @@ def test_endpoints_api_v1_manage_fabrics_switches_00140():
     assert set(query.split("&")) == {
         "clusterName=cluster-a",
         "hostname=leaf1",
-        "filter=hostname:leaf*",
-        "sort=hostname:asc",
+        "filter=hostname%3Aleaf%2A",
+        "sort=hostname%3Aasc",
     }
 
 
@@ -665,3 +665,25 @@ def test_endpoints_api_v1_manage_fabrics_switches_00640():
         instance.endpoint_params.cluster_name = "cluster1"
         result = instance.path
     assert result == "/api/v1/manage/fabrics/MyFabric/switches/SAL1948TRTT/actions/changeSwitchSerialNumber?clusterName=cluster1"
+
+
+def test_endpoints_api_v1_manage_fabrics_switches_00700():
+    """
+    # Summary
+
+    Verify fabric_name is percent-encoded in EpManageFabricsSwitchesGet.path (issue #292).
+
+    ## Test
+
+    - Reserved characters (``/``, space, ``#``) in fabric_name are encoded so a
+      malformed request path is not produced.
+
+    ## Classes and Methods
+
+    - EpManageFabricsSwitchesGet.path
+    """
+    with does_not_raise():
+        instance = EpManageFabricsSwitchesGet()
+        instance.fabric_name = "my/fabric name#1"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/my%2Ffabric%20name%231/switches"

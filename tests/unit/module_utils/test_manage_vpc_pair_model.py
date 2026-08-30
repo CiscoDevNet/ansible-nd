@@ -193,3 +193,25 @@ def test_manage_vpc_pair_model_00090() -> None:
     assert model.verify.enabled is True
     assert model.verify.retries == 5
     assert model.verify.timeout == 10
+
+
+def test_manage_vpc_pair_model_00100() -> None:
+    """Verify from_config accepts the ``context`` threaded by the state machine.
+
+    Regression: the shared state machine passes ``context={"state": ...}`` into
+    model construction so models can apply state-aware validation. from_config
+    must accept and forward it rather than raising
+    ``VpcPairModel.from_config() got an unexpected keyword argument 'context'``.
+    """
+    with does_not_raise():
+        model = VpcPairModel.from_config(
+            {
+                "switch_id": "SN01",
+                "peer_switch_id": "SN02",
+                "use_virtual_peer_link": True,
+            },
+            context={"state": "merged"},
+        )
+    assert model.switch_id == "SN01"
+    assert model.peer_switch_id == "SN02"
+    assert model.use_virtual_peer_link is True

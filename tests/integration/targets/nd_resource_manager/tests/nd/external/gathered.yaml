@@ -1,0 +1,139 @@
+---
+- name: External delta pools - Set resource config
+  ansible.builtin.set_fact:
+    rm_test_config:
+      - entity_name: "external_instance_device"
+        pool_type: "ID"
+        pool_name: "INSTANCE_ID"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "201"
+
+      - entity_name: "external_loopback_ipv6_fabric"
+        pool_type: "IP"
+        pool_name: "LOOPBACK_IPV6_POOL"
+        scope_type: "fabric"
+        resource: "fe80::31"
+
+      - entity_name: "external_tunnel_ios_xe_device"
+        pool_type: "ID"
+        pool_name: "TUNNEL_ID_IOS_XE"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+        resource: "31"
+    rm_test_delete_config:
+      - entity_name: "external_instance_device"
+        pool_type: "ID"
+        pool_name: "INSTANCE_ID"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+
+      - entity_name: "external_loopback_ipv6_fabric"
+        pool_type: "IP"
+        pool_name: "LOOPBACK_IPV6_POOL"
+        scope_type: "fabric"
+
+      - entity_name: "external_tunnel_ios_xe_device"
+        pool_type: "ID"
+        pool_name: "TUNNEL_ID_IOS_XE"
+        scope_type: "device"
+        switches:
+          - "{{ ansible_switch1 }}"
+    rm_expected_resource_count: 3
+    rm_expected_entity_names:
+      - "external_instance_device"
+      - "external_loopback_ipv6_fabric"
+      - "external_tunnel_ios_xe_device"
+
+- name: External delta pools - Pre-clean resources
+  cisco.nd.nd_manage_resource_manager: &rm_delete
+    state: deleted
+    fabric_name: "{{ ansible_it_fabric }}"
+    config: "{{ rm_test_delete_config }}"
+  register: result
+
+- name: External delta pools - Assert pre-clean did not fail
+  ansible.builtin.assert:
+    that:
+      - 'result.failed | default(false) == false'
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+- block:
+    - name: External delta pools - Create resources for gathered test
+      cisco.nd.nd_manage_resource_manager:
+        state: merged
+        fabric_name: "{{ ansible_it_fabric }}"
+        config: "{{ rm_test_config }}"
+      register: result
+
+    - name: External delta pools - Assert create setup
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+          - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+    - name: External delta pools - Gather resources by entity name
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "external_instance_device"
+
+          - entity_name: "external_loopback_ipv6_fabric"
+
+          - entity_name: "external_tunnel_ios_xe_device"
+      register: result
+
+    - name: External delta pools - Assert gathered resources
+      ansible.builtin.assert:
+        that:
+          - '(result["gathered"] | length) == (rm_expected_entity_names | length)'
+          - >-
+            (
+              result["gathered"]
+              | map(attribute="entity_name")
+              | map('split', '~')
+              | map('sort')
+              | map('join', '~')
+              | sort
+              | list
+            )
+            ==
+            (
+              rm_expected_entity_names
+              | map('split', '~')
+              | map('sort')
+              | map('join', '~')
+              | sort
+              | list
+            )
+
+    - name: External delta pools - Gather resources by first pool
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - pool_name: "INSTANCE_ID"
+      register: result
+
+    - name: External delta pools - Assert gathered pool filter
+      ansible.builtin.assert:
+        that:
+          - '(result["gathered"] | length) != 0'
+          - 'result["gathered"] | map(attribute="pool_name") | unique | list == ["INSTANCE_ID"]'
+
+  always:
+    - name: External delta pools - Cleanup resources
+      cisco.nd.nd_manage_resource_manager: *rm_delete
+      register: result
+
+    - name: External delta pools - Assert cleanup did not fail
+      ansible.builtin.assert:
+        that:
+          - 'result.failed | default(false) == false'
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0

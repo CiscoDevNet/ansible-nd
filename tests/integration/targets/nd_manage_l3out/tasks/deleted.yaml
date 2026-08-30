@@ -1,0 +1,78 @@
+---
+# Deleted state tests for nd_manage_l3out
+# Copyright: (c) 2026, Cisco Systems, Inc.
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- DELETED: Single L3Out ---
+
+- name: "DELETED: Delete SVI L3Out (check mode)"
+  cisco.nd.nd_manage_l3out: &delete_l3out_svi
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ test_l3out_svi_name }}"
+    state: deleted
+  check_mode: true
+  register: cm_deleted_svi
+
+- name: "DELETED: Delete SVI L3Out (normal mode)"
+  cisco.nd.nd_manage_l3out: *delete_l3out_svi
+  register: nm_deleted_svi
+
+- name: "DELETED: Verify SVI L3Out deletion"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_svi is changed
+      - nm_deleted_svi is changed
+
+# --- DELETED IDEMPOTENCY ---
+
+- name: "DELETED IDEMPOTENT: Re-delete SVI L3Out (check mode)"
+  cisco.nd.nd_manage_l3out: *delete_l3out_svi
+  check_mode: true
+  register: cm_deleted_idem_svi
+
+- name: "DELETED IDEMPOTENT: Re-delete SVI L3Out (normal mode)"
+  cisco.nd.nd_manage_l3out: *delete_l3out_svi
+  register: nm_deleted_idem_svi
+
+- name: "DELETED IDEMPOTENT: Verify no change on second delete"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_idem_svi is not changed
+      - nm_deleted_idem_svi is not changed
+
+# --- DELETED: Bulk delete remaining L3Outs ---
+
+- name: "DELETED BULK: Delete BGP and static L3Outs (check mode)"
+  cisco.nd.nd_manage_l3out: &delete_l3out_bulk
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ test_l3out_bgp_name }}"
+      - name: "{{ test_l3out_static_name }}"
+    state: deleted
+  check_mode: true
+  register: cm_deleted_bulk
+
+- name: "DELETED BULK: Delete BGP and static L3Outs (normal mode)"
+  cisco.nd.nd_manage_l3out: *delete_l3out_bulk
+  register: nm_deleted_bulk
+
+- name: "DELETED BULK: Verify bulk deletion"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_bulk is changed
+      - nm_deleted_bulk is changed
+
+# --- DELETED BULK IDEMPOTENCY ---
+
+- name: "DELETED BULK IDEMPOTENT: Re-delete already removed L3Outs"
+  cisco.nd.nd_manage_l3out: *delete_l3out_bulk
+  register: nm_deleted_bulk_idem
+
+- name: "DELETED BULK IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_bulk_idem is not changed

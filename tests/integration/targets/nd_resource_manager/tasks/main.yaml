@@ -1,0 +1,5 @@
+---
+# Includes the task list for nd_resource_manager integration tests for the VXLAN iBGP fabric type and its supported pool names.
+- name: Include tasks for nd_resource_manager integration tests
+  ansible.builtin.include_tasks: rm_tasks.yaml
+  tags: ['nd']

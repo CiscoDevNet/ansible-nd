@@ -74,6 +74,31 @@ class HttpVerbEnum(str, Enum):
         return sorted([member.value for member in cls])
 
 
+class PlatformType(str, Enum):
+    """
+    # Summary
+
+    Common switch platform type values reported by the Manage switch inventory
+    API and accepted by the add-switch request API.
+    """
+
+    NX_OS = "nx-os"
+    OTHER = "other"
+    IOS_XE = "ios-xe"
+    IOS_XR = "ios-xr"
+    SONIC = "sonic"
+    APIC = "apic"
+
+    @classmethod
+    def choices(cls) -> list[str]:
+        """
+        # Summary
+
+        Return all platform type values.
+        """
+        return [member.value for member in cls]
+
+
 class OperationType(Enum):
     """
     # Summary

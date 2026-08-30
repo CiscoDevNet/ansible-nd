@@ -1,0 +1,37 @@
+---
+# Replaced state tests for nd_manage_route_map.
+
+- name: "REPLACED: Replace primary route map with matchTag entry (check mode)"
+  cisco.nd.nd_manage_route_map: &replace_primary
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ route_map_primary_replaced }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_primary
+
+- name: "REPLACED: Replace primary route map with matchTag entry (normal mode)"
+  cisco.nd.nd_manage_route_map: *replace_primary
+  register: nm_replaced_primary
+
+- name: "REPLACED: Verify primary route map replacement"
+  vars:
+    primary_after: "{{ nm_replaced_primary.after | selectattr('name', 'equalto', test_route_map_primary_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_primary is changed
+      - nm_replaced_primary is changed
+      - primary_after.entries[0].sequence_number == 20
+      - primary_after.entries[0].action == "deny"
+      - primary_after.entries[0].rule_entries[0].rule_type == "matchTag"
+      - primary_after.entries[0].rule_entries[0].tags == [65000]
+
+- name: "REPLACED IDEMPOTENT: Re-apply replacement"
+  cisco.nd.nd_manage_route_map: *replace_primary
+  register: nm_replaced_idem_primary
+
+- name: "REPLACED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_idem_primary is not changed

@@ -4,6 +4,7 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
+import logging
 from copy import deepcopy
 from typing import Any
 
@@ -12,6 +13,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import (
     EpFabricDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
+    EpManageFabricsSwitchActionsDeployPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
@@ -71,6 +75,60 @@ def issubset(subset: Any, superset: Any) -> bool:
     return True
 
 
+def _is_effectively_empty(value: Any) -> bool:
+    """
+    # Summary
+
+    Return `True` when `value` carries no user-visible content: `None`, `""`, `[]`, `{}`, or a dict whose values are all themselves effectively empty.
+    ND echoes such empty markers for fields the user never configured, so `has_removals` must not treat them as removable values.
+
+    ## Raises
+
+    None
+    """
+    # Lists are only empty-normalized when literally `[]` -- a list of empty markers ([""], [{}]) is NOT collapsed,
+    # unlike the dict branch below. ND has only been observed echoing literal `[]` for never-configured list fields;
+    # collapsing non-empty lists without lab evidence could mask a real pending removal.
+    if value is None or value == "" or value == [] or value == {}:
+        return True
+    if isinstance(value, dict):
+        return all(_is_effectively_empty(item) for item in value.values())
+    return False
+
+
+def has_removals(existing_data: Any, proposed_data: Any) -> bool:
+    """
+    # Summary
+
+    Return `True` when `existing_data` carries a non-empty key that is absent from `proposed_data` (issue #410: the reverse pass for
+    `replaced`/`overridden` diff classification). Only key *presence* is examined -- value differences between keys present on both
+    sides are the forward `issubset` pass's job. Keys whose existing value is effectively empty (`None`, `""`, `[]`, `{}`, or a dict
+    of only such values) are normalized to absent, so ND-echoed empty markers for never-configured fields do not break idempotency.
+    Recurses into dicts present on both sides; non-dict inputs (including a dict/non-dict type conflict, which the forward pass
+    already classifies as changed) report no removals.
+
+    ## Raises
+
+    None
+    """
+    if not isinstance(existing_data, dict) or not isinstance(proposed_data, dict):
+        return False
+
+    for key, value in existing_data.items():
+        if _is_effectively_empty(value):
+            continue
+        if key not in proposed_data:
+            return True
+        # Recurse into dicts only -- lists are deliberately not descended into. A removal inside a list element
+        # (e.g. a nested dict that loses a key) is already caught by the forward `issubset` pass, which matches
+        # list elements bidirectionally, so any element divergence classifies as changed there; a wholly-omitted
+        # list key is caught by the key-presence check above.
+        if isinstance(value, dict) and has_removals(value, proposed_data[key]):
+            return True
+
+    return False
+
+
 def remove_unwanted_keys(data: dict, unwanted_keys: list[str | list[str]]) -> dict:
     """Remove unwanted keys from dict (supports nested paths)."""
     data = deepcopy(data)
@@ -126,7 +184,7 @@ def register_action_api_call(
 
 class FabricUtils:
     """
-    Shared helper for fabric-level config save/deploy actions.
+    Shared helper for generic fabric-level metadata and config actions.
     """
 
     def __init__(self, nd_module: Any, fabric_name: str) -> None:
@@ -183,3 +241,110 @@ class FabricUtils:
             "status": self.nd.status,
             "response_data": response_data,
         }
+
+    @staticmethod
+    def build_switch_deploy_path(fabric_name: str) -> str:
+        """
+        Build /switchActions/deploy endpoint path for the given fabric.
+        """
+        endpoint = EpManageFabricsSwitchActionsDeployPost(fabric_name=fabric_name)
+        return endpoint.path
+
+    @property
+    def switch_deploy_path(self) -> str:
+        return self.build_switch_deploy_path(self.fabric_name)
+
+    def deploy_switches(self, switch_ids: list[str]) -> dict[str, Any]:
+        """
+        Call switch-scoped deploy action for specific switches.
+
+        Unlike the fabric-level deploy, this targets only the supplied switch
+        serial numbers via /switchActions/deploy with a {"switchIds": [...]} body.
+        """
+        path = self.switch_deploy_path
+        payload = {"switchIds": switch_ids}
+        response_data = self.nd.request(path, HttpVerbEnum.POST, payload)
+        return {
+            "path": path,
+            "status": self.nd.status,
+            "response_data": response_data,
+        }
+
+
+# =========================================================================
+# Exceptions
+# =========================================================================
+
+
+class SwitchOperationError(Exception):
+    """Raised when a switch operation fails."""
+
+
+# =========================================================================
+# API Response Validation
+# =========================================================================
+
+
+class ApiDataChecker:
+    """Detect controller-embedded errors in API response DATA payloads.
+
+    The Nexus Dashboard API signals certain errors by embedding an error
+    object inside ``DATA`` as ``{"code": <N>, "message": "<reason>"}`` even
+    when the transport-level result is marked successful.  Any payload dict
+    that contains a ``"code"`` key is treated as an error; the absence of
+    ``"code"`` means the payload is a genuine data body.
+    """
+
+    @staticmethod
+    def check(
+        data: Any,
+        context: str,
+        log: logging.Logger,
+        fail_callback=None,
+    ) -> None:
+        """Fail or raise if the response DATA contains an embedded error code.
+
+        Args:
+            data: Value returned by ``nd.request()`` or extracted from
+                  ``response_current["DATA"]``.
+            context: Human-readable description of the operation.
+            log: Logger instance.
+            fail_callback: Optional callable (e.g. ``module.fail_json``) that
+                           accepts a ``msg`` keyword argument.  When provided
+                           it is called on error instead of raising
+                           ``SwitchOperationError``.
+        """
+        log.debug(f"ApiDataChecker.check: Checking response for context: {context}")
+        log.debug(f"ApiDataChecker.check: data type={type(data)}, has 'error'={'error' in data if isinstance(data, dict) else 'N/A'}")
+
+        # Check for error object in response (some APIs return this structure)
+        if isinstance(data, dict) and "error" in data:
+            error_obj = data.get("error", {})
+            log.debug(f"ApiDataChecker.check: Found error object: {error_obj}")
+            if isinstance(error_obj, dict) and "code" in error_obj:
+                # Extract message from nested structure
+                error_msg = error_obj.get("message", "Unknown error")
+                if isinstance(error_msg, dict):
+                    error_msg = error_msg.get("message") or error_msg.get("status") or str(error_msg)
+                msg = f"{context} failed \u2014 controller returned error: " f"{error_msg} (code={error_obj['code']})"
+                log.error(msg)
+                if fail_callback is not None:
+                    log.debug(f"ApiDataChecker.check: Calling fail_callback with msg: {msg}")
+                    fail_callback(msg=msg)
+                    return  # Should not reach here
+                else:
+                    raise SwitchOperationError(msg)
+
+        # Check for code in data payload (embedded error pattern)
+        if isinstance(data, dict) and "code" in data:
+            error_msg = data.get("message", "Unknown error")
+            msg = f"{context} failed \u2014 controller returned error: " f"{error_msg} (code={data['code']})"
+            log.error(msg)
+            if fail_callback is not None:
+                log.debug(f"ApiDataChecker.check: Calling fail_callback with msg: {msg}")
+                fail_callback(msg=msg)
+                return  # Should not reach here
+            else:
+                raise SwitchOperationError(msg)
+
+        log.debug("ApiDataChecker.check: No errors detected in response")

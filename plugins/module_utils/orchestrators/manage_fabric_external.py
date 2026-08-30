@@ -8,6 +8,8 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
+from typing import ClassVar
+
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
     EpManageFabricsDelete,
@@ -19,11 +21,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import FabricExternalConnectivityModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions_mixin import ConfigActionsMixin
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
-class ManageExternalFabricOrchestrator(NDBaseOrchestrator):
-    model_class: type[NDBaseModel] = FabricExternalConnectivityModel
+class ManageExternalFabricOrchestrator(ConfigActionsMixin, NDBaseOrchestrator):
+    model_class: ClassVar[type[NDBaseModel]] = FabricExternalConnectivityModel
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPut

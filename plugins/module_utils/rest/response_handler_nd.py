@@ -206,16 +206,25 @@ class ResponseHandler:
         """
         # Summary
 
-        Handle POST, PUT, DELETE responses from the controller and set
-        self.result.
+        Handle POST, PUT, DELETE responses from the controller and set `self.result`.
 
-        -	self.result is a dict containing:
-            -   changed:
-                -   True if RETURN_CODE in (200, 201, 202, 204, 207) and no ERROR
+        -   `self.result` is a dict containing:
+            -   `changed`:
+                -   True if RETURN_CODE in (200, 201, 202, 204, 207) and no embedded error
+                -   On failure: True when the `modified` header or a per-item `success` status shows state changed (mixed
+                    Multi-Status batches), False otherwise
+            -   `success`:
+                -   True if RETURN_CODE in (200, 201, 202, 204, 207) and no embedded error
                 -   False otherwise
-            -   success:
-                -   True if RETURN_CODE in (200, 201, 202, 204, 207) and no ERROR
-                -   False otherwise
+            -   `retryable`:
+                -   False when the request succeeded, or when it failed with a success-class RETURN_CODE (the application
+                    definitively rejected the request, e.g. a Multi-Status per-item failure — replaying the identical
+                    payload cannot succeed, so `RestSend` must not retry)
+                -   True when the request failed with a non-success RETURN_CODE (e.g. 5xx — potentially transient)
+
+        ## Raises
+
+        None
         """
         result = {}
 
@@ -225,9 +234,15 @@ class ResponseHandler:
         if self._strategy.is_success(self.response):
             result["success"] = True
             result["changed"] = self._strategy.is_changed(self.response)
+            result["retryable"] = False
         else:
+            # A failure on a success-class RETURN_CODE is an application-level rejection
+            # (embedded error or per-item failure): deterministic, so not retryable.
+            # A failure on a non-success RETURN_CODE keeps the historical retry behavior.
+            return_code = self.response.get("RETURN_CODE", -1)
             result["success"] = False
-            result["changed"] = False
+            result["changed"] = self._strategy.is_changed_on_failure(self.response)
+            result["retryable"] = return_code not in self._strategy.success_codes
 
         self.result = copy.copy(result)
 

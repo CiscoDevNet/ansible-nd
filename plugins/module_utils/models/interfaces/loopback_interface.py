@@ -26,7 +26,7 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -34,7 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4CIDR, IPv6CIDR
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv6CIDR
 
 
 class LoopbackPolicyModel(NDNestedModel):
@@ -48,8 +48,19 @@ class LoopbackPolicyModel(NDNestedModel):
     None
     """
 
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_loopback` template defaults (schema-sourced via nd-openapi `intLoopbackTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    # Values must be in the model's DUMPED form: the schema declares routeMapTag as integer 12345, but
+    # `coerce_route_map_tag` stores it as a string (ND 4.2.1 GET-side type drift), so the table holds "12345".
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        "routeMapTag": "12345",
+    }
+
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    ip: IPv4CIDR = Field(default=None, alias="ip", description="Loopback IPv4 address in CIDR notation (e.g. 10.1.1.1/32)")
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
     ipv6: IPv6CIDR = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
     route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")

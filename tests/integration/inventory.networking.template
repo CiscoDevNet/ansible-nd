@@ -1,0 +1,16 @@
+# Inventory template for ND integration tests.
+# Copy to inventory.networking and fill in your local values.
+# Do NOT commit inventory.networking to git.
+
+[nd]
+nd ansible_host=<ND_CONTROLLER_HOST>
+
+[nd:vars]
+ansible_connection=ansible.netcommon.httpapi
+ansible_python_interpreter=/usr/bin/python3.9
+ansible_network_os=cisco.nd.nd
+ansible_httpapi_validate_certs=False
+ansible_httpapi_use_ssl=True
+ansible_httpapi_use_proxy=True
+ansible_user=<ND_USERNAME>
+ansible_password=<ND_PASSWORD>

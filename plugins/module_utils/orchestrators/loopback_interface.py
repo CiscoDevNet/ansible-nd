@@ -74,6 +74,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     model_class: ClassVar[type[NDBaseModel]] = LoopbackInterfaceModel
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    interface_type: ClassVar[str] = "loopback"
+    interface_mode: ClassVar[str] = "managed"
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -226,8 +228,11 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         """
         # Summary
 
-        Validate the fabric context and query all interfaces across ALL switches in the fabric, filtering for user-managed
-        loopback interfaces only (`policyType: "loopback"`).
+        Validate the fabric context and query interfaces, filtering for user-managed loopback interfaces only
+        (`policyType: "loopback"`).
+
+        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
+        and limited to switches named in the user config for all other states.
 
         System-provisioned loopbacks (e.g. Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) and
         non-standard policy templates (`ipfmLoopback`, `userDefined`) are excluded - those will be managed by dedicated modules.
@@ -248,12 +253,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         try:
             self.validate_prerequisites()
             all_loopbacks = []
-            for switch_ip, switch_id in self.fabric_context.switch_map.items():
-                api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-                if not isinstance(result, dict):
-                    continue
-                interfaces = result.get("interfaces", []) or []
+            for switch_ip, switch_id in self._switches_to_query().items():
+                interfaces = list(self._switch_interfaces(switch_id).values())
                 loopbacks = [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
                 managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") == "loopback"]
                 for iface in managed:

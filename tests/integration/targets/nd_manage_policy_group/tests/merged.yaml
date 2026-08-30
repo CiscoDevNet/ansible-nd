@@ -1,0 +1,460 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+
+- name: "MERGED - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: merged
+
+- block:
+
+    ##############################################
+    ##          MERGE - Create                  ##
+    ##############################################
+
+    # TC-1: Create a single policy group
+    - name: "MERGED TC1 - Create switch_freeform policy group"
+      cisco.nd.nd_manage_policy_group: &merged_freeform
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+            priority: 110
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "system vlan long-name"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC1 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+
+    # TC-2: Idempotence - Re-run the same task
+    - name: "MERGED TC2 - Idempotence check"
+      cisco.nd.nd_manage_policy_group: *merged_freeform
+      register: result
+      tags: merged
+
+    - name: "MERGED TC2 - Verify idempotence (no change)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: merged
+
+    ##############################################
+    ##   MERGE - Same template, different desc  ##
+    ##############################################
+
+    # TC-3 PRE: BFD freeform requires 'feature bfd' to be enabled on the
+    # switch first, otherwise NX-OS rejects 'bfd interval ...' commands
+    # and ND reports a switch-level deploy failure.
+    - name: "MERGED TC3-PRE - Enable BFD feature via feature_enable template"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Enable BFD feature"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: bfd
+      register: result_bfd_feature
+      tags: merged
+
+    # TC-3: Create a second group with same template but different description
+    - name: "MERGED TC3 - Create second switch_freeform group (different description)"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "Enable BFD timers"
+            priority: 115
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC3 - Verify creation of second group"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    ##############################################
+    ##      MERGE - Update existing group       ##
+    ##############################################
+
+    # TC-4: Update template_inputs on existing group
+    - name: "MERGED TC4 - Update template_inputs on existing policy group"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+            template_inputs:
+              CONF: "system vlan long-name\nno ip domain-lookup"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC4 - Verify update (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    - name: "MERGED TC4 - Gather updated policy group"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+      register: tc4_gathered
+      tags: merged
+
+    - name: "MERGED TC4 - Verify omitted update preserved priority"
+      ansible.builtin.assert:
+        that:
+          - tc4_gathered.gathered | length == 1
+          - tc4_gathered.gathered[0].priority == 110
+      tags: merged
+
+    # TC-5: Idempotence after update
+    - name: "MERGED TC5 - Idempotence after template_inputs update"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+            template_inputs:
+              CONF: "system vlan long-name\nno ip domain-lookup"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC5 - Verify idempotence (no change)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: merged
+
+    ##############################################
+    ##    MERGE - Update template_inputs        ##
+    ##############################################
+
+    # TC-6: Update template_inputs on existing group
+    - name: "MERGED TC6 - Update template_inputs"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "Enable BFD timers"
+            template_inputs:
+              CONF: "bfd interval 500 min_rx 500 multiplier 5"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC6 - Verify template_inputs update"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    ##############################################
+    ##    MERGE - Bulk create multiple groups   ##
+    ##############################################
+
+    # TC-7: Create multiple groups in a single task
+    - name: "MERGED TC7 - Bulk create two feature_enable groups"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Enable LACP on leaf switches"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lacp
+          - name: feature_enable
+            description: "Enable LLDP on leaf switches"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lldp
+      register: result
+      tags: merged
+
+    - name: "MERGED TC7 - Verify bulk creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    # TC-8: Idempotence on bulk create
+    - name: "MERGED TC8 - Idempotence on bulk create"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Enable LACP on leaf switches"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lacp
+          - name: feature_enable
+            description: "Enable LLDP on leaf switches"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lldp
+      register: result
+      tags: merged
+
+    - name: "MERGED TC8 - Verify idempotence on bulk"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: merged
+
+    ##############################################
+    ##  MERGE - Validation: missing description ##
+    ##############################################
+
+    # TC-9: Fail when description is missing for merged state
+    - name: "MERGED TC9 - Expect failure when description is missing"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        config:
+          - name: switch_freeform
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+      register: result
+      ignore_errors: true
+      tags: merged
+
+    - name: "MERGED TC9 - Verify failure message"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+          - "'description' in result.msg"
+      tags: merged
+
+    ##############################################
+    ##  MERGE - Update template_inputs in place ##
+    ##############################################
+
+    # TC-10: Create clock_timezone group, then update HOUR_OFFSET
+    - name: "MERGED TC10 - Create clock_timezone policy group"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            description: "Set timezone to CET"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+      register: result
+      tags: merged
+
+    - name: "MERGED TC10 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    # TC-11: Update HOUR_OFFSET from 1 → 5 (same description, same template)
+    - name: "MERGED TC11 - Update clock_timezone HOUR_OFFSET"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            description: "Set timezone to CET"
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 5
+              MINUTE_OFFSET: 0
+      register: result
+      tags: merged
+
+    - name: "MERGED TC11 - Verify update detected (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    # TC-12: Idempotence after HOUR_OFFSET update
+    - name: "MERGED TC12 - Idempotence after clock_timezone update"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            description: "Set timezone to CET"
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 5
+              MINUTE_OFFSET: 0
+      register: result
+      tags: merged
+
+    - name: "MERGED TC12 - Verify idempotence (no change)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: merged
+
+    ##############################################
+    ##  MERGE - Update switch_ids in place      ##
+    ##############################################
+
+    # TC-13: Add switch_serial_2, remove switch_serial_1 → should update
+    # Before: switch_ids = [switch_serial_1]
+    # After:  switch_ids = [switch_serial_2, switch_serial_3]
+    - name: "MERGED TC13 - Update switch_ids (add new, remove old)"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Enable LACP on leaf switches"
+            switch_ids:
+              - "{{ switch_serial_2 }}"
+              - "{{ switch_serial_3 }}"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC13 - Verify switch_ids update detected (changed)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    # TC-14: Idempotence after switch_ids update
+    - name: "MERGED TC14 - Idempotence after switch_ids change"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Enable LACP on leaf switches"
+            switch_ids:
+              - "{{ switch_serial_2 }}"
+              - "{{ switch_serial_3 }}"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC14 - Verify idempotence (no change)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: merged
+
+    ##############################################
+    ## MERGE - Mixed membership + intent update ##
+    ##############################################
+
+    # TC-15: Create a feature_enable group on one switch.
+    - name: "MERGED TC15 - Create group for split membership and intent update"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Split membership and intent update"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: lacp
+      register: result
+      tags: merged
+
+    - name: "MERGED TC15 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    # TC-16: Change both switch membership and featureName in one task. The
+    # module must split this into separate controller PUTs because ND rejects
+    # a single policy-group PUT that changes membership and intent together.
+    - name: "MERGED TC16 - Update membership and template_inputs together"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Split membership and intent update"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+              - "{{ switch_serial_2 }}"
+            template_inputs:
+              featureName: lldp
+      register: result
+      tags: merged
+
+    - name: "MERGED TC16 - Verify mixed update detected"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    - name: "MERGED TC16 - Gather mixed update result"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: feature_enable
+            description: "Split membership and intent update"
+      register: mixed_update_gathered
+      tags: merged
+
+    - name: "MERGED TC16 - Verify final mixed update state"
+      ansible.builtin.assert:
+        that:
+          - mixed_update_gathered.gathered | length == 1
+          - switch_serial_1 in mixed_update_gathered.gathered[0].switch_ids
+          - switch_serial_2 in mixed_update_gathered.gathered[0].switch_ids
+          - mixed_update_gathered.gathered[0].template_inputs.featureName == "lldp"
+      tags: merged
+
+  always:
+    - name: "MERGED - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: merged

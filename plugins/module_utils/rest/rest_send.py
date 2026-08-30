@@ -24,7 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.sender imp
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
 
-class RestSend:
+class RestSend:  # pylint: disable=too-many-public-methods
     """
     # Summary
 
@@ -196,6 +196,22 @@ class RestSend:
         if self.timeout is not None:
             self.saved_timeout = self.timeout
 
+    def warn(self, message: str) -> None:
+        """
+        # Summary
+
+        Emit a user-visible warning through the underlying `AnsibleModule`. Used by orchestrators to surface non-fatal
+        preflight failures (e.g. capability preflight in check mode) without converting them into module errors.
+
+        Encapsulates the `sender.ansible_module.warn(...)` reach so callers don't need to know about the sender's
+        internals; one localized `# type: ignore` here keeps the orchestrator call sites clean.
+
+        ## Raises
+
+        None
+        """
+        self.sender.ansible_module.warn(message)  # type: ignore[attr-defined]
+
     def commit(self) -> None:
         """
         # Summary
@@ -303,7 +319,7 @@ class RestSend:
         """
         # Summary
 
-        Call sender.commit() with retries until successful response or timeout is exceeded.
+        Call sender.commit() with retries until a successful response, a terminal (non-retryable) failure, or timeout.
 
         ## Raises
 
@@ -360,6 +376,12 @@ class RestSend:
 
             success = self.result_current["success"]
             if success is False:
+                if self.result_current.get("retryable", True) is False:
+                    msg = f"{self.class_name}.{method_name}: "
+                    msg += "Terminal failure (retryable=False). Not retrying. "
+                    msg += f"verb {self.verb}, path {self.path}."
+                    self.log.debug(msg)
+                    break
                 if self.unit_test is False:
                     sleep(self.send_interval)
                 timeout -= self.send_interval

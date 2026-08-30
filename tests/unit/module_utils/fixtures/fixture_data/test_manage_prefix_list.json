@@ -1,0 +1,234 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_manage_prefix_list.py (orchestrator tests).",
+        "Response shapes mirror the ND Manage Routing Policies prefix list API:",
+        "  - List GET returns {\"ipv4PrefixLists\": [...]} / {\"ipv6PrefixLists\": [...]} with an 'entries' key per item.",
+        "  - Bulk create (POST .../ipv4PrefixLists) returns HTTP 207 with {\"results\": [{name, status, message}]}.",
+        "  - Bulk delete (POST .../ipv4PrefixListActions/remove) returns HTTP 207 with {\"results\": [...]}.",
+        "Suffix order within a test matches the order RestSend.commit() consumes responses.",
+        "query_all() fetches the IPv4 list endpoint first, then the IPv6 list endpoint."
+    ],
+
+    "ipv4_prefix_lists_ok": {
+        "TEST_NOTES": ["Reusable IPv4 prefix list response from the list endpoint"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipv4PrefixLists": [
+                {
+                    "name": "PL-IPV4-BORDERS",
+                    "description": "IPv4 Border Router Prefixes",
+                    "entries": [
+                        {"sequenceNumber": 10, "action": "permit", "prefix": "10.0.1.0/24"},
+                        {"sequenceNumber": 20, "action": "deny", "prefix": "192.168.0.0/16"}
+                    ],
+                    "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+                }
+            ]
+        }
+    },
+
+    "ipv6_prefix_lists_ok": {
+        "TEST_NOTES": ["Reusable IPv6 prefix list response from the list endpoint"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv6PrefixLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipv6PrefixLists": [
+                {
+                    "name": "PL-IPV6-DATACENTER",
+                    "description": "IPv6 Datacenter Prefixes",
+                    "entries": [
+                        {
+                            "sequenceNumber": 10,
+                            "action": "permit",
+                            "prefix": "2001:db8::/32",
+                            "minLength": 32,
+                            "maxLength": 48
+                        }
+                    ],
+                    "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+                }
+            ]
+        }
+    },
+
+    "empty_ipv4_lists": {
+        "TEST_NOTES": ["Empty response from the IPv4 prefix list query_all"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipv4PrefixLists": []
+        }
+    },
+
+    "empty_ipv6_lists": {
+        "TEST_NOTES": ["Empty response from the IPv6 prefix list query_all"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv6PrefixLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipv6PrefixLists": []
+        }
+    },
+
+    "ipv4_single_prefix_list": {
+        "TEST_NOTES": ["Single IPv4 prefix list via the GET item endpoint"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists/PL-IPV4-BORDERS",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "PL-IPV4-BORDERS",
+            "description": "IPv4 Border Router Prefixes",
+            "entries": [
+                {"sequenceNumber": 10, "action": "permit", "prefix": "10.0.1.0/24"},
+                {"sequenceNumber": 20, "action": "deny", "prefix": "192.168.0.0/16"}
+            ],
+            "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+        }
+    },
+
+    "ipv4_single_tenant_prefix_list_without_tenant_name": {
+        "TEST_NOTES": ["Tenant-scoped IPv4 prefix list item GET where the API omits tenantName"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists/TENANT1~PL-IPV4-BORDERS",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "TENANT1~PL-IPV4-BORDERS",
+            "description": "IPv4 Border Router Prefixes",
+            "entries": [
+                {"sequenceNumber": 10, "action": "permit", "prefix": "10.0.1.0/24"},
+                {"sequenceNumber": 20, "action": "deny", "prefix": "192.168.0.0/16"}
+            ],
+            "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+        }
+    },
+
+    "ipv6_single_prefix_list": {
+        "TEST_NOTES": ["Single IPv6 prefix list via the GET item endpoint"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv6PrefixLists/PL-IPV6-DATACENTER",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "PL-IPV6-DATACENTER",
+            "description": "IPv6 Datacenter Prefixes",
+            "entries": [
+                {
+                    "sequenceNumber": 10,
+                    "action": "permit",
+                    "prefix": "2001:db8::/32",
+                    "minLength": 32,
+                    "maxLength": 48
+                }
+            ],
+            "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+        }
+    },
+
+    "create_ipv4_207_success": {
+        "TEST_NOTES": ["Bulk create IPv4 prefix lists -- 207 Multi-Status, all success"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "PL-IPV4-BORDERS", "status": "success", "message": "Successfully created IPv4 prefix list PL-IPV4-BORDERS"}
+            ]
+        }
+    },
+
+    "create_ipv6_207_success": {
+        "TEST_NOTES": ["Bulk create IPv6 prefix lists -- 207 Multi-Status, all success"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv6PrefixLists",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "PL-IPV6-DATACENTER", "status": "success", "message": "Successfully created IPv6 prefix list PL-IPV6-DATACENTER"}
+            ]
+        }
+    },
+
+    "create_ipv4_207_partial_failure": {
+        "TEST_NOTES": ["Bulk create IPv4 prefix lists -- 207 Multi-Status with one per-item failure"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "PL-IPV4-OK", "status": "success", "message": "Successfully created IPv4 prefix list PL-IPV4-OK"},
+                {"name": "PL-IPV4-BAD", "status": "failed", "message": "Failed to create IPv4 prefix list PL-IPV4-BAD"}
+            ]
+        }
+    },
+
+    "update_ipv4_prefix_list": {
+        "TEST_NOTES": ["PUT response for an IPv4 prefix list update"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists/PL-IPV4-BORDERS",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "PL-IPV4-BORDERS",
+            "description": "Updated IPv4 Border Router Prefixes",
+            "entries": [
+                {"sequenceNumber": 10, "action": "permit", "prefix": "10.0.1.0/24"},
+                {"sequenceNumber": 20, "action": "deny", "prefix": "192.168.0.0/16"},
+                {"sequenceNumber": 30, "action": "permit", "prefix": "172.16.0.0/12"}
+            ],
+            "lastUpdateTimestamp": "2026-06-12T12:00:00Z"
+        }
+    },
+
+    "bulk_delete_ipv4_207_success": {
+        "TEST_NOTES": ["Bulk delete IPv4 prefix lists -- POST .../ipv4PrefixListActions/remove, 207 success"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixListActions/remove",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "PL-IPV4-BORDERS", "status": "success", "message": "Successfully deleted IPv4 prefix list PL-IPV4-BORDERS"}
+            ]
+        }
+    },
+
+    "bulk_delete_ipv6_207_success": {
+        "TEST_NOTES": ["Bulk delete IPv6 prefix lists -- POST .../ipv6PrefixListActions/remove, 207 success"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv6PrefixListActions/remove",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "PL-IPV6-DATACENTER", "status": "success", "message": "Successfully deleted IPv6 prefix list PL-IPV6-DATACENTER"}
+            ]
+        }
+    },
+
+    "bulk_delete_ipv4_207_partial_failure": {
+        "TEST_NOTES": ["Bulk delete IPv4 prefix lists -- 207 Multi-Status with one per-item failure"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixListActions/remove",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "PL-IPV4-OK", "status": "success", "message": "Successfully deleted IPv4 prefix list PL-IPV4-OK"},
+                {"name": "PL-IPV4-BAD", "status": "failed", "message": "Failed to delete IPv4 prefix list PL-IPV4-BAD"}
+            ]
+        }
+    }
+}

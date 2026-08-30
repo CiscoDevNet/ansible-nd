@@ -26,7 +26,7 @@ wrapping or flattening.
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -46,6 +46,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     SpeedEnum,
     StormControlActionEnum,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
@@ -59,7 +60,7 @@ _INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
 _CANONICAL_INTERFACE_TYPE = "Ethernet"
 
 
-class EthernetAccessPolicyModel(NDNestedModel):
+class EthernetAccessPolicyModel(StormControlMutexMixin):
     """
     # Summary
 
@@ -69,6 +70,33 @@ class EthernetAccessPolicyModel(NDNestedModel):
 
     None
     """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_access_host` template defaults (schema-sourced via nd-openapi `intAccessHostTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        "bpduFilter": "default",
+        "bpduGuard": "enable",
+        "cdp": True,
+        "debounceTimer": 100,
+        "duplexMode": "auto",
+        "errorDetectionAcl": True,
+        "fec": "auto",
+        "linkType": "auto",
+        "monitor": False,
+        "mtu": "jumbo",
+        "negotiateAuto": True,
+        "netflow": False,
+        "orphanPort": False,
+        "pfc": False,
+        "portTypeEdgeTrunk": True,
+        "qos": False,
+        "speed": "auto",
+        "stormControl": False,
+        "stormControlAction": "default",
+    }
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
     access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094, description="VLAN for this access port")

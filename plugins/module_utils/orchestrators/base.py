@@ -4,6 +4,7 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
+from collections.abc import Sequence
 from functools import wraps
 from typing import Any, ClassVar, Dict, Generic, Optional, TypeVar
 
@@ -39,6 +40,11 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         validate_assignment=True,
         populate_by_name=True,
         arbitrary_types_allowed=True,
+        # pydantic <2.10 defaults protected_namespaces to the whole `model_` prefix and applies the
+        # check even to ClassVar annotations, so `model_class` would raise NameError at class
+        # construction on user hosts running older pydantic 2.x. Pin pydantic >=2.10's narrower
+        # default rather than () so the collision guard still covers genuinely dangerous names.
+        protected_namespaces=("model_validate", "model_dump"),
     )
 
     model_class: ClassVar[type[NDBaseModel]] = NDBaseModel
@@ -118,6 +124,36 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
 
         return self.rest_send.response_current.get("DATA", {})
 
+    def preflight(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Pre-mutation hook invoked by `NDStateMachine` before create/update operations — which are skipped in check
+        mode — so subclasses can validate the proposed set during a dry-run. Base implementation is a no-op;
+        interface orchestrators override to run capability preflight.
+
+        ## Raises
+
+        None
+        """
+        return
+
+    def preflight_create(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Pre-mutation hook invoked by `NDStateMachine` with only the items diffed as create (`new`) — before any
+        create/update API call, so it fails fast in check mode too. Distinct from `preflight`, which receives the
+        full proposed set; this hook sees the create-only subset so subclasses can enforce create-specific
+        requirements without rejecting legitimate policy-less updates. Base implementation is a no-op; interface
+        orchestrators override to require a policy on create.
+
+        ## Raises
+
+        None
+        """
+        return
+
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:
@@ -157,6 +193,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
+
+    def prepare_config_data(self, raw_config):
+        """Hook for subclasses to backfill or normalize raw user config before the proposed collection is built. Returns the list unchanged by default."""
+        return raw_config
 
     @model_validator(mode="after")
     def validate_bulk_endpoints(self):

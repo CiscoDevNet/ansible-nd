@@ -1,0 +1,23 @@
+---
+# Pre-test cleanup for nd_interface_port_channel_trunk_host
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Called from main.yaml before the merged/replaced/overridden/deleted/vlan_mapping
+# state blocks. Ensures no test port-channels exist on the target switch before
+# the state tests run.
+
+- name: "SETUP: Remove test port-channels before state tests"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel502
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel503
+    state: deleted
+  tags: always

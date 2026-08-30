@@ -8,9 +8,9 @@
 Unit tests for `NDBaseInterfaceOrchestrator`.
 
 Verifies the shared interface-orchestrator infrastructure: lazy `FabricContext`, switch IP-to-serial
-resolution, fabric pre-flight validation, endpoint configuration, deploy/remove queue de-duplication,
-and bulk `deploy_pending` / `remove_pending` flush against the `interfaceActions/deploy` and
-`interfaceActions/remove` endpoints.
+resolution, fabric pre-flight validation, capability-preflight gating, endpoint configuration,
+deploy/remove queue de-duplication, and bulk `deploy_pending` / `remove_pending` flush against the
+`interfaceActions/deploy` and `interfaceActions/remove` endpoints.
 
 Uses `_StubInterfaceOrchestrator`, a minimal concrete subclass, to satisfy `NDBaseOrchestrator`'s
 Pydantic field requirements without coupling these tests to any per-feature orchestrator.
@@ -24,6 +24,7 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
+from types import SimpleNamespace
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -59,6 +60,25 @@ class _StubInterfaceOrchestrator(NDBaseInterfaceOrchestrator):
     delete_endpoint: type[NDEndpointBaseModel] = NDEndpointBaseModel
     query_one_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesGet
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
+
+
+class _StubOptedInOrchestrator(_StubInterfaceOrchestrator):
+    """Stub that opts in to capability preflight via `interface_type` but omits `interface_mode`.
+
+    Used to verify `validate_switches_capable` raises a clear error for a half-configured subclass.
+    """
+
+    interface_type = "loopback"
+
+
+class _StubCapableOrchestrator(_StubInterfaceOrchestrator):
+    """Stub that fully opts in to capability preflight via both `interface_type` and `interface_mode`.
+
+    Used to drive `validate_switches_capable` through the resolution + capability-endpoint code path.
+    """
+
+    interface_type = "loopback"
+    interface_mode = "managed"
 
 
 def responses_base_interface(key: str):
@@ -99,7 +119,7 @@ def test_base_interface_00010() -> None:
     ## Test
 
     - `_pending_deploys` and `_pending_removes` start empty
-    - `deploy` defaults to True
+    - `deploy` defaults to False
     - `_fabric_context` is None before first access
 
     ## Classes and Methods
@@ -119,7 +139,7 @@ def test_base_interface_00010() -> None:
 
     assert instance._pending_deploys == []
     assert instance._pending_removes == []
-    assert instance.deploy is True
+    assert instance.deploy is False
     assert instance._fabric_context is None
 
 
@@ -585,6 +605,7 @@ def test_base_interface_00620() -> None:
 
     ## Test
 
+    - `deploy` is enabled (it defaults to False)
     - Two pairs are queued
     - POST is issued to `/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy`
     - Request body is `{"interfaces": [{"interfaceName": ..., "switchId": ...}, ...]}` in queue order
@@ -603,6 +624,7 @@ def test_base_interface_00620() -> None:
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
     instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
     instance._queue_deploy("loopback10", "FDO12345ABC")
     instance._queue_deploy("loopback20", "FDO12345ABD")
 
@@ -629,6 +651,7 @@ def test_base_interface_00630() -> None:
 
     ## Test
 
+    - `deploy` is enabled (it defaults to False)
     - One pair queued
     - POST returns 500
     - `RuntimeError` matches `Bulk deploy failed`
@@ -646,6 +669,7 @@ def test_base_interface_00630() -> None:
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
     instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
     instance._queue_deploy("loopback10", "FDO12345ABC")
 
     match = r"Bulk deploy failed"
@@ -766,3 +790,483 @@ def test_base_interface_00720() -> None:
         instance.remove_pending()
 
     assert instance._pending_removes == [("loopback10", "FDO12345ABC")]
+
+
+# =============================================================================
+# Test: validate_switches_capable
+# =============================================================================
+
+
+def test_base_interface_00800() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` is a no-op when `interface_type` is `""` (the opted-out base default).
+
+    ## Test
+
+    - `_StubInterfaceOrchestrator` leaves `interface_type` as `""`
+    - `validate_switches_capable` returns without resolving switches or raising, even for a non-empty input
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+
+def test_base_interface_00810() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` raises a clear `RuntimeError` when a subclass sets `interface_type` but leaves `interface_mode` empty.
+
+    ## Test
+
+    - `_StubOptedInOrchestrator` sets `interface_type` but inherits the empty `interface_mode`
+    - `validate_switches_capable` raises `RuntimeError` naming the class and both ClassVars
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubOptedInOrchestrator(rest_send=rest_send)
+
+    match = r"_StubOptedInOrchestrator sets interface_type but not interface_mode"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+
+def test_base_interface_00820() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` aggregates multiple unresolvable `switch_ip` values into a single `RuntimeError`
+    (issue #301), so one typo cannot mask resolution or capability problems on the remaining entries.
+
+    ## Test
+
+    - Switches inventory contains only `192.168.12.151`
+    - Three model_instances are passed: the valid IP and two distinct unknown IPs
+    - `validate_switches_capable` raises `RuntimeError` naming BOTH unknown IPs in a single message
+    - The capability endpoint is NOT contacted (no second fixture consumed)
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    model_instances = [
+        SimpleNamespace(switch_ip="192.168.12.151"),
+        SimpleNamespace(switch_ip="10.1.1.99"),
+        SimpleNamespace(switch_ip="10.1.1.100"),
+    ]
+    match = r"Cannot resolve switch_ip to switchId in fabric 'fabric_1' for: 10\.1\.1\.100, 10\.1\.1\.99"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_switches_capable(model_instances)
+
+
+def test_base_interface_00830() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` downgrades a capability endpoint failure to a warning in `--check` mode
+    (issue #302), so dry-runs stay green when the unpublished `capableSwitches` endpoint is unavailable.
+
+    ## Test
+
+    - `rest_send.check_mode` is True
+    - Switches inventory resolves the one target IP to `FDO12345ABC`
+    - `capableSwitches` GET returns 404 -> `InterfaceCapabilityPreflight._query_get` raises `RuntimeError`
+    - `validate_switches_capable` does NOT raise
+    - A warning containing `Capability preflight skipped in check mode` is recorded on the mock module
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.check_mode = True
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    warnings = rest_send.sender.ansible_module.warnings
+    assert len(warnings) == 1
+    assert "Capability preflight skipped in check mode" in warnings[0]
+
+
+def test_base_interface_00840() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` downgrades a capability MISMATCH (offending switch) to a warning in `--check`
+    mode (issue #302), so dry-runs still surface the information without failing the run.
+
+    ## Test
+
+    - `rest_send.check_mode` is True
+    - Switches inventory resolves the target IP to `FDO12345ABC`
+    - `capableSwitches` returns 200 with an empty `switches` list -> `validate` raises with offender details
+    - `validate_switches_capable` does NOT raise
+    - A warning is recorded mentioning the offending `switchId`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.check_mode = True
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    warnings = rest_send.sender.ansible_module.warnings
+    assert len(warnings) == 1
+    assert "Capability preflight skipped in check mode" in warnings[0]
+    assert "FDO12345ABC" in warnings[0]
+
+
+def test_base_interface_00850() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` still raises a capability mismatch OUTSIDE `--check` mode (issue #302 regression
+    guard): the softening behavior must be gated on `check_mode`.
+
+    ## Test
+
+    - `rest_send.check_mode` is False
+    - Switches inventory resolves the target IP
+    - `capableSwitches` returns 200 with an empty `switches` list
+    - `validate_switches_capable` raises `RuntimeError` naming the offending `switchId`
+    - No warning is recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    match = r"not capable of hosting interface_type='loopback' mode='managed'"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    assert rest_send.sender.ansible_module.warnings == []
+
+
+def test_base_interface_00860() -> None:
+    """
+    # Summary
+
+    Verify `preflight` delegates to `validate_switches_capable`. `NDStateMachine` calls `preflight` (the generic
+    pre-mutation hook) rather than `validate_switches_capable` directly, so this guards the interface override that
+    wires the two together.
+
+    ## Test
+
+    - `rest_send.check_mode` is True
+    - Switches inventory resolves the target IP to `FDO12345ABC`
+    - `capableSwitches` returns 200 with an empty `switches` list (the target is incapable)
+    - `preflight` does NOT raise (check-mode softening, inherited from `validate_switches_capable`)
+    - A warning mentioning the offending `switchId` is recorded -> proves `preflight` routed through `validate_switches_capable`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.check_mode = True
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.preflight([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    warnings = rest_send.sender.ansible_module.warnings
+    assert len(warnings) == 1
+    assert "Capability preflight skipped in check mode" in warnings[0]
+    assert "FDO12345ABC" in warnings[0]
+
+
+# =============================================================================
+# Test: preflight_create() policy-required-on-create guard (issue #350)
+# =============================================================================
+
+
+def _iface_model(switch_ip: str, interface_name: str, *, policy: bool = True, config_data: bool = True, network_os: bool = True):
+    """Build a lightweight stand-in for an interface model instance for `preflight_create` tests.
+
+    `preflight_create` reads `config_data` -> `network_os` -> `policy` via `getattr`, so a `SimpleNamespace`
+    faithfully exercises the traversal without coupling these tests to any per-feature Pydantic model. Set
+    `config_data=False` for an identifier-only item, or `policy=False` for a `config_data` with no policy.
+    """
+    if not config_data:
+        config_data_obj = None
+    else:
+        network_os_obj = SimpleNamespace(policy=(SimpleNamespace() if policy else None)) if network_os else None
+        config_data_obj = SimpleNamespace(network_os=network_os_obj)
+    return SimpleNamespace(switch_ip=switch_ip, interface_name=interface_name, config_data=config_data_obj)
+
+
+def test_base_interface_00900() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` does not raise when every create item carries a policy.
+
+    ## Test
+
+    - Two items each have `config_data.network_os.policy` set
+    - `preflight_create` does not raise
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    items = [_iface_model("192.168.12.151", "loopback100"), _iface_model("192.168.12.152", "loopback101")]
+    with does_not_raise():
+        instance.preflight_create(items)
+
+
+def test_base_interface_00910() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` raises `RuntimeError` for a create item with no `config_data` at all, naming the
+    offending `switch_ip`, `interface_name`, and the fabric.
+
+    ## Test
+
+    - One item has `config_data` of None (identifier only)
+    - `preflight_create` raises `RuntimeError` naming the switch_ip, interface_name, and fabric_1
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    match = r"without a policy.*fabric 'fabric_1'.*switch_ip=192\.168\.12\.151, interface_name=loopback100"
+    with pytest.raises(RuntimeError, match=match):
+        instance.preflight_create([_iface_model("192.168.12.151", "loopback100", config_data=False)])
+
+
+def test_base_interface_00920() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` raises when `config_data` is present but `policy` is None (the `config_data`-without-policy
+    case, distinct from no `config_data` at all).
+
+    ## Test
+
+    - One item has `config_data.network_os` present but `policy` is None
+    - `preflight_create` raises `RuntimeError` naming the offending interface
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    match = r"switch_ip=192\.168\.12\.151, interface_name=Vlan100"
+    with pytest.raises(RuntimeError, match=match):
+        instance.preflight_create([_iface_model("192.168.12.151", "Vlan100", policy=False)])
+
+
+def test_base_interface_00930() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` aggregates multiple offenders into a single `RuntimeError` naming each.
+
+    ## Test
+
+    - Two items both lack a policy
+    - `preflight_create` raises one `RuntimeError` naming both interface_names
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    items = [
+        _iface_model("192.168.12.151", "loopback100", config_data=False),
+        _iface_model("192.168.12.152", "loopback101", policy=False),
+    ]
+    with pytest.raises(RuntimeError) as exc_info:
+        instance.preflight_create(items)
+    message = str(exc_info.value)
+    assert "interface_name=loopback100" in message
+    assert "interface_name=loopback101" in message
+
+
+def test_base_interface_00940() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` names only the policy-less offender and not the valid sibling in a mixed batch.
+
+    ## Test
+
+    - One item has a policy, one does not
+    - `preflight_create` raises `RuntimeError` naming the offender only
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    items = [
+        _iface_model("192.168.12.151", "loopback_ok"),
+        _iface_model("192.168.12.152", "loopback_bad", config_data=False),
+    ]
+    with pytest.raises(RuntimeError) as exc_info:
+        instance.preflight_create(items)
+    message = str(exc_info.value)
+    assert "interface_name=loopback_bad" in message
+    assert "loopback_ok" not in message
+
+
+def test_base_interface_00950() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` is a no-op for an empty create set (the common case where a state run produces only updates).
+
+    ## Test
+
+    - `preflight_create([])` does not raise
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.preflight_create([])
+
+
+def test_base_interface_00960() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` still raises in `--check` mode. The guard is a deterministic input-validation error with no
+    API dependency, so it fails fast in a dry-run rather than downgrading to a warning like the capability preflight.
+
+    ## Test
+
+    - `rest_send.check_mode` is True
+    - A policy-less create item still raises `RuntimeError`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.check_mode = True
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    with pytest.raises(RuntimeError, match=r"without a policy"):
+        instance.preflight_create([_iface_model("192.168.12.151", "loopback100", config_data=False)])
