@@ -902,25 +902,18 @@ def test_jsonpath_values_support_extended_filters(action_plugin):
         }
     }
 
-    managed_loopback100 = (
-        "$.current.interfaces[?("
-        "@.interfaceName == 'loopback100' & "
-        "@.configData.networkOS.policy.policyType == 'loopback'"
-        ")]"
-    )
-    managed_loopback101 = (
-        "$.current.interfaces[?("
-        "@.interfaceName == 'loopback101' & "
-        "@.configData.networkOS.policy.policyType == 'loopback'"
-        ")]"
-    )
+    managed_loopback100 = "$.current.interfaces[?(" "@.interfaceName == 'loopback100' & " "@.configData.networkOS.policy.policyType == 'loopback'" ")]"
+    managed_loopback101 = "$.current.interfaces[?(" "@.interfaceName == 'loopback101' & " "@.configData.networkOS.policy.policyType == 'loopback'" ")]"
 
-    assert len(
-        action_plugin._jsonpath_values(
-            controller_state,
-            managed_loopback100,
+    assert (
+        len(
+            action_plugin._jsonpath_values(
+                controller_state,
+                managed_loopback100,
+            )
         )
-    ) == 1
+        == 1
+    )
     assert (
         action_plugin._jsonpath_values(
             controller_state,
