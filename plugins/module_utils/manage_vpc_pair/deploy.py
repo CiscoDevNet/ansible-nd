@@ -179,8 +179,7 @@ def _get_managed_pair_switches_needing_deploy(
         Sorted list of unique switch serial numbers needing deployment
     """
     switches = _validate_fabric_switches(nd_v2, fabric_name)
-    if not switches:
-        return []
+    # No early return on empty inventory: fall through so every configured peer is warned.
     managed_serials: set[str] = set()
     for config_entry in config_entries or []:
         if not isinstance(config_entry, dict):
