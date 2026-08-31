@@ -2310,12 +2310,13 @@ def test_response_handler_nd_01440():
     """
     # Summary
 
-    Verify GET results carry no retryable key (GET retry semantics are unchanged).
+    Verify a GET failing with a 5xx code remains retryable (GET retries serve eventual-consistency polling and 5xx is
+    potentially transient; only 4xx-except-429 is terminal — see issue #457).
 
     ## Test
 
     - GET returns 500
-    - result has no "retryable" key, so RestSend's .get("retryable", True) default preserves today's GET retry behavior
+    - success is False and retryable is True
 
     ## Classes and Methods
 
@@ -2332,7 +2333,7 @@ def test_response_handler_nd_01440():
     with does_not_raise():
         instance.commit()
     assert instance.result["success"] is False
-    assert "retryable" not in instance.result
+    assert instance.result["retryable"] is True
 
 
 def test_response_handler_nd_01450():
@@ -2495,3 +2496,163 @@ def test_response_handler_nd_01490():
         instance.commit()
     assert instance.result["success"] is False
     assert instance.result["changed"] is False
+
+
+def test_response_handler_nd_01500():
+    """
+    # Summary
+
+    Verify a POST failing with a 4xx code is terminal (retryable=False): the request reached the application and was
+    rejected, so an identical replay cannot succeed (issue #457 — deterministic 400s previously burned the full retry
+    budget).
+
+    ## Test
+
+    - POST returns 400
+    - success is False, retryable is False, changed is False
+
+    ## Classes and Methods
+
+    - ResponseHandler._is_terminal_client_error()
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 400,
+        "MESSAGE": "Bad Request",
+        "DATA": {"error": "Invalid fabric settings"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["retryable"] is False
+    assert instance.result["changed"] is False
+
+
+def test_response_handler_nd_01510():
+    """
+    # Summary
+
+    Verify a POST failing with 429 (Too Many Requests) remains retryable: rate limiting is the one transient 4xx, so
+    it is excluded from the 4xx-terminal rule (issue #457).
+
+    ## Test
+
+    - POST returns 429
+    - success is False and retryable is True
+
+    ## Classes and Methods
+
+    - ResponseHandler._is_terminal_client_error()
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 429,
+        "MESSAGE": "Too Many Requests",
+        "DATA": {},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["retryable"] is True
+
+
+def test_response_handler_nd_01520():
+    """
+    # Summary
+
+    Verify a GET failing with a 4xx code is terminal (retryable=False): a deterministic client error on a GET (bad
+    query parameter, malformed path segment) previously burned the full retry budget just like a mutation (issue
+    #457 scope note — the 4xx-terminal rule applies to all verbs).
+
+    ## Test
+
+    - GET returns 400
+    - success is False, found is False, retryable is False
+
+    ## Classes and Methods
+
+    - ResponseHandler._is_terminal_client_error()
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 400,
+        "MESSAGE": "Bad Request",
+        "DATA": {"error": "invalid query parameter"},
+    }
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["found"] is False
+    assert instance.result["retryable"] is False
+
+
+def test_response_handler_nd_01530():
+    """
+    # Summary
+
+    Verify a GET returning 404 keeps its not-found-is-success contract with retryable=False (the key is now present
+    on every GET result for a consistent shape; a successful result never re-enters the retry loop).
+
+    ## Test
+
+    - GET returns 404
+    - success is True, found is False, retryable is False
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 404,
+        "MESSAGE": "Not Found",
+        "DATA": {},
+    }
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+    assert instance.result["found"] is False
+    assert instance.result["retryable"] is False
+
+
+def test_response_handler_nd_01540():
+    """
+    # Summary
+
+    Verify a DELETE failing with 404 is terminal (retryable=False): only GET treats 404 as not-found-success; for a
+    mutation it is a client error, and replaying an identical DELETE against a missing resource cannot succeed
+    (issue #457 — orchestrators with bounded domain-level retries, e.g. L3Out attach, own that pacing themselves).
+
+    ## Test
+
+    - DELETE returns 404
+    - success is False and retryable is False
+
+    ## Classes and Methods
+
+    - ResponseHandler._is_terminal_client_error()
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 404,
+        "MESSAGE": "Not Found",
+        "DATA": {"error": "resource does not exist"},
+    }
+    instance.verb = HttpVerbEnum.DELETE
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["retryable"] is False

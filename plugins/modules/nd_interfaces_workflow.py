@@ -66,10 +66,16 @@ options:
       state:
         description:
         - Desired state for this resource group.
-        - V(merged) creates missing resources and merges supplied fields into existing resources.
-        - V(replaced) replaces the fields of the explicitly listed resources according to the selected standalone model.
+        - V(merged) creates missing resources and merges supplied fields when the current policy already belongs to the selected family.
+          If an explicitly listed interface has a different eligible policy in the same structural interface domain, it performs an
+          implicit policy transition and applies the selected family's desired configuration.
+        - V(replaced) replaces the fields of explicitly listed resources. If the current policy belongs to another eligible family in the
+          same structural interface domain, it performs the same implicit policy transition.
         - V(overridden) treats this family's configuration as authoritative and expands interface inventory scope to the complete fabric.
-        - V(deleted) removes the listed resources that currently exist.
+          It does not claim unlisted interfaces owned by other policy families.
+        - V(deleted) acts on each explicitly listed identity regardless of its current policy family, provided the current interface is in
+          the same structural domain and is safe to delete. Physical Ethernet interfaces are reset to the unconfigured fabric-default
+          policy; deletable logical interfaces are removed.
         - All ten initial interface adapters support all four values.
         type: str
         choices: [ merged, replaced, overridden, deleted ]
@@ -103,14 +109,37 @@ notes:
 - C(cisco.nd.nd_interface_flow_rules) is intentionally outside this workflow and is not a valid O(resources[].type).
 - A non-overridden workflow reads only the union of switches named by its resource groups. Any V(overridden) group expands the shared
   inventory scope to all switches in the fabric.
-- vPC groups load authoritative fabric vPC-pair inventory in the same execution and reject a configured switch that is not paired.
-- Sibling policy-type transitions are rejected unless an explicit, tested transition sequence is added; they are never inferred as an
-  independent create.
+- vPC groups load the complete intended fabric vPC-pair inventory with deterministic pagination in the same execution. They reject
+  missing, self-referential, conflicting, or inverse-inconsistent pair records.
+- vPC identity is pair-scoped. Equal vPC names on different pairs are planned independently, while both peer echoes for one pair are
+  required and treated as one resource.
+- For V(merged) and V(replaced), O(resources[].type) is the desired policy family. An explicitly listed interface using another eligible
+  policy in the same structural interface domain is changed with one destination-family replacement request; no separate transition
+  option is required.
+- A policy transition is rejected before writes when controller safety metadata, structural type, vPC peer consistency, port-channel or
+  vPC membership, or parent-child interface dependencies make the change unsafe.
+- Current and final physical members of port-channel and vPC interfaces are protected from independent Ethernet resets, transitions,
+  creates, and non-whitelisted updates, including when operational membership data is stale.
+- Ethernet and port-channel parents cannot be mutated in the same workflow as a child-subinterface mutation and cannot be changed while
+  an existing child subinterface remains. Managed and unmanaged subinterface writes require an existing routed parent configured in a
+  prior workflow; V(routedHost) for Ethernet or V(l3PortChannel) for a port-channel.
+- For V(deleted), the selected type supplies the input and execution contract, but explicit identity lookup is policy-independent within
+  that structural interface domain. A physical Ethernet delete resets the interface to the unconfigured default instead of removing the
+  physical interface.
+- An unconfigured default V(trunkHost) physical interface retains the ordinary bulk-create path and is never converted into a
+  per-interface transition, preserving the workflow's scale advantage.
+- Interface inventories and transition/delete safety data are shared for the complete workflow. They are not fetched once per resource
+  group or once per interface; pagination may require more than one GET for a switch or fabric-level safety inventory.
+- The authoritative vPC-pair map is shared with all vPC resource orchestrators, preventing repeated per-resource peer-lookup GETs.
 - The shared snapshot is execution-scoped and is never accepted from arbitrary caller input or persisted across Ansible tasks.
 - Normal-mode execution uses the same current interface model and orchestrator contracts as the standalone modules, so merged validation,
   normalization, and deployment behavior is inherited automatically.
-- Deletes run before updates and creates. Deferred logical removes, Ethernet normalize/reset operations, and deployments are consolidated
-  across compatible resource groups.
+- Deletes and deferred normalize/reset operations run before transitions, updates, and creates. Deployments are consolidated across
+  compatible resource groups.
+- The Ethernet V(routedHost) to V(accessHost) and V(accessHost) to V(trunkHost) cross-policy PUTs have been live-qualified during this
+  development effort. Destination orchestrators exist for port-channel, vPC, managed and unmanaged subinterface, SVI, loopback, and other
+  Ethernet transitions, but those source/destination combinations must be live-qualified against the intended Nexus Dashboard release
+  and fabric type before production use. Architectural support is not a claim of live qualification.
 - The executor stops after the first failed mutation phase, does not replay mixed-success requests, reports succeeded, failed, uncertain,
   skipped, and not-attempted items, and refreshes affected switches after any mutation request.
 """
@@ -175,12 +204,43 @@ EXAMPLES = r"""
                   ip: 192.0.2.1
                   prefix: 24
   check_mode: true
+
+- name: Converge a routed or dot1q-tunnel interface to the Ethernet access policy
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: FABRIC1
+    resources:
+      - type: ethernet_access
+        state: merged
+        config:
+          - switch_ip: 192.168.1.11
+            interface_names:
+              - Ethernet1/40
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 3900
+    config_actions:
+      deploy: false
+
+- name: Reset an explicitly named physical interface regardless of its current policy
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: FABRIC1
+    resources:
+      - type: ethernet_access
+        state: deleted
+        config:
+          - switch_ip: 192.168.1.11
+            interface_names:
+              - Ethernet1/40
+    config_actions:
+      deploy: false
 """
 
 RETURN = r"""
 changed:
   description:
-  - In check mode, whether the plan contains at least one create, update, or delete.
+  - In check mode, whether the plan contains at least one transition, create, update, or delete.
   - In normal mode, whether mutation responses or the reconciled actual state show a controller change.
   returned: always
   type: bool
@@ -205,7 +265,7 @@ config_actions:
   returned: always
   type: dict
 mutation_count:
-  description: Total number of planned creates, updates, and deletes across resource groups.
+  description: Total number of planned transitions, creates, updates, and deletes across resource groups.
   returned: always
   type: int
 target_switch_ids:
@@ -232,13 +292,36 @@ resources:
     state:
       description: State planned for this group.
       type: str
+    transitions:
+      description: One-request implicit policy transitions planned for this group.
+      type: list
+      elements: dict
+      contains:
+        action:
+          description: Always V(transition).
+          type: str
+        switch_ip:
+          description: Management IP of the target switch.
+          type: str
+        switch_id:
+          description: Controller serial identity of the target switch.
+          type: str
+        interface_name:
+          description: Interface name.
+          type: str
+        from_policy_type:
+          description: Current controller policy discriminator.
+          type: str
+        to_policy_type:
+          description: Destination controller policy discriminator.
+          type: str
     changed:
       description:
       - Whether C(before) and the reported C(after) differ.
       - In check mode this is prospective; in normal mode it is actual when reconciliation succeeds.
       type: bool
     planned_changed:
-      description: Whether this group had a planned create, update, or delete.
+      description: Whether this group had a planned transition, create, update, or delete.
       type: bool
     before:
       description: Existing selected family configuration before execution.
@@ -268,7 +351,9 @@ resources:
       type: list
       elements: dict
     deleted:
-      description: Models planned for deletion.
+      description:
+      - Models planned for deletion.
+      - Physical Ethernet entries represent reset-to-default operations; deletable logical entries represent removals.
       type: list
       elements: dict
 before:
@@ -287,7 +372,8 @@ diff:
   type: list
   elements: dict
 request_stats:
-  description: Shared inventory, vPC context, mutation, deployment, cache, refresh, and overlay counters for this execution.
+  description: Shared configured-interface inventory, lazy transition/delete safety inventory, vPC context, mutation, deployment, cache,
+    refresh, and overlay counters for this execution.
   returned: always
   type: dict
   contains:
@@ -308,6 +394,18 @@ request_stats:
       type: int
     interface_inventory_dirty_refetches:
       description: Automatic refetches caused by dirty snapshot state.
+      type: int
+    interface_summary_switches:
+      description: Number of switches fetched into the lazy transition/delete safety summary cache.
+      type: int
+    interface_summary_gets:
+      description: Interface-summary safety GET requests, including pagination.
+      type: int
+    interface_summary_pages:
+      description: Interface-summary safety pages fetched.
+      type: int
+    interface_summary_cache_hits:
+      description: Safety lookups served from the shared interface-summary cache.
       type: int
     snapshot_overlays:
       description: Atomic known-success overlays applied to the snapshot.
@@ -340,7 +438,8 @@ execution:
       type: list
       elements: str
     items:
-      description: Per-planned-mutation execution status, identity, and controller message when available.
+      description: Per-planned-mutation execution status, identity, transition source and destination policy types when applicable, and
+        controller message when available.
       type: list
       elements: dict
     deployment:

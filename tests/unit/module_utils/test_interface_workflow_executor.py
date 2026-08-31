@@ -11,6 +11,12 @@ from types import SimpleNamespace
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor import (
     InterfaceWorkflowExecutor,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planner import (
+    InterfacePolicyTransition,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_interface_base import (
+    VpcInterfaceBaseOrchestrator,
+)
 
 
 class FakeModel:
@@ -81,6 +87,7 @@ class FakeOrchestrator:
         fail_preflight=False,
         fail_create=False,
         fail_deploy=False,
+        fail_transition=False,
     ):
         self.name = name
         self.events = events
@@ -93,6 +100,7 @@ class FakeOrchestrator:
         self.deploy = True
         self._deploys = []
         self._removes = []
+        self.fail_transition = fail_transition
 
     @property
     def pending_deploys(self):
@@ -138,12 +146,16 @@ class FakeOrchestrator:
         self.rest_send.record("/interfaceActions/remove")
         self._removes = []
 
-    def update(self, model):
+    def update(self, model, existing_data=None):
         target = (
             model.interface_name,
             self.fabric_context.get_switch_id(model.switch_ip),
         )
-        self.events.append(("update", self.name, model.interface_name))
+        action = "transition" if existing_data is not None else "update"
+        self.events.append((action, self.name, model.interface_name))
+        if action == "transition" and self.fail_transition:
+            self.rest_send.record(f"/interfaces/{model.interface_name}", success=False, changed=False, method="PUT")
+            raise RuntimeError("policy transition rejected")
         self.rest_send.record(f"/interfaces/{model.interface_name}", method="PUT")
         self.queue_deploy_targets([target])
 
@@ -219,7 +231,7 @@ class FakeSnapshot:
         self.events.append(("refresh", tuple(switch_ids)))
 
 
-def resource(index, orchestrator, *, deletes=(), updates=(), creates=(), actual=("after",)):
+def resource(index, orchestrator, *, deletes=(), transitions=(), updates=(), creates=(), actual=("after",)):
     """Build one InterfaceResourcePlan-shaped value."""
     before = FakeCollection(["before"])
     return SimpleNamespace(
@@ -228,9 +240,23 @@ def resource(index, orchestrator, *, deletes=(), updates=(), creates=(), actual=
         state="merged",
         proposed=FakeCollection(["proposed"]),
         before=before,
+        transitions=tuple(transitions),
         operations=SimpleNamespace(deletes=tuple(deletes), updates=tuple(updates), creates=tuple(creates)),
         orchestrator=orchestrator,
         adapter=FakeAdapter(FakeCollection(actual)),
+    )
+
+
+def policy_transition(name="Ethernet1/1"):
+    """Build one explicit routed-to-access transition."""
+    return InterfacePolicyTransition(
+        desired=FakeModel(name),
+        current={"configData": {"networkOS": {"policy": {"policyType": "routedHost"}}}},
+        switch_ip="192.0.2.1",
+        switch_id="SERIAL1",
+        interface_name=name,
+        from_policy_type="routedHost",
+        to_policy_type="accessHost",
     )
 
 
@@ -303,6 +329,96 @@ def test_executor_defaults_to_staging_changes_without_deployment():
     assert "deploy" not in [event[0] for event in events]
 
 
+def test_transition_put_precedes_ordinary_updates_and_creates_then_deploys_once():
+    events = []
+    orchestrator = FakeOrchestrator("only", events)
+    workflow_plan = plan(
+        resource(
+            0,
+            orchestrator,
+            transitions=[policy_transition("Ethernet1/1")],
+            updates=[FakeModel("Ethernet1/2")],
+            creates=[FakeModel("Ethernet1/3")],
+        )
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    phase_names = [event[0] for event in events]
+    assert result.failed is False
+    assert result.status == "completed"
+    assert result.mutation_requests == 3
+    assert result.deploy_requests == 1
+    assert phase_names.index("transition") < phase_names.index("update") < phase_names.index("create") < phase_names.index("deploy")
+    transition_item = next(item for item in result.items if item.action == "transition")
+    assert transition_item.status == "succeeded"
+    assert transition_item.to_dict() == {
+        "resource_index": 0,
+        "type": "loopback",
+        "action": "transition",
+        "switch_ip": "192.0.2.1",
+        "switch_id": "SERIAL1",
+        "interface_name": "Ethernet1/1",
+        "status": "succeeded",
+        "from_policy_type": "routedHost",
+        "to_policy_type": "accessHost",
+    }
+    deploy_event = next(event for event in events if event[0] == "deploy")
+    assert set(deploy_event[2]) == {
+        ("Ethernet1/1", "SERIAL1"),
+        ("Ethernet1/2", "SERIAL1"),
+        ("Ethernet1/3", "SERIAL1"),
+    }
+
+
+def test_transition_with_deploy_false_stages_one_put_without_physical_deployment():
+    events = []
+    orchestrator = FakeOrchestrator("only", events)
+    workflow_plan = plan(resource(0, orchestrator, transitions=[policy_transition()]))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=False).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.status == "staged"
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 0
+    assert result.deployment["requested"] is False
+    assert result.deployment["status"] == "disabled"
+    assert [event[0] for event in events].count("transition") == 1
+    assert "deploy" not in [event[0] for event in events]
+
+
+def test_transition_failure_stops_updates_creates_and_deployment():
+    events = []
+    orchestrator = FakeOrchestrator("only", events, fail_transition=True)
+    workflow_plan = plan(
+        resource(
+            0,
+            orchestrator,
+            transitions=[policy_transition("Ethernet1/1")],
+            updates=[FakeModel("Ethernet1/2")],
+            creates=[FakeModel("Ethernet1/3")],
+            actual=("before",),
+        )
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    status_by_action = {item.action: item.status for item in result.items}
+    assert result.failed is True
+    assert result.status == "failed"
+    assert result.changed is False
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 0
+    assert status_by_action == {
+        "transition": "failed",
+        "update": "not_attempted",
+        "create": "not_attempted",
+    }
+    assert result.deployment["status"] == "not_attempted"
+    assert not any(event[0] in {"update", "create", "deploy"} for event in events)
+
+
 def test_preflight_failure_sends_no_writes_and_leaves_every_item_not_attempted():
     events = []
     orchestrator = FakeOrchestrator("only", events, fail_preflight=True)
@@ -372,3 +488,66 @@ def test_deploy_false_stages_changes_without_sending_deploy_request():
     assert result.deploy_requests == 0
     assert result.deployment["status"] == "disabled"
     assert "deploy" not in [event[0] for event in events]
+
+
+class CacheAwareFakeVpcOrchestrator(FakeOrchestrator):
+    """Exercise the production vPC peer resolver through each executor write phase."""
+
+    fabric_name = "FABRIC1"
+
+    def __init__(self, name, events):
+        super().__init__(name, events)
+        self._peer_serial_cache = {}
+
+    def _request(self, *, path, verb, not_found_ok=False):
+        del verb, not_found_ok
+        self.rest_send.record(path, changed=False, method="GET")
+        return {"peerSwitchId": "UNSEEDED_PEER"}
+
+    def _resolve_model_peer(self, model):
+        switch_id = self.fabric_context.get_switch_id(model.switch_ip)
+        return VpcInterfaceBaseOrchestrator._resolve_peer_switch_id(self, model.switch_ip, switch_id)
+
+    def update(self, model, existing_data=None):
+        self._resolve_model_peer(model)
+        return super().update(model, existing_data=existing_data)
+
+    def create_bulk(self, models):
+        for model in models:
+            self._resolve_model_peer(model)
+        return super().create_bulk(models)
+
+
+def test_seeded_shared_vpc_cache_avoids_pair_gets_during_transition_update_and_create():
+    events = []
+    access = CacheAwareFakeVpcOrchestrator("access", events)
+    trunk = CacheAwareFakeVpcOrchestrator("trunk", events)
+    shared_cache = {
+        "SERIAL1": "SERIAL2",
+        "SERIAL2": "SERIAL1",
+    }
+    VpcInterfaceBaseOrchestrator.share_peer_serial_cache(access, shared_cache)
+    VpcInterfaceBaseOrchestrator.share_peer_serial_cache(trunk, shared_cache)
+    workflow_plan = plan(
+        resource(
+            0,
+            access,
+            transitions=[policy_transition("vpc10")],
+            updates=[FakeModel("vpc11")],
+        ),
+        resource(
+            1,
+            trunk,
+            creates=[FakeModel("vpc20", "192.0.2.2")],
+        ),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    responses = [*access.rest_send.responses, *trunk.rest_send.responses]
+    assert result.failed is False
+    assert result.mutation_requests == 3
+    assert access._peer_serial_cache is shared_cache
+    assert trunk._peer_serial_cache is shared_cache
+    assert all(response["METHOD"] != "GET" for response in responses)
+    assert all("/vpcPair" not in response["REQUEST_PATH"] for response in responses)

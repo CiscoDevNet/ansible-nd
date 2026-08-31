@@ -9,14 +9,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
+from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_coordinator import (
     InterfaceWorkflowCoordinator,
     InterfaceWorkflowExecutionFailed,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planner import (
+    InterfaceWorkflowPlanner,
     InterfaceWorkflowValidationError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
 
 class FakeCollection:
@@ -42,6 +45,20 @@ class FakeModel:
         return self.value
 
 
+class FakeTransition:
+    """Small transition serializer that keeps raw desired/current state internal."""
+
+    def to_dict(self):
+        return {
+            "action": "transition",
+            "switch_ip": "192.0.2.1",
+            "switch_id": "SERIAL1",
+            "interface_name": "Ethernet1/1",
+            "from_policy_type": "routedHost",
+            "to_policy_type": "accessHost",
+        }
+
+
 class FakeModule:
     """Module shape needed by the coordinator."""
 
@@ -55,7 +72,7 @@ class FakeModule:
         }
 
 
-def resource(index, *, changed=True):
+def resource(index, *, changed=True, transition=False):
     """Return one InterfaceResourcePlan-shaped object."""
     before_config = [{"interface_name": f"Ethernet1/{index + 1}", "value": "old"}]
     after_config = [{"interface_name": f"Ethernet1/{index + 1}", "value": "new"}] if changed else before_config
@@ -63,7 +80,7 @@ def resource(index, *, changed=True):
     after = FakeCollection(after_config)
     operations = SimpleNamespace(
         after=after,
-        creates=((FakeModel({"interface_name": f"Ethernet1/{index + 1}"}),) if changed else ()),
+        creates=(() if transition or not changed else (FakeModel({"interface_name": f"Ethernet1/{index + 1}"}),)),
         updates=(),
         deletes=(),
     )
@@ -73,15 +90,16 @@ def resource(index, *, changed=True):
         adapter=SimpleNamespace(module_name="cisco.nd.nd_interface_ethernet_access"),
         state="merged",
         changed=changed,
+        transitions=((FakeTransition(),) if transition else ()),
         before=before,
         proposed=FakeCollection(after_config),
         operations=operations,
     )
 
 
-def plan(*, changed=True):
+def plan(*, changed=True, transition=False):
     """Return one InterfaceWorkflowPlan-shaped object with repeated family types."""
-    resources = (resource(0, changed=changed), resource(1, changed=False))
+    resources = (resource(0, changed=changed, transition=transition), resource(1, changed=False))
     return SimpleNamespace(
         changed=changed,
         fabric_name="FABRIC1",
@@ -154,6 +172,26 @@ def test_check_mode_result_retains_repeated_groups_and_reports_planned_change():
     assert result["request_stats"]["interface_inventory_gets"] == 2
     assert result["request_stats"]["mutation_requests"] == 0
     assert result["request_stats"]["deploy_requests"] == 0
+
+
+def test_check_mode_result_exposes_transition_metadata_without_raw_state():
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+
+    result = coordinator._format_result(plan(transition=True))
+
+    resource_result = result["resources"][0]
+    assert "allow_policy_transition" not in resource_result
+    assert resource_result["created"] == []
+    assert resource_result["transitions"] == [
+        {
+            "action": "transition",
+            "switch_ip": "192.0.2.1",
+            "switch_id": "SERIAL1",
+            "interface_name": "Ethernet1/1",
+            "from_policy_type": "routedHost",
+            "to_policy_type": "accessHost",
+        }
+    ]
 
 
 def test_info_output_includes_normalized_proposed_config():
@@ -249,7 +287,12 @@ def test_normal_execution_failure_preserves_structured_result(monkeypatch):
 class FakeFabricContext:
     fabric_name = "FABRIC1"
 
-    switch_ip_by_id = {"SERIAL1": "192.0.2.1", "SERIAL2": "192.0.2.2"}
+    switch_ip_by_id = {
+        "SERIAL1": "192.0.2.1",
+        "SERIAL2": "192.0.2.2",
+        "SERIAL3": "192.0.2.3",
+        "SERIAL4": "192.0.2.4",
+    }
 
     def get_switch_ip(self, switch_id):
         try:
@@ -270,6 +313,127 @@ def test_vpc_pair_map_is_authoritative_and_bidirectional(monkeypatch):
     pair_map = coordinator._vpc_pair_map(resources=resources, fabric_context=FakeFabricContext(), rest_send=object())
     assert pair_map == {"192.0.2.1": "SERIAL2", "192.0.2.2": "SERIAL1"}
     assert coordinator._vpc_pair_gets == 1
+
+
+def test_vpc_pair_map_accepts_consistent_duplicate_and_inverse_records(monkeypatch):
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    monkeypatch.setattr(
+        coordinator,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "vpcPairs": [
+                {"switchId": "SERIAL1", "peerSwitchId": "SERIAL2"},
+                {"switchId": "SERIAL1", "peerSwitchId": "SERIAL2"},
+                {"switchId": "SERIAL2", "peerSwitchId": "SERIAL1"},
+            ]
+        },
+    )
+
+    pair_map = coordinator._vpc_pair_map(
+        resources=[{"type": "vpc_access", "config": []}], fabric_context=FakeFabricContext(), rest_send=object()
+    )
+    assert pair_map == {"192.0.2.1": "SERIAL2", "192.0.2.2": "SERIAL1"}
+
+
+def test_vpc_pair_map_paginates_intended_pairs_and_counts_actual_gets(monkeypatch):
+    responses = iter(
+        [
+            {
+                "vpcPairs": [{"switchId": "SERIAL1", "peerSwitchId": "SERIAL2"}],
+                "meta": {"counts": {"remaining": 1, "total": 2}},
+            },
+            {
+                "vpcPairs": [{"switchId": "SERIAL3", "peerSwitchId": "SERIAL4"}],
+                "meta": {"counts": {"remaining": 0, "total": 2}},
+            },
+        ]
+    )
+    requested_paths = []
+
+    def request(*_args, **kwargs):
+        requested_paths.append(kwargs["path"])
+        return next(responses)
+
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    monkeypatch.setattr(coordinator, "_request", request)
+
+    pair_map = coordinator._vpc_pair_map(
+        resources=[{"type": "vpc_access", "config": [{"switch_ip": "192.0.2.1"}]}],
+        fabric_context=FakeFabricContext(),
+        rest_send=object(),
+    )
+
+    assert pair_map == {
+        "192.0.2.1": "SERIAL2",
+        "192.0.2.2": "SERIAL1",
+        "192.0.2.3": "SERIAL4",
+        "192.0.2.4": "SERIAL3",
+    }
+    assert len(requested_paths) == 2
+    assert all("view=intendedPairs" in path for path in requested_paths)
+    assert all("max=500" in path for path in requested_paths)
+    assert all("sort=switchId%3Aasc" in path for path in requested_paths)
+    assert "offset=0" in requested_paths[0]
+    assert "offset=1" in requested_paths[1]
+    assert coordinator._vpc_pair_gets == 2
+
+
+def test_vpc_pair_map_rejects_self_pair(monkeypatch):
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    monkeypatch.setattr(
+        coordinator,
+        "_request",
+        lambda *_args, **_kwargs: {"vpcPairs": [{"switchId": "SERIAL1", "peerSwitchId": "SERIAL1"}]},
+    )
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=r"self-pair.*SERIAL1"):
+        coordinator._vpc_pair_map(
+            resources=[{"type": "vpc_access", "config": []}],
+            fabric_context=FakeFabricContext(),
+            rest_send=object(),
+        )
+
+
+def test_vpc_pair_map_rejects_conflicting_duplicate_mapping(monkeypatch):
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    monkeypatch.setattr(
+        coordinator,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "vpcPairs": [
+                {"switchId": "SERIAL1", "peerSwitchId": "SERIAL2"},
+                {"switchId": "SERIAL1", "peerSwitchId": "SERIAL3"},
+            ]
+        },
+    )
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=r"conflicting.*SERIAL1.*SERIAL2.*SERIAL3"):
+        coordinator._vpc_pair_map(
+            resources=[{"type": "vpc_access", "config": []}],
+            fabric_context=FakeFabricContext(),
+            rest_send=object(),
+        )
+
+
+def test_vpc_pair_map_rejects_inverse_inconsistent_records(monkeypatch):
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    monkeypatch.setattr(
+        coordinator,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "vpcPairs": [
+                {"switchId": "SERIAL1", "peerSwitchId": "SERIAL2"},
+                {"switchId": "SERIAL2", "peerSwitchId": "SERIAL3"},
+            ]
+        },
+    )
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=r"inverse-inconsistent.*SERIAL2.*SERIAL3.*SERIAL1"):
+        coordinator._vpc_pair_map(
+            resources=[{"type": "vpc_access", "config": []}],
+            fabric_context=FakeFabricContext(),
+            rest_send=object(),
+        )
 
 
 def test_vpc_group_rejects_switch_missing_from_authoritative_pair_inventory(
@@ -304,3 +468,69 @@ def test_non_vpc_workflow_skips_pair_inventory(monkeypatch):
     )
     assert pair_map == {}
     assert coordinator._vpc_pair_gets == 0
+
+
+def test_vpc_pair_inventory_count_remains_visible_in_request_stats():
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    coordinator._snapshot = SimpleNamespace(request_stats={"switches": 2, "interface_inventory_gets": 2})
+    coordinator._vpc_pair_gets = 1
+
+    result = coordinator._format_result(plan())
+
+    assert result["request_stats"]["vpc_pair_gets"] == 1
+
+
+def test_authoritative_pair_inventory_seeds_one_cache_shared_by_all_vpc_orchestrators():
+    rest_send = RestSend({"fabric_name": "FABRIC1", "check_mode": True})
+    fabric_context = FabricContext(rest_send=rest_send, fabric_name="FABRIC1")
+    fabric_context._fabric_summary = {"local": True, "fabricStatus": "default"}
+    fabric_context._switch_map = {"192.0.2.1": "SERIAL1", "192.0.2.2": "SERIAL2"}
+    fabric_context._switch_map_by_id = {"SERIAL1": "192.0.2.1", "SERIAL2": "192.0.2.2"}
+    requests = []
+    snapshot = InterfaceStateSnapshot(
+        fabric_name="FABRIC1",
+        fabric_context=fabric_context,
+        request=lambda **kwargs: requests.append(kwargs) or {"interfaces": []},
+    )
+    planner = InterfaceWorkflowPlanner(
+        snapshot=snapshot,
+        vpc_pair_by_switch_ip={
+            "192.0.2.1": "SERIAL2",
+            "192.0.2.2": "SERIAL1",
+        },
+    )
+
+    workflow_plan = planner.plan(
+        [
+            {
+                "type": "vpc_access",
+                "config": [
+                    {
+                        "switch_ip": "192.0.2.1",
+                        "interface_name": "vpc10",
+                        "config_data": {"network_os": {"policy": {"access_vlan": 10}}},
+                    }
+                ],
+            },
+            {
+                "type": "vpc_trunk_host",
+                "config": [
+                    {
+                        "switch_ip": "192.0.2.2",
+                        "interface_name": "vpc20",
+                        "config_data": {"network_os": {"policy": {"allowed_vlans": "10-20"}}},
+                    }
+                ],
+            },
+        ]
+    )
+
+    access_orchestrator, trunk_orchestrator = (resource.orchestrator for resource in workflow_plan.resources)
+    assert access_orchestrator._peer_serial_cache is trunk_orchestrator._peer_serial_cache
+    assert access_orchestrator._peer_serial_cache == {
+        "SERIAL1": "SERIAL2",
+        "SERIAL2": "SERIAL1",
+    }
+    assert access_orchestrator._resolve_peer_switch_id("192.0.2.1", "SERIAL1") == "SERIAL2"
+    assert trunk_orchestrator._resolve_peer_switch_id("192.0.2.2", "SERIAL2") == "SERIAL1"
+    assert len(requests) == 2
