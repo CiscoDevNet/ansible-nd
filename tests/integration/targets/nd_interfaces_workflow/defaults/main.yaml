@@ -1,0 +1,39 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# A role invocation is read-only unless the caller explicitly selects live.
+nd_iw_execution_mode: check
+nd_iw_enable_live_mutation: false
+nd_iw_profile: smoke
+
+# The default scope requires an explicit, enabled mapping for every supported
+# fabric type.  Override this list to run a deliberately smaller qualification.
+nd_iw_selected_fabric_types:
+  - vxlanEbgp
+  - vxlanIbgp
+  - externalConnectivity
+nd_iw_selected_families: []
+
+# Fabric-wide deletion through state: overridden is independently guarded even
+# when nd_iw_profile is destructive.
+nd_iw_enable_destructive: false
+nd_iw_enable_deploy: false
+
+nd_iw_output_level: normal
+nd_iw_logging_config: ""
+nd_iw_verify_fabric_type: true
+nd_iw_cleanup_strict: true
+
+# These task lists each run once per fabric.  Family-specific full-profile
+# branches are dispatched separately by tasks/run_family.yaml.
+nd_iw_common_scenarios:
+  - batched_lifecycle
+  - output_levels
+  - deploy_controls
+  - shared_snapshot
+  - mixed_workflow
+  - repeated_types
+  - policy_transitions
+  - conflicts_validation
+  - unsupported_combinations

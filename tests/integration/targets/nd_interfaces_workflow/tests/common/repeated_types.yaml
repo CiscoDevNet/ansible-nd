@@ -1,0 +1,48 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Select a family with a distinct secondary identity
+  ansible.builtin.set_fact:
+    nd_iw_repeated_case_candidates: "{{ nd_iw_active_cases | selectattr('secondary', 'defined') | list }}"
+
+- name: Plan two groups of the same interface type
+  vars:
+    nd_iw_repeated_case: "{{ nd_iw_repeated_case_candidates | first }}"
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: "{{ nd_iw_repeated_case.family }}"
+        state: merged
+        config: "{{ nd_iw_repeated_case.create_config }}"
+      - type: "{{ nd_iw_repeated_case.family }}"
+        state: merged
+        config: "{{ nd_iw_repeated_case.secondary }}"
+    config_actions:
+      deploy: true
+    output_level: info
+  check_mode: true
+  register: nd_iw_repeated_result
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  when: nd_iw_repeated_case_candidates | length > 0
+
+- name: Verify repeated types retain distinct resource indices
+  ansible.builtin.assert:
+    that:
+      - nd_iw_repeated_result.resources | length == 2
+      - nd_iw_repeated_result.resources | map(attribute='resource_index') | list == [0, 1]
+      - nd_iw_repeated_result.resources | map(attribute='type') | unique | list | length == 1
+      - nd_iw_repeated_result.resources[0].proposed != nd_iw_repeated_result.resources[1].proposed
+      - nd_iw_repeated_result.execution.status == 'check_mode'
+      - nd_iw_repeated_result.execution.mutations_sent == 0
+      - nd_iw_repeated_result.execution.deployments_sent == 0
+      - nd_iw_repeated_result.request_stats.mutation_requests == 0
+      - nd_iw_repeated_result.request_stats.deploy_requests == 0
+  when: nd_iw_repeated_case_candidates | length > 0
+
+- name: Require a secondary fixture for repeated-type coverage
+  ansible.builtin.assert:
+    that:
+      - nd_iw_repeated_case_candidates | length > 0
+    fail_msg: The property matrix must define at least one distinct secondary config.

@@ -1,0 +1,98 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Preview {{ nd_iw_current_case.family }} variant {{ nd_iw_mutex_variant.name }}
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: "{{ nd_iw_current_case.family }}"
+        state: merged
+        config: "{{ nd_iw_mutex_variant.config }}"
+    config_actions:
+      deploy: true
+    output_level: debug
+  check_mode: true
+  register: nd_iw_mutex_preview
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  ignore_errors: true
+
+- name: Verify valid {{ nd_iw_mutex_variant.name }} preview has no side effects
+  ansible.builtin.assert:
+    that:
+      - not (nd_iw_mutex_preview.failed | default(false) | bool)
+      - nd_iw_mutex_preview.execution.status == 'check_mode'
+      - nd_iw_mutex_preview.execution.mutations_sent == 0
+      - nd_iw_mutex_preview.execution.deployments_sent == 0
+      - nd_iw_mutex_preview.request_stats.mutation_requests == 0
+      - nd_iw_mutex_preview.request_stats.deploy_requests == 0
+  when: nd_iw_mutex_variant.valid | bool
+
+- name: Verify every valid {{ nd_iw_mutex_variant.name }} property value survived normalization
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_config_item.yaml"
+  vars:
+    nd_iw_expected_config_item: "{{ item }}"
+    nd_iw_assert_resource_result: "{{ nd_iw_mutex_preview.resources[0] }}"
+    nd_iw_assert_observed_items: "{{ nd_iw_mutex_preview.resources[0].proposed }}"
+  loop: "{{ nd_iw_mutex_variant.config }}"
+  loop_control:
+    label: >-
+      {{ item.interface_name | default(item.interface_names | default(["unknown"]) | first) }}
+  when:
+    - nd_iw_mutex_variant.valid | bool
+    - not (nd_iw_mutex_preview.failed | default(false) | bool)
+
+- name: Verify invalid {{ nd_iw_mutex_variant.name }} branch is rejected
+  ansible.builtin.assert:
+    that:
+      - nd_iw_mutex_preview.failed | default(false) | bool
+      - not (nd_iw_mutex_preview.changed | default(false) | bool)
+      - nd_iw_mutex_preview.msg is search(nd_iw_mutex_variant.expected_error)
+  when: not (nd_iw_mutex_variant.valid | bool)
+
+- name: Apply valid {{ nd_iw_mutex_variant.name }} branch on its reserved identity
+  when:
+    - nd_iw_mutex_variant.valid | bool
+    - not nd_iw_module_check_mode
+  block:
+    - name: Apply {{ nd_iw_current_case.family }} variant {{ nd_iw_mutex_variant.name }}
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_current_case.family }}"
+            state: merged
+            config: "{{ nd_iw_mutex_variant.config }}"
+        config_actions:
+          deploy: false
+        output_level: info
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_mutex_apply
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+    - name: Verify {{ nd_iw_mutex_variant.name }} reached reconciled controller state
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_case_result.yaml"
+      vars:
+        nd_iw_assert_case: "{{ nd_iw_current_case }}"
+        nd_iw_assert_expected_config: "{{ nd_iw_mutex_variant.config }}"
+        nd_iw_assert_resource_result: "{{ nd_iw_mutex_apply.resources[0] }}"
+        nd_iw_assert_state: merged
+
+  always:
+    - name: Remove only {{ nd_iw_current_case.family }} reserved variant identities
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_current_case.family }}"
+            state: deleted
+            config: >-
+              {{
+                nd_iw_current_case.delete_all
+                | default(nd_iw_current_case.delete_config | default(nd_iw_current_case.delete))
+              }}
+        config_actions:
+          deploy: false
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_mutex_cleanup
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"

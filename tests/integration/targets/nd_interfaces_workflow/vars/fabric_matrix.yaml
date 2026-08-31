@@ -1,0 +1,79 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Switch values intentionally default to empty strings. Preflight discovers them
+# from the named fabric or requires explicit nd_iw_*_switch_* overrides; the test
+# suite never falls back to a plausible-looking management address.
+nd_iw_fabric_matrix:
+  vxlanEbgp:
+    fabric_type: vxlanEbgp
+    inventory_host: "{{ nd_iw_vxlan_ebgp_inventory_host | default('nac-fabric-ebgp-vxlan', true) }}"
+    fabric_name: >-
+      {{ nd_iw_vxlan_ebgp_fabric_name |
+         default(nd_iw_vxlan_ebgp_inventory_host | default('nac-fabric-ebgp-vxlan', true), true) }}
+    enabled: "{{ nd_iw_enable_vxlan_ebgp | default(true) | bool }}"
+    switches:
+      primary: "{{ nd_iw_vxlan_ebgp_switch_primary | default('', true) }}"
+      secondary: "{{ nd_iw_vxlan_ebgp_switch_secondary | default('', true) }}"
+      vpc_peer1: "{{ nd_iw_vxlan_ebgp_vpc_peer1 | default('', true) }}"
+      vpc_peer2: "{{ nd_iw_vxlan_ebgp_vpc_peer2 | default('', true) }}"
+    reserved_set: default
+    capability_mode: declared
+    candidate_families: &all_interface_families
+      - ethernet_access
+      - ethernet_trunk_host
+      - loopback
+      - port_channel_access
+      - port_channel_trunk_host
+      - subinterface_managed
+      - subinterface_unmanaged
+      - svi
+      - vpc_access
+      - vpc_trunk_host
+    vpc_families: &vpc_interface_families
+      - vpc_access
+      - vpc_trunk_host
+    unsupported_families: []
+    unsupported_expected_error: {}
+
+  vxlanIbgp:
+    fabric_type: vxlanIbgp
+    inventory_host: "{{ nd_iw_vxlan_ibgp_inventory_host | default('nac-fabric-ibgp-vxlan', true) }}"
+    fabric_name: >-
+      {{ nd_iw_vxlan_ibgp_fabric_name |
+         default(nd_iw_vxlan_ibgp_inventory_host | default('nac-fabric-ibgp-vxlan', true), true) }}
+    enabled: "{{ nd_iw_enable_vxlan_ibgp | default(true) | bool }}"
+    switches:
+      primary: "{{ nd_iw_vxlan_ibgp_switch_primary | default('', true) }}"
+      secondary: "{{ nd_iw_vxlan_ibgp_switch_secondary | default('', true) }}"
+      vpc_peer1: "{{ nd_iw_vxlan_ibgp_vpc_peer1 | default('', true) }}"
+      vpc_peer2: "{{ nd_iw_vxlan_ibgp_vpc_peer2 | default('', true) }}"
+    reserved_set: default
+    capability_mode: declared
+    candidate_families: *all_interface_families
+    vpc_families: *vpc_interface_families
+    unsupported_families: []
+    unsupported_expected_error: {}
+
+  externalConnectivity:
+    fabric_type: externalConnectivity
+    inventory_host: "{{ nd_iw_external_inventory_host | default('nac-msd-external', true) }}"
+    fabric_name: >-
+      {{ nd_iw_external_fabric_name |
+         default(nd_iw_external_inventory_host | default('nac-msd-external', true), true) }}
+    enabled: "{{ nd_iw_enable_external | default(true) | bool }}"
+    switches:
+      primary: "{{ nd_iw_external_switch_primary | default('', true) }}"
+      secondary: "{{ nd_iw_external_switch_secondary | default('', true) }}"
+      vpc_peer1: "{{ nd_iw_external_vpc_peer1 | default('', true) }}"
+      vpc_peer2: "{{ nd_iw_external_vpc_peer2 | default('', true) }}"
+    reserved_set: default
+    capability_mode: declared
+    candidate_families: *all_interface_families
+    vpc_families: *vpc_interface_families
+    # External-fabric support varies with controller release, switch role, and
+    # actual vPC-pair inventory. Declare verified exceptions in unsupported_families;
+    # the target does not infer capabilities from a failed mutation.
+    unsupported_families: []
+    unsupported_expected_error: {}

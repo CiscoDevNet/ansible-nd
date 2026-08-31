@@ -1,0 +1,30 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Require the batched preview before checking shared snapshot statistics
+  ansible.builtin.assert:
+    that:
+      - nd_iw_batch_create_preview is defined
+      - nd_iw_batch_create_preview.request_stats is mapping
+      - nd_iw_batch_create_preview.resources | length == nd_iw_active_cases | length
+
+- name: Verify one paginated inventory sequence is shared across all resource groups
+  vars:
+    nd_iw_snapshot_stats: "{{ nd_iw_batch_create_preview.request_stats }}"
+  ansible.builtin.assert:
+    that:
+      - nd_iw_snapshot_stats.switches == nd_iw_batch_create_preview.target_switch_ids | unique | list | length
+      - nd_iw_snapshot_stats.interface_inventory_pages == nd_iw_snapshot_stats.interface_inventory_gets
+      - nd_iw_snapshot_stats.interface_inventory_gets >= nd_iw_snapshot_stats.switches
+      - nd_iw_snapshot_stats.interface_inventory_cache_hits >= nd_iw_active_cases | length
+      - nd_iw_snapshot_stats.interface_inventory_cache_hits > 0
+      - nd_iw_snapshot_stats.interface_inventory_refreshes == 0
+      - nd_iw_snapshot_stats.interface_inventory_dirty_refetches == 0
+      - nd_iw_snapshot_stats.snapshot_overlays == 0
+      - nd_iw_snapshot_stats.mutation_requests == 0
+      - nd_iw_snapshot_stats.deploy_requests == 0
+    fail_msg: >-
+      The batched plan did not demonstrate snapshot reuse. Pagination may increase GET/page counts,
+      but each family must hit the execution-scoped cache instead of starting its own inventory fetch.
