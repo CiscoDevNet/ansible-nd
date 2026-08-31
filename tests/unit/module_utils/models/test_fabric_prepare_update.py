@@ -159,7 +159,8 @@ def test_fabric_prepare_update_00040() -> None:
     """
     # Summary
 
-    Verify an empty response yields a model with `update_groups` unset (None).
+    Verify an empty response yields a model with `update_groups` defaulted to an empty list, so a
+    response missing the key parses the same as an explicitly empty plan.
 
     ## Classes and Methods
 
@@ -167,15 +168,16 @@ def test_fabric_prepare_update_00040() -> None:
     """
     summary = SoftwareUpdatePlanSummaryModel.from_response({})
 
-    assert summary.update_groups is None
+    assert summary.update_groups == []
 
 
 def test_fabric_prepare_update_00050() -> None:
     """
     # Summary
 
-    Verify a sparse update group (only `updateGroupName`) parses with missing optional fields as
-    None, and that unknown wire keys are ignored rather than raising.
+    Verify a sparse update group (only `updateGroupName`) parses with missing scalar fields as
+    None and missing list fields as empty lists, and that unknown wire keys are ignored rather
+    than raising.
 
     ## Classes and Methods
 
@@ -188,6 +190,6 @@ def test_fabric_prepare_update_00050() -> None:
     assert group.update_group_name == "sparse_group"
     assert group.update_group_status is None
     assert group.stage_validate_percentage is None
-    assert group.update_group_switches is None
-    assert group.warnings is None
+    assert group.update_group_switches == []
+    assert group.warnings == []
     assert not hasattr(group, "some_future_key")

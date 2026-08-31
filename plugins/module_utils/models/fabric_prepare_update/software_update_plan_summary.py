@@ -66,6 +66,10 @@ class UpdateGroupStatusModel(NDNestedModel):
     A single update group's status within the software update plan summary, including its member
     switches and any advisory warnings ND raises for the group.
 
+    The `warnings` and `update_group_switches` lists default to empty: a key absent from the
+    response body parses the same as an explicitly empty list, since every consumer treats the two
+    identically.
+
     ## Raises
 
     None
@@ -76,8 +80,8 @@ class UpdateGroupStatusModel(NDNestedModel):
     update_type: str | None = Field(default=None, alias="updateType")
     stage_validate_percentage: int | None = Field(default=None, alias="stageValidatePercentage")
     switch_count: int | None = Field(default=None, alias="switchCount")
-    warnings: list[UpdateGroupWarningModel] | None = Field(default=None, alias="warnings")
-    update_group_switches: list[SwitchStageStatusModel] | None = Field(default=None, alias="updateGroupSwitches")
+    warnings: list[UpdateGroupWarningModel] = Field(default_factory=list, alias="warnings")
+    update_group_switches: list[SwitchStageStatusModel] = Field(default_factory=list, alias="updateGroupSwitches")
 
 
 class SoftwareUpdatePlanSummaryModel(NDNestedModel):
@@ -86,10 +90,12 @@ class SoftwareUpdatePlanSummaryModel(NDNestedModel):
 
     Top-level parse of the `softwareUpdatePlan/summary` response. Only the `updateGroups` list is
     modeled; the `softwareUpdateSummary` and `tableHeaders` blocks are ignored (`extra="ignore"`).
+    `update_groups` defaults to empty, so a response missing the key parses the same as an
+    explicitly empty plan.
 
     ## Raises
 
     None
     """
 
-    update_groups: list[UpdateGroupStatusModel] | None = Field(default=None, alias="updateGroups")
+    update_groups: list[UpdateGroupStatusModel] = Field(default_factory=list, alias="updateGroups")

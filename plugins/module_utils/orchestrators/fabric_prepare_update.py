@@ -232,7 +232,7 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
 
         - If one or more requested update groups are not present in the software update plan.
         """
-        groups_by_name = {g.update_group_name: g for g in (summary.update_groups or [])}
+        groups_by_name = {g.update_group_name: g for g in summary.update_groups}
         resolved: list[UpdateGroupStatusModel] = []
         missing: list[str] = []
         for name in update_group_names:
@@ -269,7 +269,7 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
         if summary is None:
             summary = self.get_summary()
         for group in self._resolve_groups(summary, update_group_names):
-            roles = sorted({s.switch_role for s in (group.update_group_switches or []) if s.switch_role})
+            roles = sorted({s.switch_role for s in group.update_group_switches if s.switch_role})
             if len(roles) > 1:
                 raise RuntimeError(
                     f"Update group '{group.update_group_name}' contains a mix of switch roles ({', '.join(roles)}); "
@@ -289,7 +289,7 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
 
         None
         """
-        switches = sorted(group.update_group_switches or [], key=lambda s: (s.switch_name or s.switch_id or ""))
+        switches = sorted(group.update_group_switches, key=lambda s: (s.switch_name or s.switch_id or ""))
         return {
             "update_group_name": group.update_group_name,
             "update_group_status": group.update_group_status,
@@ -427,7 +427,7 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
             try:
                 summary = self.get_summary(update_group_name=scope)
                 groups = self._resolve_groups(summary, update_group_names)
-                switches = [sw for group in groups for sw in (group.update_group_switches or [])]
+                switches = [sw for group in groups for sw in group.update_group_switches]
             except Exception as e:  # pylint: disable=broad-except
                 # A long poll will occasionally hit a transient transport error, or briefly return a
                 # body that does not resolve the requested groups; retry rather than aborting the

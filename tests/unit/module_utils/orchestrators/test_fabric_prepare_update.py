@@ -505,7 +505,7 @@ def test_fabric_prepare_update_00500() -> None:
     # The final summary is returned so the caller can reuse it for the `after` snapshot
     # instead of issuing another GET.
     assert isinstance(result, SoftwareUpdatePlanSummaryModel)
-    assert [g.update_group_name for g in (result.update_groups or [])] == ["prep_leaf"]
+    assert [g.update_group_name for g in result.update_groups] == ["prep_leaf"]
 
 
 def test_fabric_prepare_update_00510() -> None:
