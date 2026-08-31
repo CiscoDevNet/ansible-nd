@@ -43,6 +43,8 @@ except ImportError:
 
 from typing import Optional
 
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+
 # pylint: disable=unnecessary-ellipsis
 
 
@@ -136,6 +138,34 @@ class ResponseValidationStrategy(Protocol):
         ## Returns
 
         - True if code matches not_found_code, False otherwise
+
+        ## Raises
+
+        None
+        """
+        ...
+
+    def is_terminal_client_error(self, return_code: int, verb: HttpVerbEnum) -> bool:
+        """
+        # Summary
+
+        Check whether `return_code` is a 4xx client error that is terminal (not retryable) for `verb`.
+
+        ## Description
+
+        A 4xx response proves the request reached the application and was rejected, so an identical replay is deterministic and retrying wastes the
+        retry budget. Implementations decide which 4xx codes are nevertheless transient (and how that depends on the verb) for their API version —
+        e.g. rate limiting, or conflict codes the API documents on safe reads. Non-4xx codes must return False: this method classifies only client
+        errors, leaving success and 5xx policy to the caller.
+
+        ## Parameters
+
+        - return_code: HTTP status code to check
+        - verb: The HTTP verb of the request the response answers
+
+        ## Returns
+
+        - True if the code is a 4xx client error that is terminal for `verb`, False otherwise
 
         ## Raises
 

@@ -18,6 +18,7 @@ to `NdV1Strategy` (ND 4.2+):
 - Success: 200, 201, 202, 204, 207
 - Not Found: 404 (treated as success for GET)
 - Error: 405, 409
+- Terminal 4xx (not retryable): every 4xx except the transient codes 408/421/425/429 (all verbs) and 409 (GET only)
 
 If ND API v2 uses different codes, inject a new strategy via the
 `validation_strategy` property rather than modifying this class.
@@ -170,25 +171,6 @@ class ResponseHandler:
         else:
             self._handle_post_put_delete_response()
 
-    def _is_terminal_client_error(self, return_code) -> bool:
-        """
-        # Summary
-
-        Return True when `return_code` is a 4xx client error other than 429 (Too Many Requests).
-
-        ## Description
-
-        A 4xx response proves the request reached the application and was rejected: replaying the identical request
-        cannot succeed, so the failure is terminal for every verb. 429 is the one transient 4xx (rate limiting) and
-        stays retryable. No retryable 4xx is documented for any ND 4.2.1 endpoint (the dcnm-era retry-on-400 cases
-        do not carry over). See issue #457.
-
-        ## Raises
-
-        None
-        """
-        return isinstance(return_code, int) and 400 <= return_code <= 499 and return_code != 429
-
     def _handle_get_response(self) -> None:
         """
         # Summary
@@ -203,13 +185,17 @@ class ResponseHandler:
                     -   True if RETURN_CODE in (200, 201, 202, 204, 207, 404)
                     -   False otherwise (error status codes)
             -   retryable:
-                    -   False when the request succeeded, or when it failed with a 4xx code other than 429 (the
-                        request reached the application and was rejected; an identical replay cannot succeed)
-                    -   True when it failed with any other code (e.g. 5xx — potentially transient, and GET retries
-                        also serve eventual-consistency polling)
+                    -   False when the request succeeded, or when it failed with a 4xx code the injected strategy
+                        classifies as terminal for GET (the request reached the application and was rejected; an
+                        identical replay cannot succeed)
+                    -   True when it failed with any other code: 5xx (potentially transient, and GET retries also
+                        serve eventual-consistency polling) or a transient 4xx per the strategy (`NdV1Strategy`:
+                        408/421/425/429 for every verb, plus 409 for GET — documented on safe GETs where the
+                        conflict can clear on its own)
         """
         result = {}
-        return_code = self.response.get("RETURN_CODE")
+        # The response setter guarantees RETURN_CODE is present; the default only narrows the type for mypy.
+        return_code = self.response.get("RETURN_CODE", -1)
 
         # 404 Not Found - resource doesn't exist, but request was successful
         if self._strategy.is_not_found(return_code):
@@ -225,7 +211,7 @@ class ResponseHandler:
         else:
             result["found"] = False
             result["success"] = False
-            result["retryable"] = not self._is_terminal_client_error(return_code)
+            result["retryable"] = not self._strategy.is_terminal_client_error(return_code, self.verb)
 
         self.result = copy.copy(result)
 
@@ -246,10 +232,11 @@ class ResponseHandler:
             -   `retryable`:
                 -   False when the request succeeded, or when it failed with a success-class RETURN_CODE (the application
                     definitively rejected the request, e.g. a Multi-Status per-item failure — replaying the identical
-                    payload cannot succeed, so `RestSend` must not retry), or when it failed with a 4xx code other than
-                    429 (the request reached the application and was rejected; same reasoning — see issue #457)
-                -   True when the request failed with any other non-success RETURN_CODE (e.g. 5xx — potentially
-                    transient) or with 429 (rate limiting)
+                    payload cannot succeed, so `RestSend` must not retry), or when it failed with a 4xx code the injected
+                    strategy classifies as terminal for the verb (the request reached the application and was rejected;
+                    same reasoning — see issue #457)
+                -   True when the request failed with any other non-success RETURN_CODE: 5xx (potentially transient) or
+                    a transient 4xx per the strategy (`NdV1Strategy`: 408/421/425/429)
 
         ## Raises
 
@@ -266,13 +253,14 @@ class ResponseHandler:
             result["retryable"] = False
         else:
             # A failure on a success-class RETURN_CODE is an application-level rejection
-            # (embedded error or per-item failure): deterministic, so not retryable. A 4xx
-            # other than 429 is equally deterministic — the application rejected the request
-            # (issue #457). Any other non-success RETURN_CODE keeps the historical retry behavior.
+            # (embedded error or per-item failure): deterministic, so not retryable. A 4xx the
+            # strategy classifies as terminal for the verb is equally deterministic — the
+            # application rejected the request (issue #457). Any other non-success RETURN_CODE
+            # keeps the historical retry behavior.
             return_code = self.response.get("RETURN_CODE", -1)
             result["success"] = False
             result["changed"] = self._strategy.is_changed_on_failure(self.response)
-            result["retryable"] = return_code not in self._strategy.success_codes and not self._is_terminal_client_error(return_code)
+            result["retryable"] = return_code not in self._strategy.success_codes and not self._strategy.is_terminal_client_error(return_code, self.verb)
 
         self.result = copy.copy(result)
 
