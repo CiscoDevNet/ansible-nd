@@ -12,8 +12,16 @@ they parse the wire shape and are never serialized back to ND.
 
 from __future__ import annotations
 
+from typing import Literal, TypeAlias
+
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+
+# Known per-switch stage / validate statuses on ND 4.2.1. The `str` fallback in `ImageStatus` lets
+# an unrecognized status from a newer ND release parse rather than raising during a poll; type
+# checkers collapse the union to `str`, so the Literal is documentation of the known vocabulary.
+KnownImageStatus: TypeAlias = Literal["none", "inProgress", "success", "failed", "skipped"]
+ImageStatus: TypeAlias = KnownImageStatus | str
 
 
 class UpdateGroupWarningModel(NDNestedModel):
@@ -39,9 +47,10 @@ class SwitchStageStatusModel(NDNestedModel):
     Per-switch stage / validate status within an update group, as reported by the
     `softwareUpdatePlan/summary` endpoint.
 
-    `image_staged_status` and `image_validated_status` are kept as free-form strings (not a
-    `Literal`) so an unrecognized status from a newer ND release parses rather than raising during
-    a poll. Known values: `none`, `inProgress`, `success`, `failed`, `skipped`.
+    `image_staged_status` and `image_validated_status` are typed `ImageStatus`
+    (`KnownImageStatus | str`): the `Literal` half documents the known vocabulary while the `str`
+    fallback lets an unrecognized status from a newer ND release parse rather than raising during
+    a poll.
 
     ## Raises
 
@@ -54,8 +63,8 @@ class SwitchStageStatusModel(NDNestedModel):
     switch_management_ip: str | None = Field(default=None, alias="switchManagementIP")
     switch_version: str | None = Field(default=None, alias="switchVersion")
     selected_version: str | None = Field(default=None, alias="selectedVersion")
-    image_staged_status: str | None = Field(default=None, alias="imageStagedStatus")
-    image_validated_status: str | None = Field(default=None, alias="imageValidatedStatus")
+    image_staged_status: ImageStatus | None = Field(default=None, alias="imageStagedStatus")
+    image_validated_status: ImageStatus | None = Field(default=None, alias="imageValidatedStatus")
     switch_stage_validate_percentage: int | None = Field(default=None, alias="switchStageValidatePercentage")
 
 
@@ -69,6 +78,11 @@ class UpdateGroupStatusModel(NDNestedModel):
     The `warnings` and `update_group_switches` lists default to empty: a key absent from the
     response body parses the same as an explicitly empty list, since every consumer treats the two
     identically.
+
+    `update_group_status` is kept as a free-form string (not a `Literal`) for the same reason as
+    the per-switch statuses in `SwitchStageStatusModel`: an unrecognized status from a newer ND
+    release must parse rather than raise during a poll. Its vocabulary is not lab-confirmed, so no
+    known-values alias is provided.
 
     ## Raises
 
