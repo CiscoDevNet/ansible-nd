@@ -25,6 +25,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
     model_validator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import PlatformType
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
@@ -32,7 +33,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
 )
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import (
-    PlatformType,
     SnmpV3AuthProtocol,
     SwitchRole,
 )
@@ -65,7 +65,16 @@ class ConfigDataModel(NDNestedModel):
     @field_validator("models", mode="before")
     @classmethod
     def validate_models_list(cls, v: Any) -> list[str]:
-        """Validate models is a non-empty list of strings."""
+        """
+        # Summary
+
+        Validate that POAP/pre-provision config data includes a non-empty
+        module model list.
+
+        ## Raises
+
+        - `ValueError`: Raised when ``models`` is missing, not a list, or empty.
+        """
         if v is None:
             raise ValueError("'models' is required in config_data. Provide a list of module model strings, e.g. models: [N9K-X9364v, N9K-vSUP]")
         if not isinstance(v, list):
@@ -77,7 +86,16 @@ class ConfigDataModel(NDNestedModel):
     @field_validator("gateway", mode="before")
     @classmethod
     def validate_gateway(cls, v: str) -> str:
-        """Validate gateway is a valid CIDR."""
+        """
+        # Summary
+
+        Validate the config-data gateway as a non-empty CIDR value.
+
+        ## Raises
+
+        - `ValueError`: Raised when the gateway is empty or cannot be parsed as
+            CIDR.
+        """
         if not v or not v.strip():
             raise ValueError("gateway cannot be empty")
         return validate_cidr(v)
@@ -294,17 +312,17 @@ class SwitchConfigModel(NDBaseModel):
     )
     role: SwitchRole | None = Field(
         default=None,
-        description="Role to assign to the switch. None means not specified (uses controller default).",
+        description="Role to assign to the switch. Omit to use the controller default.",
     )
-    preserve_config: bool = Field(
-        default=False,
+    preserve_config: bool | None = Field(
+        default=None,
         alias="preserveConfig",
-        description="Set to false for greenfield, true for brownfield deployment",
+        description="Set to false for greenfield, true for brownfield deployment. Omit to derive from fabric type.",
     )
-    platform_type: PlatformType = Field(
-        default=PlatformType.NX_OS,
+    platform_type: PlatformType | None = Field(
+        default=None,
         alias="platformType",
-        description="Platform type of the switch (nx-os, ios-xe, etc.)",
+        description="Platform type of the switch (nx-os, ios-xe, etc.). Omit to use nx-os for add operations.",
     )
 
     # POAP, Pre-provision and RMA configurations
@@ -330,13 +348,14 @@ class SwitchConfigModel(NDBaseModel):
     ) -> Literal["normal", "poap", "preprovision", "swap", "rma"]:
         """Determine the operation type from this config.
 
-        Returns:
+        ## Returns
+
             ``'swap'`` if both poap and preprovision are present,
             ``'poap'`` if only bootstrap poap is present,
             ``'preprovision'`` if only preprovision is present,
             ``'rma'`` if RMA configs are present,
             ``'normal'`` otherwise.
-        """
+        -"""
         if self.poap and self.preprovision:
             return "swap"
         if self.poap:
@@ -350,8 +369,9 @@ class SwitchConfigModel(NDBaseModel):
     def to_config_dict(self) -> dict[str, Any]:
         """Return the playbook config as a dict with all credentials stripped.
 
-        Returns:
-            Dict of config fields with ``username``, ``password``,
+        ## Returns
+
+        - Dict of config fields with ``username``, ``password``,
             ``discovery_username``, and ``discovery_password`` excluded.
         """
         return self.to_config(
@@ -369,11 +389,20 @@ class SwitchConfigModel(NDBaseModel):
 
     @model_validator(mode="after")
     def reject_auth_proto_for_special_ops(self) -> "SwitchConfigModel":
-        """Reject non-MD5 auth_proto when POAP, Pre-provision, Swap or RMA is configured.
+        """
+        # Summary
+
+        Reject non-MD5 ``auth_proto`` when POAP, Pre-provision, Swap, or RMA is
+        configured.
 
         These operations always use MD5 internally. By validating mode='after',
         all inputs have already been coerced by Pydantic into a typed
         SnmpV3AuthProtocol value, so a direct enum comparison is safe.
+
+        ## Raises
+
+        - `ValueError`: Raised when a special operation provides an authentication
+            protocol other than MD5.
         """
         if (self.poap or self.preprovision or self.rma) and self.auth_proto != SnmpV3AuthProtocol.MD5:
             if self.poap or self.preprovision:
@@ -389,7 +418,10 @@ class SwitchConfigModel(NDBaseModel):
 
     @model_validator(mode="after")
     def validate_special_ops_exclusion(self) -> "SwitchConfigModel":
-        """Validate mutually exclusive operation combinations.
+        """
+        # Summary
+
+        Validate mutually exclusive operation combinations.
 
         Allowed:
           - poap only (Bootstrap)
@@ -398,6 +430,11 @@ class SwitchConfigModel(NDBaseModel):
           - rma (RMA)
         Not allowed:
           - rma combined with poap or preprovision
+
+        ## Raises
+
+        - `ValueError`: Raised when RMA is combined with POAP or pre-provision data
+            for the same switch.
         """
         if self.rma and (self.poap or self.preprovision):
             raise ValueError("Cannot specify 'rma' together with 'poap' or 'preprovision' for the same switch")
@@ -405,7 +442,16 @@ class SwitchConfigModel(NDBaseModel):
 
     @model_validator(mode="after")
     def validate_special_ops_credentials(self) -> "SwitchConfigModel":
-        """Validate credentials for POAP, Pre-provision, Swap and RMA operations."""
+        """
+        # Summary
+
+        Validate credentials for POAP, Pre-provision, Swap, and RMA operations.
+
+        ## Raises
+
+        - `ValueError`: Raised when special operations are missing username/password
+            or use a username other than ``admin``.
+        """
         if self.poap or self.preprovision or self.rma:
             if not self.username or not self.password:
                 raise ValueError("For POAP, Pre-provision, and RMA operations, username and password are required")
@@ -415,14 +461,23 @@ class SwitchConfigModel(NDBaseModel):
 
     @model_validator(mode="after")
     def apply_state_defaults(self, info: ValidationInfo) -> "SwitchConfigModel":
-        """Apply state-aware defaults and enforcement using validation context.
+        """
+        # Summary
+
+        Apply state-aware defaults and enforcement using validation context.
 
         When ``context={"state": "merged"}`` (or ``"overridden"``) is passed
         to ``model_validate()``, the model:
-        - Defaults ``role`` to ``SwitchRole.LEAF`` when not specified.
+        - Preserves omitted ``role`` so the controller can apply its default.
+        - Rejects explicit ``role=None``; omit the field instead.
         - Enforces that ``username`` and ``password`` are provided.
 
         For ``query`` / ``deleted`` (or no context), fields remain as-is.
+
+        ## Raises
+
+        - `ValueError`: Raised when RMA is used outside merged state, ``role`` is
+            explicitly set to null, or write states omit required credentials.
         """
         state = (info.context or {}).get("state") if info else None
 
@@ -430,9 +485,10 @@ class SwitchConfigModel(NDBaseModel):
         if self.rma and state not in (None, "merged"):
             raise ValueError(f"RMA operations require 'merged' state, " f"got '{state}' (switch: {self.seed_ip})")
 
+        if "role" in self.model_fields_set and self.role is None:
+            raise ValueError(f"role cannot be null; omit role to use the controller default (switch: {self.seed_ip})")
+
         if state in ("merged", "overridden", "replaced"):
-            if self.role is None:
-                self.role = SwitchRole.LEAF
             if not self.username or not self.password:
                 raise ValueError(f"username and password are required " f"for '{state}' state " f"(switch: {self.seed_ip})")
         return self
@@ -440,12 +496,20 @@ class SwitchConfigModel(NDBaseModel):
     @field_validator("seed_ip", mode="before")
     @classmethod
     def validate_seed_ip(cls, v: str) -> str:
-        """Resolve seed_ip to an IP address.
+        """
+        # Summary
+
+        Resolve ``seed_ip`` to an IP address.
 
         Accepts IPv4, IPv6, or a DNS name / hostname.  When the input
         is not a valid IP address a DNS lookup is performed and the
         resolved IPv4 address is returned so that downstream code
         always works with a clean IP.
+
+        ## Raises
+
+        - `ValueError`: Raised when ``seed_ip`` is empty, not an IP address, and
+            cannot be resolved through DNS.
         """
         if not v or not v.strip():
             raise ValueError("seed_ip cannot be empty")
@@ -473,7 +537,15 @@ class SwitchConfigModel(NDBaseModel):
     @field_validator("rma", mode="before")
     @classmethod
     def validate_rma_list_not_empty(cls, v: list | None) -> list | None:
-        """Validate that if RMA list is provided, it is not empty."""
+        """
+        # Summary
+
+        Validate that if an RMA list is provided, it is not empty.
+
+        ## Raises
+
+        - `ValueError`: Raised when ``rma`` is provided as an empty list.
+        """
         if v is not None and len(v) == 0:
             raise ValueError("RMA list cannot be empty if provided")
         return v
@@ -481,23 +553,79 @@ class SwitchConfigModel(NDBaseModel):
     @field_validator("auth_proto", mode="before")
     @classmethod
     def normalize_auth_proto(cls, v: str | SnmpV3AuthProtocol | None) -> SnmpV3AuthProtocol:
-        """Normalize auth_proto to handle case-insensitive input (MD5, md5, etc.)."""
+        """
+        # Summary
+
+        Normalize ``auth_proto`` to handle case-insensitive input.
+
+        ## Raises
+
+        - `ValueError`: Raised when the supplied authentication protocol is not
+            supported.
+        """
         return SnmpV3AuthProtocol.normalize(v)
 
     @field_validator("role", mode="before")
     @classmethod
     def normalize_role(cls, v: str | SwitchRole | None) -> SwitchRole | None:
-        """Normalize role for case-insensitive and underscore-to-camelCase matching.
-        Returns None when not specified (distinguishes from explicit 'leaf')."""
+        """
+        # Summary
+
+        Normalize ``role`` for case-insensitive and underscore-to-camelCase
+        matching. Returns ``None`` for an omitted value; explicit null is
+        rejected by the model validator.
+
+        ## Raises
+
+        - `ValueError`: Raised when the supplied role is not supported.
+        """
         if v is None:
             return None
         return SwitchRole.normalize(v)
 
     @field_validator("platform_type", mode="before")
     @classmethod
-    def normalize_platform_type(cls, v: str | PlatformType | None) -> PlatformType:
-        """Normalize platform_type for case-insensitive matching (NX_OS, nx-os, etc.)."""
-        return PlatformType.normalize(v)
+    def normalize_platform_type(cls, v: str | PlatformType | None) -> PlatformType | None:
+        """
+        # Summary
+
+        Normalize switch config ``platform_type`` values for case-insensitive
+        matching and reject platform families that are not supported for switch
+        add operations.
+
+        ## Raises
+
+        - `ValueError`: Raised when ``platform_type`` is invalid, or when it is a
+            valid read-side platform value that this module does not support
+            for switch add payloads, such as ``sonic`` or ``apic``.
+        """
+        platform_type = cls._normalize_config_platform_type(v)
+        if platform_type in (PlatformType.SONIC, PlatformType.APIC):
+            raise ValueError(f"platform_type '{platform_type.value}' is not supported. " "Supported platform_type values: nx-os, ios-xe, ios-xr, other.")
+        return platform_type
+
+    @staticmethod
+    def _normalize_config_platform_type(value: str | PlatformType | None) -> PlatformType | None:
+        """
+        # Summary
+
+        Normalize user-facing ``platform_type`` input for switch config models.
+
+        ## Raises
+
+        - `ValueError`: Raised when the supplied value is not a known
+            ``PlatformType``.
+        """
+        if value is None:
+            return None
+        if isinstance(value, PlatformType):
+            return value
+        if isinstance(value, str):
+            normalized = value.lower().replace("_", "-")
+            for platform_type in PlatformType:
+                if platform_type.value == normalized:
+                    return platform_type
+        raise ValueError(f"Invalid platform_type: {value}. Valid options: {PlatformType.choices()}")
 
     def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
@@ -508,20 +636,26 @@ class SwitchConfigModel(NDBaseModel):
 
     @classmethod
     def from_switch_data(cls, sw: Any) -> "SwitchConfigModel":
-        """Build a config-shaped entry from a live inventory record.
+        """
+        # Summary
+
+        Build a config-shaped entry from a live inventory record.
 
         Only the fields recoverable from the ND inventory API are populated.
         Credentials (username, password) are intentionally omitted.
 
-        Args:
-            sw: A SwitchDataModel instance from the fabric inventory.
+        ## Parameters
 
-        Returns:
-            SwitchConfigModel instance with seed_ip, role, and platform_type
+        - `sw`: A SwitchDataModel instance from the fabric inventory.
+
+        ## Returns
+
+        - SwitchConfigModel instance with seed_ip, role, and platform_type
             populated from live data.
 
-        Raises:
-            ValueError: If the inventory record is missing a management IP,
+        ## Raises
+
+        - `ValueError`: If the inventory record is missing a management IP,
                 making it impossible to construct a valid config entry.
         """
         if not sw.fabric_management_ip:
@@ -540,17 +674,19 @@ class SwitchConfigModel(NDBaseModel):
     def to_gathered_dict(self) -> dict[str, Any]:
         """Return a config dict suitable for gathered output.
 
-        platform_type is excluded (internal detail not needed by the user).
+        platform_type is included when present so gathered non-NX switches can be
+        replayed without changing their platform identity.
         username and password are replaced with placeholders so the returned
         data is immediately usable as ``config:`` input after substituting
         real credentials.
 
-        Returns:
-            Dict with seed_ip, role, auth_proto, preserve_config,
+        ## Returns
+
+        - Dict with seed_ip, role, auth_proto, platform_type,
             username set to ``"<username>"``, password set to ``"<password>"``.
         """
         result = self.to_config()
-        for key in ("platform_type", "poap", "preprovision", "rma", "operation_type"):
+        for key in ("poap", "preprovision", "rma", "operation_type"):
             result.pop(key, None)
         result["username"] = "<username>"
         result["password"] = "<password>"
@@ -595,11 +731,23 @@ class SwitchConfigModel(NDBaseModel):
                             "MD5_AES",
                             "SHA_DES",
                             "SHA_AES",
+                            "SHA_AES_256",
+                            "SHA_224",
+                            "SHA_224_AES",
+                            "SHA_224_AES_256",
+                            "SHA_256",
+                            "SHA_256_AES",
+                            "SHA_256_AES_256",
+                            "SHA_384",
+                            "SHA_384_AES",
+                            "SHA_384_AES_256",
+                            "SHA_512",
+                            "SHA_512_AES",
+                            "SHA_512_AES_256",
                         ],
                     ),
                     role=dict(
                         type="str",
-                        default="leaf",
                         choices=[
                             "leaf",
                             "spine",
@@ -617,7 +765,16 @@ class SwitchConfigModel(NDBaseModel):
                             "tor",
                         ],
                     ),
-                    preserve_config=dict(type="bool", default=False),
+                    preserve_config=dict(type="bool"),
+                    platform_type=dict(
+                        type="str",
+                        choices=[
+                            "nx-os",
+                            "ios-xe",
+                            "ios-xr",
+                            "other",
+                        ],
+                    ),
                     poap=dict(
                         type="dict",
                         options=dict(

@@ -17,6 +17,8 @@ applied consistently across model files (e.g. all `description` fields share the
   UTF-8 input. Catching this client-side gives users a clear error instead of a confusing server fault.
 - `IPv4CIDR` — `str | None` validated as an IPv4 interface address in CIDR notation (e.g. `10.1.1.1/32`).
 - `IPv6CIDR` — `str | None` validated as an IPv6 interface address in CIDR notation (e.g. `2001:db8::1/128`).
+- `IPv4Host` — `str | None` that accepts bare (`10.1.1.1`) or CIDR (`10.1.1.1/32`) input and normalizes to the bare
+  host address. Use where ND rejects CIDR notation on the wire (e.g. the loopback `ip` field).
 """
 
 from __future__ import annotations
@@ -115,6 +117,33 @@ IPv4CIDR = Annotated[Optional[str], BeforeValidator(validate_ipv4_cidr)]
 
 IPv6CIDR = Annotated[Optional[str], BeforeValidator(validate_ipv6_cidr)]
 """IPv6 interface address in CIDR notation (`str | None`). Layer with `Field(...)` for alias/description as usual."""
+
+
+def validate_ipv4_host(value: str | None) -> str | None:
+    """
+    # Summary
+
+    Normalize an IPv4 interface address to its bare host form (strip any prefix). Accepts bare (`10.1.1.1`) or CIDR
+    (`10.1.1.1/32`) and returns the bare address, because ND's loopback `ip` field rejects CIDR notation.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `value` is not a valid IPv4 address or interface.
+    """
+    if value is None:
+        return value
+    try:
+        return str(ipaddress.IPv4Interface(value).ip)
+    except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError) as err:
+        raise ValueError(f"'{value}' is not a valid IPv4 address") from err
+
+
+# See AsciiDescription comment above for why Optional[str] is used at runtime instead of `str | None`.
+IPv4Host = Annotated[Optional[str], BeforeValidator(validate_ipv4_host)]
+"""IPv4 host address (`str | None`). Accepts bare or CIDR input; normalizes to the bare host form (no prefix).
+Layer with `Field(...)` for alias/description as usual."""
 
 # Fabric name rules (verified against ND 4.2.x GUI):
 #   - Allowed chars: a-z, A-Z, 0-9, _, -

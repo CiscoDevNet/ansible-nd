@@ -58,8 +58,6 @@
 {% endif %}
 {% if switch.preserve_config is defined %}
 {% set _ = switch_item.update({'preserve_config': switch.preserve_config | default('') }) %}
-{% else %}
-{% set _ = switch_item.update({'preserve_config': false }) %}
 {% endif %}
 {% endif %}
 {% set _ = switch_list.append(switch_item) %}

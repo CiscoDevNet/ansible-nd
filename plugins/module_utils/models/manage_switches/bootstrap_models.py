@@ -121,7 +121,16 @@ class BootstrapCredentialModel(NDBaseModel):
 
     @model_validator(mode="after")
     def validate_credentials(self) -> "BootstrapCredentialModel":
-        """Validate credential configuration logic."""
+        """
+        # Summary
+
+        Validate bootstrap credential configuration.
+
+        ## Raises
+
+        - `ValueError`: Raised when new local credentials are incomplete, or when
+            CyberArk credentials omit the required credential-store key.
+        """
         if self.use_new_credentials:
             if self.remote_credential_store == RemoteCredentialStore.CYBERARK:
                 if not self.remote_credential_store_key:

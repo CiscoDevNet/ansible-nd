@@ -87,7 +87,9 @@ options:
                 - For POAP and RMA, should be C(MD5).
                 type: str
                 default: MD5
-                choices: ['MD5', 'SHA', 'MD5_DES', 'MD5_AES', 'SHA_DES', 'SHA_AES']
+                choices: ['MD5', 'SHA', 'MD5_DES', 'MD5_AES', 'SHA_DES', 'SHA_AES', 'SHA_AES_256', 'SHA_224',
+                          'SHA_224_AES', 'SHA_224_AES_256', 'SHA_256', 'SHA_256_AES', 'SHA_256_AES_256',
+                          'SHA_384', 'SHA_384_AES', 'SHA_384_AES_256', 'SHA_512', 'SHA_512_AES', 'SHA_512_AES_256']
             username:
                 description:
                 - Login username for the switch.
@@ -100,8 +102,9 @@ options:
             role:
                 description:
                 - Role to assign to the switch in the fabric.
+                - When omitted, the controller applies its default role and role drift is not enforced.
+                - Supported values depend on the target fabric type. See C(notes).
                 type: str
-                default: leaf
                 choices:
                 - leaf
                 - spine
@@ -120,8 +123,22 @@ options:
             preserve_config:
                 description:
                 - Set to C(false) for greenfield deployment, C(true) for brownfield.
+                - When omitted, the module derives the value from the target fabric
+                  type after querying the fabric.
+                - Supported explicit values depend on the target fabric type. See
+                  C(notes).
                 type: bool
-                default: false
+            platform_type:
+                description:
+                - Platform type of the switch.
+                - When omitted for add operations, the module uses C(nx-os).
+                - Supported values depend on the target fabric type. See C(notes).
+                type: str
+                choices:
+                - nx-os
+                - ios-xe
+                - ios-xr
+                - other
             poap:
                 description:
                 - Bootstrap POAP config for the switch.
@@ -261,7 +278,32 @@ notes:
   is used as the stable identity for idempotency checks.
 - Idempotence for B(normal discovery) - A switch is considered idempotent when
   its C(seed_ip) already exists in the fabric inventory with no configuration
-  drift (same role).
+  drift. If C(role) is omitted, role drift is ignored and the controller
+  default applies on add.
+- The module validates switch platform, provided C(role), and C(preserve_config)
+  against the resolved fabric type for configurations that require discovery or
+  write operations. Existing idempotent switches are not rejected only because
+  onboarding-only options were omitted.
+- Supported fabric families are Data Center VXLAN iBGP/eBGP, Campus VXLAN, and
+  External and Inter-Fabric Connectivity.
+- Data Center VXLAN iBGP/eBGP supports NX-OS switches.
+- Campus VXLAN supports NX-OS and IOS-XE switches.
+- External and Inter-Fabric Connectivity supports NX-OS, IOS-XE, IOS-XR, and
+  other platform switches.
+- C(preserve_config) must be C(false) for Campus VXLAN and Data Center VXLAN
+  eBGP fabrics.
+- C(preserve_config) must be C(true) for External and Inter-Fabric Connectivity
+  fabrics.
+- C(preserve_config) can be C(true) or C(false) for Data Center VXLAN iBGP
+  fabrics.
+- When C(preserve_config) is omitted, the module derives C(false) for Campus
+  VXLAN and Data Center VXLAN eBGP fabrics. It derives C(true) for Data Center
+  VXLAN iBGP and External and Inter-Fabric Connectivity fabrics.
+- Campus VXLAN supports C(leaf) and C(spine) roles for IOS-XE switches.
+- Campus VXLAN supports C(border_gateway), C(border_gateway_spine), and
+  C(border_gateway_super_spine) roles for NX-OS switches.
+- Validation failures include the exact supported platform, provided C(role),
+  and C(preserve_config) values for the target fabric type.
 """
 
 EXAMPLES = """
