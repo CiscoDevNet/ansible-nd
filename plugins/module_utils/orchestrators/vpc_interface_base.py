@@ -17,9 +17,10 @@ inherit from this base and provide their own `model_class` and `_managed_policy_
 Inherits shared interface lifecycle operations (deploy queuing, fabric validation, switch resolution) from
 `NDBaseInterfaceOrchestrator` and adds vPC-specific functionality:
 
-- Peer-serial auto-resolution: each create/update reads the per-switch `vpcPair` endpoint to obtain the peer
-  serial, then injects it as `peerSwitchId` in the payload. Results are cached per orchestrator instance so
-  bulk operations make at most one lookup per primary switch.
+- Peer-serial auto-resolution: create/update injects the peer serial as `peerSwitchId` in the payload. Standalone
+  orchestrators resolve a cache miss through the per-switch `vpcPair` endpoint. The aggregate interface workflow
+  shares a cache seeded from its authoritative fabric-wide `vpcPairs` read, so its mutations need no per-primary
+  pair lookups.
 - Standard remove-based deletion (vPC interfaces are virtual and deletable).
 - Fabric-wide `query_all()` filtered by `interfaceType: "vpc"` and per-type policy filtering.
 
@@ -75,8 +76,9 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     Provides shared logic for all vPC interface types. Subclasses must set `model_class` and implement
     `_managed_policy_types()` to define which policy types they manage.
 
-    Each create/update reads the `vpcPair` record for the primary switch to obtain the peer serial, which is
-    then injected as `peerSwitchId` in the payload. Lookups are cached per orchestrator instance.
+    Each create/update obtains the peer serial from the active cache and injects it as `peerSwitchId` in the
+    payload. Standalone instances populate cache misses from `vpcPair`; aggregate workflows can share a cache
+    pre-seeded from an authoritative `vpcPairs` inventory.
 
     Mutation methods (`create`, `update`) queue deploys for bulk execution. `delete` issues an immediate
     per-interface `DELETE /interfaces/{name}` (the bulk `interfaceActions/remove` endpoint rejects vPC interfaces;
@@ -367,6 +369,10 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 f"'{self.fabric_name}': {'; '.join(conflicts)}. Remove each member from its current parent first."
             )
 
+    def share_peer_serial_cache(self, cache: dict[str, str]) -> None:
+        """Use a caller-owned peer-serial cache shared by aggregate workflow orchestrators."""
+        self._peer_serial_cache = cache
+
     def _managed_policy_types(self) -> set[str]:
         """
         # Summary
@@ -388,7 +394,8 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         Resolve one switch's declared peer serial from its authoritative
         ``vpcPair`` endpoint. Cache only that directed observation; a one-sided
-        record is not evidence for the reverse relation.
+        record is not evidence for the reverse relation. Aggregate-workflow
+        orchestrators may share the directed-observation cache.
 
         ## Raises
 
