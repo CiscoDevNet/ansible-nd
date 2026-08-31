@@ -425,3 +425,17 @@ def test_manage_vpc_pair_deploy_00180_get_managed_pair_switches_merges_deleted_f
     # excluded; DROP2GONE absent from inventory skipped; no spurious warning.
     assert result == ["DROP1AAA", "KEEP2AAA"]
     assert module.warnings == []
+
+
+def test_manage_vpc_pair_deploy_00190_resource_scope_warns_when_inventory_empty():
+    # Empty fabric inventory must not become a silent no-op: every configured
+    # peer is warned as unresolved and no switchActions/deploy is posted.
+    nrm = _make_resource_nrm(config=[{"switch_id": "FOX111AAA", "peer_switch_id": "FOX222AAA"}])
+    fake_nd = _FakeNDModuleV2(nrm.module, switches_response={"switches": []})
+
+    _run_deploy(nrm, fake_nd)
+
+    assert SWITCH_DEPLOY_PATH not in fake_nd.paths()
+    assert any("not found in fabric" in warning for warning in nrm.module.warnings)
+    warnings = " ".join(nrm.module.warnings)
+    assert "FOX111AAA" in warnings and "FOX222AAA" in warnings
