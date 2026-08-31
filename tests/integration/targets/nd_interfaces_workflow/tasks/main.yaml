@@ -1,0 +1,63 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Interface workflow | Run the target exactly once
+  run_once: true
+  block:
+    - name: Interface workflow | Load fabric mappings
+      ansible.builtin.include_vars:
+        file: "{{ role_path }}/vars/fabric_matrix.yaml"
+      tags: always
+
+    - name: Interface workflow | Load interface property matrix
+      ansible.builtin.include_vars:
+        file: "{{ role_path }}/vars/property_matrix.yaml"
+      tags: always
+
+    - name: Interface workflow | Load reserved resource identifiers
+      ansible.builtin.include_vars:
+        file: "{{ role_path }}/vars/reserved_resources.yaml"
+      tags: always
+
+    - name: Interface workflow | Validate and resolve the requested live-test scope
+      ansible.builtin.include_tasks:
+        file: preflight.yaml
+        apply:
+          tags: always
+      tags: always
+
+    - name: Interface workflow | Execute the guarded integration suite
+      block:
+        - name: Interface workflow | Remove test-owned resources before live execution
+          ansible.builtin.include_tasks: setup.yaml
+          when: not nd_iw_module_check_mode
+          tags:
+            - nd_iw_live
+            - nd_iw_cleanup
+
+        - name: Interface workflow | Run each enabled fabric qualification
+          ansible.builtin.include_tasks: run_fabric.yaml
+          loop: "{{ nd_iw_active_fabrics }}"
+          loop_control:
+            loop_var: nd_iw_current_fabric
+            label: "{{ nd_iw_current_fabric.discriminator }}:{{ nd_iw_current_fabric.fabric_name }}"
+          tags:
+            - nd_iw_smoke
+            - nd_iw_full
+            - nd_iw_destructive
+
+      always:
+        - name: Interface workflow | Remove all test-owned resources after live execution
+          ansible.builtin.include_tasks:
+            file: cleanup.yaml
+            apply:
+              tags:
+                - always
+                - nd_iw_cleanup
+          when: not nd_iw_module_check_mode
+          tags:
+            - always
+            - nd_iw_cleanup
+      environment:
+        ND_LOGGING_CONFIG: "{{ nd_iw_logging_config }}"

@@ -1,0 +1,42 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Profile selection lives in defaults/main.yaml so inventory can override it.
+nd_iw_profiles:
+  smoke:
+    run_mutex: false
+    run_invalid: false
+    run_optional: false
+  full:
+    run_mutex: true
+    run_invalid: true
+    run_optional: true
+  destructive:
+    run_mutex: true
+    run_invalid: true
+    run_optional: true
+
+nd_iw_supported_fabric_types:
+  - vxlanEbgp
+  - vxlanIbgp
+  - externalConnectivity
+
+# This catalog is used by preflight before the templated property matrix can be
+# rendered, and preserves deterministic dependency-safe family order.
+nd_iw_family_order:
+  - subinterface_managed
+  - subinterface_unmanaged
+  - svi
+  - loopback
+  - vpc_access
+  - vpc_trunk_host
+  - port_channel_access
+  - port_channel_trunk_host
+  - ethernet_access
+  - ethernet_trunk_host
+
+# The runner must set these aliases for the currently selected fabric before it
+# renders property or cleanup payloads.
+nd_iw_active_switches: "{{ nd_iw_runtime_switches | default({}) }}"
+nd_iw_active_resources: "{{ nd_iw_runtime_resources | default({}) }}"

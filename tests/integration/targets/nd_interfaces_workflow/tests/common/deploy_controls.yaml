@@ -1,0 +1,162 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Select a stable family for deployment-control coverage
+  vars:
+    nd_iw_ethernet_deploy_cases: "{{ nd_iw_active_cases | selectattr('family', 'equalto', 'ethernet_access') | list }}"
+  ansible.builtin.set_fact:
+    nd_iw_deploy_case: >-
+      {{ nd_iw_ethernet_deploy_cases | first if nd_iw_ethernet_deploy_cases | length > 0 else nd_iw_active_cases | first }}
+
+- name: Preview a change with deployment requested
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: "{{ nd_iw_deploy_case.family }}"
+        state: merged
+        config: "{{ nd_iw_deploy_case.create_config }}"
+    config_actions:
+      deploy: true
+    output_level: normal
+  check_mode: true
+  register: nd_iw_deploy_preview
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+- name: Verify check mode never mutates or deploys
+  ansible.builtin.assert:
+    that:
+      - nd_iw_deploy_preview.check_mode
+      - nd_iw_deploy_preview.execution.status == 'check_mode'
+      - nd_iw_deploy_preview.execution.deployment.requested
+      - nd_iw_deploy_preview.execution.deployment.status == 'not_needed'
+      - nd_iw_deploy_preview.execution.mutations_sent == 0
+      - nd_iw_deploy_preview.execution.deployments_sent == 0
+      - nd_iw_deploy_preview.request_stats.mutation_requests == 0
+      - nd_iw_deploy_preview.request_stats.deploy_requests == 0
+
+- name: Exercise live deployment controls on one reserved identity
+  when: not nd_iw_module_check_mode
+  block:
+    - name: Remove the reserved deployment-control identity
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_deploy_case.family }}"
+            state: deleted
+            config: >-
+              {{
+                nd_iw_deploy_case.delete_all
+                | default(nd_iw_deploy_case.delete_config | default(nd_iw_deploy_case.delete))
+              }}
+        config_actions:
+          deploy: false
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_deploy_precleanup
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+    - name: Stage a reserved interface without deployment
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_deploy_case.family }}"
+            state: merged
+            config: "{{ nd_iw_deploy_case.create_config }}"
+        config_actions:
+          deploy: false
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_deploy_disabled
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+    - name: Verify deploy false stages intent without a deployment request
+      ansible.builtin.assert:
+        that:
+          - nd_iw_deploy_disabled is changed
+          - nd_iw_deploy_disabled.execution.status == 'staged'
+          - not nd_iw_deploy_disabled.execution.deployment.requested
+          - nd_iw_deploy_disabled.execution.deployment.status in ['disabled', 'not_needed']
+          - nd_iw_deploy_disabled.execution.mutations_sent > 0
+          - nd_iw_deploy_disabled.execution.deployments_sent == 0
+          - nd_iw_deploy_disabled.request_stats.deploy_requests == 0
+
+    - name: Update and deploy the reserved interface once
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_deploy_case.family }}"
+            state: merged
+            config: "{{ nd_iw_deploy_case.update_config }}"
+        config_actions:
+          deploy: true
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_deploy_enabled
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: nd_iw_enable_deploy | bool
+
+    - name: Verify all successful mutations produce exactly one consolidated deployment
+      ansible.builtin.assert:
+        that:
+          - nd_iw_deploy_enabled is changed
+          - nd_iw_deploy_enabled.execution.status == 'completed'
+          - nd_iw_deploy_enabled.execution.deployment.requested
+          - nd_iw_deploy_enabled.execution.deployment.status == 'succeeded'
+          - nd_iw_deploy_enabled.execution.mutations_sent > 0
+          - nd_iw_deploy_enabled.execution.deployments_sent == 1
+          - nd_iw_deploy_enabled.request_stats.deploy_requests == 1
+      when: nd_iw_enable_deploy | bool
+
+    - name: Record that physical deployment cleanup is required
+      ansible.builtin.set_fact:
+        nd_iw_deployment_exercised: true
+      when:
+        - nd_iw_enable_deploy | bool
+        - nd_iw_deploy_enabled.execution.deployment.status == 'succeeded'
+
+    - name: Reapply deployed intent to prove no-change suppresses deployment
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_deploy_case.family }}"
+            state: merged
+            config: "{{ nd_iw_deploy_case.update_config }}"
+        config_actions:
+          deploy: true
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_deploy_idempotent
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: nd_iw_enable_deploy | bool
+
+    - name: Verify idempotency sends no mutation or deployment
+      ansible.builtin.assert:
+        that:
+          - nd_iw_deploy_idempotent is not changed
+          - nd_iw_deploy_idempotent.execution.status == 'no_change'
+          - nd_iw_deploy_idempotent.execution.mutations_sent == 0
+          - nd_iw_deploy_idempotent.execution.deployments_sent == 0
+          - nd_iw_deploy_idempotent.request_stats.mutation_requests == 0
+          - nd_iw_deploy_idempotent.request_stats.deploy_requests == 0
+      when: nd_iw_enable_deploy | bool
+
+  always:
+    - name: Remove only the reserved deployment-control identity
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_deploy_case.family }}"
+            state: deleted
+            config: >-
+              {{
+                nd_iw_deploy_case.delete_all
+                | default(nd_iw_deploy_case.delete_config | default(nd_iw_deploy_case.delete))
+              }}
+        config_actions:
+          deploy: "{{ (nd_iw_enable_deploy | bool) or (nd_iw_deployment_exercised | default(false) | bool) }}"
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_deploy_cleanup
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"

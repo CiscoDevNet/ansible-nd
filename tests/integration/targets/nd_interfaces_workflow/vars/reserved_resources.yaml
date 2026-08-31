@@ -1,0 +1,187 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# All values are test-owned identifiers, never credentials. Override the complete
+# set (nd_iw_reserved_resources) when these ports/IDs are not reserved in a lab.
+nd_iw_reserved_resources:
+  default:
+    ethernet_access:
+      primary:
+        - "{{ nd_iw_ethernet_access_primary | default('Ethernet1/41', true) }}"
+        - "{{ nd_iw_ethernet_access_fanout | default('Ethernet1/42', true) }}"
+      secondary:
+        - "{{ nd_iw_ethernet_access_secondary | default('Ethernet1/43', true) }}"
+    ethernet_trunk_host:
+      primary:
+        - "{{ nd_iw_ethernet_trunk_primary | default('Ethernet1/44', true) }}"
+      secondary:
+        - "{{ nd_iw_ethernet_trunk_secondary | default('Ethernet1/45', true) }}"
+    port_channel_access:
+      primary_name: "port-channel{{ nd_iw_port_channel_access_primary_id | default(901) }}"
+      secondary_name: "port-channel{{ nd_iw_port_channel_access_secondary_id | default(902) }}"
+      primary_ports:
+        - "{{ nd_iw_port_channel_access_member1 | default('Ethernet1/46', true) }}"
+        - "{{ nd_iw_port_channel_access_member2 | default('Ethernet1/47', true) }}"
+      alternate_ports:
+        - "{{ nd_iw_port_channel_access_member1 | default('Ethernet1/46', true) }}"
+      secondary_ports:
+        - "{{ nd_iw_port_channel_access_member3 | default('Ethernet1/48', true) }}"
+    port_channel_trunk_host:
+      primary_name: "port-channel{{ nd_iw_port_channel_trunk_primary_id | default(911) }}"
+      secondary_name: "port-channel{{ nd_iw_port_channel_trunk_secondary_id | default(912) }}"
+      primary_ports:
+        - "{{ nd_iw_port_channel_trunk_member1 | default('Ethernet1/49', true) }}"
+        - "{{ nd_iw_port_channel_trunk_member2 | default('Ethernet1/50', true) }}"
+      alternate_ports:
+        - "{{ nd_iw_port_channel_trunk_member1 | default('Ethernet1/49', true) }}"
+      secondary_ports:
+        - "{{ nd_iw_port_channel_trunk_member3 | default('Ethernet1/51', true) }}"
+    loopback:
+      primary_name: "loopback{{ nd_iw_loopback_primary_id | default(901) }}"
+      secondary_name: "loopback{{ nd_iw_loopback_secondary_id | default(902) }}"
+      primary_ipv4: "{{ nd_iw_loopback_primary_ipv4 | default('198.18.90.1', true) }}"
+      alternate_ipv4: "{{ nd_iw_loopback_alternate_ipv4 | default('198.18.90.2', true) }}"
+      primary_ipv6: "{{ nd_iw_loopback_primary_ipv6 | default('2001:db8:90::1/128', true) }}"
+      alternate_ipv6: "{{ nd_iw_loopback_alternate_ipv6 | default('2001:db8:90::2/128', true) }}"
+    subinterface:
+      ethernet_parent: "{{ nd_iw_subinterface_ethernet_parent | default('Ethernet1/3', true) }}"
+      port_channel_parent: "{{ nd_iw_subinterface_port_channel_parent | default('port-channel10', true) }}"
+      managed_primary_id: "{{ nd_iw_subinterface_managed_primary_id | default(901) }}"
+      managed_secondary_id: "{{ nd_iw_subinterface_managed_secondary_id | default(902) }}"
+      unmanaged_primary_id: "{{ nd_iw_subinterface_unmanaged_primary_id | default(911) }}"
+      unmanaged_secondary_id: "{{ nd_iw_subinterface_unmanaged_secondary_id | default(912) }}"
+      primary_ipv4: "{{ nd_iw_subinterface_primary_ipv4 | default('198.18.91.1', true) }}"
+      alternate_ipv4: "{{ nd_iw_subinterface_alternate_ipv4 | default('198.18.91.2', true) }}"
+      primary_ipv6: "{{ nd_iw_subinterface_primary_ipv6 | default('2001:db8:91::1', true) }}"
+      alternate_ipv6: "{{ nd_iw_subinterface_alternate_ipv6 | default('2001:db8:91::2', true) }}"
+    svi:
+      primary_name: "vlan{{ nd_iw_svi_primary_id | default(3901) }}"
+      secondary_name: "vlan{{ nd_iw_svi_secondary_id | default(3902) }}"
+      primary_ipv4: "{{ nd_iw_svi_primary_ipv4 | default('198.18.92.1', true) }}"
+      alternate_ipv4: "{{ nd_iw_svi_alternate_ipv4 | default('198.18.92.2', true) }}"
+      hsrp_vip: "{{ nd_iw_svi_hsrp_vip | default('198.18.92.254', true) }}"
+      alternate_hsrp_vip: "{{ nd_iw_svi_alternate_hsrp_vip | default('198.18.92.126', true) }}"
+      primary_ipv6: "{{ nd_iw_svi_primary_ipv6 | default('2001:db8:92::1', true) }}"
+      alternate_ipv6: "{{ nd_iw_svi_alternate_ipv6 | default('2001:db8:92::2', true) }}"
+      hsrp_vipv6: "{{ nd_iw_svi_hsrp_vipv6 | default('2001:db8:92::fe', true) }}"
+    vpc_access:
+      primary_name: "vpc{{ nd_iw_vpc_access_primary_id | default(951) }}"
+      secondary_name: "vpc{{ nd_iw_vpc_access_secondary_id | default(952) }}"
+      primary_port_channel_id: "{{ nd_iw_vpc_access_primary_id | default(951) }}"
+      secondary_port_channel_id: "{{ nd_iw_vpc_access_secondary_id | default(952) }}"
+      peer1_primary_ports:
+        - "{{ nd_iw_vpc_access_peer1_member1 | default('Ethernet1/5', true) }}"
+      peer2_primary_ports:
+        - "{{ nd_iw_vpc_access_peer2_member1 | default('Ethernet1/5', true) }}"
+      peer1_secondary_ports:
+        - "{{ nd_iw_vpc_access_peer1_member2 | default('Ethernet1/6', true) }}"
+      peer2_secondary_ports:
+        - "{{ nd_iw_vpc_access_peer2_member2 | default('Ethernet1/6', true) }}"
+    vpc_trunk_host:
+      primary_name: "vpc{{ nd_iw_vpc_trunk_primary_id | default(961) }}"
+      secondary_name: "vpc{{ nd_iw_vpc_trunk_secondary_id | default(962) }}"
+      primary_port_channel_id: "{{ nd_iw_vpc_trunk_primary_id | default(961) }}"
+      secondary_port_channel_id: "{{ nd_iw_vpc_trunk_secondary_id | default(962) }}"
+      peer1_primary_ports:
+        - "{{ nd_iw_vpc_trunk_peer1_member1 | default('Ethernet1/8', true) }}"
+      peer2_primary_ports:
+        - "{{ nd_iw_vpc_trunk_peer2_member1 | default('Ethernet1/8', true) }}"
+      peer1_secondary_ports:
+        - "{{ nd_iw_vpc_trunk_peer1_member2 | default('Ethernet1/9', true) }}"
+      peer2_secondary_ports:
+        - "{{ nd_iw_vpc_trunk_peer2_member2 | default('Ethernet1/9', true) }}"
+    vlans:
+      access: "{{ nd_iw_access_vlan | default(3101) }}"
+      access_alternate: "{{ nd_iw_access_vlan_alternate | default(3102) }}"
+      native: "{{ nd_iw_native_vlan | default(3103) }}"
+      native_alternate: "{{ nd_iw_native_vlan_alternate | default(3104) }}"
+      allowed: "{{ nd_iw_allowed_vlans | default('3101-3110', true) }}"
+      allowed_alternate: "{{ nd_iw_allowed_vlans_alternate | default('3105-3115', true) }}"
+      provider: "{{ nd_iw_provider_vlan | default(3120) }}"
+      customer_inner: "{{ nd_iw_customer_inner_vlan | default(3121) }}"
+      customer:
+        - "{{ nd_iw_customer_vlan | default('3122-3123', true) }}"
+    references:
+      vrf: "{{ nd_iw_test_vrf | default('default', true) }}"
+      route_map_tag: "{{ nd_iw_route_map_tag | default('901') }}"
+      routing_tag: "{{ nd_iw_routing_tag | default('901') }}"
+      l2_netflow_monitor: "{{ nd_iw_l2_netflow_monitor | default('IW_L2_MONITOR', true) }}"
+      l3_netflow_monitor: "{{ nd_iw_l3_netflow_monitor | default('IW_L3_MONITOR', true) }}"
+      netflow_sampler: "{{ nd_iw_netflow_sampler | default('IW_SAMPLER', true) }}"
+      qos_policy: "{{ nd_iw_qos_policy | default('IW_QOS_POLICY', true) }}"
+      queuing_policy: "{{ nd_iw_queuing_policy | default('IW_QUEUING_POLICY', true) }}"
+      dhcp_servers:
+        - "{{ nd_iw_dhcp_server1 | default('192.0.2.11', true) }}"
+        - "{{ nd_iw_dhcp_server2 | default('192.0.2.12', true) }}"
+        - "{{ nd_iw_dhcp_server3 | default('192.0.2.13', true) }}"
+
+# Ready-to-use aggregate cleanup. The runner selects a reserved set and publishes
+# it as nd_iw_active_resources before rendering this variable.
+nd_iw_cleanup_resources:
+  - type: subinterface_managed
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_secondary_id }}"
+  - type: subinterface_unmanaged
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.unmanaged_primary_id }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.unmanaged_secondary_id }}"
+  - type: svi
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.svi.secondary_name }}"
+  - type: loopback
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.loopback.secondary_name }}"
+  - type: vpc_access
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_access.secondary_name }}"
+  - type: vpc_trunk_host
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.secondary_name }}"
+  - type: port_channel_access
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_access.secondary_name }}"
+  - type: port_channel_trunk_host
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.secondary_name }}"
+  - type: ethernet_access
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_access.primary + nd_iw_active_resources.ethernet_access.secondary }}"
+  - type: ethernet_trunk_host
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary + nd_iw_active_resources.ethernet_trunk_host.secondary }}"
