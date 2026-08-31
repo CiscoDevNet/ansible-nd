@@ -1271,22 +1271,13 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
                 elif switch_sync is True and peer_switch_sync is True:
                     config_sync_state = True
 
-                # Resolve pair sync state from both overview and switch signals.
+                # Resolve pair sync state from the stronger signals.
                 #
                 # Precedence:
-                # - Switch-level pending/out-of-sync is authoritative not-in-sync (checked first).
-                # - overview=False is authoritative not-in-sync (deploy needed).
-                # - overview=True is in-sync (preserves idempotency of a deployed pair).
-                # - overview=None with no switch signal defaults to in-sync.
-                pair_not_in_sync = False
-                if config_sync_state is False:
-                    pair_not_in_sync = True
-                elif sync_state is False:
-                    pair_not_in_sync = True
-                elif sync_state is True:
-                    pair_not_in_sync = False
-                else:
-                    pair_not_in_sync = False
+                # - overview=True is authoritative in-sync.
+                # - overview=False is authoritative not-in-sync.
+                # - overview=None falls back to explicit switch out-of-sync.
+                pair_not_in_sync = sync_state is False or (sync_state is None and config_sync_state is False)
 
                 if pair_not_in_sync:
                     not_in_sync_pairs.append(
