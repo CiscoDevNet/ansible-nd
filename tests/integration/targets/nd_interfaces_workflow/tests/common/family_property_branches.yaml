@@ -1,0 +1,29 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Verify {{ nd_iw_expected_family }} matrix metadata
+  ansible.builtin.assert:
+    that:
+      - nd_iw_current_case.family == nd_iw_expected_family
+      - nd_iw_current_case.module is string
+      - nd_iw_current_case.create_config is sequence
+      - nd_iw_current_case.update_config is sequence
+      - nd_iw_current_case.replace_config is sequence
+      - nd_iw_current_case.delete_config is sequence
+      - nd_iw_current_case.property_assertions is sequence
+      - nd_iw_current_case.property_assertions | length > 0
+      - nd_iw_current_case.expected_supported | bool
+
+- name: Exercise {{ nd_iw_expected_family }} mutually exclusive and alternate branches
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/mutex_variants.yaml"
+  when: nd_iw_profile_config.run_mutex | bool
+
+- name: Validate {{ nd_iw_expected_family }} controller-object-dependent property packs
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/optional_packs.yaml"
+  when: nd_iw_profile_config.run_optional | bool
+
+- name: Exercise guarded {{ nd_iw_expected_family }} authoritative override
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/overridden.yaml"
+  when: nd_iw_run_destructive | bool

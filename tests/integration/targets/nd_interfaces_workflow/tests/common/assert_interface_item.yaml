@@ -1,0 +1,46 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Select planned or reconciled state for {{ nd_iw_expected_interface_name }}
+  vars:
+    nd_iw_observed_interface_items: >-
+      {{ nd_iw_assert_observed_items | default(nd_iw_assert_resource_result.after) }}
+  ansible.builtin.set_fact:
+    nd_iw_matching_proposed_items: >-
+      {{
+        nd_iw_assert_resource_result.proposed
+        | selectattr('switch_ip', 'equalto', nd_iw_expected_config_item.switch_ip)
+        | selectattr('interface_name', 'equalto', nd_iw_expected_interface_name)
+        | list
+      }}
+    nd_iw_matching_after_items: >-
+      {{
+        nd_iw_observed_interface_items
+        | selectattr('switch_ip', 'equalto', nd_iw_expected_config_item.switch_ip)
+        | selectattr('interface_name', 'equalto', nd_iw_expected_interface_name)
+        | list
+      }}
+
+- name: Verify {{ nd_iw_expected_interface_name }} and its supplied property subset
+  vars:
+    nd_iw_observed_interface_item: "{{ nd_iw_matching_after_items | first | default({}) }}"
+    nd_iw_expected_config_data: >-
+      {{
+        (nd_iw_matching_proposed_items | first).config_data
+        if nd_iw_assert_resource_result.after_verified | default(false) | bool
+        and nd_iw_matching_proposed_items | length == 1
+        else nd_iw_expected_config_item.config_data | default({})
+      }}
+  ansible.builtin.assert:
+    that:
+      - nd_iw_matching_after_items | length == 1
+      - nd_iw_observed_interface_item.config_data is defined
+      - >-
+        nd_iw_observed_interface_item.config_data
+        | combine(nd_iw_expected_config_data, recursive=true)
+        == nd_iw_observed_interface_item.config_data
+    fail_msg: >-
+      Planned or reconciled {{ nd_iw_assert_resource_result.type }} state did not contain the expected
+      {{ nd_iw_expected_config_item.switch_ip }}/{{ nd_iw_expected_interface_name }} property subset.

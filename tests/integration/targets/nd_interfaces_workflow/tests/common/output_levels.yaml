@@ -1,0 +1,67 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Select a supported family for output-level coverage
+  ansible.builtin.set_fact:
+    nd_iw_output_case: "{{ nd_iw_active_cases | first }}"
+
+- name: Read a normal-level workflow plan
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: "{{ nd_iw_output_case.family }}"
+        state: merged
+        config: "{{ nd_iw_output_case.create_config }}"
+    config_actions:
+      deploy: false
+    output_level: normal
+  check_mode: true
+  register: nd_iw_output_normal
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+- name: Read an info-level workflow plan
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: "{{ nd_iw_output_case.family }}"
+        state: merged
+        config: "{{ nd_iw_output_case.create_config }}"
+    config_actions:
+      deploy: false
+    output_level: info
+  check_mode: true
+  register: nd_iw_output_info
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+- name: Read a debug-level workflow plan
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: "{{ nd_iw_output_case.family }}"
+        state: merged
+        config: "{{ nd_iw_output_case.create_config }}"
+    config_actions:
+      deploy: false
+    output_level: debug
+  check_mode: true
+  register: nd_iw_output_debug
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+- name: Verify normal, info, and debug output contracts
+  ansible.builtin.assert:
+    that:
+      - nd_iw_output_normal.output_level == 'normal'
+      - nd_iw_output_info.output_level == 'info'
+      - nd_iw_output_debug.output_level == 'debug'
+      - nd_iw_output_normal.resources | rejectattr('proposed', 'defined') | list | length == 1
+      - nd_iw_output_info.resources | selectattr('proposed', 'defined') | list | length == 1
+      - nd_iw_output_debug.resources | selectattr('proposed', 'defined') | list | length == 1
+      - nd_iw_output_info.resources[0].proposed == nd_iw_output_debug.resources[0].proposed
+      - nd_iw_output_normal.execution.mutations_sent == 0
+      - nd_iw_output_info.execution.mutations_sent == 0
+      - nd_iw_output_debug.execution.mutations_sent == 0
+      - nd_iw_output_normal.execution.deployments_sent == 0
+      - nd_iw_output_info.execution.deployments_sent == 0
+      - nd_iw_output_debug.execution.deployments_sent == 0

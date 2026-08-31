@@ -1,0 +1,224 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Reject an excluded interface workflow resource type
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: interface_flow_rules
+        state: merged
+        config: []
+    config_actions:
+      deploy: true
+    output_level: normal
+  check_mode: true
+  register: nd_iw_excluded_type_result
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  ignore_errors: true
+
+- name: Verify excluded-type validation fails before planning or writes
+  ansible.builtin.assert:
+    that:
+      - nd_iw_excluded_type_result.failed | default(false) | bool
+      - not (nd_iw_excluded_type_result.changed | default(false) | bool)
+      - nd_iw_excluded_type_result.msg is search('interface_flow_rules')
+
+- name: Select a supported family for duplicate-ownership validation
+  ansible.builtin.set_fact:
+    nd_iw_conflict_case: "{{ nd_iw_active_cases | first }}"
+
+- name: Plan duplicate ownership of one interface identity
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: "{{ nd_iw_conflict_case.family }}"
+        state: merged
+        config: "{{ nd_iw_conflict_case.create_config }}"
+      - type: "{{ nd_iw_conflict_case.family }}"
+        state: merged
+        config: "{{ nd_iw_conflict_case.create_config }}"
+    config_actions:
+      deploy: true
+    output_level: debug
+  check_mode: true
+  register: nd_iw_duplicate_conflict
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  ignore_errors: true
+
+- name: Verify duplicate ownership is a structured pre-mutation conflict
+  ansible.builtin.assert:
+    that:
+      - nd_iw_duplicate_conflict.failed | default(false) | bool
+      - not (nd_iw_duplicate_conflict.changed | default(false) | bool)
+      - nd_iw_duplicate_conflict.conflicts is defined
+      - nd_iw_duplicate_conflict.conflicts | selectattr('code', 'equalto', 'duplicate_ownership') | list | length >= 1
+      - nd_iw_duplicate_conflict.conflicts[0].resource_indices == [0, 1]
+
+- name: Select Ethernet sibling-policy fixtures
+  ansible.builtin.set_fact:
+    nd_iw_conflict_access_cases: "{{ nd_iw_active_cases | selectattr('family', 'equalto', 'ethernet_access') | list }}"
+    nd_iw_conflict_trunk_cases: "{{ nd_iw_active_cases | selectattr('family', 'equalto', 'ethernet_trunk_host') | list }}"
+
+- name: Plan access and trunk ownership of the same Ethernet interface
+  vars:
+    nd_iw_conflict_access_case: "{{ nd_iw_conflict_access_cases | first }}"
+    nd_iw_conflict_trunk_case: "{{ nd_iw_conflict_trunk_cases | first }}"
+    nd_iw_conflict_access_item: "{{ nd_iw_conflict_access_case.create_config | first }}"
+    nd_iw_conflict_trunk_item: >-
+      {{
+        (nd_iw_conflict_trunk_case.create_config | first)
+        | combine(
+            {
+              'switch_ip': nd_iw_conflict_access_item.switch_ip,
+              'interface_names': nd_iw_conflict_access_item.interface_names
+            },
+            recursive=true
+          )
+      }}
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: ethernet_access
+        state: merged
+        config:
+          - "{{ nd_iw_conflict_access_item }}"
+      - type: ethernet_trunk_host
+        state: merged
+        config:
+          - "{{ nd_iw_conflict_trunk_item }}"
+    config_actions:
+      deploy: true
+    output_level: normal
+  check_mode: true
+  register: nd_iw_ethernet_sibling_conflict
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  ignore_errors: true
+  when:
+    - nd_iw_conflict_access_cases | length > 0
+    - nd_iw_conflict_trunk_cases | length > 0
+
+- name: Verify Ethernet sibling policies cannot claim one identity
+  ansible.builtin.assert:
+    that:
+      - nd_iw_ethernet_sibling_conflict.failed | default(false) | bool
+      - not (nd_iw_ethernet_sibling_conflict.changed | default(false) | bool)
+      - nd_iw_ethernet_sibling_conflict.conflicts | selectattr('code', 'equalto', 'duplicate_ownership') | list | length >= 1
+  when:
+    - nd_iw_conflict_access_cases | length > 0
+    - nd_iw_conflict_trunk_cases | length > 0
+
+- name: Select physical-port and port-channel fixtures
+  ansible.builtin.set_fact:
+    nd_iw_conflict_port_channel_cases: "{{ nd_iw_active_cases | selectattr('family', 'equalto', 'port_channel_access') | list }}"
+
+- name: Plan independent Ethernet intent on a new port-channel member
+  vars:
+    nd_iw_conflict_access_case: "{{ nd_iw_conflict_access_cases | first }}"
+    nd_iw_conflict_port_channel_case: "{{ nd_iw_conflict_port_channel_cases | first }}"
+    nd_iw_conflict_port_channel_item: "{{ nd_iw_conflict_port_channel_case.create_config | first }}"
+    nd_iw_conflict_member: "{{ nd_iw_conflict_port_channel_item.config_data.network_os.policy.ports | first }}"
+    nd_iw_conflict_member_item: >-
+      {{
+        (nd_iw_conflict_access_case.create_config | first)
+        | combine(
+            {
+              'switch_ip': nd_iw_conflict_port_channel_item.switch_ip,
+              'interface_names': [nd_iw_conflict_member]
+            },
+            recursive=true
+          )
+      }}
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: ethernet_access
+        state: merged
+        config:
+          - "{{ nd_iw_conflict_member_item }}"
+      - type: port_channel_access
+        state: merged
+        config:
+          - "{{ nd_iw_conflict_port_channel_item }}"
+    config_actions:
+      deploy: true
+    output_level: normal
+  check_mode: true
+  register: nd_iw_member_conflict
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  ignore_errors: true
+  when:
+    - nd_iw_conflict_access_cases | length > 0
+    - nd_iw_conflict_port_channel_cases | length > 0
+
+- name: Verify Ethernet and port-channel member ownership cannot race
+  ansible.builtin.assert:
+    that:
+      - nd_iw_member_conflict.failed | default(false) | bool
+      - not (nd_iw_member_conflict.changed | default(false) | bool)
+      - nd_iw_member_conflict.conflicts | selectattr('code', 'equalto', 'ethernet_member_collision') | list | length >= 1
+  when:
+    - nd_iw_conflict_access_cases | length > 0
+    - nd_iw_conflict_port_channel_cases | length > 0
+
+- name: Select vPC sibling-policy fixtures
+  ansible.builtin.set_fact:
+    nd_iw_conflict_vpc_access_cases: "{{ nd_iw_active_cases | selectattr('family', 'equalto', 'vpc_access') | list }}"
+    nd_iw_conflict_vpc_trunk_cases: "{{ nd_iw_active_cases | selectattr('family', 'equalto', 'vpc_trunk_host') | list }}"
+
+- name: Plan access and trunk ownership of the same vPC identity
+  vars:
+    nd_iw_conflict_vpc_access_case: "{{ nd_iw_conflict_vpc_access_cases | first }}"
+    nd_iw_conflict_vpc_trunk_case: "{{ nd_iw_conflict_vpc_trunk_cases | first }}"
+    nd_iw_conflict_vpc_access_item: "{{ nd_iw_conflict_vpc_access_case.create_config | first }}"
+    nd_iw_conflict_vpc_trunk_item: >-
+      {{
+        (nd_iw_conflict_vpc_trunk_case.create_config | first)
+        | combine(
+            {
+              'switch_ip': nd_iw_conflict_vpc_access_item.switch_ip,
+              'interface_name': nd_iw_conflict_vpc_access_item.interface_name
+            },
+            recursive=true
+          )
+      }}
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: vpc_access
+        state: merged
+        config:
+          - "{{ nd_iw_conflict_vpc_access_item }}"
+      - type: vpc_trunk_host
+        state: merged
+        config:
+          - "{{ nd_iw_conflict_vpc_trunk_item }}"
+    config_actions:
+      deploy: true
+    output_level: normal
+  check_mode: true
+  register: nd_iw_vpc_sibling_conflict
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  ignore_errors: true
+  when:
+    - nd_iw_conflict_vpc_access_cases | length > 0
+    - nd_iw_conflict_vpc_trunk_cases | length > 0
+
+- name: Verify vPC sibling policies cannot claim one pair-scoped identity
+  ansible.builtin.assert:
+    that:
+      - nd_iw_vpc_sibling_conflict.failed | default(false) | bool
+      - not (nd_iw_vpc_sibling_conflict.changed | default(false) | bool)
+      - nd_iw_vpc_sibling_conflict.conflicts | selectattr('code', 'equalto', 'duplicate_ownership') | list | length >= 1
+  when:
+    - nd_iw_conflict_vpc_access_cases | length > 0
+    - nd_iw_conflict_vpc_trunk_cases | length > 0
+
+- name: Run family-model invalid property cases
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/invalid_family_cases.yaml"
+  loop: "{{ nd_iw_active_cases }}"
+  loop_control:
+    loop_var: nd_iw_invalid_family_case
+    label: "{{ nd_iw_invalid_family_case.family }}"
+  when: nd_iw_profile_config.run_invalid | bool

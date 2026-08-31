@@ -1,0 +1,80 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Interface workflow preflight | Validate runner selectors
+  ansible.builtin.assert:
+    that:
+      - nd_iw_execution_mode in ['check', 'live']
+      - nd_iw_profile in nd_iw_profiles
+      - nd_iw_selected_fabric_types | length > 0
+      - nd_iw_selected_fabric_types | difference(nd_iw_supported_fabric_types) | length == 0
+      - nd_iw_fabric_matrix is mapping
+    fail_msg: >-
+      Invalid nd_interfaces_workflow integration-test configuration. Select check or live execution,
+      a declared profile, and only supported fabric discriminators; provide the checked-in matrix fixtures.
+
+- name: Interface workflow preflight | Require explicit live-mutation opt-in
+  ansible.builtin.assert:
+    that:
+      - nd_iw_enable_live_mutation | bool
+    fail_msg: >-
+      Live mode requires nd_iw_enable_live_mutation=true in addition to
+      nd_iw_execution_mode=live. No interface mutation was attempted.
+  when: nd_iw_execution_mode == 'live'
+
+- name: Interface workflow preflight | Require explicit destructive opt-in
+  ansible.builtin.assert:
+    that:
+      - nd_iw_enable_destructive | bool
+    fail_msg: >-
+      The destructive profile requires nd_iw_enable_destructive=true in addition to
+      nd_iw_profile=destructive. No fabric-wide override was attempted.
+  when: nd_iw_profile == 'destructive'
+
+- name: Interface workflow preflight | Derive immutable run flags
+  ansible.builtin.set_fact:
+    nd_iw_module_check_mode: "{{ nd_iw_execution_mode != 'live' }}"
+    nd_iw_run_full: "{{ nd_iw_profile in ['full', 'destructive'] }}"
+    nd_iw_run_destructive: >-
+      {{ nd_iw_profile == 'destructive' and nd_iw_enable_destructive | bool }}
+    nd_iw_profile_config: "{{ nd_iw_profiles[nd_iw_profile] }}"
+    nd_iw_active_fabrics: []
+    nd_iw_deployment_exercised: false
+
+- name: Interface workflow preflight | Resolve enabled fabric mappings
+  ansible.builtin.set_fact:
+    nd_iw_active_fabrics: >-
+      {{ nd_iw_active_fabrics
+         + [item.value | combine({'matrix_key': item.key,
+                                  'discriminator': item.value.fabric_type | default(item.key)})] }}
+  loop: "{{ nd_iw_fabric_matrix | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - item.key in nd_iw_selected_fabric_types
+    - item.value.enabled | default(false) | bool
+
+- name: Interface workflow preflight | Require every selected fabric mapping
+  ansible.builtin.assert:
+    that:
+      - nd_iw_active_fabrics | length > 0
+      - >-
+        nd_iw_selected_fabric_types
+        | difference(nd_iw_active_fabrics | map(attribute='discriminator') | list)
+        | length == 0
+    fail_msg: >-
+      Every selected discriminator must have an enabled nd_iw_fabric_matrix entry with real inventory,
+      fabric, switch, and reserved-resource values. Missing mappings: {{ nd_iw_selected_fabric_types
+      | difference(nd_iw_active_fabrics | map(attribute='discriminator') | list) | join(', ') }}.
+
+- name: Interface workflow preflight | Validate each mapped fabric without mutation
+  ansible.builtin.include_tasks:
+    file: preflight_fabric.yaml
+    apply:
+      tags: always
+  loop: "{{ nd_iw_active_fabrics }}"
+  loop_control:
+    loop_var: nd_iw_preflight_fabric
+    label: "{{ nd_iw_preflight_fabric.discriminator }}:{{ nd_iw_preflight_fabric.fabric_name }}"
+  tags: always

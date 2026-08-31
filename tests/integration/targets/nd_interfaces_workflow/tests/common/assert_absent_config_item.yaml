@@ -1,0 +1,26 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Normalize deleted interface identities
+  ansible.builtin.set_fact:
+    nd_iw_absent_interface_names: >-
+      {{
+        [nd_iw_absent_config_item.interface_name]
+        if nd_iw_absent_config_item.interface_name is defined
+        else nd_iw_absent_config_item.interface_names
+      }}
+
+- name: Verify deleted interfaces are absent from selected family state
+  vars:
+    nd_iw_absent_matches: >-
+      {{
+        nd_iw_assert_resource_result.after
+        | selectattr('switch_ip', 'equalto', nd_iw_absent_config_item.switch_ip)
+        | selectattr('interface_name', 'in', nd_iw_absent_interface_names)
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - nd_iw_absent_matches | length == 0

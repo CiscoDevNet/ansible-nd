@@ -1,0 +1,133 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Preview controller-object-dependent property packs for {{ nd_iw_current_case.family }}
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: "{{ nd_iw_current_case.family }}"
+        state: merged
+        config: "{{ item.config }}"
+    config_actions:
+      deploy: true
+    output_level: info
+  check_mode: true
+  register: nd_iw_optional_pack_previews
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  ignore_errors: true
+  loop: "{{ nd_iw_current_case.optional_packs | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Verify optional property packs validate and never write
+  ansible.builtin.assert:
+    that:
+      - not (item.failed | default(false) | bool)
+      - item.resources | length == 1
+      - item.resources[0].proposed is defined
+      - item.resources[0].proposed | length >= item.item.config | length
+      - item.execution.status == 'check_mode'
+      - item.execution.mutations_sent == 0
+      - item.execution.deployments_sent == 0
+      - item.request_stats.mutation_requests == 0
+      - item.request_stats.deploy_requests == 0
+    fail_msg: >-
+      Optional pack {{ item.item.name }} for {{ nd_iw_current_case.family }} did not validate.
+      Requirements={{ item.item.requirements | default([]) }}; error={{ item.msg | default('none') }}.
+  loop: "{{ nd_iw_optional_pack_previews.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Verify every optional property value survived normalization
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_config_item.yaml"
+  vars:
+    nd_iw_optional_result: "{{ item.0 }}"
+    nd_iw_expected_config_item: "{{ item.1 }}"
+    nd_iw_assert_resource_result: "{{ item.0.resources[0] }}"
+    nd_iw_assert_observed_items: "{{ item.0.resources[0].proposed }}"
+  loop: "{{ nd_iw_optional_pack_previews.results | default([]) | subelements('item.config') }}"
+  loop_control:
+    label: >-
+      {{ item.0.item.name ~ ':' ~ (item.1.interface_name | default(item.1.interface_names | default(["unknown"]) | first)) }}
+  when: not (item.0.failed | default(false) | bool)
+
+- name: Reset live-eligible optional packs
+  ansible.builtin.set_fact:
+    nd_iw_optional_live_packs: []
+    nd_iw_confirmed_optional_prerequisites: >-
+      {{
+        nd_iw_optional_prerequisites
+        | default({})
+        | dict2items
+        | selectattr('value', 'equalto', true)
+        | map(attribute='key')
+        | list
+      }}
+
+- name: Select live-safe or explicitly satisfied optional packs
+  ansible.builtin.set_fact:
+    nd_iw_optional_live_packs: "{{ nd_iw_optional_live_packs + [item] }}"
+  loop: "{{ nd_iw_current_case.optional_packs | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: >-
+    item.live_safe | default(false) | bool
+    or (
+      item.requirements | default([])
+      | difference(nd_iw_confirmed_optional_prerequisites)
+      | length == 0
+    )
+
+- name: Apply live-eligible optional packs for {{ nd_iw_current_case.family }}
+  when:
+    - not nd_iw_module_check_mode
+    - nd_iw_optional_live_packs | length > 0
+  block:
+    - name: Apply optional property pack to its reserved identity
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_current_case.family }}"
+            state: merged
+            config: "{{ item.config }}"
+        config_actions:
+          deploy: false
+        output_level: info
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_optional_pack_live_results
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      loop: "{{ nd_iw_optional_live_packs }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Verify optional pack properties reached reconciled controller state
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_case_result.yaml"
+      vars:
+        nd_iw_assert_case: "{{ nd_iw_current_case }}"
+        nd_iw_assert_expected_config: "{{ item.item.config }}"
+        nd_iw_assert_resource_result: "{{ item.resources[0] }}"
+        nd_iw_assert_state: merged
+      loop: "{{ nd_iw_optional_pack_live_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+  always:
+    - name: Remove only reserved optional-pack identities
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_current_case.family }}"
+            state: deleted
+            config: >-
+              {{
+                nd_iw_current_case.delete_all
+                | default(nd_iw_current_case.delete_config | default(nd_iw_current_case.delete))
+              }}
+        config_actions:
+          deploy: false
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_optional_pack_cleanup
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"

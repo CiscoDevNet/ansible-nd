@@ -1,0 +1,8 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Run managed subinterface property branches
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/family_property_branches.yaml"
+  vars:
+    nd_iw_expected_family: subinterface_managed
