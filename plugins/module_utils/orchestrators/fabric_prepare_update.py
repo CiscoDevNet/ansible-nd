@@ -405,7 +405,8 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
 
         The `timeout` is honored ahead of the retry budget: if the deadline has passed, a timeout is
         raised even when the most recent poll failed, so a small `timeout` is never overshot by the
-        retry loop.
+        retry loop. Each sleep is capped at the time remaining until the deadline, so the loop takes
+        one final poll at the deadline instead of overshooting it by up to a full `interval`.
 
         ## Raises
 
@@ -443,7 +444,7 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
                         f"Polling staging status for update group(s) {update_group_names} in fabric "
                         f"'{self.fabric_name}' failed {consecutive_failures} times in a row: {e}"
                     ) from e
-                time.sleep(interval)
+                time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
                 continue
             consecutive_failures = 0
 
@@ -468,4 +469,4 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
                     f"fabric '{self.fabric_name}' to complete. Current status: {self._format_switch_statuses(switches)}"
                 )
 
-            time.sleep(interval)
+            time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
