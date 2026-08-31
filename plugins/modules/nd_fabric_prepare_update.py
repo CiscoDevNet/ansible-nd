@@ -31,11 +31,13 @@ options:
   fabric_name:
     description:
     - The name of the fabric that contains the update groups to prepare.
+    - The fabric must already exist on Nexus Dashboard.
     type: str
     required: true
   update_groups:
     description:
     - The list of update group names to prepare.
+    - At least one update group name is required; an empty list fails validation.
     - Each named update group must already exist in O(fabric_name). Create update groups with M(cisco.nd.nd_fabric_update_group).
     type: list
     elements: str
@@ -44,7 +46,8 @@ options:
     description:
     - Whether to wait for staging to complete on every switch before returning.
     - When V(true), the module polls Nexus Dashboard until every switch has staged and validated, or until O(wait_timeout) is reached.
-    - When V(false), the module returns as soon as Nexus Dashboard accepts the stage action; staging continues on Nexus Dashboard.
+    - When V(false), the module does not wait for staging to complete; it records one post-stage status snapshot (returned as the
+      task's after status) and returns while staging continues on Nexus Dashboard.
     type: bool
     default: true
   wait_timeout:
@@ -77,8 +80,8 @@ notes:
 - The target image, whether the upgrade is disruptive or non-disruptive, maintenance mode, and the report checks
   are properties of the update group itself, not of this module. Configure them with M(cisco.nd.nd_fabric_update_group)
   before preparing. This module only selects which update groups to prepare.
-- In check mode, when staging is required, the module reports a change but does not stage, because the stage
-  action cannot be previewed.
+- In check mode, if staging is required, the module reports C(changed=true) but does not invoke the stage action,
+  because it cannot be previewed. Consequently, the returned after status is unchanged from before.
 - When O(wait=true), the module holds the persistent connection for the whole staging wait. Keep O(wait_interval)
   below the persistent connection idle timeout (C(persistent_command_timeout)), and for long O(wait_timeout)
   values raise C(ansible_command_timeout) for the host so the connection is not reaped mid-wait.
