@@ -1550,6 +1550,58 @@ def test_rest_send_01110():
     assert instance.result_current["success"] is True
 
 
+def test_rest_send_01120():
+    """
+    # Summary
+
+    Verify a GET failing with 409 (Conflict) retries and consumes the recovery response: the ND OpenAPI documents
+    409 on safe GETs (e.g. /links) where the conflict is with the resource's current state (e.g. topology
+    reconciliation) and can clear on its own.
+
+    ## Test
+
+    - GET returns 409 (retryable=True), then 200 on the retry
+    - timeout (10) and send_interval (5) allow exactly two submissions
+    - The loop consumes both responses and the final result is the successful 200
+
+    ## Classes and Methods
+
+    - RestSend.commit()
+    - RestSend._commit_normal_mode()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_rest_send(f"{method_name}a")
+        yield responses_rest_send(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+
+    params = {"check_mode": False}
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = gen_responses
+
+    with does_not_raise():
+        instance = RestSend(params)
+        instance.sender = sender
+        response_handler = ResponseHandler()
+        response_handler.response = {"RETURN_CODE": 200, "MESSAGE": "OK"}
+        response_handler.verb = HttpVerbEnum.GET
+        response_handler.commit()
+        instance.response_handler = response_handler
+        instance.unit_test = True
+        instance.timeout = 10
+        instance.send_interval = 5
+        instance.path = "/api/v1/manage/links"
+        instance.verb = HttpVerbEnum.GET
+        instance.commit()
+
+    assert instance.response_current["RETURN_CODE"] == 200
+    assert instance.result_current["success"] is True
+    assert instance.result_current["found"] is True
+
+
 # =============================================================================
 # Test: RestSend.add_response()
 # =============================================================================
