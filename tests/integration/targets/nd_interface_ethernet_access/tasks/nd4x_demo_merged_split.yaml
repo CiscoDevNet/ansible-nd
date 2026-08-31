@@ -5,7 +5,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names:
@@ -20,7 +19,6 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
-          timeout: 300
         config:
           - "{{ ethernet_split_49 }}"
           - "{{ ethernet_split_50 }}"
@@ -97,7 +95,6 @@
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
-        timeout: 300
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_names:
