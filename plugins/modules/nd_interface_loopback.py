@@ -153,7 +153,7 @@ options:
                       ip:
                         description:
                         - The secondary IPv4 address, in bare host form (e.g. 10.2.2.3).
-                        - The mask length is set separately via O(config.config_data.network_os.policy.secondary_ip_list.prefix); CIDR notation is rejected.
+                        - The mask length is set separately via O(config[].config_data.network_os.policy.secondary_ip_list[].prefix); CIDR notation is rejected.
                         type: str
                       prefix:
                         description:
