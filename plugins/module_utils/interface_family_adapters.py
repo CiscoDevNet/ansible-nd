@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import expand_ethernet_config
@@ -36,10 +37,34 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import Res
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
 ConfigNormalizer = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
+IMPLICIT_TRANSITION_STATES = frozenset({"merged", "replaced"})
 
 
 class InterfaceWorkflowValidationError(ValueError):
     """Raised when a resource group cannot be validated by its standalone family contract."""
+
+
+class InterfaceTransitionStrategy(str, Enum):
+    """Mutation method used when an interface changes policy family."""
+
+    UPDATE = "update"
+
+
+class InterfaceDeleteStrategy(str, Enum):
+    """Controller operation used to remove or reset an interface."""
+
+    NORMALIZE = "normalize"
+    REMOVE = "remove"
+    DELETE = "delete"
+
+
+@dataclass(frozen=True)
+class InterfaceFamilySafety:
+    """Structural dependency guards required by an interface family."""
+
+    requires_pair_consistency: bool = False
+    owns_physical_members: bool = False
+    guards_child_subinterfaces: bool = False
 
 
 @dataclass(frozen=True)
@@ -52,6 +77,10 @@ class InterfaceFamilyAdapter:
     ownership_domain: str
     interface_types: frozenset[str]
     policy_types: frozenset[str]
+    delete_strategy: InterfaceDeleteStrategy
+    transition_strategy: InterfaceTransitionStrategy = InterfaceTransitionStrategy.UPDATE
+    transition_states: frozenset[str] = IMPLICIT_TRANSITION_STATES
+    safety: InterfaceFamilySafety = InterfaceFamilySafety()
     config_normalizer: ConfigNormalizer | None = None
     supported_states: frozenset[str] = SUPPORTED_STATES
 
@@ -113,6 +142,8 @@ _ADAPTER_DEFINITIONS = (
         "ownership_domain": "ethernet",
         "interface_types": frozenset({"ethernet"}),
         "policy_types": frozenset({"accessHost"}),
+        "delete_strategy": InterfaceDeleteStrategy.NORMALIZE,
+        "safety": InterfaceFamilySafety(guards_child_subinterfaces=True),
         "config_normalizer": expand_ethernet_config,
     },
     {
@@ -122,6 +153,8 @@ _ADAPTER_DEFINITIONS = (
         "ownership_domain": "ethernet",
         "interface_types": frozenset({"ethernet"}),
         "policy_types": frozenset({"trunkHost"}),
+        "delete_strategy": InterfaceDeleteStrategy.NORMALIZE,
+        "safety": InterfaceFamilySafety(guards_child_subinterfaces=True),
         "config_normalizer": expand_ethernet_config,
     },
     {
@@ -131,6 +164,7 @@ _ADAPTER_DEFINITIONS = (
         "ownership_domain": "loopback",
         "interface_types": frozenset({"loopback"}),
         "policy_types": frozenset({"loopback"}),
+        "delete_strategy": InterfaceDeleteStrategy.REMOVE,
     },
     {
         "resource_type": "port_channel_access",
@@ -139,6 +173,8 @@ _ADAPTER_DEFINITIONS = (
         "ownership_domain": "port_channel",
         "interface_types": frozenset({"portChannel"}),
         "policy_types": frozenset({"accessPoHost"}),
+        "delete_strategy": InterfaceDeleteStrategy.REMOVE,
+        "safety": InterfaceFamilySafety(owns_physical_members=True, guards_child_subinterfaces=True),
     },
     {
         "resource_type": "port_channel_trunk_host",
@@ -147,6 +183,8 @@ _ADAPTER_DEFINITIONS = (
         "ownership_domain": "port_channel",
         "interface_types": frozenset({"portChannel"}),
         "policy_types": frozenset({"trunkPoHost"}),
+        "delete_strategy": InterfaceDeleteStrategy.REMOVE,
+        "safety": InterfaceFamilySafety(owns_physical_members=True, guards_child_subinterfaces=True),
     },
     {
         "resource_type": "subinterface_managed",
@@ -155,6 +193,7 @@ _ADAPTER_DEFINITIONS = (
         "ownership_domain": "subinterface",
         "interface_types": frozenset({"subInterface"}),
         "policy_types": frozenset({"subinterface"}),
+        "delete_strategy": InterfaceDeleteStrategy.REMOVE,
     },
     {
         "resource_type": "subinterface_unmanaged",
@@ -163,6 +202,7 @@ _ADAPTER_DEFINITIONS = (
         "ownership_domain": "subinterface",
         "interface_types": frozenset({"subInterface"}),
         "policy_types": frozenset({"monitorSubinterface"}),
+        "delete_strategy": InterfaceDeleteStrategy.REMOVE,
     },
     {
         "resource_type": "svi",
@@ -171,6 +211,7 @@ _ADAPTER_DEFINITIONS = (
         "ownership_domain": "svi",
         "interface_types": frozenset({"svi"}),
         "policy_types": frozenset({"svi"}),
+        "delete_strategy": InterfaceDeleteStrategy.REMOVE,
     },
     {
         "resource_type": "vpc_access",
@@ -179,6 +220,8 @@ _ADAPTER_DEFINITIONS = (
         "ownership_domain": "vpc",
         "interface_types": frozenset({"vpc"}),
         "policy_types": frozenset({"accessVpcHost"}),
+        "delete_strategy": InterfaceDeleteStrategy.DELETE,
+        "safety": InterfaceFamilySafety(requires_pair_consistency=True, owns_physical_members=True),
     },
     {
         "resource_type": "vpc_trunk_host",
@@ -187,6 +230,8 @@ _ADAPTER_DEFINITIONS = (
         "ownership_domain": "vpc",
         "interface_types": frozenset({"vpc"}),
         "policy_types": frozenset({"trunkVpcHost"}),
+        "delete_strategy": InterfaceDeleteStrategy.DELETE,
+        "safety": InterfaceFamilySafety(requires_pair_consistency=True, owns_physical_members=True),
     },
 )
 

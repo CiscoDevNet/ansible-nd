@@ -13,6 +13,8 @@ in the ND Manage API.
   (GET /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
 - `EpManageInterfacesListGet` - List all interfaces on a switch
   (GET /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces)
+- `EpManageInterfacesSummaryGet` - List interface summary records for a fabric
+  (GET /api/v1/manage/fabrics/{fabric_name}/interfacesSummary)
 - `EpManageInterfacesPost` - Create interfaces on a switch
   (POST /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces)
 - `EpManageInterfacesPut` - Update a specific interface
@@ -42,6 +44,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     MaxMixin,
     NetworkNameMixin,
     OffsetMixin,
+    SwitchIdMixin,
     SwitchSerialNumberMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
@@ -60,6 +63,12 @@ class ManageInterfacesListEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin
 
     sort: str | None = Field(default=None, min_length=1, description="Sort field and direction")
     config_only: bool | None = Field(default=None, description="Return config-only interface data")
+
+
+class ManageInterfacesSummaryEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin, OffsetMixin, SwitchIdMixin, EndpointQueryParams):
+    """Endpoint-specific query parameters for fabric interface summaries."""
+
+    sort: str | None = Field(default=None, min_length=1, description="Sort field and direction")
 
 
 class _EpManageInterfacesBase(FabricNameMixin, SwitchSerialNumberMixin, InterfaceNameMixin, NDEndpointBaseModel):
@@ -208,6 +217,36 @@ class EpManageInterfacesListGet(_EpManageInterfacesBase):
 
         None
         """
+        return HttpVerbEnum.GET
+
+
+class EpManageInterfacesSummaryGet(FabricNameMixin, NDEndpointBaseModel):
+    """List interface summary records for a fabric."""
+
+    class_name: Literal["EpManageInterfacesSummaryGet"] = Field(
+        default="EpManageInterfacesSummaryGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: ManageInterfacesSummaryEndpointParams = Field(
+        default_factory=ManageInterfacesSummaryEndpointParams,
+        description="Endpoint-specific query parameters",
+    )
+
+    @property
+    def path(self) -> str:
+        """Build the fabric interface-summary endpoint path."""
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        path = BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfacesSummary")
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{path}?{query_string}"
+        return path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return ``HttpVerbEnum.GET``."""
         return HttpVerbEnum.GET
 
 

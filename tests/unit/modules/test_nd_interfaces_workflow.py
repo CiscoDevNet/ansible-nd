@@ -36,6 +36,7 @@ def test_argument_spec_uses_exact_registry_and_excludes_flow_rules():
         "overridden",
         "replaced",
     ]
+    assert "allow_policy_transition" not in resource_options
     assert resource_options["config"] == {
         "type": "list",
         "elements": "dict",
@@ -61,6 +62,12 @@ def test_documentation_links_every_standalone_module_and_not_flow_rules():
     assert "M(cisco.nd.nd_interface_flow_rules)" not in nd_interfaces_workflow.DOCUMENTATION
     assert "default: false" in nd_interfaces_workflow.DOCUMENTATION
     assert "Outstanding interface" not in nd_interfaces_workflow.DOCUMENTATION
+    assert "allow_policy_transition" not in nd_interfaces_workflow.DOCUMENTATION
+    assert "allow_policy_transition" not in nd_interfaces_workflow.EXAMPLES
+    assert "policy transition" in nd_interfaces_workflow.DOCUMENTATION
+    assert "unconfigured default" in nd_interfaces_workflow.DOCUMENTATION
+    assert "regardless of its current policy family" in nd_interfaces_workflow.DOCUMENTATION
+    assert "from_policy_type" in nd_interfaces_workflow.RETURN
 
 
 def test_main_requires_pydantic_then_runs_coordinator_and_exits():

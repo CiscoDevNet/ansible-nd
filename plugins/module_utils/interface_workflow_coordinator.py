@@ -37,6 +37,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sen
 
 PlannerFactory = Callable[..., InterfaceWorkflowPlanner]
 ExecutorFactory = Callable[..., InterfaceWorkflowExecutor]
+VPC_PAIR_PAGE_SIZE = 500
 
 
 class InterfaceWorkflowExecutionFailed(RuntimeError):
@@ -96,6 +97,17 @@ class InterfaceWorkflowCoordinator:
     def _uses_vpc(resources: list[dict[str, Any]]) -> bool:
         return any(isinstance(resource, dict) and resource.get("type") in {"vpc_access", "vpc_trunk_host"} for resource in resources)
 
+    @staticmethod
+    def _coerce_nonnegative_int(value: Any) -> int | None:
+        """Return a non-negative integer response count, or None when unusable."""
+        if isinstance(value, bool):
+            return None
+        try:
+            converted = int(value)
+        except (TypeError, ValueError):
+            return None
+        return converted if converted >= 0 else None
+
     def _vpc_pair_map(
         self,
         *,
@@ -107,15 +119,59 @@ class InterfaceWorkflowCoordinator:
         if not self._uses_vpc(resources):
             return {}
 
-        endpoint = EpVpcPairsListGet()
-        endpoint.fabric_name = fabric_context.fabric_name
-        self._vpc_pair_gets += 1
-        data = self._request(rest_send, path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
-        records = data.get("vpcPairs") or data.get("items") or []
-        if not isinstance(records, list):
-            raise InterfaceWorkflowValidationError("The Nexus Dashboard vPC-pair response must contain a list in 'vpcPairs'.")
+        records: list[Any] = []
+        offset = 0
+        seen_page_signatures: set[tuple[tuple[str | None, str | None], ...]] = set()
+        while True:
+            endpoint = EpVpcPairsListGet()
+            endpoint.fabric_name = fabric_context.fabric_name
+            endpoint.endpoint_params.view = "intendedPairs"
+            endpoint.lucene_params.max = VPC_PAIR_PAGE_SIZE
+            endpoint.lucene_params.offset = offset
+            endpoint.lucene_params.sort = "switchId:asc"
+            self._vpc_pair_gets += 1
+            data = self._request(rest_send, path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
+            page = data.get("vpcPairs") or data.get("items") or []
+            if not isinstance(page, list):
+                raise InterfaceWorkflowValidationError("The Nexus Dashboard vPC-pair response must contain a list in 'vpcPairs'.")
 
-        pair_by_switch_ip: dict[str, str] = {}
+            signature = tuple(
+                (
+                    (record.get("switchId") or record.get("peer1SwitchId")),
+                    (record.get("peerSwitchId") or record.get("peer2SwitchId")),
+                )
+                if isinstance(record, dict)
+                else (None, None)
+                for record in page
+            )
+            if page and signature in seen_page_signatures:
+                raise InterfaceWorkflowValidationError(
+                    f"The Nexus Dashboard vPC-pair pagination repeated a page at offset {offset}."
+                )
+            if page:
+                seen_page_signatures.add(signature)
+            records.extend(page)
+
+            metadata = data.get("meta") or data.get("metadata") or {}
+            counts = metadata.get("counts") if isinstance(metadata, dict) else {}
+            counts = counts if isinstance(counts, dict) else {}
+            total = self._coerce_nonnegative_int(counts.get("total"))
+            remaining = self._coerce_nonnegative_int(counts.get("remaining"))
+            if total is not None:
+                has_next = offset + len(page) < total
+            elif remaining is not None:
+                has_next = remaining > 0
+            else:
+                has_next = len(page) >= VPC_PAIR_PAGE_SIZE
+            if not has_next:
+                break
+            if not page:
+                raise InterfaceWorkflowValidationError(
+                    f"The Nexus Dashboard vPC-pair response reports more records after empty offset {offset}."
+                )
+            offset += len(page)
+
+        declared_peer_by_switch_id: dict[str, str] = {}
         for record in records:
             if not isinstance(record, dict):
                 continue
@@ -123,11 +179,50 @@ class InterfaceWorkflowCoordinator:
             second = record.get("peerSwitchId") or record.get("peer2SwitchId")
             if not isinstance(first, str) or not first or not isinstance(second, str) or not second:
                 continue
+            if first.casefold() == second.casefold():
+                raise InterfaceWorkflowValidationError(
+                    f"The authoritative vPC-pair inventory contains a self-pair for switch '{first}'."
+                )
+            existing_peer = declared_peer_by_switch_id.get(first)
+            if existing_peer is not None and existing_peer != second:
+                raise InterfaceWorkflowValidationError(
+                    f"The authoritative vPC-pair inventory contains conflicting mappings for switch '{first}': "
+                    f"'{existing_peer}' and '{second}'."
+                )
+            declared_peer_by_switch_id[first] = second
+
+        for first, second in declared_peer_by_switch_id.items():
+            inverse_peer = declared_peer_by_switch_id.get(second)
+            if inverse_peer is not None and inverse_peer != first:
+                raise InterfaceWorkflowValidationError(
+                    "The authoritative vPC-pair inventory contains inverse-inconsistent records: "
+                    f"switch '{second}' maps to '{inverse_peer}' instead of '{first}'."
+                )
+
+        peer_by_switch_id: dict[str, str] = {}
+        for first, second in declared_peer_by_switch_id.items():
+            for switch_id, peer_id in ((first, second), (second, first)):
+                existing_peer = peer_by_switch_id.get(switch_id)
+                if existing_peer is not None and existing_peer != peer_id:
+                    raise InterfaceWorkflowValidationError(
+                        f"The authoritative vPC-pair inventory contains conflicting mappings for switch '{switch_id}': "
+                        f"'{existing_peer}' and '{peer_id}'."
+                    )
+                peer_by_switch_id[switch_id] = peer_id
+
+        pair_by_switch_ip: dict[str, str] = {}
+        for switch_id, peer_id in peer_by_switch_id.items():
             try:
-                pair_by_switch_ip[fabric_context.get_switch_ip(first)] = second
-                pair_by_switch_ip[fabric_context.get_switch_ip(second)] = first
+                switch_ip = fabric_context.get_switch_ip(switch_id)
             except RuntimeError:
                 continue
+            existing_peer = pair_by_switch_ip.get(switch_ip)
+            if existing_peer is not None and existing_peer != peer_id:
+                raise InterfaceWorkflowValidationError(
+                    f"The authoritative vPC-pair inventory contains conflicting mappings for management IP '{switch_ip}': "
+                    f"'{existing_peer}' and '{peer_id}'."
+                )
+            pair_by_switch_ip[switch_ip] = peer_id
 
         for resource_index, resource in enumerate(resources):
             if not isinstance(resource, dict) or resource.get("type") not in {
@@ -188,6 +283,7 @@ class InterfaceWorkflowCoordinator:
             "type": resource.resource_type,
             "module": resource.adapter.module_name,
             "state": resource.state,
+            "transitions": [transition.to_dict() for transition in resource.transitions],
             "changed": changed,
             "planned_changed": resource.changed,
             "before": resource.before.to_ansible_config(),

@@ -45,6 +45,8 @@ class InterfaceExecutionItem:
     switch_ip: str
     switch_id: str
     interface_name: str
+    from_policy_type: str | None = None
+    to_policy_type: str | None = None
     status: str = "not_attempted"
     message: str | None = None
 
@@ -64,6 +66,10 @@ class InterfaceExecutionItem:
             "interface_name": self.interface_name,
             "status": self.status,
         }
+        if self.from_policy_type is not None:
+            result["from_policy_type"] = self.from_policy_type
+        if self.to_policy_type is not None:
+            result["to_policy_type"] = self.to_policy_type
         if self.message:
             result["message"] = self.message
         return result
@@ -124,8 +130,35 @@ class InterfaceWorkflowExecutor:
 
     def _build_items(self, plan: InterfaceWorkflowPlan) -> None:
         for resource in plan.resources:
+            for model in resource.operations.deletes:
+                interface_name, switch_id = self._model_target(resource, model)
+                item = InterfaceExecutionItem(
+                    resource_index=resource.resource_index,
+                    resource_type=resource.resource_type,
+                    action="delete",
+                    switch_ip=getattr(model, "switch_ip"),
+                    switch_id=switch_id,
+                    interface_name=interface_name,
+                )
+                self._items.append(item)
+                self._item_by_key[(resource.resource_index, "delete", model.get_identifier_value())] = item
+
+            for transition in resource.transitions:
+                model = transition.desired
+                item = InterfaceExecutionItem(
+                    resource_index=resource.resource_index,
+                    resource_type=resource.resource_type,
+                    action="transition",
+                    switch_ip=transition.switch_ip,
+                    switch_id=transition.switch_id,
+                    interface_name=transition.interface_name,
+                    from_policy_type=transition.from_policy_type,
+                    to_policy_type=transition.to_policy_type,
+                )
+                self._items.append(item)
+                self._item_by_key[(resource.resource_index, "transition", model.get_identifier_value())] = item
+
             for action, models in (
-                ("delete", resource.operations.deletes),
                 ("update", resource.operations.updates),
                 ("create", resource.operations.creates),
             ):
@@ -259,7 +292,8 @@ class InterfaceWorkflowExecutor:
             for resource in plan.resources:
                 if resource.state == "deleted":
                     continue
-                resource.orchestrator.preflight_create(resource.operations.creates)
+                create_candidates = [*resource.operations.creates, *(transition.desired for transition in resource.transitions)]
+                resource.orchestrator.preflight_create(create_candidates)
                 resource.orchestrator.preflight(list(resource.proposed))
         except Exception as exc:  # pylint: disable=broad-except
             self._errors.append(f"Pre-mutation prerequisite validation failed: {exc}")
@@ -369,6 +403,22 @@ class InterfaceWorkflowExecutor:
             return False
         for item in [*normalize_items, *reset_items]:
             item.status = "succeeded"
+        return True
+
+    def _execute_transitions(self, plan: InterfaceWorkflowPlan) -> bool:
+        """Replace approved foreign policies through destination-family PUTs."""
+        for resource in plan.resources:
+            for transition in resource.transitions:
+                item = self._item(resource, "transition", transition.desired)
+                if not self._call_items(
+                    resource.orchestrator,
+                    [item],
+                    lambda resource=resource, transition=transition: resource.orchestrator.update(
+                        transition.desired, existing_data=transition.current
+                    ),
+                    f"resources[{resource.resource_index}] {resource.resource_type} policy transition failed",
+                ):
+                    return False
         return True
 
     def _execute_updates(self, plan: InterfaceWorkflowPlan) -> bool:
@@ -498,7 +548,7 @@ class InterfaceWorkflowExecutor:
         return actual
 
     def execute(self, plan: InterfaceWorkflowPlan) -> InterfaceWorkflowExecution:
-        """Execute delete, update, create, and deploy phases, then refetch actual state."""
+        """Execute delete, transition, update, create, and deploy phases, then refetch actual state."""
         self._build_items(plan)
         phases_ok = self._enable_writes_and_preflight(plan)
         if phases_ok:
@@ -507,6 +557,8 @@ class InterfaceWorkflowExecutor:
             phases_ok = self._flush_base_removes(plan)
         if phases_ok:
             phases_ok = self._flush_ethernet_removes(plan)
+        if phases_ok:
+            phases_ok = self._execute_transitions(plan)
         if phases_ok:
             phases_ok = self._execute_updates(plan)
         if phases_ok:
