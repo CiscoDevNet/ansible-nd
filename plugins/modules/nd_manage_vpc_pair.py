@@ -57,7 +57,8 @@ options:
                 description:
                 - Deploy scope for configuration actions.
                 - C(resource) deploys only the switches that make up the managed vPC pair(s) and are left out-of-sync, using the per-switch deploy action.
-                - Peers of vPC pairs removed by this task (via O(state=overridden) omissions, an empty O(config), or O(state=deleted)) are also deployed so the removal takes effect.
+                - Peers of vPC pairs removed by this task (via O(state=overridden) omissions, an empty O(config), or O(state=deleted))
+                  are also deployed so the removal takes effect.
                 - C(switch) deploys every switch in the fabric left out-of-sync by the vPC pair changes using the per-switch deploy action.
                 - C(global) deploys the entire fabric.
                 - Configuration is saved at the fabric level before deploying for all scopes.
