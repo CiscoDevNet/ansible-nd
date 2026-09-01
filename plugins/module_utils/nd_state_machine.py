@@ -13,23 +13,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
     filter_gathered_response,
     validate_gathered_filters,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
-    NDStateMachineError,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
-    NDConfigCollection,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
-    NDBaseOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
-    ResponseType,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
-    ResponseHandler,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
