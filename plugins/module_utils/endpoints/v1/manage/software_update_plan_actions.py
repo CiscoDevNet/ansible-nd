@@ -21,6 +21,8 @@ live on a common `_EpFabricSoftwareUpdatePlanActionBase`; each concrete endpoint
   (POST /api/v1/manage/fabrics/{fabric_name}/softwareUpdatePlan/actions/detachGroup)
 - `EpFabricSoftwareUpdatePlanPropose` - Auto-assign update groups fabric-wide by algorithm
   (POST /api/v1/manage/fabrics/{fabric_name}/softwareUpdatePlan/actions/propose)
+- `EpFabricSoftwareUpdatePlanStage` - Stage and validate images for update groups
+  (POST /api/v1/manage/fabrics/{fabric_name}/softwareUpdatePlan/actions/stage)
 """
 
 from __future__ import annotations
@@ -165,4 +167,60 @@ class EpFabricSoftwareUpdatePlanPropose(_EpFabricSoftwareUpdatePlanActionBase):
     @property
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.POST
+
+
+class EpFabricSoftwareUpdatePlanStage(FabricNameMixin, NDEndpointBaseModel):
+    """
+    # Summary
+
+    Stage and validate images for one or more update groups (the GUI "Prepare" action).
+
+    ND copies the configured image to each switch's bootflash, runs `show install all impact`, and
+    generates pre-reports. The action is asynchronous: it returns HTTP 202 with an empty body, and
+    progress is observed via the `softwareUpdatePlan/summary` endpoint.
+
+    - Path: `/api/v1/manage/fabrics/{fabric_name}/softwareUpdatePlan/actions/stage`
+    - Verb: POST
+    - Body: `{"updateGroupNames": ["...", "..."]}`
+
+    ## Raises
+
+    ### ValueError
+
+    - Via `path` property if `fabric_name` is not set.
+    """
+
+    class_name: Literal["EpFabricSoftwareUpdatePlanStage"] = Field(
+        default="EpFabricSoftwareUpdatePlanStage", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the stage action endpoint path. `fabric_name` is percent-encoded with `safe=""`.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `fabric_name` is not set before accessing `path`.
+        """
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "softwareUpdatePlan", "actions", "stage")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.POST`.
+
+        ## Raises
+
+        None
+        """
         return HttpVerbEnum.POST
