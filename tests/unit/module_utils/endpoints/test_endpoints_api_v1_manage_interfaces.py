@@ -34,9 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     ManageInterfacesListEndpointParams,
     ManageInterfacesSummaryEndpointParams,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
-    LuceneQueryParams,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import LuceneQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
