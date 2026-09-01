@@ -79,7 +79,7 @@ options:
                     - Use V(iosXeLoopback) for a general-purpose IOS-XE loopback.
                     - Use V(iosXeLoopbackShutNoshut) to manage only the admin state of an IOS-XE loopback.
                     - Use V(iosXeUnderlayLoopback) for an IOS-XE underlay (NVE source) loopback.
-                    - Use V(iosXeInternalLoopback) for an IOS-XE internal loopback (unvalidated ip/ipv6, PIM option).
+                    - Use V(iosXeInternalLoopback) for an IOS-XE internal loopback (IPv4/IPv6 and PIM options).
                     - Use V(csrLoopback) for a CSR loopback.
                     - Use V(csr1kvLoopback) for a CSR1kv loopback (admin state and freeform config only).
                     type: str
