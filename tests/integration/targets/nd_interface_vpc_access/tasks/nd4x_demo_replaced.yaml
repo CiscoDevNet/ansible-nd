@@ -1,0 +1,218 @@
+---
+- name: Run nd_interface_vpc_access replaced harness tests
+  block:
+    - name: "REPLACED SETUP: Reset and verify the test vPC pair"
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_pair_setup.yaml
+        apply:
+          tags:
+            - always
+      tags:
+        - always
+
+    - name: "REPLACED SETUP: Remove reserved vPC interfaces"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_vpc_access_cleanup_config }}"
+        state: deleted
+
+    - name: "REPLACED SETUP: Create baseline vpc100"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_baseline }}"
+        state: merged
+      register: nd4x_replaced_baseline
+
+    - name: "REPLACED SETUP: Wait for baseline convergence"
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: "REPLACED SETUP: Verify exact baseline state"
+      vars:
+        vpc100_before: >-
+          {{
+            nd4x_replaced_baseline.after
+            | selectattr('interface_name', 'equalto', 'vpc100')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_replaced_baseline.changed | bool
+          - vpc100_before.config_data.network_os.policy.access_vlan == 10
+          - >-
+            vpc100_before.config_data.network_os.policy.peer1_member_ports
+            == ['Ethernet1/5']
+          - >-
+            vpc100_before.config_data.network_os.policy.peer2_member_ports
+            == ['Ethernet1/5']
+
+    - name: "REPLACED UPDATE: Replace vpc100 policy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: replaced
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_vpc_pair_check_mode_queries }}"
+      register: nd4x_replaced_update
+
+    - name: "REPLACED UPDATE: Verify returned vpc100 state"
+      vars:
+        vpc100_after: >-
+          {{
+            nd4x_replaced_update.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vpc100')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_replaced_update.check_mode_result.changed | bool
+          - nd4x_replaced_update.first_run_result.changed | bool
+          - vpc100_after.config_data.network_os.policy.access_vlan == 20
+          - >-
+            vpc100_after.config_data.network_os.policy.peer1_port_channel_id
+            == 100
+          - >-
+            vpc100_after.config_data.network_os.policy.peer2_port_channel_id
+            == 100
+          - >-
+            vpc100_after.config_data.network_os.policy.peer1_member_ports
+            == ['Ethernet1/5', 'Ethernet1/8']
+          - >-
+            vpc100_after.config_data.network_os.policy.peer2_member_ports
+            == ['Ethernet1/5']
+          - >-
+            vpc100_after.config_data.network_os.policy.port_channel_mode
+            == 'active'
+          - vpc100_after.config_data.network_os.policy.lacp_rate == 'fast'
+
+    - name: "REPLACED IDEMPOTENT: Wait for convergence"
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: "REPLACED IDEMPOTENT: Reapply vpc100 in normal mode"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: replaced
+        check_mode: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_updated }}"
+        expected:
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        nd_queries:
+          - name: Validate replaced vpc100 on peer 1
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer1 }}/interfaces/vpc100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.accessVlan
+                equals: 20
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.peer1MemberPorts
+                equals:
+                  - Ethernet1/5
+                  - Ethernet1/8
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.peer2MemberPorts
+                equals:
+                  - Ethernet1/5
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.peer1PortChannelId
+                equals: 100
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.peer2PortChannelId
+                equals: 100
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.portChannelMode
+                equals: active
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.lacpRate
+                equals: fast
+          - name: Validate replaced vpc100 on peer 2
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer2 }}/interfaces/vpc100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.accessVlan
+                equals: 20
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.peer1MemberPorts
+                equals:
+                  - Ethernet1/5
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.peer2MemberPorts
+                equals:
+                  - Ethernet1/5
+                  - Ethernet1/8
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.peer1PortChannelId
+                equals: 100
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.peer2PortChannelId
+                equals: 100
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.portChannelMode
+                equals: active
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.lacpRate
+                equals: fast
+      register: nd4x_replaced_idempotent
+
+    - name: "REPLACED IDEMPOTENT: Verify real no-change result"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_replaced_idempotent.first_run_result.changed | bool
+          - not nd4x_replaced_idempotent.second_run_result.changed | bool
+          - nd4x_replaced_idempotent.check_mode_result is none
+          - nd4x_replaced_idempotent.idempotency_attempts == 1
+          - nd4x_replaced_idempotent.nd_query_results | length == 2
+
+  always:
+    - name: "REPLACED CLEANUP: Remove reserved vPC interfaces"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_vpc_access_cleanup_config }}"
+        state: deleted
+      ignore_errors: true
+      tags:
+        - always
+
+    - name: "REPLACED CLEANUP: Remove test vPC pair"
+      cisco.nd.nd_manage_vpc_pair:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
+            peer2_switch_id: "{{ test_switch_ip_peer2 }}"
+        state: deleted
+      ignore_errors: true
+      tags:
+        - always

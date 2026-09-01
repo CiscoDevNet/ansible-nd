@@ -1,0 +1,271 @@
+---
+- name: Run nd_interface_ethernet_access replaced harness tests
+  block:
+    - name: "REPLACED SETUP: Normalize Ethernet1/41 through Ethernet1/44"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - Ethernet1/41
+              - Ethernet1/42
+              - Ethernet1/43
+              - Ethernet1/44
+        state: deleted
+
+    - name: "REPLACED SETUP: Recreate post-merged state"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ ethernet_41_updated }}"
+          - "{{ ethernet_42_43_updated }}"
+          - "{{ ethernet_44 }}"
+        state: merged
+      register: replaced_setup
+
+    - name: "REPLACED SETUP: Verify exact prerequisite state"
+      vars:
+        ethernet_41_before: >-
+          {{
+            replaced_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | first
+          }}
+        ethernet_42_before: >-
+          {{
+            replaced_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/42')
+            | first
+          }}
+        ethernet_44_before: >-
+          {{
+            replaced_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/44')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - ethernet_41_before.config_data.network_os.policy.access_vlan == 150
+          - ethernet_41_before.config_data.network_os.policy.bpdu_guard
+            == "disable"
+          - ethernet_41_before.config_data.network_os.policy.cdp == false
+          - ethernet_42_before.config_data.network_os.policy.access_vlan == 250
+          - ethernet_42_before.config_data.network_os.policy.admin_state == false
+          - ethernet_44_before.config_data.network_os.policy.access_vlan == 300
+
+    - name: "REPLACED SINGLE: Replace Ethernet1/41 with partial payload"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ ethernet_41_replaced }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced Ethernet1/41
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F41
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: Ethernet1/41
+              - jsonpath: "$.current.configData.networkOS.policy.policyType"
+                equals: accessHost
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 500
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Replaced Ethernet1/41
+      register: replaced_single_41
+
+    - name: "REPLACED SINGLE: Verify returned configuration and idempotency"
+      vars:
+        ethernet_41_after: >-
+          {{
+            replaced_single_41.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - ethernet_41_after.config_data.network_os.policy.access_vlan == 500
+          - ethernet_41_after.config_data.network_os.policy.description
+            == "Replaced Ethernet1/41"
+          - replaced_single_41.idempotency_attempts == 1
+          - not replaced_single_41.second_run_result.changed | bool
+
+    - name: "REPLACED FAN-OUT: Replace Ethernet1/42 and Ethernet1/43"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ ethernet_42_43_replaced }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced Ethernet1/42
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F42
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 600
+              - jsonpath: "$.current.configData.networkOS.policy.adminState"
+                equals: true
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Replaced fan-out access ports
+          - name: Validate replaced Ethernet1/43
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F43
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 600
+              - jsonpath: "$.current.configData.networkOS.policy.adminState"
+                equals: true
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Replaced fan-out access ports
+      register: replaced_fanout
+
+    - name: "REPLACED FAN-OUT: Verify both returned configurations"
+      vars:
+        ethernet_42_after: >-
+          {{
+            replaced_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/42')
+            | first
+          }}
+        ethernet_43_after: >-
+          {{
+            replaced_fanout.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/43')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - ethernet_42_after.config_data.network_os.policy.access_vlan == 600
+          - ethernet_43_after.config_data.network_os.policy.access_vlan == 600
+          - ethernet_42_after.config_data.network_os.policy.admin_state == true
+          - ethernet_43_after.config_data.network_os.policy.admin_state == true
+          - replaced_fanout.nd_query_results | length == 2
+          - not replaced_fanout.second_run_result.changed | bool
+
+    - name: "REPLACED MULTI: Replace Ethernet1/41 and Ethernet1/44"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ ethernet_41_replaced_multi }}"
+          - "{{ ethernet_44_replaced }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate multi-replaced Ethernet1/41
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F41
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 700
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Replaced again Ethernet1/41
+          - name: Validate multi-replaced Ethernet1/44
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id
+              }}/interfaces/Ethernet1%2F44
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 800
+              - jsonpath: "$.current.configData.networkOS.policy.adminState"
+                equals: false
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Replaced Ethernet1/44
+      register: replaced_multi
+
+    - name: "REPLACED MULTI: Verify both returned configurations"
+      vars:
+        ethernet_41_after: >-
+          {{
+            replaced_multi.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+            | first
+          }}
+        ethernet_44_after: >-
+          {{
+            replaced_multi.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/44')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - ethernet_41_after.config_data.network_os.policy.access_vlan == 700
+          - ethernet_44_after.config_data.network_os.policy.access_vlan == 800
+          - ethernet_44_after.config_data.network_os.policy.admin_state == false
+          - replaced_multi.nd_query_results | length == 2
+          - not replaced_multi.second_run_result.changed | bool
+
+  always:
+    - name: "REPLACED CLEANUP: Normalize Ethernet1/41 through Ethernet1/44"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - Ethernet1/41
+              - Ethernet1/42
+              - Ethernet1/43
+              - Ethernet1/44
+        state: deleted

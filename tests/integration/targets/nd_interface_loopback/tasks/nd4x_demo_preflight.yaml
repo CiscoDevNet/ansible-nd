@@ -1,0 +1,115 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+    timeout: 300
+  register: nd4x_version
+
+- name: "ND4X PREFLIGHT: Record ND 4.x support"
+  ansible.builtin.set_fact:
+    nd4x_supported: >-
+      {{
+        nd4x_version.current.platformVersion
+        is version('4.0.0', '>=')
+      }}
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping ND 4.x loopback harness scenarios because controller version
+      {{ nd4x_version.current.platformVersion }} is older than 4.0.0.
+  when: not nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Query switches in the test fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+    timeout: 300
+  register: nd4x_switch_inventory
+  changed_when: false
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Initialize fabric snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_fabric_check_mode_queries: []
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Build fabric snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_fabric_check_mode_queries: >-
+      {{
+        nd4x_fabric_check_mode_queries
+        + [
+            {
+              'name':
+                'Snapshot interfaces on switch '
+                ~ (
+                    item.fabricManagementIp
+                    | default(item.switchId)
+                  ),
+              'path': (
+                '/api/v1/manage/fabrics/'
+                ~ test_fabric_name
+                ~ '/switches/'
+                ~ item.switchId
+                ~ '/interfaces'
+              ),
+              'expected_status': 200,
+              'unordered': true,
+              'ignore_keys': ['operData']
+            }
+          ]
+      }}
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: >-
+      {{
+        item.fabricManagementIp
+        | default(item.switchId)
+      }}
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify fabric snapshot coverage"
+  ansible.builtin.assert:
+    that:
+      - nd4x_fabric_check_mode_queries | length > 0
+      - >-
+        nd4x_fabric_check_mode_queries | length
+        ==
+        nd4x_switch_inventory.current.switches
+        | default([])
+        | length
+    fail_msg: >-
+      Could not prepare one predictive snapshot query for every switch in
+      the test fabric.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Select switch by management IP"
+  ansible.builtin.set_fact:
+    nd4x_switch_matches: >-
+      {{
+        nd4x_switch_inventory.current.switches
+        | default([])
+        | selectattr(
+            'fabricManagementIp',
+            'equalto',
+            test_switch_ip
+          )
+        | list
+      }}
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require exactly one matching switch"
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_matches | length == 1
+    fail_msg: >-
+      Expected exactly one switch with fabricManagementIp
+      {{ test_switch_ip }} in fabric {{ test_fabric_name }}, but found
+      {{ nd4x_switch_matches | length }}.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Record current switch ID"
+  ansible.builtin.set_fact:
+    test_switch_id: "{{ nd4x_switch_matches[0].switchId }}"
+  when: nd4x_supported | bool

@@ -9,6 +9,30 @@ test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
 
 # Loopback interface configs used across tests.
 # Loopback IDs 100-109 are reserved for these integration tests.
+nd4x_loopback_destructive_tests_enabled: >-
+  {{
+    nd_loopback_destructive_tests_enabled
+    | default(false)
+    | bool
+  }}
+
+nd4x_loopback_reserved_interfaces:
+  - loopback100
+  - loopback101
+  - loopback102
+  - loopback103
+  - loopback104
+  - loopback105
+  - loopback106
+  - loopback107
+  - loopback108
+  - loopback109
+
+nd4x_loopback_overridden_allowed_interfaces:
+  - loopback100
+  - loopback101
+  - loopback102
+
 loopback_100:
   switch_ip: "{{ test_switch_ip }}"
   interface_name: loopback100

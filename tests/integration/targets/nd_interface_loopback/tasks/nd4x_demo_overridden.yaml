@@ -1,0 +1,432 @@
+---
+- name: "OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_loopback_destructive_tests_enabled | bool
+    fail_msg: >-
+      The overridden test is fabric-wide and can delete managed loopbacks
+      omitted from the desired configuration. Run only on a dedicated test
+      fabric and set nd_loopback_destructive_tests_enabled=true.
+
+- name: "OVERRIDDEN PREFLIGHT: Query interfaces on every fabric switch"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ item.switchId }}/interfaces
+    method: get
+    timeout: 300
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: >-
+      {{
+        item.fabricManagementIp
+        | default(item.switchId)
+      }}
+  register: nd4x_fabric_interface_inventory
+  changed_when: false
+
+- name: "OVERRIDDEN PREFLIGHT: Initialize managed loopback scope"
+  ansible.builtin.set_fact:
+    nd4x_existing_managed_loopbacks: []
+
+- name: "OVERRIDDEN PREFLIGHT: Collect managed loopbacks"
+  ansible.builtin.set_fact:
+    nd4x_existing_managed_loopbacks: >-
+      {{
+        nd4x_existing_managed_loopbacks
+        + [
+            {
+              'switch_ip':
+                fabric_interface.0.item.fabricManagementIp,
+              'interface_name':
+                fabric_interface.1.interfaceName
+            }
+          ]
+      }}
+  loop: >-
+    {{
+      query(
+        'ansible.builtin.subelements',
+        nd4x_fabric_interface_inventory.results,
+        'current.interfaces',
+        {'skip_missing': True}
+      )
+    }}
+  loop_control:
+    loop_var: fabric_interface
+    label: >-
+      {{
+        fabric_interface.0.item.fabricManagementIp
+        | default(fabric_interface.0.item.switchId)
+      }}
+      {{
+        fabric_interface.1.interfaceName
+        | default('unknown')
+      }}
+  when:
+    - fabric_interface.1.interfaceType | default('') == 'loopback'
+    - >-
+      fabric_interface.1.get('configData', {})
+      .get('networkOS', {})
+      .get('policy', {})
+      .get('policyType', '') == 'loopback'
+- name: "OVERRIDDEN PREFLIGHT: Reject loopbacks outside test scope"
+  vars:
+    existing_switch_ips: >-
+      {{
+        nd4x_existing_managed_loopbacks
+        | map(attribute='switch_ip')
+        | unique
+        | list
+      }}
+    existing_test_switch_loopbacks: >-
+      {{
+        nd4x_existing_managed_loopbacks
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | map(attribute='interface_name')
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - existing_switch_ips | difference([test_switch_ip]) | length == 0
+      - >-
+        existing_test_switch_loopbacks
+        | difference(
+            nd4x_loopback_overridden_allowed_interfaces
+          )
+        | length == 0
+    fail_msg: >-
+      Unsafe overridden testbed. Existing managed loopbacks were found on
+      another switch or outside loopback100-loopback102. No override was
+      applied.
+
+- name: Run nd_interface_loopback overridden harness tests
+  block:
+    - name: "OVERRIDDEN SETUP: Remove loopback100 through loopback102"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        timeout: 300
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback101
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback102
+        state: deleted
+
+    - name: "OVERRIDDEN SETUP: Recreate post-merged state"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        timeout: 300
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_100_updated }}"
+          - "{{ loopback_101 }}"
+          - "{{ loopback_102 }}"
+        state: merged
+
+    - name: "OVERRIDDEN SETUP: Recreate single replaced state"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        timeout: 300
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  ip: "10.100.100.3"
+                  description: Replaced loopback100
+        state: replaced
+    - name: "OVERRIDDEN SETUP: Recreate multi-replaced state"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        timeout: 300
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  ip: "10.100.100.4"
+                  description: Replaced again loopback100
+          - "{{ loopback_101_updated }}"
+        state: replaced
+      register: overridden_setup
+    - name: "OVERRIDDEN SETUP: Verify exact pre-override state"
+      vars:
+        loopback100_before_override: >-
+          {{
+            overridden_setup.after
+            | selectattr(
+                'interface_name',
+                'equalto',
+                'loopback100'
+              )
+            | first
+          }}
+        loopback101_before_override: >-
+          {{
+            overridden_setup.after
+            | selectattr(
+                'interface_name',
+                'equalto',
+                'loopback101'
+              )
+            | first
+          }}
+        loopback102_before_override: >-
+          {{
+            overridden_setup.after
+            | selectattr(
+                'interface_name',
+                'equalto',
+                'loopback102'
+              )
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - overridden_setup.changed | bool
+          - loopback100_before_override.config_data.network_os.policy.ip
+            == "10.100.100.4"
+          - loopback100_before_override.config_data.network_os.policy.description
+            == "Replaced again loopback100"
+          - loopback101_before_override.config_data.network_os.policy.ip
+            == "10.100.101.2"
+          - loopback101_before_override.config_data.network_os.policy.admin_state
+            == false
+          - loopback102_before_override.interface_name == "loopback102"
+
+    - name: "OVERRIDDEN REDUCE: Retain only loopback100"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          timeout: 300
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  ip: "10.100.100.5"
+                  description: Overridden loopback100
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate retained loopback100
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.100.5"
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Overridden loopback100
+          - name: Validate removed managed loopbacks
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'loopback101' &
+                  @.configData.networkOS.policy.policyType == 'loopback'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'loopback102' &
+                  @.configData.networkOS.policy.policyType == 'loopback'
+                  )]
+                exists: false
+      register: overridden_reduce
+
+    - name: "OVERRIDDEN REDUCE: Verify returned state"
+      vars:
+        loopback100_after: >-
+          {{
+            overridden_reduce.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback100')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - loopback100_after.config_data.network_os.policy.ip
+            == "10.100.100.5"
+          - loopback100_after.config_data.network_os.policy.description
+            == "Overridden loopback100"
+          - overridden_reduce.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback101')
+            | list
+            | length == 0
+          - overridden_reduce.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback102')
+            | list
+            | length == 0
+          - overridden_reduce.nd_query_results | length == 2
+
+    - name: "OVERRIDDEN FILTER: Re-run identical override"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          timeout: 300
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  ip: "10.100.100.5"
+                  description: Overridden loopback100
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Revalidate retained loopback100
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: loopback100
+      register: overridden_filter
+
+    - name: "OVERRIDDEN FILTER: Verify system loopbacks are excluded"
+      ansible.builtin.assert:
+        that:
+          - not overridden_filter.check_mode_result.changed | bool
+          - not overridden_filter.first_run_result.changed | bool
+          - overridden_filter.first_run_result.before
+            | selectattr('interface_name', 'equalto', 'loopback0')
+            | list
+            | length == 0
+          - overridden_filter.first_run_result.before
+            | selectattr('interface_name', 'equalto', 'loopback1')
+            | list
+            | length == 0
+
+    - name: "OVERRIDDEN SWAP: Replace loopback100 with loopback101 and loopback102"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          timeout: 300
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_101 }}"
+          - "{{ loopback_102 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate swapped-out managed loopback100
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'loopback100' &
+                  @.configData.networkOS.policy.policyType == 'loopback'
+                  )]
+                exists: false
+          - name: Validate swapped-in loopback101
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback101
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.101.1"
+          - name: Validate swapped-in loopback102
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback102
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.102.1"
+      register: overridden_swap
+
+    - name: "OVERRIDDEN SWAP: Verify returned state"
+      ansible.builtin.assert:
+        that:
+          - overridden_swap.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback100')
+            | list
+            | length == 0
+          - overridden_swap.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback101')
+            | list
+            | length == 1
+          - overridden_swap.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback102')
+            | list
+            | length == 1
+          - overridden_swap.nd_query_results | length == 3
+
+  always:
+    - name: "OVERRIDDEN CLEANUP: Remove loopback100 through loopback102"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        timeout: 300
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback101
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback102
+        state: deleted

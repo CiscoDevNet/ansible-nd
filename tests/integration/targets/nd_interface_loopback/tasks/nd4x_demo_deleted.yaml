@@ -1,0 +1,243 @@
+---
+- name: Run nd_interface_loopback deleted harness tests
+  block:
+    - name: "DELETED SETUP: Remove reserved deletion-test loopbacks"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        timeout: 300
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback101
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback102
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback199
+        state: deleted
+
+    - name: "DELETED SETUP: Create loopback101 and loopback102"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        timeout: 300
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_101 }}"
+          - "{{ loopback_102 }}"
+        state: merged
+
+    - name: "DELETED SINGLE: Delete loopback101"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          timeout: 300
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback101
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries:
+          - name: Snapshot all managed interfaces on test switch
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            expected_status: 200
+            unordered: true
+            ignore_keys:
+              - operData
+        nd_queries:
+          - name: Validate loopback101 managed configuration absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'loopback101' &
+                  @.configData.networkOS.policy.policyType == 'loopback'
+                  )]
+                exists: false
+      register: deleted_loopback_101
+
+    - name: "DELETED SINGLE: Verify deletion and idempotency"
+      ansible.builtin.assert:
+        that:
+          - deleted_loopback_101.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback101')
+            | list
+            | length == 0
+          - deleted_loopback_101.idempotency_attempts == 1
+          - not deleted_loopback_101.second_run_result.changed | bool
+
+    - name: "DELETED MULTI SETUP: Recreate loopback100 and loopback101"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        timeout: 300
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_100 }}"
+          - "{{ loopback_101 }}"
+        state: merged
+
+    - name: "DELETED MULTI: Delete loopback100 through loopback102"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          timeout: 300
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback101
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback102
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries:
+          - name: Snapshot all managed interfaces on test switch
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            expected_status: 200
+            unordered: true
+            ignore_keys:
+              - operData
+        nd_queries:
+          - name: Validate managed loopbacks absent after multi-delete
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'loopback100' &
+                  @.configData.networkOS.policy.policyType == 'loopback'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'loopback101' &
+                  @.configData.networkOS.policy.policyType == 'loopback'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'loopback102' &
+                  @.configData.networkOS.policy.policyType == 'loopback'
+                  )]
+                exists: false
+      register: deleted_loopbacks_multi
+
+    - name: "DELETED MULTI: Verify all loopbacks are absent"
+      ansible.builtin.assert:
+        that:
+          - deleted_loopbacks_multi.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback100')
+            | list
+            | length == 0
+          - deleted_loopbacks_multi.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback101')
+            | list
+            | length == 0
+          - deleted_loopbacks_multi.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback102')
+            | list
+            | length == 0
+          - deleted_loopbacks_multi.nd_query_results | length == 1
+
+    - name: "DELETED NON-EXISTENT: Delete loopback199"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          timeout: 300
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback199
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries:
+          - name: Snapshot all managed interfaces on test switch
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            expected_status: 200
+            unordered: true
+            ignore_keys:
+              - operData
+        nd_queries:
+          - name: Validate loopback199 managed configuration remains absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'loopback199' &
+                  @.configData.networkOS.policy.policyType == 'loopback'
+                  )]
+                exists: false
+      register: deleted_nonexistent_199
+
+    - name: "DELETED NON-EXISTENT: Verify no-change results"
+      ansible.builtin.assert:
+        that:
+          - not deleted_nonexistent_199.check_mode_result.changed | bool
+          - not deleted_nonexistent_199.first_run_result.changed | bool
+          - not deleted_nonexistent_199.second_run_result.changed | bool
+
+  always:
+    - name: "DELETED CLEANUP: Remove reserved deletion-test loopbacks"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        timeout: 300
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback101
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback102
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback199
+        state: deleted

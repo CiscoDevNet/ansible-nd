@@ -8,30 +8,35 @@
 #
 # Run the test suite with ansible-test:
 #
-#   ansible-test integration nd_interface_vpc_access
+#   ansible-test network-integration nd_interface_vpc_access
 #
-# Lab pre-conditions (verified in reference_nd_lab.md):
+# Original fixture defaults (override these in inventory for another approved
+# lab):
 #   - SITE1 fabric with peer1 (192.168.12.151) and peer2 (192.168.12.152) reachable
-#   - Ethernet1/5, Ethernet1/6, Ethernet1/7 free on both peers for vPC member testing
-#   - vPC pair uses a virtual peer-link (no physical peer-link cable required); see vars/main.yaml
-#   - Multi-pair scenario additionally requires Ethernet1/10 free on all four leaves and a second vPC pair present
+#   - Peer 1 Ethernet1/5, Ethernet1/7, and Ethernet1/8 are reserved for this test
+#   - Peer 2 Ethernet1/5 and Ethernet1/7 are reserved for this test
+#   - The approved parity environment uses a physical peer-link discovered and
+#     managed by Nexus Dashboard
 #
-# Setup creates the vPC pair if missing; teardown unpairs it (which cascades and removes all
-# member vPC interfaces, so we don't need an explicit vPC-interface teardown). Set
-# nd_test_manage_vpc_pairs=false to treat the pair as pre-existing lab substrate (setup/teardown
-# then leave it untouched).
+# Setup resets and recreates the vPC pair; teardown unpairs it, which also
+# removes its vPC interfaces. Set nd_test_manage_vpc_pairs=false to use an
+# existing pair without changing or removing it.
 
 - name: Test that we have a Nexus Dashboard host, username and password
   ansible.builtin.fail:
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
   when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+  tags:
+    - always
 
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
+  tags:
+    - always
 
-- name: Run nd_interface_vpc_access state tests
+- name: Run original nd_interface_vpc_access state tests
   block:
     - name: Pre-test setup (create vPC pair, clean any prior vPC interfaces)
       ansible.builtin.include_tasks: setup.yaml
@@ -61,6 +66,105 @@
         state: deleted
       ignore_errors: true
       when: test_manage_vpc_pairs
+  vars:
+    ansible_command_timeout: 300
+  environment:
+    ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
+
+- name: Run nd_interface_vpc_access ND 4.x harness tests
+  block:
+    - name: Run ND 4.x vPC-access harness preflight
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_preflight.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_merged
+            - nd4x_demo_replaced
+            - nd4x_demo_deleted
+            - nd4x_demo_negative
+            - nd4x_demo_overridden
+            - nd4x_demo_destructive
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+        - nd4x_demo_replaced
+        - nd4x_demo_deleted
+        - nd4x_demo_negative
+        - nd4x_demo_overridden
+        - nd4x_demo_destructive
+
+    - name: Run merged state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_merged
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run replaced state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_replaced.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_replaced
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_replaced
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run deleted state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_deleted.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_deleted
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_deleted
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run negative validation tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_negative.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_negative
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_negative
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run overridden state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_overridden.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo_overridden
+            - nd4x_demo_destructive
+      tags:
+        - never
+        - nd4x_demo_overridden
+        - nd4x_demo_destructive
+      when: nd4x_supported | default(false) | bool
   vars:
     ansible_command_timeout: 300
   environment:
