@@ -1,0 +1,9 @@
+---
+bugfixes:
+  - >-
+    nd_interface_* - when a task with ``config_actions.deploy`` set to ``true`` fails after the controller has already
+    accepted some of the requested interface changes, deploy that accepted subset and name it in the failure message instead
+    of leaving it staged but undeployed. A retry previously classified those interfaces as unchanged and never deployed them,
+    so controller intent and switch running state stayed divergent even after a successful retry. The failure-path finalizer
+    introduced for ``nd_interface_loopback`` is now shared (``finalize_accepted_intent`` in ``base_interface.py``) and
+    adopted by all ten ``nd_interface_*`` modules.

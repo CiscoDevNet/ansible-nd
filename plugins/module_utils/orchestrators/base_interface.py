@@ -16,6 +16,7 @@ with interface-type-specific payload construction and query filtering.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import ClassVar
 
@@ -475,3 +476,37 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint.fabric_name = self.fabric_name
         payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in self._pending_removes]}
         return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+
+
+def finalize_accepted_intent(orchestrator: NDBaseOrchestrator | None, check_mode: bool, module_log: logging.Logger) -> str:
+    """
+    # Summary
+
+    Failure-path finalizer shared by the `nd_interface_*` modules (PR #403 review): when a module fails after some mutations
+    succeeded, deploy the already-accepted subset via `deploy_accepted_mutations` so it does not remain staged-but-undeployed.
+    Without this, a retry classifies the accepted interfaces as unchanged and never deploys them, so controller intent and
+    switch running state stay divergent even after a successful retry.
+
+    Call it from every `except` handler in a module's `main()` and append the result to the failure message. It returns a
+    sentence naming what was finalized (or reporting that finalization itself failed), or an empty string when there is nothing
+    to do: check mode (no mutations were sent), `deploy: false` (staged intent is the documented contract), no accepted
+    mutations queued, the failure preceded orchestrator creation (`orchestrator` is `None`), or the orchestrator is not an
+    `NDBaseInterfaceOrchestrator`.
+
+    ## Raises
+
+    None (a finalization failure is folded into the returned message so it cannot mask the original error).
+    """
+    if orchestrator is None or check_mode:
+        return ""
+    if not isinstance(orchestrator, NDBaseInterfaceOrchestrator):
+        return ""
+    try:
+        deployed = orchestrator.deploy_accepted_mutations()
+    except Exception as deploy_error:  # pylint: disable=broad-except
+        module_log.exception("Failure-path deploy of accepted mutations failed")
+        return f" NOTE: the controller accepted some interface changes before the failure and deploying them also failed; they remain staged: {deploy_error}"
+    if not deployed:
+        return ""
+    names = ", ".join(sorted(f"{name} (switchId {switch_id})" for name, switch_id in deployed))
+    return f" NOTE: before the failure, the controller had already accepted changes for interface(s) [{names}]; those changes were deployed."

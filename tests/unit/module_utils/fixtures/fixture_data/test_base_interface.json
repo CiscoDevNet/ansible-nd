@@ -227,5 +227,29 @@
         "DATA": {
             "error": "boom"
         }
+    },
+    "test_base_interface_00684a": {
+        "TEST_NOTES": [
+            "finalize_accepted_intent success: POST interfaceActions/deploy succeeds for the queued mutation-backed pairs"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "ok"
+        }
+    },
+    "test_base_interface_00685a": {
+        "TEST_NOTES": [
+            "finalize_accepted_intent failure: POST interfaceActions/deploy returns 500; the message must report staged intent and the queue must be retained"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "error": "boom"
+        }
     }
 }

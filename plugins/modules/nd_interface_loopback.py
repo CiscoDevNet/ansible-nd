@@ -700,41 +700,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator, finalize_accepted_intent
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
-
-
-def _finalize_accepted_intent(nd_state_machine: NDStateMachine | None, module: AnsibleModule, module_log: logging.Logger) -> str:
-    """
-    # Summary
-
-    Failure-path finalizer (PR #403 review): when the module fails after some mutations succeeded, deploy the already-accepted
-    subset via `deploy_accepted_mutations` so it does not remain staged-but-undeployed. Without this, a retry classifies the
-    accepted interfaces as unchanged and never deploys them, so controller intent and switch running state stay divergent even
-    after a successful retry.
-
-    Returns a sentence to append to the failure message naming what was finalized (or reporting that finalization itself
-    failed). Returns an empty string when there is nothing to do: check mode (no mutations were sent), `deploy: false`
-    (staged intent is the documented contract), no accepted mutations queued, or the failure preceded orchestrator creation.
-
-    ## Raises
-
-    None (a finalization failure is folded into the returned message so it cannot mask the original error).
-    """
-    if nd_state_machine is None or module.check_mode:
-        return ""
-    orchestrator = nd_state_machine.model_orchestrator
-    if not isinstance(orchestrator, NDBaseInterfaceOrchestrator):
-        return ""
-    try:
-        deployed = orchestrator.deploy_accepted_mutations()
-    except Exception as deploy_error:  # pylint: disable=broad-except
-        module_log.exception("Failure-path deploy of accepted mutations failed")
-        return f" NOTE: the controller accepted some interface changes before the failure and deploying them also failed; they remain staged: {deploy_error}"
-    if not deployed:
-        return ""
-    names = ", ".join(sorted(f"{name} (switchId {switch_id})" for name, switch_id in deployed))
-    return f" NOTE: before the failure, the controller had already accepted changes for interface(s) [{names}]; those changes were deployed."
 
 
 def main():
@@ -797,7 +764,7 @@ def main():
         module_log.exception("NDStateMachineError during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module execution failed: {str(e)}"
-        error_msg += _finalize_accepted_intent(nd_state_machine, module, module_log)
+        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
@@ -806,7 +773,7 @@ def main():
         module_log.exception("Unhandled exception during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module failed: {str(e)}"
-        error_msg += _finalize_accepted_intent(nd_state_machine, module, module_log)
+        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
