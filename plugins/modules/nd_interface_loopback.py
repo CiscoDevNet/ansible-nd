@@ -768,6 +768,7 @@ def main():
     module_log = logging.getLogger("nd.nd_interface_loopback")
 
     nd_state_machine = None
+    verbosity = module._verbosity
 
     try:
         # Initialize StateMachine
@@ -796,7 +797,7 @@ def main():
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 
-        module.exit_json(**nd_state_machine.output.format())
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except Exception as e:  # pylint: disable=broad-except
         fail_from_exception(module, module_log, nd_state_machine, e)
