@@ -63,6 +63,11 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
 
+    # Maximum Lucene expressions per switch before collapsing to the base query
+    # Beyond this threshold, a single broad query is cheaper than N targeted ones.
+    _MAX_EXPRESSIONS_PER_SWITCH: ClassVar[int] = 3
+    _MAX_TOTAL_REQUESTS: ClassVar[int] = 300
+
     def model_post_init(self, __context) -> None:
         """
         # Summary

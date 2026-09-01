@@ -240,12 +240,14 @@ class TestNDOutputGatheredState:
         result = output.format()
         assert result["gathered"] == [{"name": "link1"}]
 
-    def test_gathered_omits_change_oriented_keys(self):
-        """state='gathered' omits before/after/diff/proposed."""
+    def test_gathered_includes_empty_change_oriented_keys(self):
+        """state='gathered' includes before/after/diff as empty lists."""
         output = NDOutput("info", state="gathered")
         result = output.format()
-        for key in ("after", "before", "diff", "proposed"):
-            assert key not in result
+        assert result["before"] == []
+        assert result["after"] == []
+        assert result["diff"] == []
+        assert result["proposed"] == []
 
     def test_gathered_is_not_changed(self):
         """gathered is read-only, so changed is always False."""

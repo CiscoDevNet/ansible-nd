@@ -23,9 +23,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import ClassVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
-    NDEndpointBaseModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
@@ -38,15 +36,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
     build_lucene_expressions,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
-    LoopbackInterfaceModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
-    NDBaseInterfaceOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
-    ResponseType,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
 class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfaceModel]):
@@ -98,9 +90,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             ("interface_name",): "interfaceName",
         },
     )
-    # Maximum Lucene expressions per switch before collapsing to the base query
-    # Beyond this threshold, a single broad query is cheaper than N targeted ones.
-    _MAX_EXPRESSIONS_PER_SWITCH: ClassVar[int] = 3
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -280,6 +269,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
         filter_items = gathered_filters or [{}]
 
+        fabric_wide_filters: list[dict] = []
+        switch_scoped_filters: list[tuple[str, str, dict]] = []
+
         for filter_item in filter_items:
             requested_switch_ip = filter_item.get("switch_ip")
             if requested_switch_ip:
@@ -288,37 +280,43 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
                     raise ValueError(
                         f"Gathered filter references switch_ip '{requested_switch_ip}' " f"which does not exist in fabric '{self.fabric_context.fabric_name}'."
                     )
-                target_switches = {
-                    requested_switch_ip: switch_id,
-                }
+                switch_scoped_filters.append((requested_switch_ip, switch_id, filter_item))
             else:
-                target_switches = switch_map
-            expressions = build_lucene_expressions(
-                filters=[filter_item],
-                spec=self.gathered_lucene_spec,
-            )
-            for switch_ip, switch_id in target_switches.items():
-                if switch_ip not in query_plan:
-                    query_plan[switch_ip] = (switch_id, set())
+                fabric_wide_filters.append(filter_item)
 
-                planned_expressions = query_plan[switch_ip][1]
-                for expression in expressions:
-                    # The base query already returns every managed loopback on
-                    # this switch, so any narrower interface-name query would
-                    # only duplicate candidates and REST calls.
-                    if expression == base_expression:
-                        planned_expressions.clear()
-                        planned_expressions.add(base_expression)
-                    elif base_expression not in planned_expressions:
-                        planned_expressions.add(expression)
+        if fabric_wide_filters:
+            fabric_wide_expressions: set[str] = set()
+            for expr in build_lucene_expressions(fabric_wide_filters, self.gathered_lucene_spec):
+                if expr == base_expression:
+                    fabric_wide_expressions = {base_expression}
+                    break
+                fabric_wide_expressions.add(expr)
 
-        # Cap fan-out: if a switch accumulated more expressions than the threshold,
-        # collapse to the base expression. The local filter guarantees correctness;
-        # the server filter only reduces candidate volume.
+            if len(switch_map) * len(fabric_wide_expressions) > self._MAX_TOTAL_REQUESTS:
+                fabric_wide_expressions = {base_expression}
+        else:
+            fabric_wide_expressions = None
+
+        if fabric_wide_expressions is not None:
+            for switch_ip, switch_id in switch_map.items():
+                query_plan[switch_ip] = (switch_id, set(fabric_wide_expressions))
+
+        for switch_ip, switch_id, filter_item in switch_scoped_filters:
+            if switch_ip not in query_plan:
+                query_plan[switch_ip] = (switch_id, set())
+            planned = query_plan[switch_ip][1]
+            for expr in build_lucene_expressions([filter_item], self.gathered_lucene_spec):
+                if expr == base_expression:
+                    planned.clear()
+                    planned.add(base_expression)
+                elif base_expression not in planned:
+                    planned.add(expr)
+
         for switch_ip, (switch_id, expressions) in query_plan.items():
             if len(expressions) > self._MAX_EXPRESSIONS_PER_SWITCH:
                 expressions.clear()
                 expressions.add(base_expression)
+
         return query_plan
 
     def _query_interfaces_with_lucene(

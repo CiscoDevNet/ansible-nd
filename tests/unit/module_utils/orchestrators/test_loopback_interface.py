@@ -34,25 +34,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopbac
     LoopbackNetworkOSModel,
     LoopbackPolicyModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import (
-    LoopbackInterfaceOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
-    ResponseHandler,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
-    does_not_raise,
-)
-from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import (
-    load_fixture,
-)
-from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import (
-    MockAnsibleModule,
-)
-from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
-    ResponseGenerator,
-)
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
+from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 
@@ -1048,6 +1036,32 @@ def test_loopback_interface_00765() -> None:
 
     with pytest.raises(ValueError, match="does not exist in fabric"):
         instance._build_gathered_query_plan([{"switch_ip": "192.0.2.99", "interface_name": "loopback101"}])
+
+
+def test_loopback_interface_00767() -> None:
+    """Verify total request budget collapses fabric-wide expressions on large fabrics."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    large_switch_map = {f"192.0.2.{i}": f"SERIAL-{i}" for i in range(150)}
+    instance._fabric_context = SimpleNamespace(
+        fabric_name="large_fabric",
+        switch_map=large_switch_map,
+    )
+
+    filters = [
+        {"interface_name": "loopback100"},
+        {"interface_name": "loopback101"},
+        {"interface_name": "loopback102"},
+    ]
+    plan = instance._build_gathered_query_plan(filters)
+
+    base = "interfaceType:loopback AND policyType:loopback"
+    for switch_ip in large_switch_map:
+        assert plan[switch_ip][1] == {base}
 
 
 def test_loopback_interface_00770(monkeypatch) -> None:

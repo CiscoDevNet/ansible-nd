@@ -35,32 +35,16 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
 import ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine as state_machine_module
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
-    NDStateMachineError,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
-    NDStateMachine,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import (
-    LoopbackInterfaceOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
-    ResponseType,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
-    ResponseHandler,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
-    does_not_raise,
-)
-from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import (
-    MockAnsibleModule,
-)
-from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
-    ResponseGenerator,
-)
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 

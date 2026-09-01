@@ -6,9 +6,7 @@ from __future__ import absolute_import, division, print_function
 
 from typing import Any, Dict, List, Optional, Union
 
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
-    NDConfigCollection,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.utils import prune_to_spec
 
@@ -45,10 +43,15 @@ class NDOutput:
             gathered_output = {
                 "output_level": self._output_level,
                 "changed": False,
+                "before": [],
+                "after": [],
+                "diff": [],
                 "gathered": gathered_items,
             }
-            if self._output_level == "debug":
-                gathered_output["logs"] = self._logs
+            if self._output_level in ("debug", "info"):
+                gathered_output["proposed"] = []
+                if self._output_level == "debug":
+                    gathered_output["logs"] = self._logs
             if self._extra:
                 gathered_output.update(self._extra)
             gathered_output.update(**kwargs)

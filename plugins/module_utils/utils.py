@@ -8,15 +8,9 @@ import logging
 from copy import deepcopy
 from typing import Any
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import (
-    EpFabricConfigSavePost,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import (
-    EpFabricDeployPost,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
-    EpManageFabricsSwitchActionsDeployPost,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import EpFabricConfigSavePost
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import EpFabricDeployPost
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import EpManageFabricsSwitchActionsDeployPost
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 

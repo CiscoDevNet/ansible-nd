@@ -16,12 +16,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     SerializationInfo,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
-    NDNestedModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.constants import (
-    NDConstantMapping,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
 
 USER_ROLES_MAPPING = NDConstantMapping(
     {

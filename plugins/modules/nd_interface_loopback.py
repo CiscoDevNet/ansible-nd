@@ -290,26 +290,14 @@ import logging
 import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
-    NDStateMachineError,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    require_pydantic,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
-    LoopbackInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
-    NDStateMachine,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
-    NDBaseInterfaceOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import (
-    LoopbackInterfaceOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 
 
 def main():
@@ -344,6 +332,7 @@ def main():
     module_log = logging.getLogger("nd.nd_interface_loopback")
 
     nd_state_machine = None
+    verbosity = module._verbosity
 
     try:
         # Initialize StateMachine
@@ -372,11 +361,11 @@ def main():
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 
-        module.exit_json(**nd_state_machine.output.format())
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except NDStateMachineError as e:
         module_log.exception("NDStateMachineError during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
         error_msg = f"Module execution failed: {str(e)}"
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
