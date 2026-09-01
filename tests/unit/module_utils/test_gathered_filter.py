@@ -16,9 +16,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
     format_lucene_value,
     validate_gathered_filters,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
-    LoopbackInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 
 
 def _response(
