@@ -1,0 +1,75 @@
+---
+- name: Create all Interface Group types with the ND 4.x test runner
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: switch
+    config: "{{ interface_group_all_types }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch Interface Groups after type creation
+        path: >-
+          {{
+            '/api/v1/manage/fabrics/'
+            ~ test_fabric_name
+            ~ '/interfaceGroups?max=10000'
+          }}
+        method: get
+        expected_status: 200
+  register: interface_group_types_result
+
+- name: Validate successful state-machine output contract
+  ansible.builtin.assert:
+    that:
+      - interface_group_types_result.check_mode_result.before is defined
+      - interface_group_types_result.check_mode_result.after is defined
+      - >-
+        interface_group_types_result.first_run_result.before
+        != interface_group_types_result.first_run_result.after
+      - >-
+        interface_group_types_result.second_run_result.before
+        == interface_group_types_result.second_run_result.after
+  when: not ansible_check_mode
+
+- name: Validate proposed output at info and debug output levels
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          interface_group_types_result.check_mode_result.proposed
+          | length
+        )
+        == (interface_group_all_types | length)
+  when:
+    - not ansible_check_mode
+    - nd_info.output_level in ['info', 'debug']
+
+- name: Validate all Interface Group types from the list response
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_types_result.nd_query_results[0].result }}"
+    test_data: "{{ interface_group_all_types }}"
+    mode: exact
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    invariants:
+      total_count: "{{ interface_group_all_types | length }}"
+      required_types: >-
+        {{ interface_group_all_types | map(attribute='type') | list }}
+      unique_group_names: true
+      unique_members: true
+      consistent_counts: true
+  when: not ansible_check_mode

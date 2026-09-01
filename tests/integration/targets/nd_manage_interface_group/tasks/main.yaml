@@ -1,0 +1,378 @@
+---
+# Integration tests for nd_manage_interface_group.
+#
+# The execution flow follows the nd4x_module_test action-plugin contract from
+# CiscoDevNet/ansible-nd#337: predictive check mode, one apply, one idempotency
+# application, followed by read-only controller validation.
+
+- name: Verify required Nexus Dashboard connection variables
+  ansible.builtin.fail:
+    msg: >-
+      Define ansible_host, ansible_user, and ansible_password for the Nexus
+      Dashboard integration test inventory.
+  when: >-
+    ansible_host is not defined
+    or ansible_user is not defined
+    or ansible_password is not defined
+  tags:
+    - always
+
+- name: Verify required fabric and switch management IP variables
+  ansible.builtin.assert:
+    that:
+      - test_fabric_name | length > 0
+      - test_switch_ip_primary | length > 0
+      - test_switch_ip_secondary | length > 0
+      - test_switch_ip_primary != test_switch_ip_secondary
+    fail_msg: >-
+      Define nd_test_fabric_name, nd_test_switch_ip, and
+      nd_test_interface_group_secondary_switch_ip in
+      interface_group_test_vars.yml. The two management IPs must identify
+      different switches.
+  tags:
+    - always
+
+- name: Query the fabric switch inventory for canonical serial numbers
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: interface_group_switch_inventory
+  changed_when: false
+  tags:
+    - always
+
+- name: Select the two reserved switches by management IP
+  ansible.builtin.set_fact:
+    interface_group_primary_switch_matches: >-
+      {{
+        interface_group_switch_inventory.current.switches
+        | default([])
+        | selectattr(
+            'fabricManagementIp',
+            'equalto',
+            test_switch_ip_primary
+          )
+        | list
+      }}
+    interface_group_secondary_switch_matches: >-
+      {{
+        interface_group_switch_inventory.current.switches
+        | default([])
+        | selectattr(
+            'fabricManagementIp',
+            'equalto',
+            test_switch_ip_secondary
+          )
+        | list
+      }}
+  tags:
+    - always
+
+- name: Verify both management IPs resolve uniquely in the fabric
+  ansible.builtin.assert:
+    that:
+      - interface_group_primary_switch_matches | length == 1
+      - interface_group_secondary_switch_matches | length == 1
+    fail_msg: >-
+      Each supplied management IP must resolve to exactly one switch in fabric
+      '{{ test_fabric_name }}'. Primary matches={{
+      interface_group_primary_switch_matches | length }}, secondary matches={{
+      interface_group_secondary_switch_matches | length }}.
+  tags:
+    - always
+
+- name: Store the canonical switch serial numbers for Interface Group requests
+  ansible.builtin.set_fact:
+    test_switch_id: >-
+      {{ interface_group_primary_switch_matches[0].switchId }}
+    test_switch_id_secondary: >-
+      {{ interface_group_secondary_switch_matches[0].switchId }}
+  tags:
+    - always
+
+- name: Verify Interface Group testbed variables
+  ansible.builtin.assert:
+    that:
+      - test_fabric_name | length > 0
+      - test_switch_id | length > 0
+      - test_switch_id_secondary | length > 0
+      - test_port_channel_1 | length > 0
+      - test_port_channel_2 | length > 0
+      - test_port_channel_3 | length > 0
+      - test_any_port_channel | length > 0
+      - >-
+        not test_create_port_channel_fixtures
+        or test_switch_ip_primary | length > 0
+      - >-
+        not test_create_port_channel_fixtures
+        or test_switch_ip_secondary | length > 0
+      - >-
+        not test_create_port_channel_fixtures
+        or test_port_channel_member_1 | length > 0
+      - >-
+        not test_create_port_channel_fixtures
+        or test_port_channel_member_2 | length > 0
+      - >-
+        not test_create_port_channel_fixtures
+        or test_port_channel_member_3 | length > 0
+      - >-
+        not test_create_port_channel_fixtures
+        or test_any_port_channel_member | length > 0
+      - >-
+        not test_ethernet_custom_flow_enabled
+        or test_ethernet_custom | length > 0
+      - >-
+        not test_ethernet_custom_flow_enabled
+        or test_custom_template | length > 0
+      - test_ethernet_policy | length > 0
+      - test_ethernet_without_policy | length > 0
+      - test_any_ethernet_primary | length > 0
+      - test_any_ethernet_secondary | length > 0
+      - >-
+        not test_vpc_flow_enabled
+        or (test_vpc_id >= 1 and test_vpc_id <= 4096)
+      - test_network_1 | length > 0
+      - test_network_2 | length > 0
+      - test_undeployed_network | length > 0
+      - >-
+        not test_create_network_fixtures
+        or test_switch_ip_primary | length > 0
+      - >-
+        not test_create_network_fixtures
+        or test_switch_ip_secondary | length > 0
+      - >-
+        not test_create_network_fixtures
+        or test_network_attachment_interface_primary | length > 0
+      - >-
+        not test_create_network_fixtures
+        or test_network_attachment_interface_secondary | length > 0
+      - test_network_base_id >= 1
+      - test_network_base_id + 3 <= 16777214
+      - test_network_base_vlan >= 2
+      - test_network_base_vlan + 3 <= 4094
+      - >-
+        not test_vpc_flow_enabled
+        or not test_create_vpc_fixture
+        or test_switch_ip_primary | length > 0
+      - >-
+        not test_vpc_flow_enabled
+        or not test_create_vpc_fixture
+        or test_vpc_peer1_member | length > 0
+      - >-
+        not test_vpc_flow_enabled
+        or not test_create_vpc_fixture
+        or test_vpc_peer2_member | length > 0
+      - test_switch_id != test_switch_id_secondary
+      - >-
+        [test_port_channel_1, test_port_channel_2, test_port_channel_3]
+        | unique | list | length == 3
+      - >-
+        (
+          (
+            [test_ethernet_custom]
+            if test_ethernet_custom_flow_enabled
+            else []
+          )
+          + [
+            test_ethernet_policy,
+            test_any_ethernet_primary,
+            test_network_attachment_interface_primary,
+            test_port_channel_member_1,
+            test_port_channel_member_2,
+            test_port_channel_member_3
+          ]
+          + (
+            [test_vpc_peer1_member]
+            if test_vpc_flow_enabled
+            else []
+          )
+        )
+        | reject('equalto', '')
+        | list
+        | unique
+        | list
+        | length
+        ==
+        (
+          (
+            [test_ethernet_custom]
+            if test_ethernet_custom_flow_enabled
+            else []
+          )
+          + [
+            test_ethernet_policy,
+            test_any_ethernet_primary,
+            test_network_attachment_interface_primary,
+            test_port_channel_member_1,
+            test_port_channel_member_2,
+            test_port_channel_member_3
+          ]
+          + (
+            [test_vpc_peer1_member]
+            if test_vpc_flow_enabled
+            else []
+          )
+        )
+        | reject('equalto', '')
+        | list
+        | length
+      - >-
+        (
+          [
+            test_ethernet_without_policy,
+            test_any_ethernet_secondary,
+            test_network_attachment_interface_secondary,
+            test_any_port_channel_member
+          ]
+          + (
+            [test_vpc_peer2_member]
+            if test_vpc_flow_enabled
+            else []
+          )
+        )
+        | reject('equalto', '')
+        | list
+        | unique
+        | list
+        | length
+        ==
+        (
+          [
+            test_ethernet_without_policy,
+            test_any_ethernet_secondary,
+            test_network_attachment_interface_secondary,
+            test_any_port_channel_member
+          ]
+          + (
+            [test_vpc_peer2_member]
+            if test_vpc_flow_enabled
+            else []
+          )
+        )
+        | reject('equalto', '')
+        | list
+        | length
+      - >-
+        [test_network_1, test_network_2, test_undeployed_network]
+        | unique | list | length == 3
+    fail_msg: >-
+      Define the complete two-leaf Interface Group fixture documented in
+      interface_group_test_vars.yml.template. All interfaces, Network IDs, and
+      VLAN IDs must be reserved for this suite.
+  tags:
+    - always
+
+- name: Set common Interface Group test options
+  ansible.builtin.set_fact:
+    nd_info:
+      output_level: "{{ nd_output_level | default('debug') }}"
+    interface_group_run_marker: >-
+      ANSIBLE-IG-{{ now(utc=true, fmt='%Y%m%d%H%M%S') }}
+  tags:
+    - always
+
+- name: Run Interface Group integration coverage
+  block:
+    - name: Remove leftovers from an interrupted prior run
+      ansible.builtin.include_tasks:
+        file: cleanup.yaml
+        apply:
+          tags:
+            - always
+      tags:
+        - always
+
+    - name: Check that reserved members are not owned by external groups
+      cisco.nd.nd_manage_interface_group:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ interface_group_reserved_member_filters }}"
+        state: gathered
+      register: interface_group_reserved_member_owners
+      tags:
+        - always
+
+    - name: Verify the Interface Group member fixtures are reserved
+      ansible.builtin.assert:
+        that:
+          - >-
+            interface_group_reserved_member_owners.gathered
+            | default([])
+            | length == 0
+        fail_msg: >-
+          One or more Interface Group member fixtures are already associated
+          with a non-test Interface Group: {{
+            interface_group_reserved_member_owners.gathered
+            | default([])
+            | map(attribute='interface_group_name')
+            | list
+          }}. Supply interfaces reserved exclusively for this target.
+      tags:
+        - always
+
+    - name: Create the reserved logical interface fixtures
+      ansible.builtin.include_tasks:
+        file: setup.yaml
+        apply:
+          tags:
+            - always
+      tags:
+        - always
+
+    - name: Validate all Interface Group discriminator types
+      ansible.builtin.include_tasks: types.yaml
+      tags:
+        - interface_groups_types
+
+    - name: Validate every type-specific member association
+      ansible.builtin.include_tasks: type_members.yaml
+
+    - name: Validate resource and switch deployment behavior
+      ansible.builtin.include_tasks: deployment.yaml
+
+    - name: Validate network associations across every group type
+      ansible.builtin.include_tasks: network_associations.yaml
+
+    - name: Validate read-only gathered output and filtering
+      ansible.builtin.include_tasks: gathered.yaml
+      tags:
+        - interface_groups_gathered
+
+    - name: Validate additive merged behavior and config actions
+      ansible.builtin.include_tasks: merged.yaml
+
+    - name: Validate input, reference, move, and atomic preflight failures
+      ansible.builtin.include_tasks: failures.yaml
+
+    - name: Validate authoritative replacement and member moves
+      ansible.builtin.include_tasks: replaced.yaml
+
+    - name: Validate deletion and delete idempotency
+      ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Validate fabric-wide overridden behavior
+      ansible.builtin.include_tasks: overridden.yaml
+  always:
+    - name: Remove Interface Group integration-test resources
+      ansible.builtin.include_tasks:
+        file: cleanup.yaml
+        apply:
+          tags:
+            - always
+      tags:
+        - always
+  module_defaults:
+    cisco.nd.nd_manage_interface_group:
+      timeout: 300
+    cisco.nd.nd_interface_ethernet_trunk_host:
+      timeout: 300
+    cisco.nd.nd_interface_port_channel_trunk_host:
+      timeout: 300
+    cisco.nd.nd_interface_vpc_trunk_host:
+      timeout: 300
+    cisco.nd.nd_manage_vpc_pair:
+      timeout: 600
+    cisco.nd.nd_manage_networks:
+      timeout: 300
+  environment:
+    ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"

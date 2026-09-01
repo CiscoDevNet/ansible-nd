@@ -16,6 +16,7 @@ mutation operations are gated by check mode:
   item re-submitted without a policy is not a create and is not validated.
 - `preflight` (capability, PR #275 / issue #273) is then called over the proposed set, in check mode as well as
   normal mode, even though the underlying create/update calls are skipped in check mode.
+- `prepare_mutations` runs only after both preflight hooks succeed and before normal create/update reconciliation.
 - For `deleted` state neither preflight is called (removing configuration does not depend on capability, and a
   policy-less item is correct for delete -- the documented out-of-scope decision).
 
@@ -65,6 +66,9 @@ class _SpyLoopbackOrchestrator(LoopbackInterfaceOrchestrator):
         # Record-only, mirroring the `preflight` spy: the guard's own logic is covered in
         # test_base_interface.py; here we assert only that manage_state reaches it with the create subset.
         self._calls.append(("preflight_create", list(model_instances)))
+
+    def prepare_mutations(self, existing, proposed, check_mode=False) -> None:
+        self._calls.append(("prepare_mutations", check_mode))
 
     def create(self, model_instance, **kwargs) -> ResponseType:
         self._calls.append(("create", model_instance))
@@ -149,11 +153,12 @@ def test_nd_state_machine_00100() -> None:
 
     calls = instance.model_orchestrator._calls
     names = [name for name, _ in calls]
-    assert names == ["preflight_create", "preflight"]
+    assert names == ["preflight_create", "preflight", "prepare_mutations"]
     # preflight_create receives the single new item (create subset)
     assert [m.get_identifier_value() for m in calls[0][1]] == [("192.168.12.151", "loopback10")]
     assert len(calls[1][1]) == 1
     assert calls[1][1][0].get_identifier_value() == ("192.168.12.151", "loopback10")
+    assert calls[2] == ("prepare_mutations", True)
 
 
 def test_nd_state_machine_00110() -> None:
@@ -167,8 +172,9 @@ def test_nd_state_machine_00110() -> None:
     ## Test
 
     - `state: merged`, `check_mode: False`, one proposed interface
-    - `preflight_create`, then `preflight`, then `create_bulk` are recorded (loopback supports bulk create)
-    - Both preflights precede the mutation
+    - `preflight_create`, then `preflight`, then `prepare_mutations`, then `create_bulk` are recorded
+      (loopback supports bulk create)
+    - Both preflights and mutation preparation precede normal reconciliation
 
     ## Classes and Methods
 
@@ -183,7 +189,8 @@ def test_nd_state_machine_00110() -> None:
         instance.manage_state()
 
     names = [name for name, _ in instance.model_orchestrator._calls]
-    assert names == ["preflight_create", "preflight", "create_bulk"]
+    assert names == ["preflight_create", "preflight", "prepare_mutations", "create_bulk"]
+    assert instance.model_orchestrator._calls[2] == ("prepare_mutations", False)
 
 
 def test_nd_state_machine_00120() -> None:
@@ -212,6 +219,7 @@ def test_nd_state_machine_00120() -> None:
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert "preflight" not in names
     assert "preflight_create" not in names
+    assert "prepare_mutations" not in names
 
 
 def test_nd_state_machine_00130() -> None:
@@ -243,6 +251,7 @@ def test_nd_state_machine_00130() -> None:
     assert names.count("preflight") == 1
     assert names[0] == "preflight_create"
     assert names[1] == "preflight"
+    assert names[2] == "prepare_mutations"
     assert len(calls[1][1]) == 1
 
 
@@ -325,13 +334,14 @@ def test_nd_state_machine_00150() -> None:
     module = _build_module(state="merged", check_mode=False, config=_CONFIG)
     instance = NDStateMachine(module=module, model_orchestrator=spy)
 
-    with pytest.raises(NDStateMachineError, match=r"without a policy") as exc_info:
+    with pytest.raises(NDStateMachineError, match=r"^Preflight failed: .*without a policy") as exc_info:
         instance.manage_state()
 
     assert isinstance(exc_info.value.__cause__, RuntimeError)
 
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert "preflight_create" in names
+    assert "prepare_mutations" not in names
     assert "create" not in names
     assert "create_bulk" not in names
 
@@ -416,6 +426,7 @@ def test_nd_state_machine_00170() -> None:
 
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert names[0] == "preflight_create"
+    assert "prepare_mutations" not in names
 
 
 class _CapabilityOnlyFailingSpy(_SpyLoopbackOrchestrator):
@@ -456,12 +467,64 @@ def test_nd_state_machine_00180() -> None:
     module = _build_module(state="merged", check_mode=False, config=_CONFIG)
     instance = NDStateMachine(module=module, model_orchestrator=spy)
 
-    with pytest.raises(NDStateMachineError, match=r"capability preflight failed") as exc_info:
+    with pytest.raises(NDStateMachineError, match=r"^Preflight failed: capability preflight failed") as exc_info:
         instance.manage_state()
 
     assert isinstance(exc_info.value.__cause__, RuntimeError)
 
     names = [name for name, _ in instance.model_orchestrator._calls]
+    assert "prepare_mutations" not in names
+    assert "create" not in names
+    assert "create_bulk" not in names
+
+
+class _RaisingPrepareMutationsSpy(_SpyLoopbackOrchestrator):
+    """Spy whose prerequisite mutation hook raises after both preflight hooks succeed."""
+
+    def prepare_mutations(self, existing, proposed, check_mode=False) -> None:
+        self._calls.append(("prepare_mutations", check_mode))
+        raise RuntimeError("source-group detach failed")
+
+
+def test_nd_state_machine_00190() -> None:
+    """Classify a failed prerequisite mutation separately from preflight validation."""
+    spy = _RaisingPrepareMutationsSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"^Failed to prepare mutations: source-group detach failed$") as exc_info:
+        instance.manage_state()
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert names == ["preflight_create", "preflight", "prepare_mutations"]
+    assert "create" not in names
+    assert "create_bulk" not in names
+
+
+_NORMALIZED_PREPARE_ERROR = NDStateMachineError("already normalized")
+
+
+class _NormalizedPrepareMutationsErrorSpy(_SpyLoopbackOrchestrator):
+    """Spy whose prerequisite mutation hook raises an already-normalized state-machine error."""
+
+    def prepare_mutations(self, existing, proposed, check_mode=False) -> None:
+        self._calls.append(("prepare_mutations", check_mode))
+        raise _NORMALIZED_PREPARE_ERROR
+
+
+def test_nd_state_machine_00200() -> None:
+    """Do not relabel an NDStateMachineError raised by mutation preparation."""
+    spy = _NormalizedPrepareMutationsErrorSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"^already normalized$") as exc_info:
+        instance.manage_state()
+
+    assert exc_info.value is _NORMALIZED_PREPARE_ERROR
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert names == ["preflight_create", "preflight", "prepare_mutations"]
     assert "create" not in names
     assert "create_bulk" not in names
 

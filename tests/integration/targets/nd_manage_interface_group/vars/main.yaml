@@ -1,0 +1,727 @@
+---
+# Variables for comprehensive nd_manage_interface_group integration coverage.
+#
+# The suite assumes two reserved leaf switches are supplied through
+# interface_group_test_vars.yml. By default it creates and removes their vPC
+# pair, three reserved Networks, four reserved port-channel interfaces, and one
+# reserved vPC interface. Connection credentials remain in the inventory.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('') }}"
+test_switch_ip_primary: "{{ nd_test_switch_ip | default('') }}"
+test_switch_ip_secondary: >-
+  {{ nd_test_interface_group_secondary_switch_ip | default('') }}
+test_vpc_flow_enabled: >-
+  {{
+    nd_test_interface_group_vpc_flow_enabled
+    | default(true)
+    | bool
+  }}
+test_ethernet_custom_flow_enabled: >-
+  {{
+    nd_test_interface_group_ethernet_custom_flow_enabled
+    | default(true)
+    | bool
+  }}
+test_create_vpc_pair_fixture: >-
+  {{
+    nd_test_interface_group_create_vpc_pair_fixture
+    | default(true)
+    | bool
+  }}
+test_vpc_pair_use_virtual_peer_link: >-
+  {{
+    nd_test_interface_group_vpc_pair_use_virtual_peer_link
+    | default(true)
+    | bool
+  }}
+interface_group_vpc_pair_config:
+  - peer1_switch_id: "{{ test_switch_id }}"
+    peer2_switch_id: "{{ test_switch_id_secondary }}"
+    use_virtual_peer_link: "{{ test_vpc_pair_use_virtual_peer_link }}"
+interface_group_vpc_peer_switch_ids: >-
+  {{
+    {test_switch_id: test_switch_id_secondary}
+    if test_vpc_flow_enabled
+    else {}
+  }}
+
+test_port_channel_1: >-
+  {{ nd_test_interface_group_port_channel_1 | default('') }}
+test_port_channel_2: >-
+  {{ nd_test_interface_group_port_channel_2 | default('') }}
+test_port_channel_3: >-
+  {{ nd_test_interface_group_port_channel_3 | default('') }}
+test_any_port_channel: >-
+  {{ nd_test_interface_group_any_port_channel | default('') }}
+test_port_channel_member_1: >-
+  {{ nd_test_interface_group_port_channel_member_1 | default('') }}
+test_port_channel_member_2: >-
+  {{ nd_test_interface_group_port_channel_member_2 | default('') }}
+test_port_channel_member_3: >-
+  {{ nd_test_interface_group_port_channel_member_3 | default('') }}
+test_any_port_channel_member: >-
+  {{ nd_test_interface_group_any_port_channel_member | default('') }}
+test_create_port_channel_fixtures: >-
+  {{
+    nd_test_interface_group_create_port_channel_fixtures
+    | default(true)
+    | bool
+  }}
+
+test_ethernet_custom: >-
+  {{ nd_test_interface_group_ethernet_custom | default('') }}
+test_ethernet_policy: >-
+  {{ nd_test_interface_group_ethernet_policy | default('') }}
+test_ethernet_without_policy: >-
+  {{ nd_test_interface_group_ethernet_without_policy | default('') }}
+test_any_ethernet_primary: >-
+  {{ nd_test_interface_group_any_ethernet_primary | default('') }}
+test_any_ethernet_secondary: >-
+  {{ nd_test_interface_group_any_ethernet_secondary | default('') }}
+test_create_ethernet_fixtures: >-
+  {{
+    nd_test_interface_group_create_ethernet_fixtures
+    | default(true)
+    | bool
+  }}
+
+interface_group_ethernet_fixtures:
+  - switch_ip: "{{ test_switch_ip_primary }}"
+    interface_names:
+      - "{{ test_ethernet_custom }}"
+      - "{{ test_ethernet_policy }}"
+      - "{{ test_any_ethernet_primary }}"
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          allowed_vlans: all
+          native_vlan: 1
+  - switch_ip: "{{ test_switch_ip_secondary }}"
+    interface_names:
+      - "{{ test_ethernet_without_policy }}"
+      - "{{ test_any_ethernet_secondary }}"
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          allowed_vlans: all
+          native_vlan: 1
+
+interface_group_ethernet_fixture_cleanup:
+  - switch_ip: "{{ test_switch_ip_primary }}"
+    interface_names:
+      - "{{ test_ethernet_custom }}"
+      - "{{ test_ethernet_policy }}"
+      - "{{ test_any_ethernet_primary }}"
+  - switch_ip: "{{ test_switch_ip_secondary }}"
+    interface_names:
+      - "{{ test_ethernet_without_policy }}"
+      - "{{ test_any_ethernet_secondary }}"
+
+# Match the nd_interface_vpc_trunk_host integration convention: one numeric
+# fixture identifier defines both local peer port-channels and the logical vPC
+# interface name.
+test_vpc_id: >-
+  {{ nd_test_interface_group_vpc_id | default(200) | int }}
+test_vpc_interface: "vpc{{ test_vpc_id }}"
+test_vpc_peer1_member: >-
+  {{ nd_test_interface_group_vpc_peer1_member | default('') }}
+test_vpc_peer2_member: >-
+  {{ nd_test_interface_group_vpc_peer2_member | default('') }}
+test_create_vpc_fixture: >-
+  {{ nd_test_interface_group_create_vpc_fixture | default(true) | bool }}
+
+test_create_network_fixtures: >-
+  {{
+    nd_test_interface_group_create_network_fixtures
+    | default(true)
+    | bool
+  }}
+test_network_base_id: >-
+  {{ nd_test_interface_group_network_base_id | default(902100) | int }}
+test_network_base_vlan: >-
+  {{ nd_test_interface_group_network_base_vlan | default(3200) | int }}
+test_network_attachment_interface_primary: >-
+  {{
+    nd_test_interface_group_network_attachment_interface_primary
+    | default('')
+  }}
+test_network_attachment_interface_secondary: >-
+  {{
+    nd_test_interface_group_network_attachment_interface_secondary
+    | default('')
+  }}
+test_network_1: >-
+  {{
+    nd_test_interface_group_network_1
+    | default('ANSIBLE-IG-NETWORK-A')
+  }}
+test_network_2: >-
+  {{
+    nd_test_interface_group_network_2
+    | default('ANSIBLE-IG-NETWORK-B')
+  }}
+test_undeployed_network: >-
+  {{
+    nd_test_interface_group_undeployed_network
+    | default('ANSIBLE-IG-NETWORK-PENDING')
+  }}
+
+interface_group_deployed_network_fixtures:
+  - network_name: "{{ test_network_1 }}"
+    is_l2only: true
+    network_id: "{{ test_network_base_id + 1 }}"
+    vlan_id: "{{ test_network_base_vlan + 1 }}"
+    vlan_name: ansible_ig_network_a_vlan
+    rt_auto: true
+    enable_ir: false
+    attach:
+      - ip_address: "{{ test_switch_ip_primary }}"
+        vlan_id: "{{ test_network_base_vlan + 1 }}"
+        interfaces:
+          - mode: trunk
+            interface_range: >-
+              {{ test_network_attachment_interface_primary }}
+      - ip_address: "{{ test_switch_ip_secondary }}"
+        vlan_id: "{{ test_network_base_vlan + 1 }}"
+        interfaces:
+          - mode: trunk
+            interface_range: >-
+              {{ test_network_attachment_interface_secondary }}
+    deploy: true
+    deploy_type: switch
+  - network_name: "{{ test_network_2 }}"
+    is_l2only: true
+    network_id: "{{ test_network_base_id + 2 }}"
+    vlan_id: "{{ test_network_base_vlan + 2 }}"
+    vlan_name: ansible_ig_network_b_vlan
+    rt_auto: true
+    enable_ir: false
+    attach:
+      - ip_address: "{{ test_switch_ip_primary }}"
+        vlan_id: "{{ test_network_base_vlan + 2 }}"
+        interfaces:
+          - mode: trunk
+            interface_range: >-
+              {{ test_network_attachment_interface_primary }}
+      - ip_address: "{{ test_switch_ip_secondary }}"
+        vlan_id: "{{ test_network_base_vlan + 2 }}"
+        interfaces:
+          - mode: trunk
+            interface_range: >-
+              {{ test_network_attachment_interface_secondary }}
+    deploy: true
+    deploy_type: switch
+
+interface_group_pending_network_fixture:
+  - network_name: "{{ test_undeployed_network }}"
+    is_l2only: true
+    network_id: "{{ test_network_base_id + 3 }}"
+    vlan_id: "{{ test_network_base_vlan + 3 }}"
+    vlan_name: ansible_ig_network_pending_vlan
+    rt_auto: true
+    enable_ir: false
+    attach:
+      - ip_address: "{{ test_switch_ip_primary }}"
+        vlan_id: "{{ test_network_base_vlan + 3 }}"
+        interfaces:
+          - mode: trunk
+            interface_range: >-
+              {{ test_network_attachment_interface_primary }}
+    deploy: false
+    deploy_type: switch
+
+interface_group_network_delete_config:
+  - network_name: "{{ test_network_1 }}"
+    is_l2only: true
+    deploy_type: switch
+  - network_name: "{{ test_network_2 }}"
+    is_l2only: true
+    deploy_type: switch
+  - network_name: "{{ test_undeployed_network }}"
+    is_l2only: true
+    deploy_type: switch
+
+test_custom_template: >-
+  {{
+    nd_test_interface_group_custom_template
+    | default('')
+  }}
+test_custom_extra_config_key: >-
+  {{
+    nd_test_interface_group_custom_extra_config_key
+    | default('CONF')
+  }}
+
+interface_group_test_prefix: "ANSIBLE-IG-"
+
+interface_group_names:
+  any: "ANSIBLE-IG-ANY"
+  ethernet_custom: "ANSIBLE-IG-ETH-CUSTOM"
+  ethernet_with_policy: "ANSIBLE-IG-ETH-POLICY"
+  ethernet_without_policy: "ANSIBLE-IG-ETH-NO-POLICY"
+  port_channel: "ANSIBLE-IG-PC"
+  port_channel_target: "ANSIBLE-IG-PC-TARGET"
+  port_channel_undeployed: "ANSIBLE-IG-PC-UNDEPLOYED"
+  vpc: "ANSIBLE-IG-VPC"
+  atomic_valid: "ANSIBLE-IG-ATOMIC-VALID"
+  atomic_invalid: "ANSIBLE-IG-ATOMIC-INVALID"
+  replaced_empty: "ANSIBLE-IG-REPLACED-EMPTY"
+  delete_empty_1: "ANSIBLE-IG-DELETE-EMPTY-1"
+  delete_empty_2: "ANSIBLE-IG-DELETE-EMPTY-2"
+
+interface_group_reserved_names:
+  - "{{ interface_group_names.any }}"
+  - "{{ interface_group_names.ethernet_custom }}"
+  - "{{ interface_group_names.ethernet_with_policy }}"
+  - "{{ interface_group_names.ethernet_without_policy }}"
+  - "{{ interface_group_names.port_channel }}"
+  - "{{ interface_group_names.port_channel_target }}"
+  - "{{ interface_group_names.port_channel_undeployed }}"
+  - "{{ interface_group_names.vpc }}"
+  - "{{ interface_group_names.atomic_valid }}"
+  - "{{ interface_group_names.atomic_invalid }}"
+  - "{{ interface_group_names.replaced_empty }}"
+  - "{{ interface_group_names.delete_empty_1 }}"
+  - "{{ interface_group_names.delete_empty_2 }}"
+  - "ANSIBLE-IG-MISSING-TYPE"
+  - "ANSIBLE-IG-MISSING-CUSTOM-TEMPLATE"
+  - "ANSIBLE-IG-MISSING-NETWORK"
+
+interface_group_reserved_config:
+  - interface_group_name: "{{ interface_group_names.any }}"
+  - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
+  - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
+  - interface_group_name: "{{ interface_group_names.ethernet_without_policy }}"
+  - interface_group_name: "{{ interface_group_names.port_channel }}"
+  - interface_group_name: "{{ interface_group_names.port_channel_target }}"
+  - interface_group_name: "{{ interface_group_names.port_channel_undeployed }}"
+  - interface_group_name: "{{ interface_group_names.vpc }}"
+  - interface_group_name: "{{ interface_group_names.atomic_valid }}"
+  - interface_group_name: "{{ interface_group_names.atomic_invalid }}"
+  - interface_group_name: "{{ interface_group_names.replaced_empty }}"
+  - interface_group_name: "{{ interface_group_names.delete_empty_1 }}"
+  - interface_group_name: "{{ interface_group_names.delete_empty_2 }}"
+  - interface_group_name: "ANSIBLE-IG-MISSING-TYPE"
+  - interface_group_name: "ANSIBLE-IG-MISSING-CUSTOM-TEMPLATE"
+  - interface_group_name: "ANSIBLE-IG-MISSING-NETWORK"
+
+interface_group_reserved_member_filters: >-
+  {{
+    (
+      [
+        {
+          'switch_interfaces': [
+            {
+              'switch_id': test_switch_id,
+              'interface_names': [test_ethernet_custom]
+            }
+          ]
+        }
+      ]
+      if test_ethernet_custom_flow_enabled
+      else []
+    )
+    + [
+      {
+        'switch_interfaces': [
+          {
+            'switch_id': test_switch_id,
+            'interface_names': [test_ethernet_policy]
+          }
+        ]
+      },
+      {
+        'switch_interfaces': [
+          {
+            'switch_id': test_switch_id,
+            'interface_names': [test_any_ethernet_primary]
+          }
+        ]
+      },
+      {
+        'switch_interfaces': [
+          {
+            'switch_id': test_switch_id,
+            'interface_names': [test_port_channel_1]
+          }
+        ]
+      },
+      {
+        'switch_interfaces': [
+          {
+            'switch_id': test_switch_id,
+            'interface_names': [test_port_channel_2]
+          }
+        ]
+      },
+      {
+        'switch_interfaces': [
+          {
+            'switch_id': test_switch_id,
+            'interface_names': [test_port_channel_3]
+          }
+        ]
+      },
+      {
+        'switch_interfaces': [
+          {
+            'switch_id': test_switch_id_secondary,
+            'interface_names': [test_ethernet_without_policy]
+          }
+        ]
+      },
+      {
+        'switch_interfaces': [
+          {
+            'switch_id': test_switch_id_secondary,
+            'interface_names': [test_any_ethernet_secondary]
+          }
+        ]
+      },
+      {
+        'switch_interfaces': [
+          {
+            'switch_id': test_switch_id_secondary,
+            'interface_names': [test_any_port_channel]
+          }
+        ]
+      }
+    ]
+    + (
+      [
+        {
+          'switch_interfaces': [
+            {
+              'switch_id': test_switch_id,
+              'interface_names': [test_vpc_interface]
+            }
+          ]
+        }
+      ]
+      if test_vpc_flow_enabled
+      else []
+    )
+  }}
+
+# The defaults use the native parameter names retained when
+# int_shared_trunk_host is duplicated as dupe_int_shared_trunk_host.
+# Controllers can override both the template and its native input dictionary.
+interface_group_custom_template_config: >-
+  {{
+    nd_test_interface_group_custom_template_config
+    | default(
+      {
+        'DESC': 'Ansible Interface Group custom template',
+        'BPDUGUARD_ENABLED': 'no',
+        'IG_FOR_FEX': false,
+        'PORTTYPE_FAST_ENABLED': true,
+        'MTU': 'jumbo',
+        'SPEED': 'Auto',
+        'AUTO_NEG': 'on',
+        'ALLOWED_VLANS': 'none',
+        'NATIVE_VLAN': none,
+        'CDP_ENABLE': true,
+        'ENABLE_ORPHAN_PORT': false,
+        'PORT_DUPLEX_MODE': 'auto',
+        'CONF': '',
+        'ADMIN_STATE': true,
+        'ENABLE_NETFLOW': false,
+        'NETFLOW_MONITOR': '',
+        'NETFLOW_SAMPLER': ''
+      }
+    )
+  }}
+interface_group_custom_update_config: >-
+  {{
+    {
+      test_custom_extra_config_key:
+      'description ' ~ interface_group_run_marker
+    }
+  }}
+interface_group_custom_effective_config: >-
+  {{
+    interface_group_custom_template_config
+    | combine(interface_group_custom_update_config)
+  }}
+
+interface_group_any_type:
+  interface_group_name: "{{ interface_group_names.any }}"
+  type: any
+
+interface_group_ethernet_custom_type:
+  interface_group_name: "{{ interface_group_names.ethernet_custom }}"
+  type: ethernetCustom
+  template_name: "{{ test_custom_template }}"
+  template_config: "{{ interface_group_custom_template_config }}"
+
+interface_group_ethernet_with_policy_type:
+  interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
+  type: ethernetWithPolicy
+  ethernet_attributes:
+    admin_state: true
+    allowed_vlans: none
+    auto_negotiate: true
+    bpdu_guard: default
+    cdp: true
+    description: Ansible shared Ethernet policy
+    duplex_mode: auto
+    extra_config: ''
+    mtu: jumbo
+    native_vlan: 1
+    netflow: false
+    netflow_monitor: ''
+    netflow_sampler: ''
+    orphan_port: false
+    port_type_edge: false
+    port_type_edge_trunk: true
+    speed: auto
+
+interface_group_ethernet_without_policy_type:
+  interface_group_name: "{{ interface_group_names.ethernet_without_policy }}"
+  type: ethernetWithoutPolicy
+
+interface_group_port_channel_type:
+  interface_group_name: "{{ interface_group_names.port_channel }}"
+  type: portChannel
+
+interface_group_vpc_type:
+  interface_group_name: "{{ interface_group_names.vpc }}"
+  type: vpc
+
+interface_group_all_types: >-
+  {{
+    [interface_group_any_type]
+    + (
+      [interface_group_ethernet_custom_type]
+      if test_ethernet_custom_flow_enabled
+      else []
+    )
+    + [
+      interface_group_ethernet_with_policy_type,
+      interface_group_ethernet_without_policy_type,
+      interface_group_port_channel_type
+    ]
+    + ([interface_group_vpc_type] if test_vpc_flow_enabled else [])
+  }}
+
+interface_group_all_types_after_deployment: >-
+  {{
+    [interface_group_any_type]
+    + (
+      [
+        interface_group_ethernet_custom_type
+        | combine(
+            {'template_config': interface_group_custom_effective_config},
+            recursive=true
+          )
+      ]
+      if test_ethernet_custom_flow_enabled
+      else []
+    )
+    + [
+      interface_group_ethernet_with_policy_type,
+      interface_group_ethernet_without_policy_type,
+      interface_group_port_channel_type
+    ]
+    + ([interface_group_vpc_type] if test_vpc_flow_enabled else [])
+  }}
+
+interface_group_any_members:
+  interface_group_name: "{{ interface_group_names.any }}"
+  type: any
+  switch_interfaces:
+    - switch_id: "{{ test_switch_id }}"
+      interface_names:
+        - "{{ test_any_ethernet_primary }}"
+    - switch_id: "{{ test_switch_id_secondary }}"
+      interface_names:
+        - "{{ test_any_ethernet_secondary }}"
+        - "{{ test_any_port_channel }}"
+
+interface_group_vpc_member:
+  interface_group_name: "{{ interface_group_names.vpc }}"
+  type: vpc
+  switch_interfaces:
+    - switch_id: "{{ test_switch_id }}"
+      interface_names:
+        - "{{ test_vpc_interface }}"
+
+interface_group_ethernet_custom_member: >-
+  {{
+    interface_group_ethernet_custom_type
+    | combine(
+        {
+          'switch_interfaces': [
+            {
+              'switch_id': test_switch_id,
+              'interface_names': [test_ethernet_custom]
+            }
+          ]
+        },
+        recursive=true
+      )
+  }}
+
+interface_group_ethernet_with_policy_member: >-
+  {{
+    interface_group_ethernet_with_policy_type
+    | combine(
+        {
+          'switch_interfaces': [
+            {
+              'switch_id': test_switch_id,
+              'interface_names': [test_ethernet_policy]
+            }
+          ]
+        },
+        recursive=true
+      )
+  }}
+
+interface_group_ethernet_without_policy_member: >-
+  {{
+    interface_group_ethernet_without_policy_type
+    | combine(
+        {
+          'switch_interfaces': [
+            {
+              'switch_id': test_switch_id_secondary,
+              'interface_names': [test_ethernet_without_policy]
+            }
+          ]
+        },
+        recursive=true
+      )
+  }}
+
+interface_group_initial_member_config: >-
+  {{
+    [interface_group_any_members]
+    + (
+      [interface_group_ethernet_custom_member]
+      if test_ethernet_custom_flow_enabled
+      else []
+    )
+    + [
+      interface_group_ethernet_with_policy_member,
+      interface_group_ethernet_without_policy_member
+    ]
+    + ([interface_group_vpc_member] if test_vpc_flow_enabled else [])
+  }}
+
+interface_group_initial_member_expected: >-
+  {{
+    interface_group_initial_member_config
+    + [
+      interface_group_port_channel_type
+      | combine({'switch_interfaces': []})
+    ]
+  }}
+
+interface_group_pc_one_member:
+  interface_group_name: "{{ interface_group_names.port_channel }}"
+  type: portChannel
+  networks:
+    - "{{ test_network_1 }}"
+  switch_interfaces:
+    - switch_id: "{{ test_switch_id }}"
+      interface_names:
+        - "{{ test_port_channel_1 }}"
+
+interface_group_pc_two_members:
+  interface_group_name: "{{ interface_group_names.port_channel }}"
+  type: portChannel
+  networks:
+    - "{{ test_network_1 }}"
+    - "{{ test_network_2 }}"
+  switch_interfaces:
+    - switch_id: "{{ test_switch_id }}"
+      interface_names:
+        - "{{ test_port_channel_1 }}"
+        - "{{ test_port_channel_2 }}"
+
+interface_group_pc_two_members_network_1:
+  interface_group_name: "{{ interface_group_names.port_channel }}"
+  type: portChannel
+  networks:
+    - "{{ test_network_1 }}"
+  switch_interfaces:
+    - switch_id: "{{ test_switch_id }}"
+      interface_names:
+        - "{{ test_port_channel_1 }}"
+        - "{{ test_port_channel_2 }}"
+
+interface_group_vpc_fixture:
+  switch_ip: "{{ test_switch_ip_primary }}"
+  interface_name: "{{ test_vpc_interface }}"
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: all
+        native_vlan: 1
+        peer1_port_channel_id: "{{ test_vpc_id }}"
+        peer1_member_ports:
+          - "{{ test_vpc_peer1_member }}"
+        peer2_port_channel_id: "{{ test_vpc_id }}"
+        peer2_member_ports:
+          - "{{ test_vpc_peer2_member }}"
+        port_channel_mode: active
+        lacp_rate: fast
+        mtu: jumbo
+
+interface_group_port_channel_fixtures:
+  - switch_ip: "{{ test_switch_ip_primary }}"
+    interface_name: "{{ test_port_channel_1 }}"
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          allowed_vlans: all
+          native_vlan: 1
+          ports:
+            - "{{ test_port_channel_member_1 }}"
+          port_channel_mode: active
+          lacp_rate: fast
+          mtu: jumbo
+  - switch_ip: "{{ test_switch_ip_primary }}"
+    interface_name: "{{ test_port_channel_2 }}"
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          allowed_vlans: all
+          native_vlan: 1
+          ports:
+            - "{{ test_port_channel_member_2 }}"
+          port_channel_mode: active
+          lacp_rate: fast
+          mtu: jumbo
+  - switch_ip: "{{ test_switch_ip_primary }}"
+    interface_name: "{{ test_port_channel_3 }}"
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          allowed_vlans: all
+          native_vlan: 1
+          ports:
+            - "{{ test_port_channel_member_3 }}"
+          port_channel_mode: active
+          lacp_rate: fast
+          mtu: jumbo
+  - switch_ip: "{{ test_switch_ip_secondary }}"
+    interface_name: "{{ test_any_port_channel }}"
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          allowed_vlans: all
+          native_vlan: 1
+          ports:
+            - "{{ test_any_port_channel_member }}"
+          port_channel_mode: active
+          lacp_rate: fast
+          mtu: jumbo

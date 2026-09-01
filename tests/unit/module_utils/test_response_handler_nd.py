@@ -2495,3 +2495,139 @@ def test_response_handler_nd_01490():
         instance.commit()
     assert instance.result["success"] is False
     assert instance.result["changed"] is False
+
+
+# =============================================================================
+# Test: Interface Groups Multi-Status envelope
+#
+# POST /interfaceGroups and POST /interfaceGroups/actions/remove return HTTP 207
+# with per-item outcomes under DATA.interfaceGroups[]. Policy Groups retain
+# module-local handling for their markDelete fallback, so DATA.policyGroups[]
+# intentionally remains outside the central scan.
+# =============================================================================
+
+
+def test_response_handler_nd_01500():
+    """A mixed Interface Group create is a terminal failure that changed state."""
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "interfaceGroups": [
+                {
+                    "type": "ethernet",
+                    "status": "success",
+                    "message": "Interface group 'IG1' created successfully",
+                },
+                {
+                    "type": "portChannel",
+                    "status": "failed",
+                    "message": "Interface group 'IG2' failed to create",
+                },
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    with does_not_raise():
+        instance.commit()
+
+    assert instance.result == {
+        "success": False,
+        "changed": True,
+        "retryable": False,
+    }
+    assert instance.error_message == "ND Error: Interface group 'IG2' failed to create"
+
+
+def test_response_handler_nd_01510():
+    """An all-failed Interface Group remove is unchanged and labels every group."""
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "interfaceGroups": [
+                {
+                    "interfaceGroupName": "IG1",
+                    "status": "failed",
+                    "message": "still associated",
+                },
+                {
+                    "interfaceGroupName": "IG2",
+                    "status": "failed",
+                    "message": "not found",
+                },
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    with does_not_raise():
+        instance.commit()
+
+    assert instance.result == {
+        "success": False,
+        "changed": False,
+        "retryable": False,
+    }
+    assert instance.error_message == "ND Error: IG1: still associated; IG2: not found"
+
+
+def test_response_handler_nd_01520():
+    """An all-success Interface Group batch remains a successful mutation."""
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "interfaceGroups": [
+                {
+                    "interfaceGroupName": "IG1",
+                    "status": "success",
+                    "message": "deleted",
+                }
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    with does_not_raise():
+        instance.commit()
+
+    assert instance.result == {
+        "success": True,
+        "changed": True,
+        "retryable": False,
+    }
+    assert instance.error_message is None
+
+
+def test_response_handler_nd_01530():
+    """Policy Group responses remain outside central handling for local fallback."""
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "policyGroups": [
+                {
+                    "policyId": "POLICY-GROUP-1",
+                    "status": "failed",
+                    "message": "requires direct DELETE fallback",
+                }
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    with does_not_raise():
+        instance.commit()
+
+    assert instance.result == {
+        "success": True,
+        "changed": True,
+        "retryable": False,
+    }
+    assert instance.error_message is None

@@ -1,0 +1,167 @@
+---
+# Cleanup is restricted to the reserved Interface Groups, Networks, physical
+# and logical interfaces, and the vPC pair formed from the two reserved test
+# leaves. The pair is removed last so association and interface cleanup can
+# deploy while the pair still exists.
+
+- name: Remove reserved Interface Groups
+  cisco.nd.nd_manage_interface_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_reserved_config }}"
+    config_actions:
+      deploy: true
+      type: resource
+    state: deleted
+  register: interface_group_cleanup
+
+- name: Remove the reserved Network fixtures
+  cisco.nd.nd_manage_networks:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_network_delete_config }}"
+    state: deleted
+  register: interface_group_network_fixture_cleanup
+  when: test_create_network_fixtures | bool
+
+- name: Gather the reserved Networks after cleanup
+  cisco.nd.nd_manage_networks:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_network_delete_config }}"
+    state: gathered
+  register: interface_group_network_fixture_cleanup_gathered
+  when: test_create_network_fixtures | bool
+
+- name: Validate the reserved Networks were removed
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ interface_group_network_fixture_cleanup_gathered }}"
+    test_data: "{{ interface_group_network_delete_config }}"
+    present: false
+  register: interface_group_network_fixture_cleanup_validation
+  when: test_create_network_fixtures | bool
+
+- name: Verify the reserved Network cleanup completed
+  ansible.builtin.assert:
+    that:
+      - interface_group_network_fixture_cleanup is not failed
+      - interface_group_network_fixture_cleanup_validation.failed == false
+    fail_msg: >-
+      One or more reserved Network fixtures remain after Interface Group
+      cleanup.
+  when: test_create_network_fixtures | bool
+
+- name: Remove the reserved vPC interface fixture
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_primary }}"
+        interface_name: "{{ test_vpc_interface }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  register: interface_group_vpc_fixture_cleanup
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_fixture | bool
+
+- name: Remove the reserved port-channel interface fixtures
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_primary }}"
+        interface_name: "{{ test_port_channel_1 }}"
+      - switch_ip: "{{ test_switch_ip_primary }}"
+        interface_name: "{{ test_port_channel_2 }}"
+      - switch_ip: "{{ test_switch_ip_primary }}"
+        interface_name: "{{ test_port_channel_3 }}"
+      - switch_ip: "{{ test_switch_ip_secondary }}"
+        interface_name: "{{ test_any_port_channel }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  register: interface_group_port_channel_fixture_cleanup
+  when: test_create_port_channel_fixtures | bool
+
+- name: Remove the reserved physical Ethernet trunk fixtures
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_ethernet_fixture_cleanup }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  register: interface_group_ethernet_fixture_cleanup_result
+  when: test_create_ethernet_fixtures | bool
+
+- name: Allow interface cleanup to converge
+  ansible.builtin.pause:
+    seconds: 10
+  when:
+    - >-
+      (test_vpc_flow_enabled | bool
+       and test_create_vpc_fixture | bool
+       and interface_group_vpc_fixture_cleanup is changed)
+      or
+      (test_create_port_channel_fixtures | bool
+       and interface_group_port_channel_fixture_cleanup is changed)
+      or
+      (test_create_ethernet_fixtures | bool
+       and interface_group_ethernet_fixture_cleanup_result is changed)
+
+- name: Remove the reserved vPC pair fixture
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_vpc_pair_config }}"
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    verify:
+      enabled: true
+      retries: 12
+      timeout: 30
+    state: deleted
+  register: interface_group_vpc_pair_cleanup
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_pair_fixture | bool
+
+- name: Gather the reserved vPC pair after cleanup
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_vpc_pair_config }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    state: gathered
+  register: interface_group_vpc_pair_cleanup_gathered
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_pair_fixture | bool
+
+- name: Validate the reserved vPC pair was removed
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ interface_group_vpc_pair_cleanup_gathered }}"
+    expected_data: []
+    mode: count_only
+  register: interface_group_vpc_pair_cleanup_validation
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_pair_fixture | bool
+
+- name: Verify the reserved vPC pair cleanup completed
+  ansible.builtin.assert:
+    that:
+      - interface_group_vpc_pair_cleanup is not failed
+      - interface_group_vpc_pair_cleanup_validation.failed == false
+    fail_msg: >-
+      The reserved vPC pair remains after Interface Group fixture cleanup.
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_pair_fixture | bool

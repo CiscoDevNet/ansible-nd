@@ -1,0 +1,276 @@
+---
+- name: Deploy one resource while another resource remains staged
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config: >-
+      {{
+        (
+          [
+            {
+              'interface_group_name':
+                interface_group_names.ethernet_custom,
+              'template_config': interface_group_custom_update_config,
+              'deploy': false
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+        + [
+          {
+            'interface_group_name':
+              interface_group_names.ethernet_with_policy,
+            'ethernet_attributes': {'cdp': false},
+            'deploy': true
+          }
+        ]
+      }}
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch Interface Groups after selective resource deployment
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
+  register: interface_group_selective_resource_deploy
+
+- name: Validate selectively deployed policy intent
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: >-
+      {{ interface_group_selective_resource_deploy.nd_query_results[0].result }}
+    test_data: >-
+      {{
+        (
+          [
+            {
+              'interface_group_name':
+                interface_group_names.ethernet_custom,
+              'type': 'ethernetCustom',
+              'template_name': test_custom_template,
+              'template_config': interface_group_custom_update_config
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+        + [
+          {
+            'interface_group_name':
+              interface_group_names.ethernet_with_policy,
+            'type': 'ethernetWithPolicy',
+            'ethernet_attributes': {'cdp': false}
+          }
+        ]
+      }}
+    mode: subset
+  when: not ansible_check_mode
+
+- name: Confirm resource deployment did not deploy the staged custom group
+  ansible.builtin.include_tasks: preview.yaml
+  vars:
+    preview_name: "RESOURCE DEPLOYMENT ISOLATION"
+    preview_request_interfaces: >-
+      {{
+        (
+          [
+            {
+              'switchId': test_switch_id,
+              'interfaceName': test_ethernet_custom
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+        + [
+          {
+            'switchId': test_switch_id,
+            'interfaceName': test_ethernet_policy
+          }
+        ]
+      }}
+    preview_test_data: >-
+      {{
+        (
+          [
+            {
+              'switch_id': test_switch_id,
+              'interface_name': test_ethernet_custom,
+              'pending': 'present'
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+        + [
+          {
+            'switch_id': test_switch_id,
+            'interface_name': test_ethernet_policy,
+            'pending': 'clean'
+          }
+        ]
+      }}
+
+- name: >-
+    Use default switch deployment to apply all pending intent on the primary
+    leaf
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    config:
+      - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
+        ethernet_attributes:
+          cdp: true
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+    nd_queries:
+      - name: Fetch shared-policy group after switch deployment
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.ethernet_with_policy }}
+        method: get
+        expected_status: 200
+  register: interface_group_switch_deploy
+
+- name: Validate switch-deployed policy intent
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_switch_deploy.nd_query_results[0].result }}"
+    test_data:
+      - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
+        type: ethernetWithPolicy
+        ethernet_attributes:
+          cdp: true
+    mode: subset
+  when: not ansible_check_mode
+
+- name: >-
+    Confirm switch deployment scope and membership-only Interface Group state
+  ansible.builtin.include_tasks: preview.yaml
+  vars:
+    preview_name: "DEFAULT SWITCH DEPLOYMENT SCOPE AND MEMBERSHIP-ONLY GROUPS"
+    preview_convergence_delay: 30
+    preview_request_interfaces: >-
+      {{
+        (
+          [
+            {
+              'switchId': test_switch_id,
+              'interfaceName': test_ethernet_custom
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+        + [
+          {
+            'switchId': test_switch_id,
+            'interfaceName': test_ethernet_policy
+          },
+          {
+            'switchId': test_switch_id,
+            'interfaceName': test_any_ethernet_primary
+          },
+          {
+            'switchId': test_switch_id_secondary,
+            'interfaceName': test_any_ethernet_secondary
+          },
+          {
+            'switchId': test_switch_id_secondary,
+            'interfaceName': test_any_port_channel
+          },
+          {
+            'switchId': test_switch_id_secondary,
+            'interfaceName': test_ethernet_without_policy
+          }
+        ]
+        + (
+          [
+            {
+              'switchId': test_switch_id,
+              'interfaceName': test_vpc_interface
+            }
+          ]
+          if test_vpc_flow_enabled
+          else []
+        )
+      }}
+    preview_test_data: >-
+      {{
+        (
+          [
+            {
+              'switch_id': test_switch_id,
+              'interface_name': test_ethernet_custom,
+              'pending': 'clean',
+              'expected_contains': [
+                interface_group_run_marker
+              ]
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+        + [
+          {
+            'switch_id': test_switch_id,
+            'interface_name': test_ethernet_policy,
+            'pending': 'clean',
+            'expected_contains': ['switchport mode trunk']
+          },
+          {
+            'switch_id': test_switch_id,
+            'interface_name': test_any_ethernet_primary,
+            'pending': 'clean'
+          },
+          {
+            'switch_id': test_switch_id_secondary,
+            'interface_name': test_any_ethernet_secondary,
+            'pending': 'clean'
+          },
+          {
+            'switch_id': test_switch_id_secondary,
+            'interface_name': test_any_port_channel,
+            'pending': 'clean'
+          },
+          {
+            'switch_id': test_switch_id_secondary,
+            'interface_name': test_ethernet_without_policy,
+            'pending': 'clean'
+          }
+        ]
+        + (
+          [
+            {
+              'switch_id': test_switch_id,
+              'interface_name': test_vpc_interface,
+              'pending': 'clean'
+            }
+          ]
+          if test_vpc_flow_enabled
+          else []
+        )
+      }}

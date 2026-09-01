@@ -154,6 +154,25 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         """
         return
 
+    def prepare_mutations(self, existing, proposed, check_mode: bool = False) -> None:
+        """
+        # Summary
+
+        Optional hook invoked after all preflight checks succeed and immediately
+        before create/update reconciliation begins.
+
+        Subclasses can use this for ordered prerequisite mutations that cannot
+        be represented as a single resource update. The base implementation is
+        a no-op. Implementations must update ``existing`` in check mode as if
+        the prerequisite mutation succeeded so the predicted ``after`` state
+        remains accurate.
+
+        ## Raises
+
+        None
+        """
+        return
+
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:

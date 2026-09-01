@@ -1,0 +1,644 @@
+---
+- name: Reject invalid Interface Group input before any controller mutation
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: "{{ item.state | default('merged') }}"
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions: >-
+        {{
+          item.config_actions
+          | default({'deploy': false, 'type': 'resource'})
+        }}
+    config: "{{ item.config }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: true
+  loop:
+    - label: empty config
+      config: []
+      message: "config is required"
+    - label: missing type on create
+      config:
+        - interface_group_name: "ANSIBLE-IG-MISSING-TYPE"
+      message: "requires type"
+    - label: replaced requires type
+      state: replaced
+      config:
+        - interface_group_name: "ANSIBLE-IG-REPLACED-MISSING-TYPE"
+      message: "type is required"
+    - label: custom create requires template name
+      config:
+        - interface_group_name: "ANSIBLE-IG-CUSTOM-MISSING-TEMPLATE"
+          type: ethernetCustom
+      message: "requires template_name"
+    - label: Ethernet without policy requires empty attributes
+      config:
+        - interface_group_name: "ANSIBLE-IG-NO-POLICY-ATTRIBUTES"
+          type: ethernetWithoutPolicy
+          ethernet_attributes:
+            admin_state: true
+      message: "must be empty"
+    - label: referenced custom template does not exist
+      config:
+        - interface_group_name: "ANSIBLE-IG-MISSING-CUSTOM-TEMPLATE"
+          type: ethernetCustom
+          template_name: "ANSIBLE-TEMPLATE-DOES-NOT-EXIST"
+      message: "does not exist"
+    - label: built-in shared template is not a custom template
+      enabled: "{{ test_ethernet_custom_flow_enabled }}"
+      config:
+        - interface_group_name: "ANSIBLE-IG-MISSING-CUSTOM-TEMPLATE"
+          type: ethernetCustom
+          template_name: "int_shared_trunk_host"
+      message: "not a user-defined template"
+    - label: custom template rejects an unknown input
+      enabled: "{{ test_ethernet_custom_flow_enabled }}"
+      config:
+        - interface_group_name: "ANSIBLE-IG-MISSING-CUSTOM-TEMPLATE"
+          type: ethernetCustom
+          template_name: "{{ test_custom_template }}"
+          template_config:
+            ANSIBLE_UNKNOWN_TEMPLATE_INPUT: invalid
+      message: "Unknown template_config key"
+    - label: any rejects unsupported interface kinds
+      config:
+        - interface_group_name: "ANSIBLE-IG-ANY-WRONG-KIND"
+          type: any
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - Loopback0
+      message: "not valid for interface group type"
+    - label: target controller drops top-level group descriptions
+      config:
+        - interface_group_name: "ANSIBLE-IG-DESCRIPTION-UNSUPPORTED"
+          type: any
+          description: Ansible Interface Group description
+      message: "controller drops it on POST and PUT"
+    - label: Ethernet custom rejects port-channel interfaces
+      config:
+        - interface_group_name: "ANSIBLE-IG-CUSTOM-WRONG-KIND"
+          type: ethernetCustom
+          template_name: "ANSIBLE-TEMPLATE-NOT-USED"
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - Port-channel9999
+      message: "not valid for interface group type"
+    - label: Ethernet with policy rejects port-channel interfaces
+      config:
+        - interface_group_name: "ANSIBLE-IG-POLICY-WRONG-KIND"
+          type: ethernetWithPolicy
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - Port-channel9999
+      message: "not valid for interface group type"
+    - label: Ethernet without policy rejects port-channel interfaces
+      config:
+        - interface_group_name: "ANSIBLE-IG-NO-POLICY-WRONG-KIND"
+          type: ethernetWithoutPolicy
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - Port-channel9999
+      message: "not valid for interface group type"
+    - label: port-channel rejects Ethernet interfaces
+      config:
+        - interface_group_name: "ANSIBLE-IG-PORT-CHANNEL-WRONG-KIND"
+          type: portChannel
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - Ethernet1/999
+      message: "not valid for interface group type"
+    - label: vPC rejects port-channel interfaces
+      config:
+        - interface_group_name: "ANSIBLE-IG-VPC-WRONG-KIND"
+          type: vpc
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - Port-channel9999
+      message: "not valid for interface group type"
+    - label: template fields are custom-only
+      config:
+        - interface_group_name: "{{ interface_group_names.port_channel }}"
+          type: portChannel
+          template_name: "{{ test_custom_template }}"
+      message: "valid only for type=ethernetCustom"
+    - label: Ethernet attribute VLAN range is validated
+      config:
+        - interface_group_name: >-
+            {{ interface_group_names.ethernet_with_policy }}
+          type: ethernetWithPolicy
+          ethernet_attributes:
+            native_vlan: 4095
+      message: "native_vlan"
+    - label: Ethernet allowed VLAN expression is validated
+      config:
+        - interface_group_name: >-
+            {{ interface_group_names.ethernet_with_policy }}
+          type: ethernetWithPolicy
+          ethernet_attributes:
+            allowed_vlans: 4095
+      message: "allowed_vlans"
+    - label: Ethernet BPDU Guard uses the 1.1.411 values
+      config:
+        - interface_group_name: >-
+            {{ interface_group_names.ethernet_with_policy }}
+          type: ethernetWithPolicy
+          ethernet_attributes:
+            bpdu_guard: enabled
+      message: "bpdu_guard"
+    - label: Removed 1.1.332 Ethernet names are rejected
+      config:
+        - interface_group_name: >-
+            {{ interface_group_names.ethernet_with_policy }}
+          type: ethernetWithPolicy
+          ethernet_attributes:
+            admin_status: true
+      message: "admin_status"
+    - label: duplicate group names are rejected
+      config:
+        - interface_group_name: "ANSIBLE-IG-DUPLICATE"
+          type: any
+        - interface_group_name: "ANSIBLE-IG-DUPLICATE"
+          type: any
+      message: "duplicate interface_group_name"
+    - label: duplicate ownership within one task is rejected
+      config:
+        - interface_group_name: "ANSIBLE-IG-DUPLICATE-OWNER-1"
+          type: portChannel
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - "{{ test_port_channel_3 }}"
+        - interface_group_name: "ANSIBLE-IG-DUPLICATE-OWNER-2"
+          type: any
+          switch_interfaces:
+            - switch_id: "{{ test_switch_id }}"
+              interface_names:
+                - "{{ test_port_channel_3 }}"
+      message: "present in both"
+    - label: per-resource deploy is invalid under switch scope
+      config_actions:
+        deploy: true
+        type: switch
+      config:
+        - interface_group_name: "{{ interface_group_names.any }}"
+          deploy: false
+      message: "valid only when config_actions.type=resource"
+    - label: unsupported nested options are rejected
+      config:
+        - interface_group_name: "ANSIBLE-IG-UNSUPPORTED-OPTION"
+          unsupported_option: true
+      message: "unsupported"
+  loop_control:
+    label: "{{ item.label }}"
+  register: interface_group_input_failures
+  when: item.enabled | default(true) | bool
+
+- name: Verify every rejected input returned an actionable message
+  ansible.builtin.assert:
+    that:
+      - (item.first_run_result.changed | default(false)) == false
+      - >-
+        (item.item.message | lower)
+        in (item.first_run_result.msg | lower)
+  loop: >-
+    {{
+      interface_group_input_failures.results
+      | rejectattr('skipped', 'defined')
+      | list
+    }}
+  loop_control:
+    label: "{{ item.item.label }}"
+  when: not ansible_check_mode
+
+- name: Reject an atomic task containing one valid and one missing-network group
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.atomic_valid }}"
+        type: any
+      - interface_group_name: "{{ interface_group_names.atomic_invalid }}"
+        type: portChannel
+        networks:
+          - "ANSIBLE-NETWORK-DOES-NOT-EXIST"
+    idempotency: false
+    expected:
+      check_mode:
+        changed: false
+        failed: true
+      apply:
+        changed: false
+        failed: true
+  register: interface_group_atomic_preflight
+
+- name: >-
+    Verify atomic preflight failure preserved the state-machine output contract
+  ansible.builtin.assert:
+    that:
+      - >-
+        interface_group_atomic_preflight.check_mode_result.before
+        == interface_group_atomic_preflight.check_mode_result.after
+      - >-
+        interface_group_atomic_preflight.first_run_result.before
+        == interface_group_atomic_preflight.first_run_result.after
+      - interface_group_atomic_preflight.first_run_result.changed == false
+  when: not ansible_check_mode
+
+- name: Fetch groups after atomic preflight rejection
+  cisco.nd.nd_rest:
+    method: GET
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/interfaceGroups?max=10000
+  register: interface_group_atomic_preflight_live
+  when: not ansible_check_mode
+
+- name: Confirm atomic preflight wrote neither resource
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_atomic_preflight_live }}"
+    absent:
+      - "{{ interface_group_names.atomic_valid }}"
+      - "{{ interface_group_names.atomic_invalid }}"
+  when: not ansible_check_mode
+
+- name: Reject a missing network added to an existing group
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.port_channel }}"
+        networks:
+          - "ANSIBLE-NETWORK-DOES-NOT-EXIST"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: true
+  register: interface_group_missing_network_update
+
+- name: Verify rejected update preserved before and after output
+  ansible.builtin.assert:
+    that:
+      - >-
+        interface_group_missing_network_update.first_run_result.before
+        == interface_group_missing_network_update.first_run_result.after
+  when: not ansible_check_mode
+
+- name: Fetch the existing group after missing-network rejection
+  cisco.nd.nd_rest:
+    method: GET
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+      interface_group_names.port_channel }}
+  register: interface_group_missing_network_update_live
+  when: not ansible_check_mode
+
+- name: Confirm missing-network update preserved the existing group
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_missing_network_update_live }}"
+    test_data:
+      - "{{ interface_group_pc_two_members }}"
+    mode: exact
+  when: not ansible_check_mode
+
+- name: Reject an implicit cross-group member move under merged
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: switch
+    config:
+      - interface_group_name: "{{ interface_group_names.any }}"
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_port_channel_2 }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: true
+  register: interface_group_implicit_move
+
+- name: Verify merged move failure is actionable and unchanged
+  ansible.builtin.assert:
+    that:
+      - interface_group_implicit_move.first_run_result.changed == false
+      - >-
+        'state=merged is additive'
+        in interface_group_implicit_move.first_run_result.msg
+  when: not ansible_check_mode
+
+- name: Reject a replaced move that does not update the source group
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.port_channel_target }}"
+        type: portChannel
+        networks:
+          - "{{ test_network_2 }}"
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_port_channel_1 }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: true
+  register: interface_group_incomplete_replaced_move
+
+- name: Reject immutable Interface Group type changes
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.port_channel }}"
+        type: any
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: true
+  register: interface_group_immutable_type
+
+- name: Verify move and type failures are actionable
+  ansible.builtin.assert:
+    that:
+      - >-
+        'requires the source group to omit'
+        in interface_group_incomplete_replaced_move.first_run_result.msg
+      - >-
+        'type cannot be changed'
+        in interface_group_immutable_type.first_run_result.msg
+  when: not ansible_check_mode
+
+- name: Fetch all groups after rejected move and type changes
+  cisco.nd.nd_rest:
+    method: GET
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/interfaceGroups?max=10000
+  register: interface_group_rejected_changes_live
+  when: not ansible_check_mode
+
+- name: Confirm rejected changes left source and targets unchanged
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_rejected_changes_live }}"
+    test_data:
+      - "{{ interface_group_pc_two_members }}"
+      - "{{ interface_group_any_members }}"
+    absent:
+      - "{{ interface_group_names.port_channel_target }}"
+    mode: exact
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    invariants:
+      unique_group_names: true
+      unique_members: true
+  when: not ansible_check_mode
+
+- name: Create the pending Network immediately before deployment-scope checks
+  cisco.nd.nd_manage_networks:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ interface_group_pending_network_fixture }}"
+    state: merged
+  register: interface_group_pending_network_fixture_create
+  when: test_create_network_fixtures | bool
+
+- name: Verify the pending Network fixture is ready
+  ansible.builtin.assert:
+    that:
+      - interface_group_pending_network_fixture_create is not failed
+  when:
+    - test_create_network_fixtures | bool
+    - not ansible_check_mode
+
+- name: Apply Interface Group intent when a known network is not deployed
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - interface_group_name: >-
+          {{ interface_group_names.port_channel_undeployed }}
+        type: portChannel
+        networks:
+          - "{{ test_undeployed_network }}"
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_port_channel_3 }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch group associated with an undeployed network
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.port_channel_undeployed }}
+        method: get
+        expected_status: 200
+  register: interface_group_undeployed_network
+
+- name: Verify an undeployed Network did not block Interface Group intent
+  ansible.builtin.assert:
+    that:
+      - >-
+        (interface_group_undeployed_network.check_mode_result.failed
+        | default(false)) == false
+      - interface_group_undeployed_network.check_mode_result.changed == true
+      - >-
+        (interface_group_undeployed_network.first_run_result.failed
+        | default(false)) == false
+      - interface_group_undeployed_network.first_run_result.changed == true
+      - >-
+        (interface_group_undeployed_network.second_run_result.failed
+        | default(false)) == false
+      - interface_group_undeployed_network.second_run_result.changed == false
+      - >-
+        'cisco.nd.nd_manage_networks'
+        in (
+          interface_group_undeployed_network.first_run_result.warnings_nd
+          | default([])
+          | join(' ')
+        )
+      - >-
+        test_undeployed_network
+        in (
+          interface_group_undeployed_network.first_run_result.warnings_nd
+          | default([])
+          | join(' ')
+        )
+  when: not ansible_check_mode
+
+- name: Validate the undeployed network association was retained
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: >-
+      {{ interface_group_undeployed_network.nd_query_results[0].result }}
+    test_data:
+      - interface_group_name: >-
+          {{ interface_group_names.port_channel_undeployed }}
+        type: portChannel
+        networks:
+          - "{{ test_undeployed_network }}"
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_port_channel_3 }}"
+    mode: exact
+  when: not ansible_check_mode
+
+- name: Preview the referenced network after resource deployment
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/networkActions/preview
+    method: post
+    content:
+      networkNames:
+        - "{{ test_undeployed_network }}"
+      switchIds:
+        - "{{ test_switch_id }}"
+  register: interface_group_undeployed_network_preview
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Confirm resource deployment did not deploy the referenced network
+  ansible.builtin.assert:
+    that:
+      - resource_network_previews | length == 1
+      - resource_network_previews[0].status in ['pending', 'outOfSync']
+      - resource_network_previews[0].pendingConfigs | default([]) | length > 0
+  vars:
+    resource_network_previews: >-
+      {{
+        interface_group_undeployed_network_preview.current.attachments
+        | selectattr('networkName', 'equalto', test_undeployed_network)
+        | selectattr('switchId', 'equalto', test_switch_id)
+        | list
+      }}
+  when: not ansible_check_mode
+
+- name: Trigger switch-level deployment with an additive network association
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: switch
+    config:
+      - interface_group_name: >-
+          {{ interface_group_names.port_channel_undeployed }}
+        networks:
+          - "{{ test_network_1 }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+    nd_queries:
+      - name: Fetch group after switch-level deployment
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.port_channel_undeployed }}
+        method: get
+        expected_status: 200
+  register: interface_group_switch_deployed_network
+
+- name: Preview the referenced network after switch-level deployment
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/networkActions/preview
+    method: post
+    content:
+      networkNames:
+        - "{{ test_undeployed_network }}"
+      switchIds:
+        - "{{ test_switch_id }}"
+  register: interface_group_switch_deployed_network_preview
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Confirm switch-level deployment applied the referenced network
+  ansible.builtin.assert:
+    that:
+      - switch_network_previews | length == 1
+      - switch_network_previews[0].status in ['deployed', 'inSync', 'success']
+      - switch_network_previews[0].pendingConfigs | default([]) | length == 0
+  vars:
+    switch_network_previews: >-
+      {{
+        interface_group_switch_deployed_network_preview.current.attachments
+        | selectattr('networkName', 'equalto', test_undeployed_network)
+        | selectattr('switchId', 'equalto', test_switch_id)
+        | list
+      }}
+  when: not ansible_check_mode
