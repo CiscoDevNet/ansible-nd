@@ -718,6 +718,133 @@ def test_loopback_interface_00440() -> None:
     assert instance._pending_deploys == []
 
 
+def test_loopback_interface_00450() -> None:
+    """
+    # Summary
+
+    Two-run convergence for a first-group-success / later-group-failure bulk create (PR #403 review). Run 1: the first
+    `(switch, policy_type)` group's POST succeeds and its deploy is queued, the second group's POST fails, and `create_bulk`
+    raises — then `deploy_accepted_mutations` (the module's failure-path finalizer) deploys the accepted first group so it is
+    not stranded staged-but-undeployed. Run 2 (the retry): the first group's interface is already converged, so only the second
+    group is created and deployed via the normal `deploy_pending` path. Across the two runs, both interfaces end up deployed.
+
+    ## Test
+
+    - Run 1: loopback10 (`policyType: loopback`) POST succeeds, loopback30 (`policyType: mplsLoopback`) POST returns 500
+    - `create_bulk` raises `RuntimeError` matching `Bulk create failed`; `_pending_deploys` holds only loopback10
+    - `deploy_accepted_mutations` POSTs `interfaceActions/deploy` with only loopback10 and clears it from the queue
+    - Run 2 (fresh orchestrator, retry): `create_bulk` for loopback30 alone succeeds; `deploy_pending` deploys loopback30
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    - NDBaseInterfaceOrchestrator.deploy_pending()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses_run1():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
+        yield responses_loopback_interface(f"{method_name}d")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses_run1()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    models = [
+        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback10"),
+        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
+    ]
+
+    match = r"Bulk create failed"
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk(models)
+
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+    with does_not_raise():
+        deployed = instance.deploy_accepted_mutations()
+
+    assert deployed == [("loopback10", "FDO12345ABC")]
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy"
+    assert rest_send.committed_payload == {"interfaces": [{"interfaceName": "loopback10", "switchId": "FDO12345ABC"}]}
+    assert instance._pending_deploys == []
+
+    def responses_run2():
+        yield responses_loopback_interface(f"{method_name}e")
+        yield responses_loopback_interface(f"{method_name}f")
+        yield responses_loopback_interface(f"{method_name}g")
+
+    rest_send_retry = _build_rest_send(ResponseGenerator(responses_run2()))
+    instance_retry = LoopbackInterfaceOrchestrator(rest_send=rest_send_retry)
+    instance_retry.deploy = True
+
+    with does_not_raise():
+        instance_retry.create_bulk([_build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30")])
+        instance_retry.deploy_pending()
+
+    assert rest_send_retry.path == "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy"
+    assert rest_send_retry.committed_payload == {"interfaces": [{"interfaceName": "loopback30", "switchId": "FDO12345ABC"}]}
+    assert instance_retry._pending_deploys == []
+
+
+def test_loopback_interface_00460() -> None:
+    """
+    # Summary
+
+    Verify the failure-path finalizer with a mixed-result 207 as the failing group (PR #403 review): the first group's POST
+    succeeds, the second group's POST returns HTTP 207 whose `DATA.results[]` mixes a success item and a failed item, and
+    `create_bulk` raises. `deploy_accepted_mutations` then deploys only the accepted first group.
+
+    Within-group recovery of the 207's reported-success item is deliberately NOT attempted: whether ND actually creates the
+    reported-success subset of a mixed-result 207 is not lab-characterized, and the per-item `status` field is known to be
+    inconsistent (bug-tracker vault: `multi-status-207-status-field-inconsistent`), so nothing from the failed group is queued.
+
+    ## Test
+
+    - loopback10 (`policyType: loopback`) POST succeeds
+    - The mplsLoopback group (loopback30, loopback31) POST returns 207 with `results[]` mixing success and failed items
+    - `create_bulk` raises `RuntimeError` matching `Bulk create failed`; `_pending_deploys` holds only loopback10
+    - `deploy_accepted_mutations` deploys only loopback10; nothing from the failed group is deployed or queued
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    - NdV1Strategy.is_success()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
+        yield responses_loopback_interface(f"{method_name}d")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    models = [
+        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback10"),
+        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
+        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback31"),
+    ]
+
+    match = r"Bulk create failed"
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk(models)
+
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+    with does_not_raise():
+        deployed = instance.deploy_accepted_mutations()
+
+    assert deployed == [("loopback10", "FDO12345ABC")]
+    assert rest_send.committed_payload == {"interfaces": [{"interfaceName": "loopback10", "switchId": "FDO12345ABC"}]}
+    assert instance._pending_deploys == []
+
+
 # =============================================================================
 # Test: delete_bulk
 # =============================================================================

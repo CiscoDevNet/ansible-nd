@@ -793,5 +793,154 @@
                 }
             ]
         }
+    },
+    "test_loopback_interface_00450a": {
+        "TEST_NOTES": [
+            "two-run convergence run 1: switches list (1 switch)",
+            "First-group-success / later-group-failure scenario (PR #403 review): loopback10 (policyType loopback) group succeeds, loopback30 (policyType mplsLoopback) group fails."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00450b": {
+        "TEST_NOTES": [
+            "two-run convergence run 1: POST for the 'loopback' policyType group (loopback10) succeeds"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "loopback10", "status": "success"}
+            ]
+        }
+    },
+    "test_loopback_interface_00450c": {
+        "TEST_NOTES": [
+            "two-run convergence run 1: POST for the 'mplsLoopback' policyType group (loopback30) returns 500"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "error": "boom"
+        }
+    },
+    "test_loopback_interface_00450d": {
+        "TEST_NOTES": [
+            "two-run convergence run 1: failure-path finalizer deploy of the accepted group (loopback10 only)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "ok"
+        }
+    },
+    "test_loopback_interface_00450e": {
+        "TEST_NOTES": [
+            "two-run convergence run 2 (retry): switches list (1 switch)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00450f": {
+        "TEST_NOTES": [
+            "two-run convergence run 2 (retry): POST for the 'mplsLoopback' policyType group (loopback30) succeeds"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "loopback30", "status": "success"}
+            ]
+        }
+    },
+    "test_loopback_interface_00450g": {
+        "TEST_NOTES": [
+            "two-run convergence run 2 (retry): normal deploy_pending deploy (loopback30 only)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "ok"
+        }
+    },
+    "test_loopback_interface_00460a": {
+        "TEST_NOTES": [
+            "mixed-result 207 failing group: switches list (1 switch)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_loopback_interface_00460b": {
+        "TEST_NOTES": [
+            "mixed-result 207 failing group: POST for the 'loopback' policyType group (loopback10) succeeds"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "loopback10", "status": "success"}
+            ]
+        }
+    },
+    "test_loopback_interface_00460c": {
+        "TEST_NOTES": [
+            "mixed-result 207 failing group: POST for the 'mplsLoopback' group returns 207 mixing a success item and a failed item.",
+            "Within-group recovery of the reported-success item is deliberately not attempted: whether ND actually creates it is not lab-characterized, and per-item status is inconsistent (vault: multi-status-207-status-field-inconsistent)."
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "loopback30", "status": "success"},
+                {"name": "loopback31", "status": "failed", "message": "Invalid interface loopback31"}
+            ]
+        }
+    },
+    "test_loopback_interface_00460d": {
+        "TEST_NOTES": [
+            "mixed-result 207 failing group: failure-path finalizer deploy of the accepted group (loopback10 only)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "ok"
+        }
     }
 }

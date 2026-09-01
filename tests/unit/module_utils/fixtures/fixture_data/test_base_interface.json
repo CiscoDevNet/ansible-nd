@@ -201,5 +201,31 @@
         "DATA": {
             "switches": []
         }
+    },
+
+    "test_base_interface_00640a": {
+        "TEST_NOTES": [
+            "deploy_accepted_mutations happy: POST interfaceActions/deploy succeeds for the two mutation-backed pairs (delete-queued pair excluded)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "ok"
+        }
+    },
+
+    "test_base_interface_00670a": {
+        "TEST_NOTES": [
+            "deploy_accepted_mutations failure: POST interfaceActions/deploy returns 500; queue must be retained"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "error": "boom"
+        }
     }
 }
