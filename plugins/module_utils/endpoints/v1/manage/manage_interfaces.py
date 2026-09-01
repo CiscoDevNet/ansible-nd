@@ -32,12 +32,8 @@ from __future__ import annotations
 from typing import ClassVar, Literal
 from urllib.parse import quote
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    Field,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
-    NDEndpointBaseModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     ClusterNameMixin,
     FabricNameMixin,
@@ -53,9 +49,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params im
     EndpointQueryParams,
     LuceneQueryParams,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
-    BasePath,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
