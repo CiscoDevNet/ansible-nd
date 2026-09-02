@@ -114,6 +114,19 @@ class ManageTorModel(NDBaseModel):
         aggregation_pair = tuple(sorted(v for v in (self.aggregation_or_leaf_switch_id, self.aggregation_or_leaf_peer_switch_id) if v is not None))
         return (self.fabric_name, access_pair, aggregation_pair)
 
+    def affected_switch_ids(self) -> Set[str]:
+        """Serials this association references, for scoping a switch-level deploy."""
+        return {
+            switch_id
+            for switch_id in (
+                self.access_or_tor_switch_id,
+                self.aggregation_or_leaf_switch_id,
+                self.access_or_tor_peer_switch_id,
+                self.aggregation_or_leaf_peer_switch_id,
+            )
+            if switch_id is not None
+        }
+
     # --- Argument Spec ---
 
     @classmethod

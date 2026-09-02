@@ -468,11 +468,21 @@ def main():
         # overridden removal) must also push (save+deploy) to realize on the
         # switches.
         if len(nd_state_machine.sent) > 0:
+            # Scope a switch-level deploy to only the switches referenced by the
+            # ToR pairs changed this run. `sent` already holds created/updated
+            # pairs (merged/overridden) and removed pairs (deleted, plus the
+            # overridden removals of pairs present in ND but absent from config),
+            # so both members of every affected vPC pair are covered. A global
+            # deploy ignores this and stays fabric-wide.
+            only_switch_ids: set = set()
+            for pair in nd_state_machine.sent:
+                only_switch_ids |= pair.affected_switch_ids()
             nd_state_machine.model_orchestrator.execute_config_actions(
                 fabric_names=[fabric_name],
                 save=save,
                 deploy=deploy,
                 deploy_type=deploy_type,
+                only_switch_ids=only_switch_ids or None,
             )
 
         module.exit_json(**nd_state_machine.output.format_with_verbosity(_verbosity_of(module), nd_state_machine.results))
