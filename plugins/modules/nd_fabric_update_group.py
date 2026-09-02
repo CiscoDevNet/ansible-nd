@@ -262,19 +262,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_group.fabric_update_group import FabricUpdateGroupModel
 from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
-    NDConfigCollection,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
-    NDStateMachine,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_update_group import (
-    FabricUpdateGroupOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
-    ResponseHandler,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_update_group import FabricUpdateGroupOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender

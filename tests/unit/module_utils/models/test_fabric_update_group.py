@@ -33,9 +33,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_grou
     InstallImageDataModel,
     UpdateReportCheckModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_update_group import (
-    FabricUpdateGroupOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_update_group import FabricUpdateGroupOrchestrator
 
 
 @contextmanager

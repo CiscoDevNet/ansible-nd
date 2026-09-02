@@ -18,9 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
-    NDNestedModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
 
 class InstallImageDataModel(NDNestedModel):
