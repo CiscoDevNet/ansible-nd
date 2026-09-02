@@ -22,9 +22,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     AccessHostPolicyTypeEnum,
     XeAccessHostPolicyTypeEnum,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
-    EthernetAccessInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
 
 
