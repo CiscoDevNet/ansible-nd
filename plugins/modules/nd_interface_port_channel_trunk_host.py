@@ -20,6 +20,8 @@ description:
   O(config[].config_data.network_os.policy.ports) and inherit trunk-mode configuration from the port-channel policy.
 - Member interface field mutability is restricted while members of a port-channel; only description, admin_state, and
   extra_config can be modified on members via the C(nd_interface_ethernet_trunk_host) module.
+- A port-channel that lists a member ethernet already belonging to a different port-channel is rejected before any
+  change is made (also in check mode); remove the member from its current port-channel first.
 author:
 - Allen Robel (@allenrobel)
 options:
