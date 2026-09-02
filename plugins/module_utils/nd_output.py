@@ -2,26 +2,51 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
-from typing import Any, Dict, List, Optional, Union
-
+from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+from ansible_collections.cisco.nd.plugins.module_utils.utils import prune_to_spec
 
 
 class NDOutput:
-    def __init__(self, output_level: str):
+    def __init__(self, output_level: str, state: str = ""):
         self._output_level: str = output_level
+        self._state: str = state
         self._changed: bool = False
-        self._before: Union[NDConfigCollection, List] = []
-        self._after: Union[NDConfigCollection, List] = []
-        self._diff: Union[NDConfigCollection, List] = []
-        self._proposed: Union[NDConfigCollection, List] = []
-        self._logs: List = []
-        self._extra: Dict[str, Any] = {}
+        self._before: NDConfigCollection | list = []
+        self._after: NDConfigCollection | list = []
+        self._diff: NDConfigCollection | list = []
+        self._proposed: NDConfigCollection | list = []
+        self._logs: list = []
+        self._extra: dict[str, Any] = {}
+        # Argument-spec ``config.options`` mapping used to prune gathered output
+        # down to valid module arguments so it round-trips as ``config``.
+        self._gathered_spec: dict[str, Any] = {}
 
-    def format(self, **kwargs) -> Dict[str, Any]:
+    def format(self, **kwargs) -> dict[str, Any]:
+        # Read-only gathered state returns fetched objects under ``gathered``.
+        # Keep empty before/after snapshots for a consistent result shape, but
+        # omit diff/proposed because no reconciliation is performed.
+        if self._state == "gathered":
+            gathered_items = self._after.to_gathered_config() if isinstance(self._after, NDConfigCollection) else self._after
+            if self._gathered_spec and isinstance(gathered_items, list):
+                gathered_items = [prune_to_spec(item, self._gathered_spec) for item in gathered_items]
+            gathered_output = {
+                "output_level": self._output_level,
+                "changed": False,
+                "before": [],
+                "after": [],
+                "gathered": gathered_items,
+            }
+            if self._output_level == "debug":
+                gathered_output["logs"] = self._logs
+            if self._extra:
+                gathered_output.update(self._extra)
+            gathered_output.update(**kwargs)
+            return gathered_output
+
         if isinstance(self._before, NDConfigCollection) and isinstance(self._after, NDConfigCollection) and self._before.get_diff_collection(self._after):
             self._changed = True
 
@@ -45,7 +70,7 @@ class NDOutput:
 
         return output
 
-    def format_with_verbosity(self, verbosity: int, results: Optional[Results] = None, **kwargs) -> Dict[str, Any]:
+    def format_with_verbosity(self, verbosity: int, results: Results | None = None, **kwargs) -> dict[str, Any]:
         """
         Build output dict filtered by CLI verbosity level.
 
@@ -96,11 +121,12 @@ class NDOutput:
 
     def assign(
         self,
-        after: Optional[NDConfigCollection] = None,
-        before: Optional[NDConfigCollection] = None,
-        diff: Optional[NDConfigCollection] = None,
-        proposed: Optional[NDConfigCollection] = None,
-        logs: Optional[List] = None,
+        after: NDConfigCollection | None = None,
+        before: NDConfigCollection | None = None,
+        diff: NDConfigCollection | None = None,
+        proposed: NDConfigCollection | None = None,
+        logs: list | None = None,
+        gathered_spec: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
         if isinstance(after, NDConfigCollection):
@@ -111,6 +137,8 @@ class NDOutput:
             self._diff = diff
         if isinstance(proposed, NDConfigCollection):
             self._proposed = proposed
-        if isinstance(logs, List):
+        if isinstance(logs, list):
             self._logs = logs
+        if isinstance(gathered_spec, dict):
+            self._gathered_spec = gathered_spec
         self._extra.update(**kwargs)

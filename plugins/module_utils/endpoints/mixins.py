@@ -209,3 +209,24 @@ class PolicyGroupIdMixin(BaseModel):
         min_length=1,
         description="Policy Group ID (e.g., POLICY-GROUP-143310)",
     )
+
+
+class SrcClusterNameMixin(BaseModel):
+    """Mixin for endpoints that require src_cluster_name parameter."""
+
+    src_cluster_name: str | None = Field(default=None, min_length=1, description="Source cluster name")
+
+
+class DstClusterNameMixin(BaseModel):
+    """Mixin for endpoints that require dst_cluster_name parameter."""
+
+    dst_cluster_name: str | None = Field(default=None, min_length=1, description="Destination cluster name")
+
+
+class IsLogicalLinkMixin(BaseModel):
+    """Mixin for endpoints that accept isLogicalLink parameter."""
+
+    is_logical_link: BooleanStringEnum = Field(
+        default=BooleanStringEnum.FALSE,
+        description="Indicates if the link is a logical link",
+    )

@@ -1,4 +1,5 @@
 # Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -50,6 +51,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     model_class: ClassVar[type[NDBaseModel]] = NDBaseModel
     supports_bulk_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = False
+
+    # bulk_payload_key is the JSON wrapper key the bulk endpoint expects,
+    # e.g. "links" for /api/v1/manage/links POST.
+    bulk_payload_key: ClassVar[str] = "items"
 
     # NOTE: if not defined by subclasses, return an error as they are required
     create_endpoint: type[NDEndpointBaseModel]
@@ -154,6 +159,16 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         """
         return
 
+    def preflight_delete(self, model_instances: Sequence[ModelType]) -> None:
+        """Pre-delete safety hook executed in check and normal mode.
+
+        This is distinct from the capability ``preflight`` hook: deletes do not
+        require switch capability validation, but an orchestrator may still need
+        local/controller-inventory validation before check mode predicts a safe
+        deletion (for example, detecting an ambiguous controller identity).
+        """
+        return
+
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:
@@ -205,6 +220,24 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         if self.supports_bulk_delete and self.delete_bulk_endpoint is None:
             raise ValueError(f"'{self.__class__.__name__}' has 'supports_bulk_delete=True' but 'delete_bulk_endpoint' is not defined.")
         return self
+
+    def _post_bulk(self, endpoint: NDEndpointBaseModel, items: list[Any], operation_type: OperationType = OperationType.QUERY) -> dict[str, Any]:
+        """POST a bulk payload as a single request through the RestSend pipeline.
+
+        Wraps ``items`` under ``bulk_payload_key`` and sends one POST so the
+        response_handler and result aggregation run as usual.  The response has
+        the same shape the bulk endpoint returns
+        (``{bulk_payload_key: [<items in input order>]}``), so the existing
+        per-item failure surfacing (``_raise_on_bulk_failures``) works unchanged.
+
+        ``operation_type`` is forwarded to ``_request`` so bulk writes are
+        registered with the correct action (CREATE/DELETE) instead of QUERY.
+        """
+        if not items:
+            return {}
+
+        payload_key = self.bulk_payload_key
+        return self._request(endpoint.path, endpoint.verb, data={payload_key: items}, operation_type=operation_type) or {}
 
     @requires_bulk_support("supports_bulk_create")
     def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
