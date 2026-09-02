@@ -79,7 +79,13 @@
          | map('extract', nd_iw_raw_switch_id_by_ip)
          | unique
          | list }}
-    nd_iw_raw_expected_policy: "{{ nd_iw_raw_policy_type_by_family[item.0.type] }}"
+    nd_iw_raw_expected_policy: >-
+      {{
+        item.1.get('config_data', {}).get('network_os', {}).get('policy', {}).get(
+          'policy_type', nd_iw_raw_policy_type_by_family[item.0.type]
+        )
+      }}
+
   ansible.builtin.set_fact:
     nd_iw_raw_expected_policy_keys: >-
       {{
@@ -114,7 +120,13 @@
          | map('extract', nd_iw_raw_switch_id_by_ip)
          | unique
          | list }}
-    nd_iw_raw_expected_policy: "{{ nd_iw_raw_policy_type_by_family[item.0.type] }}"
+    nd_iw_raw_expected_policy: >-
+      {{
+        item.1.get('config_data', {}).get('network_os', {}).get('policy', {}).get(
+          'policy_type', nd_iw_raw_policy_type_by_family[item.0.type]
+        )
+      }}
+
     nd_iw_raw_expected_description: "{{ item.1.config_data.network_os.policy.description }}"
   ansible.builtin.set_fact:
     nd_iw_raw_expected_fingerprint_keys: >-

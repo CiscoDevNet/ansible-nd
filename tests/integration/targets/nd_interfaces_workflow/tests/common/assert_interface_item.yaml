@@ -33,13 +33,41 @@
         and nd_iw_matching_proposed_items | length == 1
         else nd_iw_expected_config_item.config_data | default({})
       }}
+    nd_iw_expected_network_os: "{{ nd_iw_expected_config_data.get('network_os', {}) }}"
+    nd_iw_expected_policy: "{{ nd_iw_expected_network_os.get('policy', {}) }}"
+    nd_iw_expected_policy_without_type: >-
+      {{
+        nd_iw_expected_policy
+        | dict2items
+        | rejectattr('key', 'equalto', 'policy_type')
+        | list
+        | items2dict
+      }}
+    nd_iw_expected_network_os_for_compare: >-
+      {{ nd_iw_expected_network_os | combine({'policy': nd_iw_expected_policy_without_type}) }}
+    nd_iw_expected_config_data_for_compare: >-
+      {{
+        nd_iw_expected_config_data | combine({'network_os': nd_iw_expected_network_os_for_compare})
+        if nd_iw_expected_policy.get('policy_type') is not none
+        else nd_iw_expected_config_data
+      }}
+    nd_iw_observed_policy_type: >-
+      {{
+        nd_iw_observed_interface_item.get(
+          'policy_type',
+          nd_iw_observed_interface_item.get('config_data', {}).get('network_os', {}).get('policy', {}).get('policy_type')
+        )
+      }}
   ansible.builtin.assert:
     that:
       - nd_iw_matching_after_items | length == 1
       - nd_iw_observed_interface_item.config_data is defined
       - >-
+        nd_iw_expected_policy.get('policy_type', nd_iw_observed_policy_type)
+        == nd_iw_observed_policy_type
+      - >-
         nd_iw_observed_interface_item.config_data
-        | combine(nd_iw_expected_config_data, recursive=true)
+        | combine(nd_iw_expected_config_data_for_compare, recursive=true)
         == nd_iw_observed_interface_item.config_data
     fail_msg: >-
       Planned or reconciled {{ nd_iw_assert_resource_result.type }} state did not contain the expected

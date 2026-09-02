@@ -243,7 +243,13 @@ class InterfaceWorkflowPlanner:
                 if isinstance(orchestrator, VpcInterfaceBaseOrchestrator):
                     orchestrator.share_peer_serial_cache(self._shared_vpc_peer_serial_cache())
                 before = self._existing_collection(adapter, orchestrator, proposed)
-                operations = adapter.plan(before=before, proposed=proposed, state=state)
+                planning_before = self._planning_before_for_policy_transitions(
+                    adapter=adapter, before=before, proposed=proposed, state=state
+                )
+                operations = adapter.plan(before=planning_before, proposed=proposed, state=state)
+                if planning_before is not before:
+                    operations = replace(operations, before=before)
+
             except Exception as exc:
                 raise InterfaceWorkflowValidationError(
                     f"resources[{resource_index}] type '{adapter.resource_type}' planning failed through {adapter.module_name}: {exc}"
@@ -440,6 +446,43 @@ class InterfaceWorkflowPlanner:
         return value if isinstance(value, str) and value else None
 
     @classmethod
+    def _planning_before_for_policy_transitions(
+        cls,
+        *,
+        adapter: InterfaceFamilyAdapter,
+        before: NDConfigCollection,
+        proposed: NDConfigCollection,
+        state: str,
+    ) -> NDConfigCollection:
+        """Hide same-identity policy-union mismatches from the ordinary state planner.
+
+        The shared state planner must not field-merge different branches of a discriminated union. For adapters that
+        explicitly opt in, temporarily removing those current identities makes the ordinary planner emit create
+        candidates. The workflow rewrite phase then converts the candidates to safety-checked destination-family PUT
+        transitions while the resource plan retains the complete observed before collection.
+        """
+        if not adapter.supports_intra_family_policy_transitions or state not in adapter.transition_states:
+            return before
+
+        transition_identifiers = []
+        for desired in proposed:
+            identifier = desired.get_identifier_value()
+            current = before.get(identifier)
+            if current is None:
+                continue
+            current_policy_type = cls._desired_policy_type(current)
+            desired_policy_type = cls._desired_policy_type(desired)
+            if current_policy_type is None or desired_policy_type is None or current_policy_type == desired_policy_type:
+                continue
+            transition_identifiers.append(identifier)
+
+        if not transition_identifiers:
+            return before
+        planning_before = before.copy()
+        planning_before.delete_many(transition_identifiers)
+        return planning_before
+
+    @classmethod
     def _desired_network_os_type(cls, model: NDBaseModel) -> str | None:
         """Return the destination model's frozen network-OS discriminator."""
         config_data = getattr(model, "config_data", None)
@@ -469,17 +512,15 @@ class InterfaceWorkflowPlanner:
         """Normalize known raw/summary interface-type aliases."""
         return {"switchVirtualInterface": "svi"}.get(value, value)
 
-    @classmethod
-    def _vpc_record_fingerprint(
-        cls,
-        current: Mapping[str, Any],
-        switch_id: str,
-        scope: tuple[str, ...],
-    ) -> Any:
-        """Return peer-independent configured vPC state for pair comparison."""
+    @staticmethod
+    def _vpc_record_fingerprint(current: Mapping[str, Any]) -> Any:
+        """Return pair-comparable configured vPC state for one controller echo.
 
-        peer_ids = [candidate for candidate in scope if candidate != switch_id]
-        peer_id = peer_ids[0] if len(peer_ids) == 1 else None
+        ND echoes one vPC interface from both peers with the same configData; only the record's switchId and policy
+        peerSwitchId orientation changes. peer1 and peer2 fields retain the configured payload's meaning in both echoes,
+        so they must not be rebound to the switch that supplied an echo. Member-port spelling and ordering are
+        presentation differences and are normalized before comparison.
+        """
 
         def scrub(value: Any) -> Any:
             if isinstance(value, Mapping):
@@ -488,15 +529,10 @@ class InterfaceWorkflowPlanner:
                 for key, item in value.items():
                     if key in ignored:
                         continue
-                    normalized_key = key
-                    if key.startswith("peer1") and len(key) > 5:
-                        normalized_key = f"peer[{switch_id}]{key[5:]}"
-                    elif peer_id is not None and key.startswith("peer2") and len(key) > 5:
-                        normalized_key = f"peer[{peer_id}]{key[5:]}"
                     normalized_item = scrub(item)
                     if key.endswith("MemberPorts") and isinstance(item, list) and all(isinstance(member, str) for member in item):
                         normalized_item = tuple(sorted(member.strip().lower() for member in item))
-                    normalized[normalized_key] = normalized_item
+                    normalized[key] = normalized_item
                 return normalized
             if isinstance(value, list):
                 return [scrub(item) for item in value]
@@ -541,7 +577,7 @@ class InterfaceWorkflowPlanner:
 
         interface_types = {current.get("interfaceType") for _switch_id, current in present}
         policy_types = {InterfaceStateSnapshot.policy_type(current) for _switch_id, current in present}
-        fingerprints = [self._vpc_record_fingerprint(current, switch_id, scope) for switch_id, current in present]
+        fingerprints = [self._vpc_record_fingerprint(current) for _switch_id, current in present]
         if len(interface_types) != 1 or len(policy_types) != 1 or fingerprints[0] != fingerprints[1]:
             raise InterfaceWorkflowValidationError(
                 f"{label} has inconsistent vPC pair records: interfaceType={sorted(str(value) for value in interface_types)}, "
@@ -833,7 +869,7 @@ class InterfaceWorkflowPlanner:
                         retained_creates.append(desired)
                         continue
                     current_policy_type = InterfaceStateSnapshot.policy_type(current_records[0][1])
-                    if current_policy_type in resource.adapter.policy_types:
+                    if current_policy_type == self._desired_policy_type(desired):
                         retained_creates.append(desired)
                         continue
                     candidate = _PolicyRewriteCandidate(resource.resource_index, desired, current_records)

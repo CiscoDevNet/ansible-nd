@@ -6,6 +6,8 @@
 
 """Ansible module for managing loopback interfaces on Cisco Nexus Dashboard."""
 
+from __future__ import annotations
+
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
 DOCUMENTATION = r"""
@@ -55,41 +57,138 @@ options:
             - Network OS specific configuration.
             type: dict
             suboptions:
+              network_os_type:
+                description:
+                - The network OS (platform) type of the target switch. This is a discriminator that determines which
+                  policy templates are applicable, and is required by the ND API schema.
+                - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst/CSR IOS-XE devices.
+                type: str
+                required: true
+                choices: [ nx-os, ios-xe ]
               policy:
                 description:
                 - The policy configuration for the loopback interface.
+                - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
                 type: dict
                 suboptions:
+                  policy_type:
+                    description:
+                    - The loopback policy template to apply. This is a discriminator that determines which of the
+                      remaining C(policy) suboptions are applicable.
+                    - Use V(loopback) for a standard NX-OS loopback interface.
+                    - Use V(ipfmLoopback) for an IP Fabric for Media loopback interface.
+                    - Use V(mplsLoopback) for an MPLS loopback interface.
+                    - Use V(iosXeLoopback) for a general-purpose IOS-XE loopback.
+                    - Use V(iosXeLoopbackShutNoshut) to manage only the admin state of an IOS-XE loopback.
+                    - Use V(iosXeUnderlayLoopback) for an IOS-XE underlay (NVE source) loopback.
+                    - Use V(iosXeInternalLoopback) for an IOS-XE internal loopback (IPv4/IPv6 and PIM options).
+                    - Use V(csrLoopback) for a CSR loopback.
+                    - Use V(csr1kvLoopback) for a CSR1kv loopback (admin state and freeform config only).
+                    type: str
+                    required: true
+                    choices: [ loopback, ipfmLoopback, mplsLoopback, iosXeLoopback, iosXeLoopbackShutNoshut, iosXeUnderlayLoopback,
+                      iosXeInternalLoopback, csrLoopback, csr1kvLoopback ]
                   admin_state:
                     description:
                     - The administrative state of the loopback interface.
                     - It defaults to C(true) when unset during creation.
+                    - Applies to all policy_type values.
                     type: bool
                   ip:
                     description:
                     - The IPv4 address of the loopback interface.
+                    - Accepts bare (C(10.1.1.1)) or CIDR (C(10.1.1.1/32)) input. CIDR input is normalized to the bare address, which is
+                      what is sent to the controller and returned in module output.
+                    - Applies to all policy_type values except C(iosXeLoopbackShutNoshut) and C(csr1kvLoopback).
                     type: str
-                  ipv6:
+                  description:
                     description:
-                    - The IPv6 address of the loopback interface.
+                    - The description of the loopback interface.
+                    - Applies to all policy_type values except C(iosXeLoopbackShutNoshut) and C(csr1kvLoopback). Maximum length is 200 for
+                      C(iosXeLoopback) and C(iosXeInternalLoopback), 254 otherwise.
+                    type: str
+                  extra_config:
+                    description:
+                    - Additional CLI configuration commands to apply to the interface.
+                    - Applies to all policy_type values except C(iosXeLoopbackShutNoshut).
                     type: str
                   vrf:
                     description:
                     - The VRF to which the loopback interface belongs.
                     - Maximum 32 characters.
+                    - Applies when policy_type is C(loopback), C(ipfmLoopback), C(iosXeLoopback), C(iosXeInternalLoopback), or C(csrLoopback).
+                    type: str
+                  ipv6:
+                    description:
+                    - The IPv6 address of the loopback interface.
+                    - Accepts bare (C(2001:db8::1)) or CIDR (C(2001:db8::1/128)) input. CIDR input is normalized to the bare address, which is
+                      what is sent to the controller and returned in module output. The controller applies the C(/128) prefix length.
+                    - Applies when policy_type is C(loopback) or C(iosXeInternalLoopback).
                     type: str
                   route_map_tag:
                     description:
                     - The route-map tag associated with the interface IP address.
+                    - Applies when policy_type is C(loopback).
                     type: str
-                  description:
+                  advertise_loopback:
                     description:
-                    - The description of the loopback interface.
-                    - Maximum 254 characters.
+                    - Whether to advertise the loopback address via OSPF/IS-IS.
+                    - Applies when policy_type is C(ipfmLoopback).
+                    type: bool
+                  is_service_reflect:
+                    description:
+                    - Whether to use this loopback as the service-reflect source address.
+                    - Applies when policy_type is C(ipfmLoopback).
+                    type: bool
+                  routing_tag:
+                    description:
+                    - The routing tag associated with the interface IP address.
+                    - Applies when policy_type is C(ipfmLoopback).
                     type: str
-                  extra_config:
+                  secondary_ip_list:
                     description:
-                    - Additional CLI configuration commands to apply to the interface.
+                    - A list of secondary IPv4 addresses configured on the loopback interface.
+                    - Applies when policy_type is C(ipfmLoopback).
+                    type: list
+                    elements: dict
+                    suboptions:
+                      ip:
+                        description:
+                        - The secondary IPv4 address, in bare host form (e.g. 10.2.2.3).
+                        - The mask length is set separately via O(config[].config_data.network_os.policy.secondary_ip_list[].prefix); CIDR notation is rejected.
+                        type: str
+                      prefix:
+                        description:
+                        - The subnet mask length for the secondary IPv4 address (4-32).
+                        type: int
+                  secondary_ip:
+                    description:
+                    - Secondary IPv4 address of the NVE interface loopback.
+                    - Accepts bare (C(10.1.1.2)) or CIDR (C(10.1.1.2/32)) input. CIDR input is normalized to the bare address, which is
+                      what is sent to the controller and returned in module output.
+                    - Applies when policy_type is C(iosXeUnderlayLoopback).
+                    type: str
+                  enable_pim:
+                    description:
+                    - Enable PIM on the interface.
+                    - Applies when policy_type is C(iosXeInternalLoopback).
+                    type: bool
+                  dci_routing_protocol:
+                    description:
+                    - The DCI (Data Center Interconnect) link-state routing protocol.
+                    - Applies when policy_type is C(mplsLoopback).
+                    type: str
+                    choices: [ ospf, isis ]
+                  dci_routing_tag:
+                    description:
+                    - The DCI (Data Center Interconnect) routing tag.
+                    - Applies when policy_type is C(mplsLoopback).
+                    type: str
+                  ospf_area_id:
+                    description:
+                    - The OSPF area identifier.
+                    - Maximum 15 characters.
+                    - Applies when policy_type is C(mplsLoopback).
                     type: str
   config_actions:
     description:
@@ -102,6 +201,9 @@ options:
         - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module
           execution via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
+        - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
+          accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
+          changes staged but undeployed.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
         - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
@@ -112,9 +214,13 @@ options:
     - Use O(state=merged) to create new resources and update existing ones as defined in your configuration.
       Resources on ND that are not specified in the configuration will be left unchanged.
     - Use O(state=replaced) to replace the resources specified in the configuration.
-    - Use O(state=overridden) to enforce the configuration as the single source of truth.
-      The resources on ND will be modified to exactly match the configuration.
-      Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
+    - Use O(state=overridden) to enforce the configuration as the single source of truth for the loopback interfaces managed by this module.
+      The scope is fabric-wide, covering every switch in the fabric rather than only the switches named in the configuration.
+      Managed loopback interfaces on ND will be modified to exactly match the configuration, and any managed loopback interface existing
+      on ND but not present in the configuration will be deleted. Use with extra caution.
+    - A managed loopback interface is one whose policy type is among the O(config[].config_data.network_os.policy.policy_type) choices.
+      Loopback interfaces with any other policy type, such as the system-provisioned NX-OS C(underlayLoopback) or C(userDefined),
+      are never modified or deleted by this module.
     - Use O(state=deleted) to remove the resources specified in the configuration from the Cisco Nexus Dashboard.
     type: str
     default: merged
@@ -124,8 +230,12 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module currently supports NX-OS loopback interfaces only (interface_type C(loopback), policy_type C(loopback)).
-- The IP Fabric for Media (C(ipfmLoopback)) and user-defined (C(userDefined)) loopback policies will be managed by dedicated modules.
+- This module supports both NX-OS and IOS-XE loopback interfaces (interface_type C(loopback)), selected via
+  O(config[].config_data.network_os.network_os_type).
+- This module manages three NX-OS loopback policy templates, selected via O(config[].config_data.network_os.policy.policy_type)
+  C(loopback), C(ipfmLoopback) (IP Fabric for Media), and C(mplsLoopback), plus six IOS-XE managed templates
+  C(iosXeLoopback), C(iosXeLoopbackShutNoshut), C(iosXeUnderlayLoopback), C(iosXeInternalLoopback), C(csrLoopback), and
+  C(csr1kvLoopback). The user-defined (C(userDefined)) loopback policy is not yet supported for either network OS.
 """
 
 EXAMPLES = r"""
@@ -137,7 +247,9 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               ip: 10.1.1.1
               admin_state: true
               description: Management loopback
@@ -156,14 +268,18 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               ip: 10.1.1.1
               description: Router ID loopback
       - switch_ip: 192.168.1.1
         interface_name: loopback1
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               ip: 10.2.1.1
               description: VTEP loopback
               route_map_tag: "12345"
@@ -171,7 +287,9 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               ip: 10.1.1.2
               description: Router ID loopback on switch 2
     config_actions:
@@ -186,7 +304,9 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               ip: 10.1.1.2
               description: Updated loopback description
     config_actions:
@@ -213,14 +333,18 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               ip: 10.1.1.1
               description: Router ID loopback
       - switch_ip: 192.168.1.2
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               ip: 10.1.1.2
               description: Router ID loopback on switch 2
     config_actions:
@@ -235,7 +359,9 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               ip: 10.1.1.1
     config_actions:
       deploy: false
@@ -249,7 +375,9 @@ EXAMPLES = r"""
         interface_name: loopback0
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               ip: 10.1.1.1
               ipv6: 2001:db8::1/128
               description: Loopback with PIM and OSPF tuning
@@ -261,9 +389,304 @@ EXAMPLES = r"""
     config_actions:
       deploy: true
     state: merged
+
+- name: Create an IPFM loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: loopback11
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: ipfmLoopback
+              ip: 10.2.2.2
+              vrf: default
+              advertise_loopback: true
+              is_service_reflect: false
+              routing_tag: "100"
+              secondary_ip_list:
+                - ip: 10.2.2.3
+                  prefix: 32
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Create an MPLS loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: loopback12
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: mplsLoopback
+              ip: 10.3.3.3
+              dci_routing_protocol: ospf
+              dci_routing_tag: "200"
+              ospf_area_id: "0.0.0.0"
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Merge an IOS-XE loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback100
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeLoopback
+              admin_state: true
+              ip: "10.200.100.1"
+              description: "XE loopback100"
+              vrf: blue
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Replace an IOS-XE loopback (full desired state)
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback100
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeLoopback
+              admin_state: true
+              ip: "10.200.100.2"
+              description: "XE loopback100 replaced"
+    config_actions:
+      deploy: true
+    state: replaced
+
+- name: Override all managed loopbacks (mixed NX-OS and IOS-XE desired state)
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: loopback100
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: loopback
+              admin_state: true
+              ip: "10.100.100.1"
+      - switch_ip: 192.168.2.1
+        interface_name: loopback100
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeLoopback
+              admin_state: true
+              ip: "10.200.100.1"
+    config_actions:
+      deploy: true
+    state: overridden
+
+- name: Delete an IOS-XE loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback100
+    config_actions:
+      deploy: true
+    state: deleted
+
+- name: Merge a CSR loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.2
+        interface_name: loopback101
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: csrLoopback
+              admin_state: true
+              ip: "10.200.101.1"
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Manage only the admin state of an IOS-XE loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback102
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeLoopbackShutNoshut
+              admin_state: false
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Merge an IOS-XE underlay loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback103
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeUnderlayLoopback
+              admin_state: true
+              ip: "10.200.103.1"
+              secondary_ip: "10.200.103.2"
+              description: "XE underlay loopback103"
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Merge an IOS-XE internal loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.1
+        interface_name: loopback104
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeInternalLoopback
+              admin_state: true
+              ip: "10.200.104.1"
+              ipv6: "2001:db8:104::1/128"
+              vrf: blue
+              enable_pim: true
+              description: "XE internal loopback104"
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Merge a CSR1kv loopback
+  cisco.nd.nd_interface_loopback:
+    fabric_name: fabric-xe
+    config:
+      - switch_ip: 192.168.2.2
+        interface_name: loopback105
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: csr1kvLoopback
+              admin_state: true
+              extra_config: "ip ospf network point-to-point"
+    config_actions:
+      deploy: true
+    state: merged
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed, or in check mode would change, the interface configuration.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
+  - An empty list when no matching interface configuration existed.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: loopback10
+    interface_type: loopback
+    config_data:
+      mode: managed
+      network_os:
+        network_os_type: nx-os
+        policy:
+          policy_type: loopback
+          admin_state: true
+          ip: 10.1.1.1
+          vrf: management
+after:
+  description:
+  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
+  - In check mode, the configuration that would result had the module run outside of check mode.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: loopback10
+    interface_type: loopback
+    config_data:
+      mode: managed
+      network_os:
+        network_os_type: nx-os
+        policy:
+          policy_type: loopback
+          admin_state: true
+          ip: 10.1.1.2
+          vrf: management
+diff:
+  description: The per-interface difference between C(before) and C(after).
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: loopback10
+    config_data:
+      network_os:
+        policy:
+          ip: 10.1.1.2
+proposed:
+  description: The configuration the module proposed to apply, before reconciliation with the controller.
+  returned: when O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: loopback10
+    interface_type: loopback
+    config_data:
+      mode: managed
+      network_os:
+        network_os_type: nx-os
+        policy:
+          policy_type: loopback
+          ip: 10.1.1.2
+logs:
+  description: Internal diagnostic log messages collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample:
+  - "Querying existing loopback interface configuration"
+msg:
+  description: A human-readable error message, present only when the module fails.
+  returned: on failure
+  type: str
+  sample: "Configuration error: ..."
 """
 # pylint: disable=wrong-import-position
 
@@ -279,6 +702,39 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
+
+
+def _finalize_accepted_intent(nd_state_machine: NDStateMachine | None, module: AnsibleModule, module_log: logging.Logger) -> str:
+    """
+    # Summary
+
+    Failure-path finalizer (PR #403 review): when the module fails after some mutations succeeded, deploy the already-accepted
+    subset via `deploy_accepted_mutations` so it does not remain staged-but-undeployed. Without this, a retry classifies the
+    accepted interfaces as unchanged and never deploys them, so controller intent and switch running state stay divergent even
+    after a successful retry.
+
+    Returns a sentence to append to the failure message naming what was finalized (or reporting that finalization itself
+    failed). Returns an empty string when there is nothing to do: check mode (no mutations were sent), `deploy: false`
+    (staged intent is the documented contract), no accepted mutations queued, or the failure preceded orchestrator creation.
+
+    ## Raises
+
+    None (a finalization failure is folded into the returned message so it cannot mask the original error).
+    """
+    if nd_state_machine is None or module.check_mode:
+        return ""
+    orchestrator = nd_state_machine.model_orchestrator
+    if not isinstance(orchestrator, NDBaseInterfaceOrchestrator):
+        return ""
+    try:
+        deployed = orchestrator.deploy_accepted_mutations()
+    except Exception as deploy_error:  # pylint: disable=broad-except
+        module_log.exception("Failure-path deploy of accepted mutations failed")
+        return f" NOTE: the controller accepted some interface changes before the failure and deploying them also failed; they remain staged: {deploy_error}"
+    if not deployed:
+        return ""
+    names = ", ".join(sorted(f"{name} (switchId {switch_id})" for name, switch_id in deployed))
+    return f" NOTE: before the failure, the controller had already accepted changes for interface(s) [{names}]; those changes were deployed."
 
 
 def main():
@@ -341,6 +797,7 @@ def main():
         module_log.exception("NDStateMachineError during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module execution failed: {str(e)}"
+        error_msg += _finalize_accepted_intent(nd_state_machine, module, module_log)
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
@@ -349,6 +806,7 @@ def main():
         module_log.exception("Unhandled exception during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module failed: {str(e)}"
+        error_msg += _finalize_accepted_intent(nd_state_machine, module, module_log)
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)

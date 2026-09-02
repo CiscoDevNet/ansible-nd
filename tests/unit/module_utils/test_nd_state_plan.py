@@ -15,11 +15,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDSt
 
 
 def _loopback(name: str, *, ip: str | None = None, description: str | None = None) -> dict:
-    policy = {key: value for key, value in {"ip": ip, "description": description}.items() if value is not None}
+    policy = {"policy_type": "loopback", **{key: value for key, value in {"ip": ip, "description": description}.items() if value is not None}}
     return {
         "switch_ip": "192.0.2.1",
         "interface_name": name,
-        "config_data": {"network_os": {"policy": policy}},
+        "config_data": {"network_os": {"network_os_type": "nx-os", "policy": policy}},
     }
 
 

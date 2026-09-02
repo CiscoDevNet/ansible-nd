@@ -182,6 +182,43 @@ def _failed_multistatus_items(response: dict) -> list[dict[str, Any]]:
     return _multistatus_items_with_status(response, _MULTISTATUS_FAILURE_STATUSES)
 
 
+def _non_success_multistatus_items(response: dict) -> list[dict[str, Any]]:
+    """
+    # Summary
+
+    Return the per-item entries in a Multi-Status body whose `status` is anything other than an exact `success`.
+
+    ## Description
+
+    Allowlist counterpart to `_failed_multistatus_items`, used for HTTP 207 responses only: on a 207 the per-item `status` vocabulary is unreliable —
+    `failed`, `error`, `Failed`, softer literals like `warning`/`notexecuted`, or the key absent entirely (vault:
+    `multi-status-207-status-field-inconsistent`; issue #397) — so only an exact `success` (case/whitespace-tolerant) may be trusted. A missing or
+    empty `status` counts as non-success. Scans the same envelope arrays as `_failed_multistatus_items` (`DATA.results[]`, `DATA.switchIds[]`,
+    `DATA.links[]`). NOT for plain-200 bodies: ND ships legitimately status-less item arrays on 200 (e.g. the GET /links list envelope), which the
+    failure-literal denylist correctly ignores.
+
+    ## Parameters
+
+    - response: Response dict with keys RETURN_CODE, MESSAGE, DATA, etc.
+
+    ## Returns
+
+    - List of item dicts whose `status` is not exactly `success` (empty list when every item reports `success` or no envelope array is present)
+
+    ## Raises
+
+    None
+    """
+    non_success: list[dict[str, Any]] = []
+    data = _get_typed_value(response, "DATA", dict, {})
+    for key in _MULTISTATUS_ITEM_KEYS:
+        items = _get_typed_value(data, key, list, [])
+        non_success.extend(
+            item for item in items if isinstance(item, dict) and str(item.get("status") or "").strip().lower() not in _MULTISTATUS_SUCCESS_STATUSES
+        )
+    return non_success
+
+
 class NdV1Strategy:
     """
     # Summary
@@ -271,6 +308,10 @@ class NdV1Strategy:
           `DATA.switchIds[]`, or `DATA.links[]` (status `failed`/`failure`/`error`). This is
           checked on any success code, not only 207: ND sends per-item statuses on HTTP 200
           for some endpoints (e.g. the L3Out batch POST).
+        - On `RETURN_CODE` 207 specifically, any envelope item whose `status` is not exactly `success` — softer literals like
+          `warning`/`notexecuted`, unknown literals, or the `status` key absent entirely — because the 207 per-item status vocabulary is
+          unreliable (issue #397; vault: `multi-status-207-status-field-inconsistent`). Plain-200 bodies keep the failure-literal denylist
+          because ND ships legitimately status-less item arrays on 200 (e.g. the GET /links list envelope).
 
         ## Parameters
 
@@ -297,6 +338,12 @@ class NdV1Strategy:
         # indicate every item succeeded -- ND sends these bodies on 207 and, for some endpoints,
         # on plain 200 -- so any success-code response with a failing item must not be
         # classified as success. See issue #295.
+        # On a 207 specifically, the per-item status vocabulary is unreliable (softer literals,
+        # or the key absent entirely), so only an exact `success` is trusted there (issue #397;
+        # vault: multi-status-207-status-field-inconsistent). Plain-200 bodies keep the
+        # failure-literal denylist because ND ships legitimately status-less item arrays on 200.
+        if response.get("RETURN_CODE") == 207 and _non_success_multistatus_items(response):
+            return False
         if _failed_multistatus_items(response):
             return False
         return True
@@ -528,9 +575,11 @@ class NdV1Strategy:
             if errors:
                 msg = f"ND Error: {'; '.join(str(e) for e in errors)}"
 
-        # Multi-Status per-item failures (results[]/switchIds[]/links[])
+        # Multi-Status per-item failures (results[]/switchIds[]/links[]). Mirrors is_success:
+        # on a 207 every non-exact-success item is reported (including status-less items), so the
+        # message names the item ND rejected rather than falling through to the generic fallback.
         if msg is None:
-            failed_items = _failed_multistatus_items(response)
+            failed_items = _non_success_multistatus_items(response) if return_code == 207 else _failed_multistatus_items(response)
             if failed_items:
                 parts = [self._format_multistatus_failure(item) for item in failed_items]
                 msg = f"ND Error: {'; '.join(parts)}"

@@ -16,11 +16,20 @@ in bulk after all mutations are complete.
 Uses `FabricContext` for pre-flight validation (fabric existence, deployment-freeze check)
 and switch IP-to-serial resolution. The model structure mirrors the API payload, so the
 orchestrator only needs to inject `switchId` and filter `query_all` results by interface type.
+
+`query_all` manages the union of NX-OS (`loopback`, `ipfmLoopback`, `mplsLoopback` — see `LoopbackPolicyTypeEnum`) and
+IOS-XE (`iosXeLoopback`, `iosXeLoopbackShutNoshut`, `iosXeUnderlayLoopback`, `iosXeInternalLoopback`, `csrLoopback`,
+`csr1kvLoopback` — see `XeLoopbackPolicyTypeEnum`) managed loopback policy types. Note that IOS-XE's
+`iosXeUnderlayLoopback` is user-creatable (unlike NX-OS's `underlayLoopback`, which is system-provisioned), so it is
+included here. `userDefined` and other system-provisioned policy types (e.g. NX-OS `underlayLoopback`) are excluded.
+The `csrLoopback` branch's wire name is lab-verified (2026-07-18): the ND 4.2.1 OpenAPI READ schema lists it as
+`csrIntLoopback`, but the wire echoes `csrLoopback` on reads too (drift recorded in the bug-tracker vault).
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -32,9 +41,43 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesRemove,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import LoopbackPolicyTypeEnum, XeLoopbackPolicyTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+
+
+@dataclass(frozen=True, slots=True)
+class _BulkCreateGroupKey:
+    """
+    # Summary
+
+    Grouping key for bulk create: one POST is sent per `(switch_id, policy_type)` group. `policy_type` is `None` for
+    identifier-only items with no policy configured.
+
+    ## Raises
+
+    None
+    """
+
+    switch_id: str
+    policy_type: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _BulkCreateItem:
+    """
+    # Summary
+
+    A single interface within a bulk-create group: the interface name (for deploy queueing) and its ready-to-send payload.
+
+    ## Raises
+
+    None
+    """
+
+    interface_name: str
+    payload: dict
 
 
 class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfaceModel]):
@@ -63,7 +106,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
     - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
-    - Via `create` if the create API request fails.
+    - Via `create` if the create API request fails, or if the response's per-item `results[]` reports a failure.
+    - Via `create_bulk` if any create API request fails, or if a response's per-item `results[]` reports a failure.
     - Via `update` if the update API request fails.
     - Via `remove_pending` if the bulk remove API request fails.
     - Via `deploy_pending` if the bulk deploy API request fails.
@@ -96,7 +140,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
         ### RuntimeError
 
-        - If the create API request fails.
+        - If the create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item
+          (detected centrally by `NdV1Strategy.is_success`, which `_request` consults).
         """
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
@@ -152,37 +197,58 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         self._queue_remove(model_instance.interface_name, switch_id)
         self._queue_deploy(model_instance.interface_name, switch_id)
 
-    def create_bulk(self, model_instances: list[LoopbackInterfaceModel], **kwargs) -> ResponseType:
+    def _group_by_switch_and_policy_type(self, model_instances: list[LoopbackInterfaceModel]) -> dict[_BulkCreateGroupKey, list[_BulkCreateItem]]:
         """
         # Summary
 
-        Create multiple loopback interfaces in bulk. Groups interfaces by switch and sends one POST per switch with all
-        interfaces in the `interfaces` array, reducing API calls from N to one-per-switch. Queues deploys for all created
-        interfaces for later bulk execution via `deploy_pending`.
+        Build the bulk-create groups: resolve each model's `switch_ip` to a `switchId`, inject it into the payload, and
+        group the resulting items by `(switch_id, policy_type)`.
 
         ## Raises
 
         ### RuntimeError
 
-        - If any create API request fails.
+        - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
+        """
+        # TODO(4.2.1) bulk-interface-create-rejects-mixed-policy-types
+        # ND rejects an interfaces[] array mixing policyType values (207 with a single failed item; nothing is
+        # created), even though the create schema allows mixed arrays. One POST per (switch, policyType).
+        groups: dict[_BulkCreateGroupKey, list[_BulkCreateItem]] = defaultdict(list)
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            payload = model_instance.to_payload()
+            payload["switchId"] = switch_id
+            group_key = _BulkCreateGroupKey(switch_id=switch_id, policy_type=model_instance.policy_type)
+            groups[group_key].append(_BulkCreateItem(interface_name=model_instance.interface_name, payload=payload))
+        return groups
+
+    def create_bulk(self, model_instances: list[LoopbackInterfaceModel], **kwargs) -> ResponseType:
+        """
+        # Summary
+
+        Create multiple loopback interfaces in bulk. Groups interfaces by `(switch_id, policy_type)` and sends one POST
+        per group with the group's interfaces in the `interfaces` array, reducing API calls from N to one-per-group.
+        Queues deploys for all successfully created interfaces for later bulk execution via `deploy_pending`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If any create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item
+          (detected centrally by `NdV1Strategy.is_success`, which `_request` consults); no deploy is queued for that
+          group's items in that case.
         """
         try:
-            groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
-            for model_instance in model_instances:
-                switch_id = self._resolve_switch_id(model_instance.switch_ip)
-                payload = model_instance.to_payload()
-                payload["switchId"] = switch_id
-                groups[switch_id].append((model_instance.interface_name, payload))
-
+            groups = self._group_by_switch_and_policy_type(model_instances)
             results = []
-            for switch_id, items in groups.items():
+            for group_key, items in groups.items():
                 # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
-                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
-                request_body = {"interfaces": [payload for interface_name, payload in items]}
+                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=group_key.switch_id)  # pyright: ignore[reportOptionalCall]
+                request_body = {"interfaces": [item.payload for item in items]}
                 result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
                 results.append(result)
-                for interface_name, payload in items:
-                    self._queue_deploy(interface_name, switch_id)
+                for item in items:
+                    self._queue_deploy(item.interface_name, group_key.switch_id)
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
@@ -228,14 +294,20 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         """
         # Summary
 
-        Validate the fabric context and query interfaces, filtering for user-managed loopback interfaces only
-        (`policyType: "loopback"`).
+        Validate the fabric context and query interfaces, filtering for the loopback policy types managed by this
+        module - the union of NX-OS (`loopback`, `ipfmLoopback`, `mplsLoopback` - see `LoopbackPolicyTypeEnum`) and
+        IOS-XE (`iosXeLoopback`, `iosXeLoopbackShutNoshut`, `iosXeUnderlayLoopback`, `iosXeInternalLoopback`,
+        `csrLoopback`, `csr1kvLoopback` - see `XeLoopbackPolicyTypeEnum`) policy types. The `csrLoopback` branch's
+        wire name is lab-verified (2026-07-18): the ND 4.2.1 OpenAPI READ schema lists it as `csrIntLoopback`, but
+        the wire echoes `csrLoopback` on reads too (drift recorded in the bug-tracker vault).
 
         The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
         and limited to switches named in the user config for all other states.
 
-        System-provisioned loopbacks (e.g. Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) and
-        non-standard policy templates (`ipfmLoopback`, `userDefined`) are excluded - those will be managed by dedicated modules.
+        IOS-XE's `iosXeUnderlayLoopback` is user-creatable (unlike NX-OS's `underlayLoopback`, which is
+        system-provisioned) and is therefore included in the managed set above. System-provisioned loopbacks (e.g.
+        NX-OS Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) and the `userDefined` policy
+        type are excluded - those are out of scope for this module.
 
         Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
 
@@ -253,10 +325,13 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         try:
             self.validate_prerequisites()
             all_loopbacks = []
+            managed_policy_types = {policy_type.value for policy_type in LoopbackPolicyTypeEnum} | {
+                policy_type.value for policy_type in XeLoopbackPolicyTypeEnum
+            }
             for switch_ip, switch_id in self._switches_to_query().items():
                 interfaces = list(self._switch_interfaces(switch_id).values())
                 loopbacks = [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
-                managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") == "loopback"]
+                managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_policy_types]
                 for iface in managed:
                     iface["switchIp"] = switch_ip
                 all_loopbacks.extend(managed)

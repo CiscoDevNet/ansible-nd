@@ -70,6 +70,27 @@ def test_documentation_links_every_standalone_module_and_not_flow_rules():
     assert "from_policy_type" in nd_interfaces_workflow.RETURN
 
 
+def test_loopback_union_contract_is_explicit_in_documentation_and_examples():
+    managed_policy_types = {
+        "loopback",
+        "ipfmLoopback",
+        "mplsLoopback",
+        "iosXeLoopback",
+        "iosXeLoopbackShutNoshut",
+        "iosXeUnderlayLoopback",
+        "iosXeInternalLoopback",
+        "csrLoopback",
+        "csr1kvLoopback",
+    }
+
+    for policy_type in managed_policy_types:
+        assert f"C({policy_type})" in nd_interfaces_workflow.DOCUMENTATION
+    assert "network_os_type: nx-os" in nd_interfaces_workflow.EXAMPLES
+    assert "policy_type: loopback" in nd_interfaces_workflow.EXAMPLES
+    assert "Identifier-only V(deleted) loopback items remain valid" in nd_interfaces_workflow.DOCUMENTATION
+    assert "Changing C(network_os_type) is rejected" in nd_interfaces_workflow.DOCUMENTATION
+
+
 def test_main_requires_pydantic_then_runs_coordinator_and_exits():
     events = []
 

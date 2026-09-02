@@ -180,6 +180,13 @@ child together, and any parent mutation while existing child subinterfaces remai
 
 Optional live packs are gated by `nd_iw_optional_prerequisites`, a mapping of prerequisite name to boolean. Set a prerequisite true only after verifying the referenced object or hardware capability in that fabric. Check-profile previews prove model normalization and zero-write planning, but they do not prove that a named NetFlow or QoS object exists. Object existence remains a live prerequisite.
 
+Configured loopback cases use the standalone module's discriminated union: `network_os_type` is required and `policy_type` must be one
+of the three managed NX-OS policies (`loopback`, `ipfmLoopback`, `mplsLoopback`) or six managed IOS-XE policies (`iosXeLoopback`,
+`iosXeLoopbackShutNoshut`, `iosXeUnderlayLoopback`, `iosXeInternalLoopback`, `csrLoopback`, `csr1kvLoopback`) appropriate to that OS.
+Identifier-only loopback deletion intentionally omits both discriminators. The checked-in live property matrix covers only the classic
+NX-OS `loopback` policy today. IPFM, MPLS, and IOS-XE property packs are explicit follow-up work; IOS-XE requires an explicitly
+declared IOS-XE test inventory.
+
 The full check-only profile cannot deterministically preview a sibling-policy transition without first seeding live source state. The full live profile uses the standalone Ethernet access and trunk-host modules to establish deterministic sibling-policy sources, then verifies implicit accessHost↔trunkHost transitions under both `merged` and `replaced`, transition metadata, idempotency, and policy-independent deletion through the opposite Ethernet type. It also verifies that physical deletion resets both interfaces to the default `trunkHost` policy without physical deployment. Other structural domains and source policies remain unit-tested until each combination has a safe, model-backed live setup path; do not use fabric-owned loopbacks, SVIs, peer links, or other controller-owned interfaces merely to manufacture transition coverage.
 
 The Ethernet `routedHost → accessHost` and `accessHost → trunkHost` cross-policy PUTs now have recorded live qualification. The latter was
@@ -188,3 +195,8 @@ and a zero-change check-mode replay. Deployment was disabled, so this qualifies 
 deployment. The reverse trunk-to-access scenario and all port-channel, vPC, managed/unmanaged subinterface, SVI, and loopback
 cross-policy combinations remain qualification workloads, not completed qualification claims. Run them against each intended Nexus
 Dashboard release and fabric type before production use.
+
+Loopback policy changes on the same network OS are planned as explicit transitions for both `merged` and `replaced`; an NX-OS-to-IOS-XE
+discriminator change is rejected. Loopback creates batch per `(switch, policy_type)` because Nexus Dashboard does not accept mixed-policy
+loopback bulk requests. Interfaces sharing both values still use one POST, and all loopback families continue to reuse the workflow's
+single shared per-switch inventory snapshot. These loopback policy-transition PUTs remain pending live qualification.

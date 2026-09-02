@@ -76,11 +76,46 @@ def _planner(
     return InterfaceWorkflowPlanner(snapshot=snapshot, vpc_pair_by_switch_ip=vpc_pairs), recorder
 
 
-def _loopback(switch_ip: str, name: str = "loopback10") -> dict[str, Any]:
+def _loopback(
+    switch_ip: str,
+    name: str = "loopback10",
+    *,
+    network_os_type: str = "nx-os",
+    policy_type: str = "loopback",
+    policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "switch_ip": switch_ip,
         "interface_name": name,
-        "config_data": {"network_os": {"policy": {"ip": "198.51.100.10/32"}}},
+        "config_data": {
+            "network_os": {
+                "network_os_type": network_os_type,
+                "policy": {
+                    "policy_type": policy_type,
+                    **(policy or {"ip": "198.51.100.10/32"}),
+                },
+            }
+        },
+    }
+
+
+def _wire_loopback(
+    name: str,
+    policy_type: str,
+    *,
+    network_os_type: str = "nx-os",
+    **policy: Any,
+) -> dict[str, Any]:
+    return {
+        "interfaceName": name,
+        "interfaceType": "loopback",
+        "configData": {
+            "mode": "managed",
+            "networkOS": {
+                "networkOSType": network_os_type,
+                "policy": {"policyType": policy_type, **policy},
+            },
+        },
     }
 
 
@@ -200,6 +235,7 @@ def test_registry_declares_generic_transition_delete_and_structural_safety_metad
         assert adapter.safety.requires_pair_consistency is pair_consistency
         assert adapter.safety.owns_physical_members is owns_members
         assert adapter.safety.guards_child_subinterfaces is child_guard
+        assert adapter.supports_intra_family_policy_transitions is (resource_type == "loopback")
         assert not hasattr(adapter, "policy_transition_sources")
 
     assert IMPLICIT_TRANSITION_STATES == frozenset({"merged", "replaced"})
@@ -210,6 +246,97 @@ def test_registry_declares_generic_transition_delete_and_structural_safety_metad
         InterfaceDeleteStrategy.REMOVE,
         InterfaceDeleteStrategy.DELETE,
     }
+
+
+def test_loopback_adapter_tracks_the_complete_standalone_policy_union() -> None:
+    """The workflow owns every policy discriminator now managed by nd_interface_loopback."""
+    adapter = INTERFACE_FAMILY_ADAPTERS["loopback"]
+
+    assert adapter.policy_types == frozenset(
+        {
+            "loopback",
+            "ipfmLoopback",
+            "mplsLoopback",
+            "iosXeLoopback",
+            "iosXeLoopbackShutNoshut",
+            "iosXeUnderlayLoopback",
+            "iosXeInternalLoopback",
+            "csrLoopback",
+            "csr1kvLoopback",
+        }
+    )
+    assert adapter.supports_intra_family_policy_transitions is True
+
+
+@pytest.mark.parametrize(
+    ("network_os_type", "policy_type"),
+    [
+        ("nx-os", "loopback"),
+        ("nx-os", "ipfmLoopback"),
+        ("nx-os", "mplsLoopback"),
+        ("ios-xe", "iosXeLoopback"),
+        ("ios-xe", "iosXeLoopbackShutNoshut"),
+        ("ios-xe", "iosXeUnderlayLoopback"),
+        ("ios-xe", "iosXeInternalLoopback"),
+        ("ios-xe", "csrLoopback"),
+        ("ios-xe", "csr1kvLoopback"),
+    ],
+)
+def test_loopback_adapter_validates_every_policy_union_branch(network_os_type: str, policy_type: str) -> None:
+    """Adapter validation delegates all nine branches to the standalone discriminated union."""
+    adapter = INTERFACE_FAMILY_ADAPTERS["loopback"]
+    proposed = adapter.validate_config(
+        [
+            _loopback(
+                "192.0.2.1",
+                network_os_type=network_os_type,
+                policy_type=policy_type,
+                policy={"admin_state": True},
+            )
+        ],
+        "merged",
+        0,
+    )
+
+    assert len(proposed) == 1
+    assert next(iter(proposed)).policy_type == policy_type
+
+
+@pytest.mark.parametrize(
+    "config_data",
+    [
+        {"network_os": {"policy": {"policy_type": "loopback", "ip": "198.51.100.10"}}},
+        {"network_os": {"network_os_type": "nx-os", "policy": {"ip": "198.51.100.10"}}},
+    ],
+)
+def test_loopback_adapter_does_not_invent_required_discriminators(
+    config_data: dict[str, Any],
+) -> None:
+    """Configured loopbacks missing either discriminator fail exactly as they do in the standalone module."""
+    adapter = INTERFACE_FAMILY_ADAPTERS["loopback"]
+    config = [
+        {
+            "switch_ip": "192.0.2.1",
+            "interface_name": "loopback10",
+            "config_data": config_data,
+        }
+    ]
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="discriminator"):
+        adapter.validate_config(config, "merged", 0)
+
+
+def test_loopback_identifier_only_delete_remains_valid_without_discriminators() -> None:
+    """Deleted state retains the standalone identifier-only input contract."""
+    adapter = INTERFACE_FAMILY_ADAPTERS["loopback"]
+
+    proposed = adapter.validate_config(
+        [{"switch_ip": "192.0.2.1", "interface_name": "loopback10"}],
+        "deleted",
+        0,
+    )
+
+    assert next(iter(proposed)).config_data is None
 
 
 def test_ethernet_adapter_accepts_the_grouped_standalone_input_contract() -> None:
@@ -396,6 +523,106 @@ def test_implicit_transition_is_generic_across_non_vpc_adapters(
     assert resource.transitions[0].to_policy_type in resource.adapter.policy_types
 
 
+@pytest.mark.parametrize("state", ["merged", "replaced"])
+def test_loopback_policy_union_change_is_an_explicit_transition(state: str) -> None:
+    """A same-identity NX-OS policy branch change uses one safety-checked replacement PUT plan."""
+    current = _wire_loopback("loopback10", "ipfmLoopback", ip="198.51.100.10")
+    desired = _loopback(
+        "192.0.2.1",
+        policy_type="mplsLoopback",
+        policy={"ip": "198.51.100.10", "dci_routing_protocol": "isis"},
+    )
+    planner, recorder = _planner(
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+
+    plan = planner.plan([{"type": "loopback", "state": state, "config": [desired]}])
+
+    resource = plan.resources[0]
+    assert len(resource.before) == 1
+    assert resource.operations.creates == ()
+    assert resource.operations.updates == ()
+    assert resource.operations.deletes == ()
+    assert len(resource.transitions) == 1
+    assert resource.transitions[0].from_policy_type == "ipfmLoopback"
+    assert resource.transitions[0].to_policy_type == "mplsLoopback"
+    assert next(iter(resource.operations.after)).policy_type == "mplsLoopback"
+    assert plan.request_stats["interface_inventory_gets"] == 1
+    assert plan.request_stats["interface_summary_gets"] == 1
+    assert len(recorder.calls) == 2
+
+
+def test_same_loopback_policy_branch_remains_an_ordinary_merged_update() -> None:
+    """A field change within one union branch keeps merge semantics and needs no safety-summary read."""
+    current = _wire_loopback("loopback10", "loopback", ip="198.51.100.10", description="old")
+    desired = _loopback(
+        "192.0.2.1",
+        policy={"ip": "198.51.100.10", "description": "new"},
+    )
+    planner, recorder = _planner(responses=[{"interfaces": [current]}])
+
+    plan = planner.plan([{"type": "loopback", "state": "merged", "config": [desired]}])
+
+    resource = plan.resources[0]
+    assert resource.transitions == ()
+    assert len(resource.operations.updates) == 1
+    assert plan.request_stats["interface_inventory_gets"] == 1
+    assert plan.request_stats["interface_summary_gets"] == 0
+    assert len(recorder.calls) == 1
+
+
+def test_loopback_transition_rejects_a_network_os_discriminator_change() -> None:
+    """A policy transition cannot silently turn one physical switch from NX-OS into IOS-XE."""
+    current = _wire_loopback("loopback10", "loopback", ip="198.51.100.10")
+    desired = _loopback(
+        "192.0.2.1",
+        network_os_type="ios-xe",
+        policy_type="iosXeLoopback",
+        policy={"ip": "198.51.100.10"},
+    )
+    planner, recorder = _planner(
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+
+    with pytest.raises(
+        InterfaceWorkflowValidationError,
+        match=r"networkOSType .*nx-os.*incompatible with destination .*ios-xe",
+    ):
+        planner.plan([{"type": "loopback", "state": "merged", "config": [desired]}])
+
+    assert len(recorder.calls) == 2
+
+
+def test_loopback_transitions_share_one_summary_read_per_switch() -> None:
+    """Multiple loopback branch changes reuse the shared inventory and summary snapshots."""
+    first = _wire_loopback("loopback10", "ipfmLoopback", ip="198.51.100.10")
+    second = _wire_loopback("loopback11", "mplsLoopback", ip="198.51.100.11")
+    planner, recorder = _planner(
+        responses=[{"interfaces": [first, second]}],
+        summary_responses={
+            "SERIAL1": {
+                "interfaces": [
+                    _summary_row(first, "SERIAL1"),
+                    _summary_row(second, "SERIAL1"),
+                ]
+            }
+        },
+    )
+    config = [
+        _loopback("192.0.2.1", "loopback10", policy={"ip": "198.51.100.10"}),
+        _loopback("192.0.2.1", "loopback11", policy={"ip": "198.51.100.11"}),
+    ]
+
+    plan = planner.plan([{"type": "loopback", "state": "merged", "config": config}])
+
+    assert len(plan.resources[0].transitions) == 2
+    assert plan.request_stats["interface_inventory_gets"] == 1
+    assert plan.request_stats["interface_summary_gets"] == 1
+    assert len(recorder.calls) == 2
+
+
 def test_svi_transition_accepts_switch_virtual_interface_summary_alias() -> None:
     """The interfacesSummary SVI spelling is canonicalized to the raw-record structure."""
     current = _wire_interface("vlan100", "switchVirtualInterface", "foreignSviPolicy")
@@ -445,8 +672,8 @@ def test_implicit_transition_requires_and_accepts_a_consistent_vpc_pair(resource
     assert plan.request_stats["interface_summary_gets"] == 2
 
 
-def test_vpc_pair_fingerprint_accepts_reciprocal_peer_fields_and_same_owner() -> None:
-    """Endpoint-relative peer1/peer2 fields normalize to one pair-scoped configuration."""
+def test_vpc_pair_fingerprint_accepts_identical_asymmetric_peer_fields() -> None:
+    """ND's two echoes preserve peer1/peer2 meaning while peerSwitchId swaps."""
     primary = _wire_interface(
         "vpc10",
         "vpc",
@@ -460,8 +687,8 @@ def test_vpc_pair_fingerprint_accepts_reciprocal_peer_fields_and_same_owner() ->
         "vpc",
         "foreignVpcPolicy",
         peerSwitchId="SERIAL1",
-        peer1MemberPorts=["ethernet1/4", "ETHERNET1/2"],
-        peer2MemberPorts=["ethernet1/3", "ETHERNET1/1"],
+        peer1MemberPorts=["ethernet1/3", "ETHERNET1/1"],
+        peer2MemberPorts=["ethernet1/4", "ETHERNET1/2"],
     )
     planner, _recorder = _planner(
         responses=[{"interfaces": [primary]}, {"interfaces": [peer]}],
@@ -1031,7 +1258,7 @@ def test_vpc_current_and_final_members_conflict_with_ethernet_mutation(current_m
         "vpc10", "vpc", "foreignVpcPolicy", peerSwitchId="SERIAL2", peer1MemberPorts=["Ethernet1/1"]
     )
     peer = _wire_interface(
-        "vpc10", "vpc", "foreignVpcPolicy", peerSwitchId="SERIAL1", peer2MemberPorts=["Ethernet1/1"]
+        "vpc10", "vpc", "foreignVpcPolicy", peerSwitchId="SERIAL1", peer1MemberPorts=["Ethernet1/1"]
     )
     responses = (
         [{"interfaces": [primary]}, {"interfaces": [peer]}]

@@ -509,7 +509,9 @@ nd_iw_property_matrix:
         interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: true
               ip: "{{ nd_iw_active_resources.loopback.primary_ipv4 }}"
               description: IW loopback minimal
@@ -518,12 +520,12 @@ nd_iw_property_matrix:
         interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: true
               ip: "{{ nd_iw_active_resources.loopback.primary_ipv4 }}"
-              # TODO: Re-enable loopback IPv6 after nd_interface_loopback normalizes CIDR input
-              # to the bare host value required by NDFC; the int_loopback template appends /128.
-              # ipv6: "{{ nd_iw_active_resources.loopback.primary_ipv6 }}"
+              ipv6: "{{ nd_iw_active_resources.loopback.primary_ipv6 }}"
               vrf: "{{ nd_iw_active_resources.references.vrf }}"
               route_map_tag: "{{ nd_iw_active_resources.references.route_map_tag }}"
               description: IW loopback maximal
@@ -533,10 +535,12 @@ nd_iw_property_matrix:
         interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: false
               ip: "{{ nd_iw_active_resources.loopback.alternate_ipv4 }}"
-              # ipv6: "{{ nd_iw_active_resources.loopback.alternate_ipv6 }}"
+              ipv6: "{{ nd_iw_active_resources.loopback.alternate_ipv6 }}"
               vrf: "{{ nd_iw_active_resources.references.vrf }}"
               route_map_tag: "902"
               description: IW loopback alternate
@@ -546,7 +550,9 @@ nd_iw_property_matrix:
         interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: true
               ip: "{{ nd_iw_active_resources.loopback.alternate_ipv4 }}"
               description: IW loopback replaced
@@ -555,7 +561,9 @@ nd_iw_property_matrix:
         interface_name: "{{ nd_iw_active_resources.loopback.secondary_name }}"
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: true
               ip: 198.18.90.3
               description: IW loopback override victim
@@ -576,19 +584,51 @@ nd_iw_property_matrix:
         config:
           - switch_ip: "{{ nd_iw_active_switches.primary }}"
             interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
-            config_data: {network_os: {policy: {description: "IW café"}}}
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  policy_type: loopback
+                  description: "IW café"
       - name: empty_vrf
         expected_error: at least 1 character
         config:
           - switch_ip: "{{ nd_iw_active_switches.primary }}"
             interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
-            config_data: {network_os: {policy: {vrf: ""}}}
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  policy_type: loopback
+                  vrf: ""
+      - name: missing_network_os_type
+        expected_error: network_os_type
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  policy_type: loopback
+                  ip: "{{ nd_iw_active_resources.loopback.primary_ipv4 }}"
+      - name: missing_policy_type
+        expected_error: policy_type
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  ip: "{{ nd_iw_active_resources.loopback.primary_ipv4 }}"
     properties:
       - switch_ip
       - interface_name
+      - config_data.network_os.network_os_type
+      - policy_type
       - config_data.network_os.policy.admin_state
       - config_data.network_os.policy.ip
-      # - config_data.network_os.policy.ipv6  # Disabled with the loopback IPv6 TODO above.
+      - config_data.network_os.policy.ipv6
       - config_data.network_os.policy.vrf
       - config_data.network_os.policy.route_map_tag
       - config_data.network_os.policy.description
@@ -848,7 +888,6 @@ nd_iw_property_matrix:
               port_channel_mode: active
               port_type_edge_trunk: true
               ports: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_ports }}"
-              ptp: false
               qos: false
               speed: auto
               storm_control: true
@@ -869,7 +908,6 @@ nd_iw_property_matrix:
               ports: "{{ nd_iw_active_resources.port_channel_trunk_host.alternate_ports }}"
               port_channel_mode: passive
               lacp_rate: normal
-              ptp: true
               description: IW port-channel trunk alternate
               storm_control_broadcast_level_pps: 1000
               storm_control_multicast_level_pps: 2000
@@ -1024,7 +1062,6 @@ nd_iw_property_matrix:
       - config_data.network_os.policy.port_channel_mode
       - config_data.network_os.policy.port_type_edge_trunk
       - config_data.network_os.policy.ports
-      - config_data.network_os.policy.ptp
       - config_data.network_os.policy.qos
       - config_data.network_os.policy.qos_policy
       - config_data.network_os.policy.queuing_policy

@@ -479,11 +479,32 @@ class InterfaceWorkflowCoordinator:
 
     @staticmethod
     def _model_policy_type(model) -> str | None:
-        """Return one model's wire policy discriminator without exposing its full payload."""
+        """Return one model policy discriminator, preferring a direct union-aware property."""
+        policy_type = getattr(model, "policy_type", None)
+        value = getattr(policy_type, "value", policy_type)
+        if isinstance(value, str) and value:
+            return value
         try:
             return InterfaceStateSnapshot.policy_type(model.to_payload())
         except Exception:  # pylint: disable=broad-except
             return None
+
+    @staticmethod
+    def _strip_internal_policy_metadata(result: dict[str, Any]) -> dict[str, Any]:
+        """Remove controller routing metadata that is not part of public desired state.
+
+        vPC orchestrators resolve and inject ``peerSwitchId`` only when building a
+        mutation payload.  The field is absent from the module argument spec, so
+        exposing its response-model form in result snapshots would make check mode
+        report a false removal when comparing observed and prospective state.
+        """
+        config_data = result.get("config_data")
+        network_os = config_data.get("network_os") if isinstance(config_data, Mapping) else None
+        policy = network_os.get("policy") if isinstance(network_os, Mapping) else None
+        if isinstance(policy, dict):
+            policy.pop("peer_switch_id", None)
+            policy.pop("peerSwitchId", None)
+        return result
 
     @classmethod
     def _serialize_model_target(cls, model) -> dict[str, Any]:
@@ -497,7 +518,7 @@ class InterfaceWorkflowCoordinator:
             policy.pop("policy_type", None)
         if policy_type is not None:
             result["policy_type"] = policy_type
-        return result
+        return cls._strip_internal_policy_metadata(result)
 
     @classmethod
     def _serialize_raw_target(cls, raw: Mapping[str, Any], switch_ip: str) -> dict[str, Any]:
@@ -528,7 +549,8 @@ class InterfaceWorkflowCoordinator:
             policy = network_os.get("policy") if isinstance(network_os, Mapping) else None
             if isinstance(policy, dict):
                 policy.pop("policy_type", None)
-        return {key: value for key, value in result.items() if value is not None}
+        result = {key: value for key, value in result.items() if value is not None}
+        return cls._strip_internal_policy_metadata(result)
 
     @staticmethod
     def _target_key(model) -> Any:
@@ -545,7 +567,7 @@ class InterfaceWorkflowCoordinator:
     @classmethod
     def _serialize_family_collection(cls, collection) -> list[dict[str, Any]]:
         """Serialize a full family collection in deterministic identity order."""
-        return [item.to_config() for item in sorted(collection, key=cls._collection_sort_key)]
+        return [cls._strip_internal_policy_metadata(item.to_config()) for item in sorted(collection, key=cls._collection_sort_key)]
 
     @classmethod
     def _project_collection(cls, resource, collection) -> list[dict[str, Any]]:
@@ -724,7 +746,6 @@ class InterfaceWorkflowCoordinator:
         peer_raw = snapshot.cached_interface(peer_id, getattr(desired, "interface_name"))
         if primary_raw is None or peer_raw is None:
             return primary_raw is None and peer_raw is None
-        scope = tuple(sorted((primary_id, peer_id)))
         if not self._vpc_peer_reference_matches(primary_raw, peer_id):
             return False
         if not self._vpc_peer_reference_matches(peer_raw, primary_id):
@@ -733,11 +754,7 @@ class InterfaceWorkflowCoordinator:
             return False
         if InterfaceStateSnapshot.policy_type(primary_raw) != InterfaceStateSnapshot.policy_type(peer_raw):
             return False
-        return InterfaceWorkflowPlanner._vpc_record_fingerprint(
-            primary_raw,
-            primary_id,
-            scope,
-        ) == InterfaceWorkflowPlanner._vpc_record_fingerprint(peer_raw, peer_id, scope)
+        return InterfaceWorkflowPlanner._vpc_record_fingerprint(primary_raw) == InterfaceWorkflowPlanner._vpc_record_fingerprint(peer_raw)
 
     def _observed_target_after(self, resource, fallback) -> tuple[list[dict[str, Any]], bool]:
         """Return target state and vPC pair-verification from the cached reconciled snapshot."""
@@ -789,7 +806,7 @@ class InterfaceWorkflowCoordinator:
                         coherent = False
                         break
             if coherent:
-                fingerprints = [InterfaceWorkflowPlanner._vpc_record_fingerprint(raw, switch_id, scope) for switch_id, raw in records.items()]
+                fingerprints = [InterfaceWorkflowPlanner._vpc_record_fingerprint(raw) for raw in records.values()]
                 coherent = all(fingerprint == fingerprints[0] for fingerprint in fingerprints[1:])
             pair_verified = pair_verified and coherent
             selected_id = preferred_by_key.get(key)

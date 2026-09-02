@@ -31,7 +31,7 @@ interfaces inherit access-mode settings from the port-channel; users do not pre-
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -83,6 +83,30 @@ class PortChannelAccessPolicyModel(NetflowAtomicMergeMixin):
 
     None
     """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_port_channel_access_host` template defaults (schema-sourced via nd-openapi `intPortChannelAccessHostTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        "bpduFilter": "default",
+        "bpduGuard": "enable",
+        "cdp": True,
+        "copyDescription": False,
+        "duplexMode": "auto",
+        "lacpPortPriority": 32768,
+        "lacpRate": "normal",
+        "lacpSuspend": False,
+        "monitor": False,
+        "mtu": "jumbo",
+        "netflow": False,
+        "portChannelMode": "active",
+        "qos": False,
+        "speed": "auto",
+        "stormControl": False,
+        "stormControlAction": "default",
+    }
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
     access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094, description="VLAN for this access port-channel")

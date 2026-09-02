@@ -32,6 +32,7 @@ user to create the pair first via `nd_manage_vpc_pair`.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -118,6 +119,45 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     def share_peer_serial_cache(self, cache: dict[str, str]) -> None:
         """Use a caller-owned peer-serial cache shared by aggregate workflow orchestrators."""
         self._peer_serial_cache = cache
+
+    def preflight(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Run the shared interface preflight, then reject a config that lists the same `interface_name` under both peers of one vPC
+        pair. With the composite `(switch_ip, interface_name)` identity (issue #356) such a config parses as two proposed items that
+        target a single ND resource; failing fast here (the state machine runs `preflight` before any mutation, in check mode too)
+        prevents a double-write against one interface. Pair resolution runs ONLY for names that appear more than once, so runs with
+        unique names — the common case — issue no additional requests; the duplicate path costs one cached `vpcPair` GET per distinct
+        primary switch, reused later by create/update.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If two (or more) proposed items share an `interface_name` and resolve to the same vPC pair.
+        - Propagated from `super().preflight` / `_resolve_switch_id` / `_resolve_peer_switch_id` (unresolvable switch, missing pair).
+        """
+        super().preflight(model_instances)
+        items_by_name: dict[str, list[ModelType]] = {}
+        for model_instance in model_instances:
+            items_by_name.setdefault(model_instance.interface_name, []).append(model_instance)
+        offenders: list[str] = []
+        for name, items in items_by_name.items():
+            if len(items) < 2:
+                continue
+            switch_ips_by_pair: dict[frozenset[str], list[str]] = {}
+            for item in items:
+                switch_id = self._resolve_switch_id(item.switch_ip)
+                peer_serial = self._resolve_peer_switch_id(item.switch_ip, switch_id)
+                switch_ips_by_pair.setdefault(frozenset({switch_id, peer_serial}), []).append(item.switch_ip)
+            for switch_ips in switch_ips_by_pair.values():
+                if len(switch_ips) > 1:
+                    offenders.append(
+                        f"{name} is listed for multiple peers ({', '.join(sorted(switch_ips))}) of the same vPC pair; list it once, under either peer"
+                    )
+        if offenders:
+            raise RuntimeError(f"Invalid vPC config in fabric '{self.fabric_name}': " + "; ".join(sorted(offenders)))
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -330,26 +370,43 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def _configured_switch_ip_by_interface_name(self) -> dict[str, str]:
+    def _configured_switch_ips_by_interface_name(self) -> dict[str, set[str]]:
         """
         # Summary
 
-        Map each config `interface_name` to the user-supplied `switch_ip`. A vPC interface spans two peers and ND
-        returns it on both; this lets `query_all` pick the peer whose IP the user actually configured so the existing
-        state's composite identifier `(switch_ip, interface_name)` matches the proposed identifier and the run stays
-        idempotent regardless of which peer the user names.
+        Map each config `interface_name` to the set of user-supplied `switch_ip` values. A vPC interface spans two peers and ND returns
+        it on both; `query_all` uses this to keep the peer copy whose IP the user actually configured, so the existing state's composite
+        identifier `(switch_ip, interface_name)` matches the proposed identifier and the run stays idempotent regardless of which peer
+        the user names. A set (not a single IP) because the same name may legally appear on multiple pairs (issue #356). Keys are
+        canonical (lowercase) names — see `_canonical_interface_name`.
 
         ## Raises
 
         None
         """
-        mapping: dict[str, str] = {}
+        mapping: dict[str, set[str]] = {}
         for item in self.rest_send.params.get("config") or []:
             name = item.get("interface_name")
             switch_ip = item.get("switch_ip")
             if name and switch_ip:
-                mapping[name] = switch_ip
+                mapping.setdefault(self._canonical_interface_name(name), set()).add(switch_ip)
         return mapping
+
+    @staticmethod
+    def _canonical_interface_name(name: str) -> str:
+        """
+        # Summary
+
+        Return the canonical (lowercase) form of a vPC interface name. The vPC models lowercase `interface_name` on validation
+        (`VPC501` -> `vpc501`, matching what ND echoes), but `query_all` reads the user config raw from `rest_send.params`, so both
+        the configured names and the response names must pass through this one canonicalizer before they are compared; otherwise a
+        mixed-case config never matches its own echo and the dedup falls back to the wrong peer (PR #411 review).
+
+        ## Raises
+
+        None
+        """
+        return name.lower()
 
     @staticmethod
     def _policy_type(iface: dict) -> str | None:
@@ -367,6 +424,34 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         network_os = config_data.get("networkOS") or {}
         policy = network_os.get("policy") or {}
         return policy.get("policyType")
+
+    def _pair_key(self, iface: dict, switch_ip: str, switch_id: str) -> frozenset[str]:
+        """
+        # Summary
+
+        Return the unordered vPC pair discriminator for an interface record: `frozenset({switchId, peerSwitchId})`. The two peer copies
+        of one vPC interface carry the same set (only the orientation swaps), while same-name interfaces on different pairs carry
+        disjoint sets (issue #356).
+
+        When the echo omits `peerSwitchId` (the OpenAPI schema does not mark it required, so this is a schema-valid shape) the peer is
+        resolved from the authoritative `vpcPair` endpoint via `_resolve_peer_switch_id` (cached per switch, so the degraded path costs
+        at most one extra GET per switch). A per-switch singleton key is NOT an acceptable fallback: if even one of the two peer echoes
+        lacked the field, the copies would key on `{A}` vs `{A, B}`, both would survive dedup, and `state: overridden` would delete the
+        pair-wide interface through the "unconfigured" peer (PR #411 review). If the pair cannot be resolved, this raises and
+        `query_all` fails closed before any override deletion can be computed.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `_resolve_peer_switch_id` when `peerSwitchId` is absent and the switch is not in a vPC pair (or the
+          `vpcPair` record itself omits `peerSwitchId`).
+        """
+        config_data = iface.get("configData") or {}
+        network_os = config_data.get("networkOS") or {}
+        policy = network_os.get("policy") or {}
+        peer_switch_id = policy.get("peerSwitchId") or self._resolve_peer_switch_id(switch_ip, switch_id)
+        return frozenset({switch_id, peer_switch_id})
 
     def _managed_vpc_interfaces(self, switch_ip: str, switch_id: str, managed_types: set[str]) -> list[dict]:
         """
@@ -403,6 +488,10 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         Each returned interface dict is enriched with a `switchIp` field so that the model can be constructed with the
         composite identifier `(switch_ip, interface_name)`.
 
+        Dedup is keyed on `(interfaceName, frozenset({switchId, peerSwitchId}))`, not `interfaceName` alone, so that two vPC pairs in
+        the same fabric may legally reuse the same vPC interface name (issue #356). An echo that omits `peerSwitchId` has its pair
+        resolved from the `vpcPair` endpoint; if that fails the whole query fails closed (see `_pair_key`).
+
         ## Raises
 
         ### RuntimeError
@@ -410,27 +499,34 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - If the fabric does not exist on the target ND node.
         - If the fabric is in deployment-freeze mode.
         - If the query API request fails.
+        - If an interface echo omits `peerSwitchId` and its switch's vPC pair cannot be resolved.
         """
         managed_types = self._managed_policy_types()
         try:
             self.validate_prerequisites()
-            configured_ip_by_name = self._configured_switch_ip_by_interface_name()
+            configured_ips_by_name = self._configured_switch_ips_by_interface_name()
             # TODO(4.2.1) vpc-interface-dual-peer-duplicate
-            # ND returns each vPC interface TWICE — once per peer switch — with identical configData. Dedupe by
-            # interfaceName. When the interface is in the user config, keep the peer whose switchIp the user supplied so
-            # idempotency holds regardless of which peer they name; otherwise keep the alphabetically-lower switchId for
-            # a stable representative. Without this dedupe, `_manage_override_deletions` would see the peer-side copy as
-            # "not in proposed" and queue a spurious delete.
-            interfaces_by_name: dict[str, tuple[str, dict]] = {}
+            # ND returns each vPC interface TWICE — once per peer switch — with identical configData. Dedupe on
+            # (interfaceName, frozenset({switchId, peerSwitchId})): one pair's two copies share the unordered set and
+            # collapse, while same-name interfaces on DIFFERENT pairs have disjoint sets and stay distinct (two pairs
+            # may legally reuse a vPC id — the vpcId pool is devicePair-scoped; issue #356). When the interface is in
+            # the user config, keep the peer whose switchIp the user supplied so idempotency holds regardless of which
+            # peer they name; otherwise keep the alphabetically-lower switchId for a stable representative. Names are
+            # canonicalized (lowercase) on both sides so a mixed-case config still matches its echo. Without this
+            # dedupe, `_manage_override_deletions` would see the peer-side copy as "not in proposed" and queue a
+            # spurious delete.
+            interfaces_by_key: dict[tuple[str, frozenset[str]], tuple[str, dict]] = {}
             for switch_ip, switch_id in self._switches_to_query().items():
                 for iface in self._managed_vpc_interfaces(switch_ip, switch_id, managed_types):
-                    name = iface.get("interfaceName")
-                    if name is None:
+                    raw_name = iface.get("interfaceName")
+                    if raw_name is None:
                         continue
-                    existing = interfaces_by_name.get(name)
-                    if self._prefers_candidate(name, switch_id, switch_ip, existing, configured_ip_by_name):
-                        interfaces_by_name[name] = (switch_id, iface)
-            return [entry[1] for entry in interfaces_by_name.values()]
+                    name = self._canonical_interface_name(raw_name)
+                    key = (name, self._pair_key(iface, switch_ip, switch_id))
+                    existing = interfaces_by_key.get(key)
+                    if self._prefers_candidate(name, switch_id, switch_ip, existing, configured_ips_by_name):
+                        interfaces_by_key[key] = (switch_id, iface)
+            return [entry[1] for entry in interfaces_by_key.values()]
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
 
@@ -440,15 +536,15 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         switch_id: str,
         switch_ip: str,
         existing: tuple[str, dict] | None,
-        configured_ip_by_name: dict[str, str],
+        configured_ips_by_name: dict[str, set[str]],
     ) -> bool:
         """
         # Summary
 
-        Decide whether a newly-seen per-peer copy of a vPC interface should replace the one already kept for `name`.
-        Prefer the peer whose `switch_ip` the user configured (idempotency); when neither peer is the configured one
-        (or the interface is not in config, e.g. an `overridden` deletion candidate), prefer the alphabetically-lower
-        `switch_id` for a stable representative.
+        Decide whether a newly-seen per-peer copy of a vPC interface should replace the one already kept for its dedup key. Prefer the
+        peer whose `switch_ip` the user configured (idempotency); when neither peer is the configured one (or the interface is not in
+        config, e.g. an `overridden` deletion candidate), prefer the alphabetically-lower `switch_id` for a stable representative. The
+        two candidates for one key are always the two peers of one pair (issue #356 keys dedup on the unordered pair set).
 
         ## Raises
 
@@ -456,10 +552,10 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         if existing is None:
             return True
-        configured_ip = configured_ip_by_name.get(name)
-        if configured_ip is not None:
-            if switch_ip == configured_ip:
+        configured_ips = configured_ips_by_name.get(name, set())
+        if configured_ips:
+            if switch_ip in configured_ips:
                 return True
-            if existing[1].get("switchIp") == configured_ip:
+            if existing[1].get("switchIp") in configured_ips:
                 return False
         return switch_id < existing[0]

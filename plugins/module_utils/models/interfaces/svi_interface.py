@@ -34,7 +34,7 @@ ND GUI exposes for managed SVIs on Nexus. OSPF / ISIS / BFD / replication-mode f
 from __future__ import annotations
 
 from contextvars import ContextVar
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -49,7 +49,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.netflow
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
-
 
 _ADDRESS_PAIR_VALIDATION_SUSPENDED: ContextVar[bool] = ContextVar("svi_address_pair_validation_suspended", default=False)
 
@@ -67,6 +66,22 @@ class SviPolicyModel(NetflowAtomicMergeMixin):
 
     None
     """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_vlan` template defaults (schema-sourced via nd-openapi `intVlanTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        "advertiseSubnetInUnderlay": False,
+        "hsrpGroup": 1,
+        "hsrpVersion": 1,
+        "ipRedirects": True,
+        "netflow": False,
+        "pimDrPriority": 1,
+        "pimSparse": False,
+        "preempt": False,
+    }
 
     policy_type: SviPolicyTypeEnum = Field(
         default=SviPolicyTypeEnum.SVI, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)"

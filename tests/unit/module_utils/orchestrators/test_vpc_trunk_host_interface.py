@@ -28,14 +28,19 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 # pylint: disable=protected-access
 # pylint: disable=redefined-outer-name
 # pylint: disable=too-many-lines
+# pylint: disable=unused-argument
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import (
     TrunkVpcHostInterfaceModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_trunk_host_interface import (
     TrunkVpcHostInterfaceOrchestrator,
 )
@@ -514,3 +519,241 @@ def test_vpc_trunk_host_orchestrator_00600_delete_uses_per_interface_endpoint() 
     assert orchestrator._pending_deploys == [("vpc500", "FDOAAAAAAAA")]
     # Bulk-remove queue stays untouched because we use per-interface DELETE.
     assert orchestrator._pending_removes == []
+
+
+# =============================================================================
+# Test: overridden through NDStateMachine — dedup correctness under real diff/override logic (#411 review)
+# =============================================================================
+
+
+class _SpyTrunkVpcHostInterfaceOrchestrator(TrunkVpcHostInterfaceOrchestrator):
+    """Real `query_all` / `preflight` (file-based REST), but every mutation entry point records itself on `self._calls` instead of
+    sending, so a test can assert exactly which creates/updates/deletes `NDStateMachine.manage_state` planned."""
+
+    def model_post_init(self, __context) -> None:
+        """Initialize the recorded-call list after Pydantic construction."""
+        super().model_post_init(__context)
+        self._calls: list[tuple] = []  # pylint: disable=attribute-defined-outside-init
+
+    def create(self, model_instance, **kwargs) -> ResponseType:
+        """Record a single create instead of sending it."""
+        self._calls.append(("create", model_instance.get_identifier_value()))
+        return {}
+
+    def create_bulk(self, model_instances, **kwargs) -> ResponseType:
+        """Record a bulk create instead of sending it."""
+        self._calls.append(("create_bulk", [item.get_identifier_value() for item in model_instances]))
+        return {}
+
+    def update(self, model_instance, **kwargs) -> ResponseType:
+        """Record an update instead of sending it."""
+        self._calls.append(("update", model_instance.get_identifier_value()))
+        return {}
+
+    def delete(self, model_instance, **kwargs) -> None:
+        """Record a single delete instead of sending it."""
+        self._calls.append(("delete", model_instance.get_identifier_value()))
+
+    def delete_bulk(self, model_instances, **kwargs) -> None:
+        """Record a bulk delete instead of sending it."""
+        self._calls.append(("delete_bulk", [item.get_identifier_value() for item in model_instances]))
+
+
+def _build_state_machine(
+    gen_responses: ResponseGenerator, state: str, check_mode: bool, config: list[dict]
+) -> tuple[NDStateMachine, _SpyTrunkVpcHostInterfaceOrchestrator]:
+    """Wire a `_SpyTrunkVpcHostInterfaceOrchestrator` (file-based `RestSend` carrying `state`/`config`) into a real `NDStateMachine`."""
+    spy = _SpyTrunkVpcHostInterfaceOrchestrator(rest_send=_build_rest_send(gen_responses, state=state, config=config))
+    module = MockAnsibleModule()
+    module.check_mode = check_mode
+    params: dict[str, Any] = {"state": state, "config": config, "output_level": "normal", "ignore_errors": False, "fabric_name": "fabric_1"}
+    module.params = params
+    return NDStateMachine(module=module, model_orchestrator=spy), spy
+
+
+# Mirrors the vpc500 echo in the 00440/00445/00450/00455 fixtures so the proposed item is a subset of the existing one (no_diff).
+_OVERRIDDEN_POLICY = {
+    "allowed_vlans": "100-200",
+    "native_vlan": 99,
+    "peer1_port_channel_id": 500,
+    "peer1_member_ports": ["Ethernet1/1"],
+    "peer2_port_channel_id": 500,
+    "peer2_member_ports": ["Ethernet1/1"],
+}
+
+
+def _assert_idempotent(state_machine: NDStateMachine, spy: _SpyTrunkVpcHostInterfaceOrchestrator, expected_switch_ip: str, expected_paths: list[str]) -> None:
+    """Shared assertions: one existing `vpc500` on `expected_switch_ip`, the exact orchestrator request sequence (`Results.path`; the
+    file-based Sender replays positionally, so this proves each `vpcPair` lookup happened where expected), no planned mutation, and
+    `changed` False."""
+    before = list(state_machine.before)
+    assert [(item.switch_ip, item.interface_name) for item in before] == [(expected_switch_ip, "vpc500")]
+    assert state_machine.results.path == expected_paths
+    state_machine.manage_state()
+    assert spy._calls == []
+    assert state_machine.output.format()["changed"] is False
+
+
+def test_vpc_trunk_host_orchestrator_00440_overridden_mixed_case_idempotent() -> None:
+    """
+    # Summary
+
+    Verify `state: overridden` is idempotent when the user names the higher-serial peer with a mixed-case `interface_name`
+    (`VPC500`). The model canonicalizes the proposed identifier to `(192.168.1.2, vpc500)`; the orchestrator's configured-peer
+    preference must key on the same canonical name, otherwise the dedup keeps peer S1 and the state machine plans a spurious
+    CREATE `(192.168.1.2, vpc500)` + override DELETE `(192.168.1.1, vpc500)` for an interface that is already correct (PR #411 review).
+
+    ## Test
+
+    - Both peers echo `vpc500`; config lists `VPC500` on 192.168.1.2 with a policy mirroring the echo
+    - `before` holds exactly `(192.168.1.2, vpc500)`
+    - `manage_state` plans no create/update/delete; `changed` is False
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - VpcInterfaceBaseOrchestrator.query_all()
+    - VpcInterfaceBaseOrchestrator._configured_switch_ips_by_interface_name()
+    """
+
+    def responses():
+        for suffix in ("a", "b", "c", "d"):
+            yield responses_vpc_trunk_host(f"test_overridden_mixed_case_00440{suffix}")
+
+    config = [{"switch_ip": "192.168.1.2", "interface_name": "VPC500", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
+
+    with does_not_raise():
+        state_machine, spy = _build_state_machine(ResponseGenerator(responses()), state="overridden", check_mode=False, config=config)
+        _assert_idempotent(
+            state_machine,
+            spy,
+            expected_switch_ip="192.168.1.2",
+            expected_paths=[
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+            ],
+        )
+
+
+def test_vpc_trunk_host_orchestrator_00445_overridden_mixed_case_idempotent_check_mode() -> None:
+    """
+    # Summary
+
+    Same scenario as 00440 under `--check`: the dry-run must preview no create/delete for a mixed-case name on the higher-serial
+    peer. Check mode skips the mutation calls but still runs the diff/override planning, so a wrong dedup representative would
+    surface as `changed: True` here (PR #411 review).
+
+    ## Test
+
+    - `check_mode=True`; both peers echo `vpc500`; config lists `VPC500` on 192.168.1.2
+    - `before` holds exactly `(192.168.1.2, vpc500)`; no planned mutation; `changed` is False
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - VpcInterfaceBaseOrchestrator.query_all()
+    """
+
+    def responses():
+        for suffix in ("a", "b", "c", "d"):
+            yield responses_vpc_trunk_host(f"test_overridden_mixed_case_00445{suffix}")
+
+    config = [{"switch_ip": "192.168.1.2", "interface_name": "VPC500", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
+
+    with does_not_raise():
+        state_machine, spy = _build_state_machine(ResponseGenerator(responses()), state="overridden", check_mode=True, config=config)
+        _assert_idempotent(
+            state_machine,
+            spy,
+            expected_switch_ip="192.168.1.2",
+            expected_paths=[
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+            ],
+        )
+
+
+def test_vpc_trunk_host_orchestrator_00450_overridden_one_peer_missing_peer_switch_id() -> None:
+    """
+    # Summary
+
+    Verify `state: overridden` does not queue a delete of the desired vPC when ONE peer echo omits `peerSwitchId`. The missing
+    peer is resolved from the `vpcPair` endpoint so both copies share one dedup key; with a per-switch singleton fallback the S2
+    copy would survive as `(192.168.1.2, vpc500)` and be deleted — removing the pair-wide interface the playbook meant to keep
+    (PR #411 review).
+
+    ## Test
+
+    - S1 echoes `vpc500` with `peerSwitchId`, S2 without it; one `vpcPair` GET for S2 (queried second, so the positional replay
+      also feeds both echoes to pre-fix code — which then plans DELETE `(192.168.1.2, vpc500)`, the destructive symptom pinned here)
+    - Config lists `vpc500` on 192.168.1.1 with a policy mirroring the echo
+    - `before` holds exactly `(192.168.1.1, vpc500)`; no planned mutation (in particular no delete); `changed` is False
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - NDStateMachine._manage_override_deletions()
+    - VpcInterfaceBaseOrchestrator._pair_key()
+    """
+
+    def responses():
+        for suffix in ("a", "b", "c", "d", "e"):
+            yield responses_vpc_trunk_host(f"test_overridden_one_peer_missing_00450{suffix}")
+
+    config = [{"switch_ip": "192.168.1.1", "interface_name": "vpc500", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
+
+    with does_not_raise():
+        state_machine, spy = _build_state_machine(ResponseGenerator(responses()), state="overridden", check_mode=False, config=config)
+        _assert_idempotent(
+            state_machine,
+            spy,
+            expected_switch_ip="192.168.1.1",
+            expected_paths=[
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/vpcPair",
+            ],
+        )
+
+
+def test_vpc_trunk_host_orchestrator_00455_overridden_both_peers_missing_peer_switch_id() -> None:
+    """
+    # Summary
+
+    Verify `state: overridden` does not queue a delete of the desired vPC when BOTH peer echoes omit `peerSwitchId`: each switch's
+    pair is resolved from its `vpcPair` record, the two copies collapse, and nothing is left over for override deletion
+    (PR #411 review).
+
+    ## Test
+
+    - Both `vpc500` echoes omit `peerSwitchId`; one `vpcPair` GET per switch (positional replay cannot also feed pre-fix code both
+      echoes here, so the pinned request sequence is what proves the pair resolution ran for each switch)
+    - Config lists `vpc500` on 192.168.1.1 with a policy mirroring the echo
+    - `before` holds exactly `(192.168.1.1, vpc500)`; no planned mutation; `changed` is False
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - NDStateMachine._manage_override_deletions()
+    - VpcInterfaceBaseOrchestrator._pair_key()
+    """
+
+    def responses():
+        for suffix in ("a", "b", "c", "d", "e", "f"):
+            yield responses_vpc_trunk_host(f"test_overridden_both_peers_missing_00455{suffix}")
+
+    config = [{"switch_ip": "192.168.1.1", "interface_name": "vpc500", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
+
+    with does_not_raise():
+        state_machine, spy = _build_state_machine(ResponseGenerator(responses()), state="overridden", check_mode=False, config=config)
+        _assert_idempotent(
+            state_machine,
+            spy,
+            expected_switch_ip="192.168.1.1",
+            expected_paths=[
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/vpcPair",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/vpcPair",
+            ],
+        )

@@ -14,6 +14,7 @@ from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import expand_ethernet_config
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import LoopbackPolicyTypeEnum, XeLoopbackPolicyTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlan, NDStatePlanner, SUPPORTED_STATES
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
@@ -38,6 +39,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Resul
 
 ConfigNormalizer = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
 IMPLICIT_TRANSITION_STATES = frozenset({"merged", "replaced"})
+LOOPBACK_POLICY_TYPES = frozenset(policy_type.value for policy_type in LoopbackPolicyTypeEnum) | frozenset(
+    policy_type.value for policy_type in XeLoopbackPolicyTypeEnum
+)
 
 
 class InterfaceWorkflowValidationError(ValueError):
@@ -78,6 +82,7 @@ class InterfaceFamilyAdapter:
     interface_types: frozenset[str]
     policy_types: frozenset[str]
     delete_strategy: InterfaceDeleteStrategy
+    supports_intra_family_policy_transitions: bool = False
     transition_strategy: InterfaceTransitionStrategy = InterfaceTransitionStrategy.UPDATE
     transition_states: frozenset[str] = IMPLICIT_TRANSITION_STATES
     safety: InterfaceFamilySafety = InterfaceFamilySafety()
@@ -163,8 +168,9 @@ _ADAPTER_DEFINITIONS = (
         "orchestrator_class": LoopbackInterfaceOrchestrator,
         "ownership_domain": "loopback",
         "interface_types": frozenset({"loopback"}),
-        "policy_types": frozenset({"loopback"}),
+        "policy_types": LOOPBACK_POLICY_TYPES,
         "delete_strategy": InterfaceDeleteStrategy.REMOVE,
+        "supports_intra_family_policy_transitions": True,
     },
     {
         "resource_type": "port_channel_access",

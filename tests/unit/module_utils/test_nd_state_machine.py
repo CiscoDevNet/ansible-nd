@@ -464,3 +464,133 @@ def test_nd_state_machine_00180() -> None:
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert "create" not in names
     assert "create_bulk" not in names
+
+
+class _ExistingConfiguredLoopbackSpy(_SpyLoopbackOrchestrator):
+    """Spy whose inventory contains loopback10 with a configured policy carrying a description.
+
+    Used by the issue #410 tests: a proposed item that omits `description` is a removal-only change that
+    `replaced`/`overridden` must classify as an update, while `merged` must leave it untouched.
+    """
+
+    def query_all(self, model_instance=None, **kwargs) -> ResponseType:
+        return [
+            {
+                "switchIp": "192.168.12.151",
+                "interfaceName": "loopback10",
+                "interfaceType": "loopback",
+                "configData": {
+                    "networkOS": {
+                        "networkOSType": "nx-os",
+                        "policy": {"policyType": "loopback", "adminState": True, "description": "stale description"},
+                    }
+                },
+            }
+        ]
+
+
+_REMOVAL_CONFIG = [
+    {
+        "switch_ip": "192.168.12.151",
+        "interface_name": "loopback10",
+        "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"policy_type": "loopback", "admin_state": True}}},
+    }
+]
+
+
+def test_nd_state_machine_00190() -> None:
+    """
+    # Summary
+
+    Verify `replaced` state classifies a removal-only proposed item as an update (issue #410): the existing
+    interface carries a policy `description` the proposed config omits, so `manage_state` must issue the
+    `update` that resets it -- not silently classify the item `no_diff`.
+
+    ## Test
+
+    - Inventory contains `loopback10` with `admin_state` and a stale `description`; proposed re-sends the same
+      identifier with `admin_state` only under `replaced`
+    - An `update` call is recorded with the proposed (description-less) model
+    - No create is recorded (the item already exists)
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - NDStateMachine._manage_create_update_state()
+    - NDBaseModel.get_diff()
+    """
+    spy = _ExistingConfiguredLoopbackSpy(rest_send=_build_rest_send())
+    module = _build_module(state="replaced", check_mode=False, config=_REMOVAL_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    calls = instance.model_orchestrator._calls
+    names = [name for name, _ in calls]
+    assert "update" in names
+    assert "create" not in names
+    assert "create_bulk" not in names
+    updated = [args for name, args in calls if name == "update"][0]
+    assert updated.get_identifier_value() == ("192.168.12.151", "loopback10")
+    assert updated.config_data.network_os.policy.description is None
+
+
+def test_nd_state_machine_00200() -> None:
+    """
+    # Summary
+
+    Verify `merged` state still classifies the same removal-only proposed item as `no_diff`: omitted fields mean
+    "leave untouched" under `merged`, so the issue #410 reverse pass must not fire on the `exclude_unset=True` path.
+
+    ## Test
+
+    - The identical inventory/config pair from `test_nd_state_machine_00190`, under `merged`
+    - No mutation is recorded (only the preflights run)
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - NDStateMachine._manage_create_update_state()
+    - NDBaseModel.get_diff()
+    """
+    spy = _ExistingConfiguredLoopbackSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=_REMOVAL_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert names == ["preflight_create", "preflight"]
+
+
+def test_nd_state_machine_00210() -> None:
+    """
+    # Summary
+
+    Verify `overridden` state classifies the removal-only proposed item as an update too (its update-classification
+    phase shares `_manage_create_update_state` with `replaced`), and does not delete the surviving item.
+
+    ## Test
+
+    - The identical inventory/config pair from `test_nd_state_machine_00190`, under `overridden`
+    - An `update` call is recorded; no delete is recorded (the identifier is still proposed)
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - NDStateMachine._manage_create_update_state()
+    - NDStateMachine._manage_override_deletions()
+    """
+    spy = _ExistingConfiguredLoopbackSpy(rest_send=_build_rest_send())
+    module = _build_module(state="overridden", check_mode=False, config=_REMOVAL_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert "update" in names
+    assert "delete" not in names
+    assert "delete_bulk" not in names

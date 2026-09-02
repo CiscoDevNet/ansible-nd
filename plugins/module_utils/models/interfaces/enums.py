@@ -242,3 +242,43 @@ class SubinterfaceUnmanagedPolicyTypeEnum(str, Enum):
     """
 
     MONITOR_SUBINTERFACE = "monitorSubinterface"
+
+
+class LoopbackPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed NX-OS loopback policy types owned by the `nd_interface_loopback` module. `userDefined` is intentionally excluded.
+
+    ## Raises
+
+    None
+    """
+
+    LOOPBACK = "loopback"
+    IPFM_LOOPBACK = "ipfmLoopback"
+    MPLS_LOOPBACK = "mplsLoopback"
+
+
+class XeLoopbackPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed IOS-XE loopback policy types owned by the `nd_interface_loopback` module. `userDefined` is intentionally excluded.
+
+    The ND 4.2.1 OpenAPI READ schema drifts on the CSR branch: it lists the discriminator as `csrIntLoopback`, but a
+    live-lab probe (2026-07-18) proved the wire echoes the create-side `csrLoopback` on reads too. Only the
+    wire-verified `csrLoopback` is listed here; the drift is recorded in the bug-tracker vault
+    (`csr-loopback-read-schema-name-drift`).
+
+    ## Raises
+
+    None
+    """
+
+    IOS_XE_LOOPBACK = "iosXeLoopback"
+    IOS_XE_LOOPBACK_SHUT_NOSHUT = "iosXeLoopbackShutNoshut"
+    IOS_XE_UNDERLAY_LOOPBACK = "iosXeUnderlayLoopback"
+    IOS_XE_INTERNAL_LOOPBACK = "iosXeInternalLoopback"
+    CSR_LOOPBACK = "csrLoopback"
+    CSR1KV_LOOPBACK = "csr1kvLoopback"

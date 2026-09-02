@@ -649,15 +649,15 @@ def _raw_ethernet(name, policy_type, **policy):
     }
 
 
-def _raw_loopback(name):
+def _raw_loopback(name, policy_type="loopback", network_os_type="nx-os", **policy):
     return {
         "interfaceName": name,
         "interfaceType": "loopback",
         "configData": {
             "mode": "managed",
             "networkOS": {
-                "networkOSType": "nx-os",
-                "policy": {"policyType": "loopback", "description": "requested loopback"},
+                "networkOSType": network_os_type,
+                "policy": {"policyType": policy_type, **(policy or {"description": "requested loopback"})},
             },
         },
     }
@@ -803,6 +803,32 @@ def test_cross_policy_transition_uses_unknown_source_fallback_and_destination_mo
 
 
 @pytest.mark.parametrize(
+    ("network_os_type", "policy_type"),
+    [
+        ("nx-os", "loopback"),
+        ("nx-os", "ipfmLoopback"),
+        ("nx-os", "mplsLoopback"),
+        ("ios-xe", "iosXeLoopback"),
+        ("ios-xe", "iosXeLoopbackShutNoshut"),
+        ("ios-xe", "iosXeUnderlayLoopback"),
+        ("ios-xe", "iosXeInternalLoopback"),
+        ("ios-xe", "csrLoopback"),
+        ("ios-xe", "csr1kvLoopback"),
+    ],
+)
+def test_loopback_union_raw_target_uses_model_aware_discriminator_projection(network_os_type, policy_type):
+    """Every managed loopback discriminator serializes through the adapter model rather than the unknown-policy fallback."""
+    raw = _raw_loopback("loopback10", policy_type, network_os_type, adminState=True)
+
+    projected = InterfaceWorkflowCoordinator._serialize_raw_target(raw, "192.0.2.1")
+
+    assert projected["policy_type"] == policy_type
+    assert projected["config_data"]["network_os"]["network_os_type"] == network_os_type
+    assert "policy_type" not in projected["config_data"]["network_os"]["policy"]
+    assert projected["config_data"]["network_os"]["policy"]["admin_state"] is True
+
+
+@pytest.mark.parametrize(
     ("raw", "action", "expected_changed"),
     [
         (_raw_ethernet("Ethernet1/1", "accessHost", accessVlan=3900), "delete", True),
@@ -896,6 +922,94 @@ def _vpc_access_config(switch_ip, peer_switch_id, access_vlan):
             }
         },
     }
+
+
+@pytest.mark.parametrize(
+    ("resource_type", "policy_type", "mode", "field_name", "wire_field", "before_value", "after_value"),
+    [
+        pytest.param("vpc_access", "accessVpcHost", "access", "access_vlan", "accessVlan", 3900, 3901, id="access"),
+        pytest.param("vpc_trunk_host", "trunkVpcHost", "trunk", "allowed_vlans", "allowedVlans", "100-200", "100-300", id="trunk"),
+    ],
+)
+def test_check_mode_replaced_vpc_update_omits_internal_peer_metadata(
+    resource_type,
+    policy_type,
+    mode,
+    field_name,
+    wire_field,
+    before_value,
+    after_value,
+):
+    """An orchestrator-only peer serial must not appear as a planned removal."""
+    desired = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "vpc10",
+        "config_data": {"network_os": {"policy": {field_name: after_value}}},
+    }
+    current = deepcopy(desired)
+    current["config_data"]["network_os"]["policy"] = {
+        field_name: before_value,
+        "peer_switch_id": "SERIAL2",
+    }
+    raw = {
+        "interfaceName": "vpc10",
+        "interfaceType": "vpc",
+        "configData": {
+            "mode": mode,
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {
+                    "policyType": policy_type,
+                    wire_field: before_value,
+                    "peerSwitchId": "SERIAL2",
+                },
+            },
+        },
+    }
+    resource_plan = _projection_resource(
+        resource_type,
+        "replaced",
+        [desired],
+        family_before=[current],
+        family_after=[desired],
+        action="update",
+    )
+    resource_plan.orchestrator._peer_serial_cache = {
+        "SERIAL1": "SERIAL2",
+        "SERIAL2": "SERIAL1",
+    }
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True, output_level="debug"))
+    coordinator._snapshot = ProjectionSnapshot([("SERIAL1", "vpc10", raw)])
+
+    projected = coordinator._format_result(_projection_plan(resource_plan))["resources"][0]
+
+    assert projected["changed"] is True
+    assert projected["planned_changed"] is True
+    for collection_name in ("before", "after", "proposed", "family_before", "family_after"):
+        policy = projected[collection_name][0]["config_data"]["network_os"]["policy"]
+        assert "peer_switch_id" not in policy
+        assert "peerSwitchId" not in policy
+
+    operation = projected["operations"][0]
+    assert operation["action"] == "update"
+    assert operation["status"] == "planned"
+    assert {
+        "path": f"config_data.network_os.policy.{field_name}",
+        "before": before_value,
+        "after": after_value,
+    } in operation["changes"]
+    assert all("peer_switch_id" not in change["path"] for change in operation["changes"])
+
+
+def test_unknown_vpc_policy_projection_omits_internal_peer_metadata():
+    """The forward-compatible raw fallback applies the same public-state boundary."""
+    raw = _raw_vpc("vpc10", "SERIAL2")
+    raw["configData"]["networkOS"]["policy"]["policyType"] = "futureVpcPolicy"
+
+    projected = InterfaceWorkflowCoordinator._serialize_raw_target(raw, "192.0.2.1")
+
+    assert projected["policy_type"] == "futureVpcPolicy"
+    assert "peer_switch_id" not in projected["config_data"]["network_os"]["policy"]
 
 
 def test_observed_vpc_target_requires_both_consistent_peer_records():

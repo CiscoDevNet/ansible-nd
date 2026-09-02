@@ -26,9 +26,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import Res
 class FakeModel:
     """Minimal interface model used by the executor."""
 
-    def __init__(self, name, switch_ip="192.0.2.1"):
+    def __init__(self, name, switch_ip="192.0.2.1", policy_type=None):
         self.interface_name = name
         self.switch_ip = switch_ip
+        self.policy_type = policy_type
 
     def get_identifier_value(self):
         return self.switch_ip, self.interface_name
@@ -56,12 +57,12 @@ class FakeRestSend:
         self.responses = []
         self.results = []
 
-    def record(self, path, *, success=True, changed=True, data=None, method="POST"):
+    def record(self, path, *, success=True, changed=True, data=None, method="POST", return_code=None):
         self.responses.append(
             {
                 "METHOD": method,
                 "REQUEST_PATH": path,
-                "RETURN_CODE": 200 if success else 207,
+                "RETURN_CODE": return_code if return_code is not None else (200 if success else 207),
                 "DATA": data or {},
             }
         )
@@ -208,6 +209,192 @@ class FakeOrchestrator:
             raise RuntimeError("mixed deploy result")
         self.rest_send.record("/interfaceActions/deploy")
         self._deploys = []
+
+
+class PolicyGroupedFakeOrchestrator(FakeOrchestrator):
+    """Model the loopback orchestrator one-request-per-policy create boundary."""
+
+    def create_bulk(self, models):
+        names = tuple(model.interface_name for model in models)
+        policy_types = {model.policy_type for model in models}
+        assert len(policy_types) == 1
+        policy_type = next(iter(policy_types))
+        self.events.append(("create", self.name, names, policy_type))
+        if policy_type == "mplsLoopback":
+            self.rest_send.record(
+                "/interfaces",
+                success=False,
+                changed=False,
+                data={
+                    "results": [
+                        {
+                            "name": names[0],
+                            "switchId": "SERIAL1",
+                            "status": "failed",
+                            "message": "policy group rejected",
+                        }
+                    ]
+                },
+            )
+            raise RuntimeError("policy group create failed")
+        self.rest_send.record("/interfaces")
+        for model in models:
+            target = (
+                model.interface_name,
+                self.fabric_context.get_switch_id(model.switch_ip),
+            )
+            self.queue_deploy_targets([target])
+
+
+class NormalReturn207CreateFakeOrchestrator(FakeOrchestrator):
+    """Return HTTP 207 without raising, optionally omitting the final requested target."""
+
+    def __init__(self, name, events, *, omit_last):
+        super().__init__(name, events)
+        self.omit_last = omit_last
+
+    def create_bulk(self, models):
+        names = tuple(model.interface_name for model in models)
+        self.events.append(("create", self.name, names))
+        reported = models[:-1] if self.omit_last else models
+        outcomes = [
+            {
+                "name": model.interface_name,
+                "switchId": self.fabric_context.get_switch_id(model.switch_ip),
+                "status": "success",
+            }
+            for model in reported
+        ]
+        self.rest_send.record(
+            "/interfaces",
+            success=True,
+            changed=True,
+            data={"results": outcomes},
+            return_code=207,
+        )
+        for model in models:
+            self.queue_deploy_targets(
+                [
+                    (
+                        model.interface_name,
+                        self.fabric_context.get_switch_id(model.switch_ip),
+                    )
+                ]
+            )
+
+
+class NormalReturn207DeployFakeOrchestrator(FakeOrchestrator):
+    """Return a superficially successful HTTP 207 that omits one deployed target."""
+
+    def deploy_pending(self):
+        targets = tuple(self._deploys)
+        self.events.append(("deploy", self.name, targets))
+        self.rest_send.record(
+            "/interfaceActions/deploy",
+            success=True,
+            changed=True,
+            data={
+                "results": [
+                    {
+                        "name": targets[0][0],
+                        "switchId": targets[0][1],
+                        "status": "success",
+                    }
+                ]
+            },
+            return_code=207,
+        )
+        self._deploys = []
+
+
+class MixedSwitch207DeployFakeOrchestrator(FakeOrchestrator):
+    """Fail deployment with per-switch outcomes rather than per-interface outcomes."""
+
+    def deploy_pending(self):
+        targets = tuple(self._deploys)
+        self.events.append(("deploy", self.name, targets))
+        self.rest_send.record(
+            "/interfaceActions/deploy",
+            success=False,
+            changed=True,
+            data={
+                "results": [
+                    {
+                        "name": "loopback2",
+                        "switchId": "SERIAL1",
+                        "status": "failed",
+                        "message": "interface rejected deploy",
+                    }
+                ],
+                "switchIds": [
+                    {"switchId": "SERIAL1", "status": "success"},
+                    {
+                        "switchId": "SERIAL2",
+                        "status": "failed",
+                        "message": "switch rejected deploy",
+                    },
+                ],
+            },
+        )
+        raise RuntimeError("mixed per-switch deploy result")
+
+
+class NormalReturn207EthernetFakeOrchestrator(FakeOrchestrator):
+    """Model Ethernet normalize returning HTTP 207 while omitting one target."""
+
+    def __init__(self, name, events):
+        super().__init__(name, events)
+        self._normalizes = []
+        self._resets = []
+
+    @property
+    def pending_normalizes(self):
+        return tuple(self._normalizes)
+
+    @property
+    def pending_resets(self):
+        return tuple(self._resets)
+
+    def queue_normalize_targets(self, targets):
+        for target in targets:
+            if target not in self._normalizes:
+                self._normalizes.append(target)
+
+    def queue_reset_targets(self, targets):
+        for target in targets:
+            if target not in self._resets:
+                self._resets.append(target)
+
+    def delete_bulk(self, models):
+        self.events.append(("delete_bulk", self.name, tuple(model.interface_name for model in models)))
+        for model in models:
+            target = (
+                model.interface_name,
+                self.fabric_context.get_switch_id(model.switch_ip),
+            )
+            self.queue_normalize_targets([target])
+            self.queue_deploy_targets([target])
+
+    def remove_pending(self):
+        targets = tuple(self._normalizes)
+        self.events.append(("normalize", self.name, targets))
+        self.rest_send.record(
+            "/interfaceActions/normalize",
+            success=True,
+            changed=True,
+            data={
+                "results": [
+                    {
+                        "name": targets[0][0],
+                        "switchId": targets[0][1],
+                        "status": "success",
+                    }
+                ]
+            },
+            return_code=207,
+        )
+        self._normalizes = []
+        self._resets = []
 
 
 class FakeAdapter:
@@ -596,6 +783,239 @@ def test_preflight_failure_reconciles_equal_vpc_names_by_pair_without_false_chan
     }
     assert result.changed is False
     assert result.status == "failed"
+
+
+def test_207_exact_success_allowlist_fails_all_identified_non_success_outcomes():
+    """HTTP 207 trusts only exact success while retaining target-specific mixed-success evidence."""
+    targets = tuple((f"loopback{index}", "SERIAL1") for index in range(1, 7))
+    response = {
+        "RETURN_CODE": 207,
+        "DATA": {
+            "results": [
+                {"name": "loopback1", "switchId": "SERIAL1", "status": " Success "},
+                {"name": "loopback2", "switchId": "SERIAL1", "message": "status omitted"},
+                {"name": "loopback3", "switchId": "SERIAL1", "status": None, "message": "status null"},
+                {"name": "loopback4", "switchId": "SERIAL1", "status": "warning", "message": "partially applied"},
+                {"name": "loopback5", "switchId": "SERIAL1", "status": "notexecuted", "message": "dependency failed"},
+                {"name": "loopback6", "switchId": "SERIAL1", "status": "futureStatus", "message": "unknown outcome"},
+            ]
+        },
+    }
+
+    classified = InterfaceWorkflowExecutor._classify_response(
+        targets,
+        response,
+        {"success": False, "changed": True},
+        "bulk create failed",
+    )
+
+    assert classified == {
+        targets[0]: ("succeeded", None),
+        targets[1]: ("failed", "status omitted"),
+        targets[2]: ("failed", "status null"),
+        targets[3]: ("failed", "partially applied"),
+        targets[4]: ("failed", "dependency failed"),
+        targets[5]: ("failed", "unknown outcome"),
+    }
+
+
+def test_207_unidentified_non_success_fails_unclassified_targets():
+    """An unidentified non-success 207 item fails closed without erasing an identified success."""
+    targets = (("loopback1", "SERIAL1"), ("loopback2", "SERIAL1"))
+    response = {
+        "RETURN_CODE": 207,
+        "DATA": {
+            "results": [
+                {"name": "loopback1", "switchId": "SERIAL1", "status": "success"},
+                {"status": "warning", "message": "controller omitted target identity"},
+            ]
+        },
+    }
+
+    classified = InterfaceWorkflowExecutor._classify_response(
+        targets,
+        response,
+        {"success": False, "changed": True},
+        "bulk create failed",
+    )
+
+    assert classified == {
+        targets[0]: ("succeeded", None),
+        targets[1]: ("failed", "bulk create failed"),
+    }
+
+
+def test_207_success_result_with_missing_target_outcome_fails_without_uncertain_status():
+    """A successful top-level 207 cannot substitute for exact-success evidence for every requested target."""
+    targets = (("loopback1", "SERIAL1"), ("loopback2", "SERIAL1"), ("loopback3", "SERIAL1"))
+    response = {
+        "RETURN_CODE": 207,
+        "DATA": {
+            "results": [
+                {"name": "loopback1", "switchId": "SERIAL1", "status": "success"},
+                {"name": "loopback2", "switchId": "SERIAL1", "status": "failed", "message": "invalid policy"},
+            ]
+        },
+    }
+
+    classified = InterfaceWorkflowExecutor._classify_response(
+        targets,
+        response,
+        {"success": True, "changed": True},
+        "bulk create failed",
+    )
+
+    assert classified == {
+        targets[0]: ("succeeded", None),
+        targets[1]: ("failed", "invalid policy"),
+        targets[2]: ("failed", "bulk create failed"),
+    }
+
+
+def test_normal_return_207_create_omitting_target_fails_end_to_end():
+    """A non-raising bulk create still fails when its HTTP 207 omits a requested target."""
+    events = []
+    orchestrator = NormalReturn207CreateFakeOrchestrator("only", events, omit_last=True)
+    workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1"), FakeModel("loopback2")]))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 0
+    assert {item.interface_name: item.status for item in result.items} == {
+        "loopback1": "succeeded",
+        "loopback2": "failed",
+    }
+    assert result.deployment["status"] == "not_attempted"
+    assert "deploy" not in [event[0] for event in events]
+    assert result.errors == (
+        "resources[0] loopback bulk create failed on SERIAL1: HTTP 207 response did not report exact success for every requested interface.",
+    )
+
+
+def test_normal_return_207_create_with_exact_success_for_every_target_succeeds():
+    """A non-raising HTTP 207 remains successful when every requested target has exact success evidence."""
+    events = []
+    orchestrator = NormalReturn207CreateFakeOrchestrator("only", events, omit_last=False)
+    workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1"), FakeModel("loopback2")]))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=False).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.status == "staged"
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 0
+    assert {item.status for item in result.items} == {"succeeded"}
+    assert result.errors == ()
+
+
+def test_normal_return_207_ethernet_normalize_omitting_target_fails_end_to_end(monkeypatch):
+    """A non-raising Ethernet normalize HTTP 207 is classified against every queued delete."""
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
+        NormalReturn207EthernetFakeOrchestrator,
+    )
+    events = []
+    orchestrator = NormalReturn207EthernetFakeOrchestrator("ethernet", events)
+    workflow_plan = plan(resource(0, orchestrator, deletes=[FakeModel("Ethernet1/1"), FakeModel("Ethernet1/2")]))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 0
+    assert {item.interface_name: item.status for item in result.items} == {
+        "Ethernet1/1": "succeeded",
+        "Ethernet1/2": "failed",
+    }
+    assert result.deployment["status"] == "not_attempted"
+    assert "deploy" not in [event[0] for event in events]
+
+
+def test_normal_return_207_deploy_omitting_target_fails_end_to_end():
+    """A non-raising deployment HTTP 207 cannot mark an omitted requested target successful."""
+    events = []
+    orchestrator = NormalReturn207DeployFakeOrchestrator("only", events)
+    workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1"), FakeModel("loopback2")]))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 1
+    assert {item.status for item in result.items} == {"succeeded"}
+    assert result.deployment["status"] == "partial_failure"
+    assert {entry["interface_name"]: entry["status"] for entry in result.deployment["targets"]} == {
+        "loopback1": "succeeded",
+        "loopback2": "failed",
+    }
+    assert result.errors == ("Consolidated interface deployment failed: HTTP 207 response did not report exact success for every requested interface.",)
+
+
+def test_deploy_switch_scoped_207_outcomes_fan_out_to_every_requested_interface():
+    """Switch outcomes fan out, while an interface-specific failure overrides switch success."""
+    events = []
+    orchestrator = MixedSwitch207DeployFakeOrchestrator("only", events)
+    workflow_plan = plan(resource(0, orchestrator, actual=("before",)))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(
+        workflow_plan,
+        deployment_targets=(
+            ("loopback1", "SERIAL1"),
+            ("loopback2", "SERIAL1"),
+            ("loopback3", "SERIAL2"),
+        ),
+    )
+
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert result.mutation_requests == 0
+    assert result.deploy_requests == 1
+    assert result.deployment["status"] == "partial_failure"
+    assert {(entry["interface_name"], entry["switch_id"]): entry["status"] for entry in result.deployment["targets"]} == {
+        ("loopback1", "SERIAL1"): "succeeded",
+        ("loopback2", "SERIAL1"): "failed",
+        ("loopback3", "SERIAL2"): "failed",
+    }
+
+
+def test_bulk_create_matches_loopback_switch_and_policy_request_boundaries():
+    """A later loopback policy-group failure does not erase earlier group success evidence."""
+    events = []
+    orchestrator = PolicyGroupedFakeOrchestrator("only", events)
+    workflow_plan = plan(
+        resource(
+            0,
+            orchestrator,
+            creates=[
+                FakeModel("loopback1", policy_type="loopback"),
+                FakeModel("loopback2", policy_type="loopback"),
+                FakeModel("loopback3", policy_type="mplsLoopback"),
+            ],
+        )
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=False).execute(workflow_plan)
+
+    assert [event for event in events if event[0] == "create"] == [
+        ("create", "only", ("loopback1", "loopback2"), "loopback"),
+        ("create", "only", ("loopback3",), "mplsLoopback"),
+    ]
+    assert {item.interface_name: item.status for item in result.items} == {
+        "loopback1": "succeeded",
+        "loopback2": "succeeded",
+        "loopback3": "failed",
+    }
+    assert orchestrator.pending_deploys == (("loopback1", "SERIAL1"), ("loopback2", "SERIAL1"))
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert result.changed is True
+    assert result.mutation_requests == 2
+    assert result.deploy_requests == 0
 
 
 def test_mixed_create_response_preserves_per_item_partial_success_and_stops_deploy():

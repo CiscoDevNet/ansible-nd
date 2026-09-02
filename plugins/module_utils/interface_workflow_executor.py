@@ -187,26 +187,33 @@ class InterfaceWorkflowExecutor:
 
     @staticmethod
     def _response_outcomes(response: dict[str, Any]) -> list[dict[str, Any]]:
+        """Return per-item response outcomes using the HTTP 207 exact-success contract."""
         data = response.get("DATA")
         if not isinstance(data, dict):
             return []
+        is_multistatus = response.get("RETURN_CODE") == 207
         outcomes: list[dict[str, Any]] = []
         for key in _OUTCOME_KEYS:
             values = data.get(key)
             if isinstance(values, list):
-                outcomes.extend(value for value in values if isinstance(value, dict) and value.get("status") is not None)
+                outcomes.extend(value for value in values if isinstance(value, dict) and (is_multistatus or value.get("status") is not None))
         return outcomes
 
     @staticmethod
-    def _outcome_target(outcome: dict[str, Any], targets: Iterable[Target]) -> Target | None:
+    def _outcome_targets(outcome: dict[str, Any], targets: Iterable[Target]) -> tuple[Target, ...]:
+        """Map one outcome to its exact target or to every target in an identified switch scope."""
         name_value = outcome.get("interfaceName") or outcome.get("name")
         switch_value = outcome.get("switchId") or outcome.get("serialNumber")
+        if name_value is None and switch_value is None:
+            return ()
         candidates = list(targets)
         if name_value is not None:
             candidates = [target for target in candidates if target[0].lower() == str(name_value).lower()]
         if switch_value is not None:
             candidates = [target for target in candidates if target[1] == str(switch_value)]
-        return candidates[0] if len(candidates) == 1 else None
+        if switch_value is not None and name_value is None:
+            return tuple(candidates)
+        return tuple(candidates) if len(candidates) == 1 else ()
 
     @classmethod
     def _classify_response(
@@ -216,30 +223,35 @@ class InterfaceWorkflowExecutor:
         result: dict[str, Any] | None,
         error: str,
     ) -> dict[Target, tuple[str, str | None]]:
+        """Classify per-target evidence, allowing only exact success outcomes on HTTP 207."""
         target_list = list(dict.fromkeys(targets))
         response = response or {}
         result = result or {}
-        if result.get("success") is True:
+        is_multistatus = response.get("RETURN_CODE") == 207
+        outcomes = cls._response_outcomes(response)
+        if result.get("success") is True and not is_multistatus:
             return {target: ("succeeded", None) for target in target_list}
 
-        outcomes = cls._response_outcomes(response)
         classified: dict[Target, tuple[str, str | None]] = {}
         for outcome in outcomes:
-            target = cls._outcome_target(outcome, target_list)
-            if target is None:
-                continue
             status = str(outcome.get("status") or "").strip().lower()
+            is_failure = status in _FAILURE_STATUSES or (is_multistatus and status not in _SUCCESS_STATUSES)
+            outcome_targets = cls._outcome_targets(outcome, target_list)
+            if not outcome_targets:
+                continue
             message = outcome.get("message") or outcome.get("warningMessage")
-            if status in _SUCCESS_STATUSES:
-                classified[target] = ("succeeded", str(message) if message else None)
-            elif status in _FAILURE_STATUSES:
-                classified[target] = ("failed", str(message) if message else error)
+            for target in outcome_targets:
+                if status in _SUCCESS_STATUSES:
+                    classified.setdefault(target, ("succeeded", str(message) if message else None))
+                elif is_failure:
+                    # A failure wins if a malformed 207 repeats one target with conflicting statuses.
+                    classified[target] = ("failed", str(message) if message else error)
 
         changed_on_failure = result.get("changed") is True
         for target in target_list:
             if target not in classified:
                 classified[target] = (
-                    "uncertain" if changed_on_failure or outcomes else "failed",
+                    "failed" if is_multistatus else ("uncertain" if changed_on_failure or outcomes else "failed"),
                     error,
                 )
         return classified
@@ -256,6 +268,24 @@ class InterfaceWorkflowExecutor:
             )
             item.status = status
             item.message = message
+
+    @classmethod
+    def _apply_success_response(
+        cls,
+        items: list[InterfaceExecutionItem],
+        response: dict[str, Any] | None,
+        result: dict[str, Any] | None,
+        error: str,
+    ) -> bool:
+        """Apply a normal-return response, enforcing exact per-target evidence for HTTP 207."""
+        response = response or {}
+        if response.get("RETURN_CODE") != 207:
+            for item in items:
+                item.status = "succeeded"
+            return True
+        outcomes = cls._classify_response((item.target for item in items), response, result, error)
+        cls._apply_outcomes(items, outcomes)
+        return all(item.status == "succeeded" for item in items)
 
     def _call_items(
         self,
@@ -276,8 +306,12 @@ class InterfaceWorkflowExecutor:
             self._apply_outcomes(items, outcomes)
             self._errors.append(error)
             return False
-        for item in items:
-            item.status = "succeeded"
+        history = self._write_history(orchestrator.rest_send, response_start, result_start)
+        response, result = history[-1] if history else ({}, {})
+        error = f"{context}: HTTP 207 response did not report exact success for every requested interface."
+        if not self._apply_success_response(items, response, result, error):
+            self._errors.append(error)
+            return False
         return True
 
     def _enable_writes_and_preflight(self, plan: InterfaceWorkflowPlan) -> bool:
@@ -405,8 +439,21 @@ class InterfaceWorkflowExecutor:
                 )
             self._errors.append(error)
             return False
-        for item in [*normalize_items, *reset_items]:
-            item.status = "succeeded"
+        history = self._write_history(target.rest_send, response_start, result_start)
+        error = "Consolidated Ethernet normalization/reset failed: HTTP 207 response did not report exact success for every requested interface."
+        cursor = 0
+        success = True
+        if normalize_items:
+            response, result = history[cursor] if cursor < len(history) else ({}, {})
+            cursor += 1 if cursor < len(history) else 0
+            success = self._apply_success_response(normalize_items, response, result, error) and success
+        for item in reset_items:
+            response, result = history[cursor] if cursor < len(history) else ({}, {})
+            cursor += 1 if cursor < len(history) else 0
+            success = self._apply_success_response([item], response, result, error) and success
+        if not success:
+            self._errors.append(error)
+            return False
         return True
 
     def _execute_transitions(self, plan: InterfaceWorkflowPlan) -> bool:
@@ -442,10 +489,15 @@ class InterfaceWorkflowExecutor:
             if not models:
                 continue
             if resource.orchestrator.supports_bulk_create:
-                groups: dict[str, list[NDBaseModel]] = defaultdict(list)
+                # Most interface families have one frozen policy type, so this remains one POST per switch. Loopback can
+                # carry multiple policy discriminators and its orchestrator sends one POST per (switch, policy type);
+                # matching that boundary here keeps each response tied to exactly the items in its controller request.
+                groups: dict[tuple[str, Any], list[NDBaseModel]] = defaultdict(list)
                 for model in models:
-                    groups[self._model_target(resource, model)[1]].append(model)
-                for switch_id, group in groups.items():
+                    switch_id = self._model_target(resource, model)[1]
+                    policy_type = getattr(model, "policy_type", None)
+                    groups[(switch_id, getattr(policy_type, "value", policy_type))].append(model)
+                for (switch_id, _policy_type), group in groups.items():
                     items = [self._item(resource, "create", model) for model in group]
                     if not self._call_items(
                         resource.orchestrator,
@@ -509,8 +561,25 @@ class InterfaceWorkflowExecutor:
             self._deployment["message"] = error
             self._errors.append(error)
             return False
-        for entry in self._deployment["targets"]:
-            entry["status"] = "succeeded"
+        history = self._write_history(target.rest_send, response_start, result_start)
+        response, result = history[-1] if history else ({}, {})
+        if response.get("RETURN_CODE") == 207:
+            error = "Consolidated interface deployment failed: HTTP 207 response did not report exact success for every requested interface."
+            outcomes = self._classify_response(targets, response, result, error)
+            for entry in self._deployment["targets"]:
+                status, message = outcomes[(entry["interface_name"], entry["switch_id"])]
+                entry["status"] = status
+                if message:
+                    entry["message"] = message
+            statuses = {entry["status"] for entry in self._deployment["targets"]}
+            if statuses != {"succeeded"}:
+                self._deployment["status"] = "partial_failure" if "succeeded" in statuses else "failed"
+                self._deployment["message"] = error
+                self._errors.append(error)
+                return False
+        else:
+            for entry in self._deployment["targets"]:
+                entry["status"] = "succeeded"
         self._deployment["status"] = "succeeded"
         return True
 

@@ -1777,11 +1777,13 @@ def test_response_handler_nd_01290():
     """
     # Summary
 
-    Verify a 207 whose per-item `status` is None (or a non-failure value) remains success.
+    Verify a POST 207 whose per-item `status` is an explicit None is classified as failure. This test originally pinned
+    the denylist behavior (None status = success); inverted for the 207 exact-success allowlist (issue #397, PR #403
+    review) — on a 207, an explicit-None status is as untrustworthy as a missing one.
 
     ## Test
 
-    - A 207 with a results[] item whose status is None does not flip success
+    - A 207 with a results[] item whose status is None flips success to False
 
     ## Classes and Methods
 
@@ -1797,7 +1799,7 @@ def test_response_handler_nd_01290():
     instance.verb = HttpVerbEnum.POST
     with does_not_raise():
         instance.commit()
-    assert instance.result["success"] is True
+    assert instance.result["success"] is False
 
 
 def test_response_handler_nd_01300():
@@ -2498,7 +2500,248 @@ def test_response_handler_nd_01490():
     assert instance.result["changed"] is False
 
 
+# =============================================================================
+# Test: 207 Multi-Status exact-success allowlist (issue #397, PR #403 review)
+# =============================================================================
+
+
 def test_response_handler_nd_01500():
+    """
+    # Summary
+
+    Verify a POST 207 whose `results[]` item has NO `status` key is classified as failure. ND omits the per-item
+    `status` on some endpoints (vault: `multi-status-207-status-field-inconsistent`), so on a 207 only an exact
+    `success` may be trusted — a missing status must not silently pass, queue a deploy, or report changed.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and `DATA.results == [{"name": "loopback10", "message": "invalid policyType"}]`
+    - success is False, changed is False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "loopback10", "message": "invalid policyType"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
+
+
+def test_response_handler_nd_01510():
+    """
+    # Summary
+
+    Verify a POST 207 whose `results[]` item carries `status: "warning"` is classified as failure — on a 207,
+    softer-than-success statuses are not success (issue #397 allowlist semantics).
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and a `results[]` item whose `status` is `warning`
+    - success is False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "loopback10", "status": "warning", "message": "partially applied"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01520():
+    """
+    # Summary
+
+    Verify a POST 207 whose `results[]` item carries `status: "notexecuted"` is classified as failure.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and a `results[]` item whose `status` is `notexecuted`
+    - success is False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "loopback10", "status": "notexecuted"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01530():
+    """
+    # Summary
+
+    Verify a POST 207 whose `results[]` item carries an unknown `status` literal is classified as failure — the
+    allowlist admits only exact `success`, so vocabulary drift on ND's side cannot silently pass.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and a `results[]` item whose `status` is the unknown literal `partial`
+    - success is False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "loopback10", "status": "partial"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01540():
+    """
+    # Summary
+
+    Verify a POST 207 whose `results[]` items ALL report `success` (case/whitespace-tolerant) is classified as
+    success — the allowlist does not over-fail well-formed mixed-envelope bodies.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and `results[]` items with `status` values `success` and `" Success "`
+    - success is True, changed is True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "loopback10", "status": "success"}, {"name": "loopback11", "status": " Success "}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+    assert instance.result["changed"] is True
+
+
+def test_response_handler_nd_01550():
+    """
+    # Summary
+
+    Verify a POST 200 whose `results[]` item has no `status` key remains classified as success — the exact-success
+    allowlist is scoped to 207 responses only. On plain 200 bodies the failure-literal denylist stays authoritative,
+    because ND ships status-less item arrays on legitimate 200 responses (e.g. the GET /links list envelope).
+
+    ## Test
+
+    - POST with RETURN_CODE 200 and `DATA.results == [{"name": "loopback10"}]` (no status key)
+    - success is True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {"results": [{"name": "loopback10"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is True
+
+
+def test_response_handler_nd_01560():
+    """
+    # Summary
+
+    Verify the 207 exact-success allowlist also covers the `switchIds[]` envelope: a status-less item there is
+    classified as failure.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and `DATA.switchIds == [{"switchId": "FDO123", "message": "deploy skipped"}]`
+    - success is False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"switchIds": [{"switchId": "FDO123", "message": "deploy skipped"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01570():
+    """
+    # Summary
+
+    Verify `extract_error_message` names a status-less 207 `results[]` item by its `name` and `message` keys, so the
+    user sees `loopback10: invalid policyType` instead of a generic status fallback.
+
+    ## Test
+
+    - 207 response whose single `results[]` item has `name` and `message` but no `status`
+    - Extracted message is `ND Error: loopback10: invalid policyType`
+
+    ## Classes and Methods
+
+    - NdV1Strategy.extract_error_message()
+    """
+    strategy = NdV1Strategy()
+    response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"results": [{"name": "loopback10", "message": "invalid policyType"}]},
+    }
+    assert strategy.extract_error_message(response) == "ND Error: loopback10: invalid policyType"
+
+
+# =============================================================================
+# Test: terminal and retryable HTTP responses (issue #457)
+# =============================================================================
+
+
+def test_response_handler_nd_01580():
     """
     # Summary
 
@@ -2531,7 +2774,7 @@ def test_response_handler_nd_01500():
     assert instance.result["changed"] is False
 
 
-def test_response_handler_nd_01510():
+def test_response_handler_nd_01590():
     """
     # Summary
 
@@ -2562,7 +2805,7 @@ def test_response_handler_nd_01510():
     assert instance.result["retryable"] is True
 
 
-def test_response_handler_nd_01520():
+def test_response_handler_nd_01600():
     """
     # Summary
 
@@ -2595,7 +2838,7 @@ def test_response_handler_nd_01520():
     assert instance.result["retryable"] is False
 
 
-def test_response_handler_nd_01530():
+def test_response_handler_nd_01610():
     """
     # Summary
 
@@ -2626,7 +2869,7 @@ def test_response_handler_nd_01530():
     assert instance.result["retryable"] is False
 
 
-def test_response_handler_nd_01540():
+def test_response_handler_nd_01620():
     """
     # Summary
 
