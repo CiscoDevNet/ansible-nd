@@ -31,7 +31,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.validators import (
     require_hostname,
-    require_ip_address,
     validate_cidr_optional,
     validate_ip_address,
 )
@@ -55,7 +54,7 @@ class BootstrapBaseData(NDNestedModel):
 
 class BootstrapBaseModel(NDBaseModel):
     """
-    Common hardware and policy properties shared across bootstrap, pre-provision, and RMA operations.
+    Common hardware properties shared across bootstrap, pre-provision, and RMA operations.
     """
 
     identifiers: ClassVar[list[str]] = []
@@ -67,10 +66,10 @@ class BootstrapBaseModel(NDBaseModel):
         alias="softwareVersion",
         description="Software version of the bootstrap switch",
     )
-    image_policy: str | None = Field(
+    software_image: str | None = Field(
         default=None,
-        alias="imagePolicy",
-        description="Image policy associated with the switch during bootstrap",
+        alias="softwareImage",
+        description="Software image file for the bootstrap switch",
     )
     switch_role: SwitchRole | None = Field(default=None, alias="switchRole")
     data: BootstrapBaseData | None = Field(default=None, description="Additional bootstrap data")
@@ -207,6 +206,11 @@ class BootstrapImportSwitchModel(NDBaseModel):
         alias="softwareVersion",
         description="Software version of the bootstrap switch",
     )
+    software_image: str | None = Field(
+        default=None,
+        alias="softwareImage",
+        description="Software image file for the bootstrap switch",
+    )
     hostname: str = Field(description="Hostname of the bootstrap switch")
     ip: str = Field(description="IP address of the bootstrap switch")
     password: str = Field(description="Switch password to be set during bootstrap for admin user")
@@ -237,24 +241,24 @@ class BootstrapImportSwitchModel(NDBaseModel):
         alias="publicKey",
         description="SSH public key from bootstrap GET API",
     )
-    re_add: bool = Field(
+    dhcp_bootstrap_ip: str | None = Field(
+        default=None,
+        alias="dhcpBootstrapIp",
+        description="Used for device day-0 bring-up when using inband reachability",
+    )
+    seed_switch: bool = Field(
         default=False,
-        alias="reAdd",
-        description="Whether to re-add an already-seen switch",
+        alias="seedSwitch",
+        description="Use as seed switch",
     )
     in_inventory: bool = Field(default=False, alias="inInventory")
-    image_policy: str | None = Field(
-        default=None,
-        alias="imagePolicy",
-        description="Image policy associated with the switch during bootstrap",
-    )
     switch_role: SwitchRole | None = Field(default=None, alias="switchRole")
     gateway_ip_mask: str | None = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
 
-    @field_validator("ip", mode="before")
+    @field_validator("ip", "dhcp_bootstrap_ip", mode="before")
     @classmethod
-    def validate_ip_field(cls, v: str) -> str:
-        return require_ip_address(v)
+    def validate_ip_field(cls, v: str | None) -> str | None:
+        return validate_ip_address(v)
 
     @field_validator("hostname", mode="before")
     @classmethod

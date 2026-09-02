@@ -376,6 +376,29 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
         assert attachment_options["export_evpn_rt"] == ["65000:13"]
 
 
+def test_vrfs_00025a_config_model_rejects_attachment_aliases():
+    """
+    # Summary
+
+    Verify playbook-facing VRF attachment config accepts snake_case only.
+    """
+    with pytest.raises(ValidationError, match="ipAddress|freeformConfig|attachmentOptions|dpuSecure|Extra inputs"):
+        VrfConfigModel.from_config(
+            {
+                "vrf_name": "ansible-vrf-attach-alias",
+                "attach": [
+                    {
+                        "ipAddress": "192.168.1.224",
+                        "freeformConfig": "interface loopback10",
+                        "attachmentOptions": {
+                            "dpuSecure": True,
+                        },
+                    }
+                ],
+            }
+        )
+
+
 def test_vrfs_00026_config_models_match_argument_specs():
     """
     # Summary
@@ -383,9 +406,12 @@ def test_vrfs_00026_config_models_match_argument_specs():
     Verify playbook-facing config models accept the same field names exposed
     by their corresponding argument specs.
     """
-    assert set(VrfConfigModel.model_fields) == set(vrf_base_argument_spec())
-    assert set(VrfParentConfigModel.model_fields) == set(vrf_parent_argument_spec())
+    internal_only_fields = {"vrf_type"}
+    assert set(VrfConfigModel.model_fields) - internal_only_fields == set(vrf_base_argument_spec())
+    assert set(VrfParentConfigModel.model_fields) - internal_only_fields == set(vrf_parent_argument_spec())
     attach_spec = vrf_base_argument_spec()["attach"]["options"]
+    assert "vrf_type" not in vrf_base_argument_spec()
+    assert "vrf_type" not in vrf_parent_argument_spec()
     attachment_options_spec = attach_spec["attachment_options"]["options"]
 
     assert set(attach_spec) == {"ip_address", "freeform_config", "attachment_options"}
@@ -538,7 +564,6 @@ def test_vrfs_00040_transform_user_defined_custom_template_payload():
     transformed = _transform(
         {
             "vrf_name": "ansible-vrf-custom",
-            "vrf_type": "userDefined",
             "vrf_id": 9008020,
             "vlan_id": 652,
             "service_vrf_template_name": "CustomServiceTemplate1",
@@ -570,12 +595,25 @@ def test_vrfs_00040_transform_user_defined_custom_template_payload():
     }
 
 
-def test_vrfs_00050_custom_template_fields_require_user_defined_type():
-    """Custom template fields must not be silently dropped or sent on VXLAN."""
+def test_vrfs_00050_custom_template_fields_infer_user_defined_type():
+    """Custom template fields infer the internal userDefined discriminator."""
+    model = VrfConfigModel.from_config(
+        {
+            "vrf_name": "ansible-vrf-custom",
+            "vrf_template_name": "CustomTemplate1",
+        }
+    )
+
+    assert model.vrf_type == "userDefined"
+
+
+def test_vrfs_00055_custom_template_fields_reject_explicit_non_user_defined_type():
+    """Internal non-userDefined discriminator cannot be combined with templates."""
     with pytest.raises(ValidationError):
         VrfConfigModel.from_config(
             {
                 "vrf_name": "ansible-vrf-invalid-custom",
+                "vrf_type": "vxlanIbgp",
                 "vrf_template_name": "CustomTemplate1",
             }
         )
@@ -587,7 +625,6 @@ def test_vrfs_00060_vrf_template_config_values_must_be_strings():
         VrfConfigModel.from_config(
             {
                 "vrf_name": "ansible-vrf-invalid-template-config",
-                "vrf_type": "userDefined",
                 "vrf_template_name": "CustomTemplate1",
                 "vrf_template_config": {"mtu": 9216},
             }

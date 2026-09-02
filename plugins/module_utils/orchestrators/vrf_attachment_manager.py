@@ -279,7 +279,7 @@ class VrfAttachmentManager:
         for vrf in config:
             vrf_name = vrf.get("vrf_name") or vrf.get("vrfName")
             for attachment in vrf.get("attach") or []:
-                ip_address = attachment.get("ip_address") or attachment.get("ipAddress")
+                ip_address = attachment.get("ip_address")
                 switch_id = ip_to_switch.get(ip_address)
                 if not vrf_name or not switch_id:
                     continue
@@ -323,7 +323,7 @@ class VrfAttachmentManager:
         wanted_ips: set[str] = set()
         for vrf in config:
             for attachment in vrf.get("attach") or []:
-                ip_address = attachment.get("ip_address") or attachment.get("ipAddress")
+                ip_address = attachment.get("ip_address")
                 if ip_address:
                     wanted_ips.add(ip_address)
 

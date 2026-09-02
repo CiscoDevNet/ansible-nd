@@ -29,6 +29,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
     OperationStatus,
     VlanNetworkType,
     VlanPoolDomainType,
+    public_vlan_network_type,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.validators import (
     NetworkValidators,
@@ -109,7 +110,6 @@ class DefaultL2FabricDataModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
     stretch: str | None = Field(default=None, description="Stretch border gateway list name")
-    enable_ir: bool | None = Field(default=False, alias="enableIr")
     multicast_group: str | None = Field(default=None, alias="multicastGroup")
     ds_vni: int | None = Field(default=None, alias="dsVni")
 
@@ -124,7 +124,7 @@ class DefaultL2DataModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
     vlan_name: str | None = Field(default=None, alias="vlanName", description="VLAN name")
-    rt_auto: bool | None = Field(default=None, alias="rtAuto", description="Enable automatic route-target")
+    rt_auto: bool | None = Field(default=None, alias="rtAuto", description="Enable L2VNI route-target both")
     x_connect: bool | None = Field(default=None, alias="xConnect", description="Enable xConnect")
     fabric_data: DefaultL2FabricDataModel | dict[str, Any] | None = Field(default=None, alias="fabricData")
 
@@ -137,6 +137,9 @@ class VxlanL3FabricDataModel(NDNestedModel):
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion", ge=1, le=3)
     netflow: bool | None = Field(default=False, description="Enable netflow")
+    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
+    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
     gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
     ipv4_trm: bool | None = Field(default=None, alias="ipv4Trm")
     ipv6_trm: bool | None = Field(default=None, alias="ipv6Trm")
@@ -155,6 +158,9 @@ class DefaultL3FabricDataModel(NDNestedModel):
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion", ge=1, le=3)
     netflow: bool | None = Field(default=False, description="Enable netflow")
+    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
+    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
     gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
 
     @field_validator("igmp_version", mode="before")
@@ -324,18 +330,12 @@ class NetworkCommonModel(NDBaseModel):
     display_name: str | None = Field(default=None, alias="displayName")
     vrf_name: str | None = Field(default=None, alias="vrfName", max_length=32)
     vlan_id: int | None = Field(default=None, alias="vlanId", ge=2, le=4094)
-    tenant_name: str | None = Field(default=None, alias="tenantName", max_length=63)
-    layer: NetworkLayer | None = Field(default=None)
+    layer: NetworkLayer | None = Field(default=None, alias="networkMode")
 
     @field_validator("network_name", mode="before")
     @classmethod
     def validate_network_name(cls, v: str | None) -> str | None:
         return NetworkValidators.validate_network_name(v)
-
-    @field_validator("tenant_name", mode="before")
-    @classmethod
-    def validate_tenant_name(cls, v: str | None) -> str | None:
-        return NetworkValidators.validate_tenant_name(v)
 
     @field_validator("vlan_id", mode="before")
     @classmethod
@@ -347,7 +347,7 @@ class NetworkBaseModel(NetworkCommonModel):
     """Generic model for components/schemas/networkBase discriminator payloads."""
 
     network_type: NetworkType | str | None = Field(default=None, alias="networkType")
-    vlan_network_type: VlanNetworkType | str | None = Field(default=None, alias="vlanNetworkType")
+    vlan_network_type: VlanNetworkType | str | None = Field(default=VlanNetworkType.NORMAL, alias="vlanNetworkType")
     primary_network_id: int | None = Field(default=None, alias="primaryNetworkId")
     primary_network_name: str | None = Field(default=None, alias="primaryNetworkName")
     normal_network_id: int | None = Field(default=None, alias="normalNetworkId")
@@ -360,6 +360,7 @@ class NetworkBaseModel(NetworkCommonModel):
     member_fabric_network_info: list[MemberFabricNetworkInfoModel] | None = Field(default=None, alias="memberFabricNetworkInfo")
     network_template_name: str | None = Field(default=None, alias="networkTemplateName")
     network_extension_template_name: str | None = Field(default=None, alias="networkExtensionTemplateName")
+    service_network_template_name: str | None = Field(default=None, alias="serviceNetworkTemplateName")
     network_template_config: dict[str, str] | None = Field(default=None, alias="networkTemplateConfig")
     interface_group_names: list[str] | None = Field(default=None, alias="interfaceGroupNames")
 
@@ -368,15 +369,26 @@ class NetworkBaseModel(NetworkCommonModel):
     def validate_network_id(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_network_id(v)
 
+    def to_config(self, **kwargs) -> dict[str, Any]:
+        data = super().to_config(**kwargs)
+        if "vlan_network_type" in data:
+            data["vlan_network_type"] = public_vlan_network_type(data["vlan_network_type"])
+        return data
+
     @classmethod
     def from_response(cls, response: dict[str, Any], **kwargs) -> "NetworkBaseModel":
         normalized = dict(response)
         if "layer" not in normalized and "networkMode" in normalized:
             normalized["layer"] = normalized["networkMode"]
         l2_data = normalized.get("l2Data")
-        if isinstance(l2_data, dict) and "rtAuto" not in l2_data and "disableRtAuto" in l2_data:
+        if isinstance(l2_data, dict):
             l2_data = dict(l2_data)
-            l2_data["rtAuto"] = not l2_data["disableRtAuto"]
+            l2_data.pop("disableRtAuto", None)
+            fabric_data = l2_data.get("fabricData")
+            if isinstance(fabric_data, dict):
+                fabric_data = dict(fabric_data)
+                fabric_data.pop("enableIr", None)
+                l2_data["fabricData"] = fabric_data
             normalized["l2Data"] = l2_data
         return super().from_response(normalized, **kwargs)
 

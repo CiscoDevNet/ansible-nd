@@ -12,7 +12,6 @@ files can import them at the top level without creating a circular dependency
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums import (
     DpuAffinity,
-    VrfType,
 )
 
 
@@ -84,7 +83,6 @@ def vrf_base_argument_spec():
         # Identity
         vrf_name=dict(type="str", required=True),
         vrf_id=dict(type="int"),
-        vrf_type=dict(type="str", choices=VrfType.choices()),
         # Custom/user-defined VRF template fields
         vrf_template_name=dict(type="str"),
         vrf_extension_template_name=dict(type="str"),

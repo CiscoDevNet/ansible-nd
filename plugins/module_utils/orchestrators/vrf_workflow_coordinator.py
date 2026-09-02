@@ -110,7 +110,6 @@ class VrfWorkflowCoordinator:
         """
         module_args: dict = dict(self.module.params)
         try:
-            self._normalize_module_args(module_args)
             if self.strategy is None:
                 self.strategy = self._resolve_strategy(module_args)
             self._trace(
@@ -199,12 +198,6 @@ class VrfWorkflowCoordinator:
         if self._trace_enabled():
             result["workflow_trace"] = list(self._workflow_trace)
         return result
-
-    @staticmethod
-    def _normalize_module_args(module_args: dict) -> None:
-        """Normalize legacy module-level aliases before workflow routing."""
-        if module_args.get("state") == "query":
-            module_args["state"] = "gathered"
 
     def _validate_topology_argument_scope(
         self,

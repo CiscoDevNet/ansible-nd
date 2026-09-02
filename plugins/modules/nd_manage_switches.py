@@ -144,6 +144,7 @@ options:
                 - Bootstrap POAP config for the switch.
                 - C(serial_number) and C(hostname) are mandatory.
                 - Model, version, and config data are sourced from the bootstrap API at runtime.
+                - C(software_image) can be provided to select the software image used during POAP import.
                 - If the bootstrap API reports a different hostname or role, the API value
                   overrides the user-provided value and a warning is logged.
                 - To perform a B(swap) operation, provide both C(poap) and C(preprovision)
@@ -171,9 +172,10 @@ options:
                         description:
                         - Password for device discovery during POAP.
                         type: str
-                    image_policy:
+                    software_image:
                         description:
-                        - Name of the image policy to be applied on the switch.
+                        - Software image file to use during POAP import.
+                        - When omitted, no software image override is requested.
                         type: str
             preprovision:
                 description:
@@ -214,10 +216,6 @@ options:
                         - Hostname for the switch during pre-provision.
                         type: str
                         required: true
-                    image_policy:
-                        description:
-                        - Image policy to apply during pre-provision.
-                        type: str
                     config_data:
                         description:
                         - Basic configuration data for the switch during Pre-provision.
@@ -252,10 +250,6 @@ options:
                         - Serial number of the replacement switch in the POAP/bootstrap loop.
                         type: str
                         required: true
-                    image_policy:
-                        description:
-                        - Name of the image policy to be applied on the replacement switch.
-                        type: str
                     discovery_username:
                         description:
                         - Username for device discovery during RMA bootstrap.
@@ -353,7 +347,6 @@ EXAMPLES = """
           model: N9K-C93180YC-EX
           version: "10.3(1)"
           hostname: leaf-preprov
-          image_policy: my-image-policy
           discovery_username: root
           discovery_password: "{{ discovery_password }}"
           config_data:
@@ -373,9 +366,9 @@ EXAMPLES = """
         poap:
           serial_number: SAL5678EFGH
           hostname: leaf-bootstrap
-          image_policy: my-image-policy
           discovery_username: root
           discovery_password: "{{ discovery_password }}"
+          software_image: nxos64-cs.10.6.4.M.bin
     state: merged
 
 - name: Swap serial number on a pre-provisioned switch (POAP swap)
@@ -400,7 +393,6 @@ EXAMPLES = """
         password: "{{ switch_password }}"
         rma:
           - new_serial_number: SAL9999ZZZZ
-            image_policy: my-image-policy
             discovery_username: root
             discovery_password: "{{ discovery_password }}"
     state: merged

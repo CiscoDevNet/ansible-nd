@@ -8,28 +8,53 @@ DOCUMENTATION = r"""
 ---
 module: nd_manage_networks
 version_added: "2.0.0"
-short_description: Manage Network definitions on Cisco Nexus Dashboard
+short_description: Manages Network definitions on Cisco Nexus Dashboard.
 description:
-  - Manage Network definitions across standalone, Multisite, and Multicluster fabric topologies.
-  - The module resolves fabric topology, selects the appropriate workflow, and supports parent/child Network coordination.
+  - Manages Network definitions on Cisco Nexus Dashboard across standalone,
+    Multisite (MSD), and Multicluster (MCFG) fabric topologies.
+  - This module manages Network definitions, parent or standalone Network switch
+    attachments, and optional deployment of pending Network changes.
+  - Supported Network definition properties include identity, custom templates,
+    VLAN, gateway, PVLAN, TRM, netflow, and route targets.
+  - Automatically detects fabric type from the ND API and routes to the
+    appropriate workflow without requiring extra user input.
+  - For parent fabrics (MSD / MCFG), supports child-fabric coordination via the
+    C(child_fabric_config) parameter inside each Network definition.
+  - Child fabrics only permit C(state=gathered) when targeted directly; all
+    write operations must be driven through the parent fabric.
 author:
   - Akshayanat C S (@achengam)
 options:
   fabric_name:
     description:
       - Name of the fabric to operate on.
+      - The module auto-detects whether this is a standalone, parent, or child
+        fabric and routes accordingly.
     type: str
     required: true
   state:
     description:
-      - Desired state of Network resources.
-      - V(query) is accepted as a compatibility alias for V(gathered).
+      - Desired state of the Network resources.
+      - V(merged) creates or updates Networks that do not match the desired config.
+      - V(replaced) replaces existing Networks that match the desired config.
+      - V(overridden) replaces all Networks; removes any not in config.
+      - V(deleted) removes specified Networks (or all if config is empty).
+      - V(gathered) returns current Network state.
     type: str
-    choices: [ merged, replaced, overridden, deleted, gathered, query ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
     default: merged
   config:
     description:
-      - List of Network definitions to manage.
+      - List of Network definition configurations to manage.
+      - Each element defines a Network with identity, template, VLAN, gateway,
+        PVLAN, attachment, deployment, and other settings.
+      - On standalone fabrics, all Network definition, attachment, and deployment
+        options are applied directly to the target fabric.
+      - For parent fabrics, each item may include a C(child_fabric_config) list
+        to provide per-child-fabric overrides. The parent-level C(attach),
+        C(deploy), and C(deploy_type) options are applied only on the parent
+        fabric and are not sent to child fabrics.
+      - For child fabrics targeted directly, only C(state=gathered) is supported.
     type: list
     elements: dict
     default: []
@@ -37,75 +62,76 @@ options:
       network_name:
         description: Name of the Network.
         type: str
-      net_name:
-        description: Compatibility alias for C(network_name).
-        type: str
-      network_type:
-        description: Network type.
-        type: str
-        choices:
-          - vxlan
-          - vxlanIbgp
-          - vxlanEbgp
-          - vxlanCampus
-          - aimlVxlanIbgp
-          - aimlVxlanEbgp
-          - aimlRouted
-          - routed
-          - classicLanEnhanced
-          - userDefined
-          - vxlanAci
-          - aci
-          - externalConnectivity
-          - vxlanExternal
       display_name:
         description: Display name.
         type: str
       vrf_name:
         description: VRF name associated with the Network.
         type: str
-      tenant_name:
-        description: Tenant name.
-        type: str
       layer:
         description: Network layer.
         type: str
         choices: [ layer2, layer2WithSecurityGroup, layer3 ]
-      is_l2only:
-        description: Whether the Network is L2-only.
-        type: bool
-      rt_auto:
-        description: Enable automatic route-target assignment.
-        type: bool
       x_connect:
         description: Enable xConnect.
         type: bool
       network_template_name:
-        description: Network template name.
+        description:
+          - Custom Network template name.
+          - Supplying custom template fields makes the module use the
+            user-defined Network schema.
         type: str
       network_extension_template_name:
-        description: Network extension template name.
+        description:
+          - Custom Network extension template name.
+          - Supplying custom template fields makes the module use the
+            user-defined Network schema.
+        type: str
+      service_network_template_name:
+        description:
+          - Custom service Network template name.
+          - Supplying custom template fields makes the module use the
+            user-defined Network schema.
         type: str
       network_template_config:
-        description: Network template configuration values.
+        description:
+          - Custom Network template configuration values.
+          - Supplying custom template fields makes the module use the
+            user-defined Network schema.
         type: dict
-      net_template:
-        description: Compatibility Network template name.
-        type: str
-      net_extension_template:
-        description: Compatibility Network extension template name.
-        type: str
       deploy:
-        description: Deploy pending changes for this Network.
+        description:
+          - Deploy pending Network attachment changes for this Network.
+          - For parent fabrics, deployment is performed once after all child
+            fabric tasks complete.
+          - Applies only to parent/standalone Network attachments, not child
+            fabric override entries.
+          - For C(state=deleted), the C(deploy) value is ignored; the module
+            deattaches existing attachments, deploys the detach using
+            C(deploy_type), and then removes the Network.
         type: bool
         default: true
       deploy_type:
-        description: Deployment scope for this Network.
+        description:
+          - Scope of the deploy operation when C(deploy=true).
+          - C(switch) deploys only the switches affected by this Network
+            attachment operation when switch identifiers are available.
+          - C(network) deploys the pending Network changes for this Network.
         type: str
         choices: [ switch, network ]
         default: switch
       attach:
-        description: Switch attachment entries for this Network.
+        description:
+          - Parent/standalone switch attachment entries for this Network.
+          - Switches are identified by management IP address and resolved before
+            attachment changes are applied.
+          - If C(attach) entries are present, the module attaches the Network to
+            those switches.
+          - In C(state=replaced), omitting C(attach) deattaches existing
+            attachments for the matching Network.
+          - In C(state=overridden), attachments not specified in the desired
+            configuration are deattached.
+          - Not supported under C(child_fabric_config).
         type: list
         elements: dict
         suboptions:
@@ -119,11 +145,15 @@ options:
           interfaces:
             description: Interface attachment entries.
             type: list
-            required: true
+            default: []
             elements: dict
             suboptions:
               mode:
-                description: Interface mode.
+                description:
+                  - Interface mode.
+                  - C(normal) Networks allow C(access), C(dot1qTunnel), and C(trunk).
+                  - C(primary) Networks allow C(promiscuous) and C(trunkPromiscuous).
+                  - C(community) and C(isolated) Networks allow C(host) and C(trunkSecondary).
                 type: str
                 required: true
                 choices: [ access, dot1qTunnel, trunk, promiscuous, trunkPromiscuous, host, trunkSecondary ]
@@ -132,18 +162,28 @@ options:
                 type: str
                 required: true
               interface_group_name:
-                description: Interface group name.
+                description:
+                  - Interface group name.
+                  - Supported only with C(mode=access) or C(mode=trunk).
                 type: str
               native_vlan:
-                description: Whether this is a native VLAN attachment.
+                description:
+                  - Whether this is a native VLAN attachment.
+                  - Supported only with C(mode=trunk).
+                  - Cannot be combined with C(mapping_type=single).
                 type: bool
                 default: false
               mapping_type:
-                description: VLAN mapping type.
+                description:
+                  - VLAN mapping type.
+                  - Supported only with C(mode=trunk).
+                  - C(single) requires C(customer_vlan) and cannot be combined with C(native_vlan=true).
                 type: str
                 choices: [ none, single ]
               customer_vlan:
-                description: Customer VLAN.
+                description:
+                  - Customer VLAN.
+                  - Supported only with C(mapping_type=single).
                 type: int
           deploy:
             description: Per-attachment deploy flag.
@@ -152,50 +192,68 @@ options:
           attachment_options:
             description: Switch-specific attachment options.
             type: dict
-          extra_config:
-            description: Raw attachment extra config.
+            suboptions:
+              dpu_secure:
+                description: Enable DPU secure mode for this attachment.
+                type: bool
+              dpu_affinity:
+                description: DPU affinity for this attachment.
+                type: str
+                choices: [ dynamic, dpu1, dpu2, dpu3, dpu4 ]
+              svi_enabled:
+                description: Enable SVI for this attachment.
+                type: bool
+              switch_route_target_import:
+                description: Switch-level route-target import values.
+                type: list
+                elements: str
+              switch_route_target_export:
+                description: Switch-level route-target export values.
+                type: list
+                elements: str
+              is_active:
+                description: Mark this attachment as active.
+                type: bool
+          freeform_config:
+            description: Additional free-form CLI configuration for this attachment.
             type: str
-
       network_id:
         description: Network segment ID.
-        type: int
-      net_id:
-        description: Compatibility alias for C(network_id).
         type: int
       vlan_id:
         description: VLAN ID.
         type: int
+      vlan_network_type:
+        description:
+          - VLAN network type.
+          - C(primary) is mapped to the ND private primary Network type.
+          - C(community) and C(isolated) are mapped to private secondary Network templates and require O(config.primary_network_id).
+          - C(primary), C(community), and C(isolated) are not supported on MCFG parent fabrics.
+          - C(normal) Networks allow C(access), C(dot1qTunnel), and C(trunk) attachment interface modes.
+          - C(primary) Networks allow C(promiscuous) and C(trunkPromiscuous) attachment interface modes.
+          - C(community) and C(isolated) Networks allow C(host) and C(trunkSecondary) attachment interface modes.
+        type: str
+        choices: [ normal, primary, community, isolated ]
+      primary_network_id:
+        description: Primary Network ID used by C(community) and C(isolated) Networks.
+        type: int
       vlan_name:
         description: VLAN name.
         type: str
+      route_target_both:
+        description:
+          - Enable automatic L2VNI route-target import/export assignment.
+        type: bool
       gateway_ipv4_address:
         description: IPv4 gateway address and prefix.
         type: str
-      gw_ip_subnet:
-        description: Compatibility alias for C(gateway_ipv4_address).
-        type: str
       gateway_ipv6_address:
         description: IPv6 gateway address and prefix.
-        type: str
-      gw_ipv6_subnet:
-        description: Compatibility alias for C(gateway_ipv6_address).
         type: str
       secondary_gateway_ipv4_collection:
         description: Secondary IPv4 gateway addresses.
         type: list
         elements: str
-      secondary_ip_gw1:
-        description: Compatibility secondary IPv4 gateway field.
-        type: str
-      secondary_ip_gw2:
-        description: Compatibility secondary IPv4 gateway field.
-        type: str
-      secondary_ip_gw3:
-        description: Compatibility secondary IPv4 gateway field.
-        type: str
-      secondary_ip_gw4:
-        description: Compatibility secondary IPv4 gateway field.
-        type: str
       secondary_gateway_ipv6_collection:
         description: Secondary IPv6 gateway addresses.
         type: list
@@ -203,23 +261,12 @@ options:
       vlan_intf_desc:
         description: VLAN interface description.
         type: str
-      int_desc:
-        description: Compatibility alias for C(vlan_intf_desc).
-        type: str
       mtu:
         description: Network interface MTU.
         type: int
         default: 9216
-      mtu_l3intf:
-        description: Compatibility alias for C(mtu).
-        type: int
-        default: 9216
       arp_suppression:
         description: Enable ARP suppression.
-        type: bool
-        default: false
-      arp_suppress:
-        description: Compatibility alias for C(arp_suppression).
         type: bool
         default: false
       routing_tag:
@@ -237,29 +284,8 @@ options:
           server_vrf:
             description: DHCP server VRF.
             type: str
-      dhcp_srvr1_ip:
-        description: Compatibility DHCP server address field.
-        type: str
-      dhcp_srvr1_vrf:
-        description: Compatibility DHCP server VRF field.
-        type: str
-      dhcp_srvr2_ip:
-        description: Compatibility DHCP server address field.
-        type: str
-      dhcp_srvr2_vrf:
-        description: Compatibility DHCP server VRF field.
-        type: str
-      dhcp_srvr3_ip:
-        description: Compatibility DHCP server address field.
-        type: str
-      dhcp_srvr3_vrf:
-        description: Compatibility DHCP server VRF field.
-        type: str
       loopback_id:
         description: Loopback ID.
-        type: int
-      dhcp_loopback_id:
-        description: Compatibility alias for C(loopback_id).
         type: int
       igmp_version:
         description: IGMP version.
@@ -271,20 +297,6 @@ options:
       ipv6_trm:
         description: Enable IPv6 Tenant Routed Multicast.
         type: bool
-      route_target_both:
-        description: Compatibility route-target auto flag.
-        type: bool
-        default: false
-      l2_fabric_data:
-        description: L2 fabric data overrides.
-        type: dict
-      stretch:
-        description: Network stretch setting.
-        type: str
-      enable_ir:
-        description: Enable ingress replication.
-        type: bool
-        default: false
       multicast_group_address:
         description: Multicast group address.
         type: str
@@ -295,23 +307,29 @@ options:
         description: Enable netflow.
         type: bool
         default: false
-      intfvlan_nf_monitor:
-        description: Interface VLAN netflow monitor name.
+      l2_netflow_monitor:
+        description: Netflow monitor for L2 VLAN.
         type: str
-      vlan_nf_monitor:
-        description: VLAN netflow monitor name.
+      l3_netflow_monitor:
+        description: Netflow monitor for L3 VLAN.
+        type: str
+      netflow_sampler:
+        description: Netflow sampler name.
         type: str
       gateway_on_border:
         description: Enable gateway on border.
         type: bool
-      l3gw_on_border:
-        description: Compatibility alias for C(gateway_on_border).
-        type: bool
       child_fabric_config:
         description:
-          - Per-child-fabric instance options for parent fabrics.
-          - Parent fabrics own Network creation, deletion, identity, VLAN, gateway,
-            attachment, and deployment fields.
+          - Per-child-fabric override entries for MSD and MCFG parent fabrics.
+          - Each entry targets a child member fabric and may override multicast,
+            DHCP, TRM, netflow, gateway, and route-target settings.
+          - Omitted fields inherit the parent Network setting.
+          - C(attach), C(deploy), C(deploy_type), Network identity, VLAN,
+            gateway, custom template fields, and PVLAN fields are not valid
+            inside C(child_fabric_config).
+          - Ignored when C(state=deleted); child fabric tasks are not executed
+            for delete operations.
         type: list
         elements: dict
         suboptions:
@@ -331,29 +349,8 @@ options:
               server_vrf:
                 description: DHCP server VRF.
                 type: str
-          dhcp_srvr1_ip:
-            description: Compatibility DHCP server address field.
-            type: str
-          dhcp_srvr1_vrf:
-            description: Compatibility DHCP server VRF field.
-            type: str
-          dhcp_srvr2_ip:
-            description: Compatibility DHCP server address field.
-            type: str
-          dhcp_srvr2_vrf:
-            description: Compatibility DHCP server VRF field.
-            type: str
-          dhcp_srvr3_ip:
-            description: Compatibility DHCP server address field.
-            type: str
-          dhcp_srvr3_vrf:
-            description: Compatibility DHCP server VRF field.
-            type: str
           loopback_id:
             description: Loopback ID.
-            type: int
-          dhcp_loopback_id:
-            description: Compatibility alias for C(loopback_id).
             type: int
           igmp_version:
             description: IGMP version.
@@ -365,56 +362,57 @@ options:
           ipv6_trm:
             description: Enable IPv6 Tenant Routed Multicast.
             type: bool
-          l2_fabric_data:
-            description: L2 fabric data overrides.
-            type: dict
-          stretch:
-            description: Network stretch setting.
-            type: str
-          enable_ir:
-            description: Enable ingress replication.
-            type: bool
           multicast_group_address:
             description: Multicast group address.
             type: str
           ds_vni:
             description: Downstream VNI.
             type: int
+          route_target_both:
+            description:
+              - Enable automatic L2VNI route-target import/export assignment on the child fabric.
+            type: bool
           netflow_enable:
             description: Enable netflow.
             type: bool
+          l2_netflow_monitor:
+            description: Netflow monitor for L2 VLAN.
+            type: str
+          l3_netflow_monitor:
+            description: Netflow monitor for L3 VLAN.
+            type: str
+          netflow_sampler:
+            description: Netflow sampler name.
+            type: str
           gateway_on_border:
             description: Enable gateway on border.
-            type: bool
-          l3gw_on_border:
-            description: Compatibility alias for C(gateway_on_border).
             type: bool
 extends_documentation_fragment:
   - cisco.nd.modules
   - cisco.nd.check_mode
 """
 EXAMPLES = r"""
+# Standalone fabric - create an L2 Network
 - name: Create an L2-only Network on a standalone fabric
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
     state: merged
     config:
       - network_name: Network_BLUE
-        is_l2only: true
+        layer: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
-        rt_auto: true
-        enable_ir: false
         deploy: false
 
+# Standalone fabric - create a Network and attach it to a switch
 - name: Create a Network and attach it to a switch interface
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
     state: merged
     config:
       - network_name: Network_BLUE
-        is_l2only: true
+        layer: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
@@ -427,51 +425,119 @@ EXAMPLES = r"""
         deploy: true
         deploy_type: switch
 
+# Standalone fabric - create an L3 Network
 - name: Create an L3 Network associated with a VRF
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
     state: merged
     config:
       - network_name: Network_L3
-        is_l2only: false
+        layer: layer3
         vrf_name: Tenant_A
         network_id: 50020
         vlan_id: 2002
         vlan_name: Network_L3_VLAN
+        route_target_both: true
         gateway_ipv4_address: 10.10.20.1/24
         arp_suppression: true
         routing_tag: 12345
         deploy: false
 
+# Standalone fabric - create a private primary Network
+- name: Create a private primary Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: merged
+    config:
+      - network_name: PVLAN_PRIMARY
+        vlan_network_type: primary
+        layer: layer2
+        network_id: 50100
+        vlan_id: 2100
+        deploy: false
+
+# Standalone fabric - create a private secondary community Network
+- name: Create a private secondary community Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: merged
+    config:
+      - network_name: PVLAN_COMMUNITY
+        vlan_network_type: community
+        primary_network_id: 50100
+        network_id: 50101
+        vlan_id: 2101
+        vlan_name: PVLAN_COMMUNITY_VLAN
+        route_target_both: true
+        multicast_group_address: 239.1.1.101
+        deploy: false
+
+# Standalone fabric - create a private secondary isolated Network
+- name: Create a private secondary isolated Network
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: merged
+    config:
+      - network_name: PVLAN_ISOLATED
+        vlan_network_type: isolated
+        primary_network_id: 50100
+        network_id: 50102
+        vlan_id: 2102
+        deploy: false
+
+# MSD parent fabric - create Network with child fabric overrides
 - name: Create Network on a parent fabric with child fabric overrides
   cisco.nd.nd_manage_networks:
     fabric_name: msd_parent
     state: merged
     config:
       - network_name: Network_PARENT
-        is_l2only: true
+        layer: layer2
         network_id: 50030
         vlan_id: 2030
         vlan_name: Network_PARENT_VLAN
         child_fabric_config:
           - fabric_name: child_fabric_1
             multicast_group_address: 239.1.1.30
-          - fabric_name: child_fabric_2
-            enable_ir: false
 
+# Child fabric - gathered only
 - name: Gather Networks on a child fabric
   cisco.nd.nd_manage_networks:
     fabric_name: child_fabric_1
     state: gathered
     config: []
 
+# Delete Networks
 - name: Delete a Network
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
     state: deleted
     config:
       - network_name: Network_BLUE
-        is_l2only: true
+        layer: layer2
+
+# Replace Network configuration
+- name: Replace Network configuration
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: replaced
+    config:
+      - network_name: Network_BLUE
+        layer: layer2
+        network_id: 50010
+        vlan_id: 2001
+        vlan_name: Network_BLUE_REPLACED
+
+# Override Network configuration
+- name: Override Network configuration
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: overridden
+    config:
+      - network_name: Network_BLUE
+        layer: layer2
+        network_id: 50010
+        vlan_id: 2001
 """
 RETURN = r"""
 changed:
@@ -580,7 +646,7 @@ def main():
         state=dict(
             type="str",
             default="merged",
-            choices=["merged", "replaced", "overridden", "deleted", "gathered", "query"],
+            choices=["merged", "replaced", "overridden", "deleted", "gathered"],
         ),
         config=dict(
             type="list",

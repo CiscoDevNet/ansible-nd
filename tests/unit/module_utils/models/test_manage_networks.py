@@ -18,6 +18,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
     NetworkStretchPayloadModel,
     NetworkSwitchesListModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
+    NetworkConfigModel,
+    NetworkInterfaceConfigModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_attachment_models import (
     AccessInterfaceModel,
     NetworkAttachDetachPayloadModel,
@@ -46,7 +50,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.va
 def test_manage_network_validators_00010() -> None:
     """Verify network validators accept valid schema values."""
     assert NetworkValidators.validate_network_name("net1") == "net1"
-    assert NetworkValidators.validate_tenant_name("tenant_1") == "tenant_1"
     assert NetworkValidators.validate_vlan_id(2) == 2
     assert NetworkValidators.validate_network_id(16777214) == 16777214
     assert NetworkValidators.validate_cidrv4("192.0.2.1/24") == "192.0.2.1/24"
@@ -58,8 +61,6 @@ def test_manage_network_validators_00020() -> None:
     """Verify network validators reject invalid schema values."""
     with pytest.raises(ValueError):
         NetworkValidators.validate_network_name("n" * 129)
-    with pytest.raises(ValueError):
-        NetworkValidators.validate_tenant_name("bad tenant")
     with pytest.raises(ValueError):
         NetworkValidators.validate_vlan_id(1)
     with pytest.raises(ValueError):
@@ -77,12 +78,18 @@ def test_manage_network_data_models_00100() -> None:
         networkName="net1",
         vrfName="vrf1",
         vlanId=3000,
-        tenantName="tenant1",
+        layer="layer3",
         l2Data=DefaultL2DataModel(vlanName="VLAN3000"),
         l3Data=DefaultL3DataModel(
             gatewayIpv4Address="192.0.2.1/24",
             gatewayIpv6Address="2001:db8::1/64",
             secondaryGatewayIpv4Collection=["192.0.2.2/24"],
+            fabricData={
+                "netflow": True,
+                "l2NetflowMonitor": "L2_MON",
+                "l3NetflowMonitor": "L3_MON",
+                "netflowSampler": "NF_SAMPLER",
+            },
         ),
     )
 
@@ -90,9 +97,14 @@ def test_manage_network_data_models_00100() -> None:
 
     assert payload["networkType"] == "vxlan"
     assert payload["networkName"] == "net1"
+    assert payload["networkMode"] == "layer3"
+    assert "layer" not in payload
     assert payload["l2Data"]["vlanName"] == "VLAN3000"
     assert payload["l3Data"]["gatewayIpv4Address"] == "192.0.2.1/24"
     assert payload["l3Data"]["mtu"] == 9216
+    assert payload["l3Data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
+    assert payload["l3Data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
+    assert payload["l3Data"]["fabricData"]["netflowSampler"] == "NF_SAMPLER"
 
 
 def test_manage_network_data_models_00105() -> None:
@@ -107,7 +119,6 @@ def test_manage_network_data_models_00105() -> None:
 
     payload = model.to_payload()
 
-    assert payload["fabricData"]["enableIr"] is False
     assert payload["fabricData"]["multicastGroup"] == "239.1.1.2"
     assert payload["fabricData"]["dsVni"] == 50000
 
@@ -201,6 +212,115 @@ def test_manage_network_attachment_models_00310() -> None:
         NetworkAttachmentInterfaceModel(mode="trunk")
     with pytest.raises(ValidationError):
         NetworkAttachmentModel(networkName="net1", vlanId=1, attach=True)
+
+
+def test_manage_network_attachment_config_models_00315() -> None:
+    """Verify playbook interface config enforces trunk mapping bindings."""
+    with pytest.raises(ValidationError, match="native_vlan cannot be true when mapping_type=single"):
+        NetworkInterfaceConfigModel(
+            mode="trunk",
+            interface_range="Ethernet1/1",
+            native_vlan=True,
+            mapping_type="single",
+            customer_vlan=300,
+        )
+    with pytest.raises(ValidationError, match="native_vlan can only be used when mode=trunk"):
+        NetworkInterfaceConfigModel(
+            mode="access",
+            interface_range="Ethernet1/1",
+            native_vlan=True,
+        )
+    with pytest.raises(ValidationError, match="mapping_type can only be used when mode=trunk"):
+        NetworkInterfaceConfigModel(
+            mode="access",
+            interface_range="Ethernet1/1",
+            mapping_type="single",
+            customer_vlan=300,
+        )
+    with pytest.raises(ValidationError, match="customer_vlan can only be used when mapping_type=single"):
+        NetworkInterfaceConfigModel(
+            mode="trunk",
+            interface_range="Ethernet1/1",
+            customer_vlan=300,
+        )
+    with pytest.raises(ValidationError, match="customer_vlan can only be used when mapping_type=single"):
+        NetworkInterfaceConfigModel(
+            mode="trunk",
+            interface_range="Ethernet1/1",
+            mapping_type="none",
+            customer_vlan=300,
+        )
+    with pytest.raises(ValidationError, match="interface_group_name can only be used when mode is access or trunk"):
+        NetworkInterfaceConfigModel(
+            mode="host",
+            interface_range="Ethernet1/1",
+            interface_group_name="ifgrp1",
+        )
+
+    native_only = NetworkInterfaceConfigModel(
+        mode="trunk",
+        interface_range="Ethernet1/1",
+        native_vlan=True,
+    )
+    mapping_only = NetworkInterfaceConfigModel(
+        mode="trunk",
+        interface_range="Ethernet1/2",
+        mapping_type="single",
+        customer_vlan=300,
+    )
+    access_group = NetworkInterfaceConfigModel(
+        mode="access",
+        interface_range="Ethernet1/3",
+        interface_group_name="ifgrp1",
+    )
+
+    assert native_only.native_vlan is True
+    assert mapping_only.mapping_type == "single"
+    assert mapping_only.customer_vlan == 300
+    assert access_group.interface_group_name == "ifgrp1"
+
+
+def test_manage_network_attachment_config_models_00316() -> None:
+    """Verify vlan_network_type controls valid attachment interface modes."""
+    with pytest.raises(ValidationError, match="mode=host is not valid for vlan_network_type=normal"):
+        NetworkConfigModel(
+            network_name="net1",
+            layer="layer2",
+            attach=[{"ip_address": "192.0.2.10", "interfaces": [{"mode": "host", "interface_range": "Ethernet1/1"}]}],
+        )
+    with pytest.raises(ValidationError, match="mode=host is not valid for vlan_network_type=privatePrimary"):
+        NetworkConfigModel(
+            network_name="net1",
+            layer="layer2",
+            vlan_network_type="primary",
+            attach=[{"ip_address": "192.0.2.10", "interfaces": [{"mode": "host", "interface_range": "Ethernet1/1"}]}],
+        )
+    with pytest.raises(ValidationError, match="mode=trunk is not valid for vlan_network_type=privateSecondaryCommunity"):
+        NetworkConfigModel(
+            network_name="net1",
+            layer="layer2",
+            vlan_network_type="community",
+            primary_network_id=30000,
+            attach=[{"ip_address": "192.0.2.10", "interfaces": [{"mode": "trunk", "interface_range": "Ethernet1/1"}]}],
+        )
+
+    private_primary = NetworkConfigModel(
+        network_name="net1",
+        layer="layer2",
+        vlan_network_type="primary",
+        attach=[{"ip_address": "192.0.2.10", "interfaces": [{"mode": "promiscuous", "interface_range": "Ethernet1/1"}]}],
+    )
+    private_secondary = NetworkConfigModel(
+        network_name="net2",
+        layer="layer2",
+        vlan_network_type="isolated",
+        primary_network_id=30000,
+        attach=[{"ip_address": "192.0.2.10", "interfaces": [{"mode": "host", "interface_range": "Ethernet1/2"}]}],
+    )
+
+    assert private_primary.vlan_network_type == "privatePrimary"
+    assert private_secondary.vlan_network_type == "privateSecondaryIsolated"
+    assert private_secondary.primary_network_id == 30000
 
 
 def test_manage_network_attachment_models_00320() -> None:

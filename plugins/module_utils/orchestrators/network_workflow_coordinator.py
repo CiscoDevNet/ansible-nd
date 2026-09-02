@@ -121,7 +121,6 @@ class NetworkWorkflowCoordinator:
             check_mode=self.module.check_mode,
         )
         try:
-            self._normalize_module_args(module_args)
             fabric_type: str = self.strategy.fabric_type
             self._validate_topology_argument_scope(module_args, fabric_type)
 
@@ -200,12 +199,6 @@ class NetworkWorkflowCoordinator:
             result["workflow_trace"] = list(self._workflow_trace)
         return result
 
-    @staticmethod
-    def _normalize_module_args(module_args: dict) -> None:
-        """Normalize legacy module-level aliases before workflow routing."""
-        if module_args.get("state") == "query":
-            module_args["state"] = "gathered"
-
     def _validate_topology_argument_scope(
         self,
         module_args: dict,
@@ -266,7 +259,7 @@ class NetworkWorkflowCoordinator:
             try:
                 operational_only = isinstance(entry, dict) and not NDNetworkOrchestrator.has_network_definition_intent(entry)
                 model = model_cls.from_config(entry)
-                parsed_config = model.to_config()
+                parsed_config = model.to_config(exclude_unset=True)
                 if operational_only:
                     sparse_config = {"network_name": parsed_config["network_name"]}
                     for key in ("attach", "deploy", "deploy_type"):
@@ -348,6 +341,7 @@ class NetworkWorkflowCoordinator:
         state = module_args.get("state", "merged")
         self._trace("parent_workflow_start", state=state, parent_fabric=parent_fabric, fabric_type=fabric_type)
         config: list[dict] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
+        self._validate_parent_network_capabilities(config)
         self._trace("parent_config_parsed", parsed_count=len(config))
 
         # Collect member fabric names for relationship validation
@@ -444,6 +438,17 @@ class NetworkWorkflowCoordinator:
         """Return True when a child_fabric_config entry contains fabric-data options."""
         return any(key != "fabric_name" and value is not None for key, value in child_cfg.items())
 
+    def _validate_parent_network_capabilities(self, config: list[dict]) -> None:
+        """Validate parent-fabric Network options that depend on resolved topology."""
+        if not (getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False)):
+            return
+
+        for idx, network in enumerate(config):
+            if NDNetworkOrchestrator.is_pvlan_network_type(network.get("vlan_network_type")):
+                self.module.fail_json(
+                    msg="config[{idx}].vlan_network_type primary, community, and isolated are not supported on Multicluster parent fabrics.".format(idx=idx)
+                )
+
     def _accumulate_child_task(
         self,
         parent_network: dict,
@@ -465,11 +470,10 @@ class NetworkWorkflowCoordinator:
         # Inherit the Network identifier plus layer context from the parent
         # definition.  The parent owns create/delete and immutable identity
         # fields; layer context only prevents child PUTs from being interpreted
-        # as an isLayer2Only change by ND.
+        # as a network-mode change by ND.
         child_cfg["network_name"] = parent_network.get("network_name")
-        for field in ("layer", "is_l2only"):
-            if child_cfg.get(field) is None and parent_network.get(field) is not None:
-                child_cfg[field] = parent_network.get(field)
+        if child_cfg.get("layer") is None and parent_network.get("layer") is not None:
+            child_cfg["layer"] = parent_network.get("layer")
 
         if child_fabric_name in child_tasks_dict:
             # Append to existing child task (batch multiple Networks together)
