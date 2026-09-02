@@ -48,15 +48,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     SpeedEnum,
     StormControlActionEnum,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import (
-    StormControlMutexMixin,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
-    NDNestedModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import (
-    AsciiDescription,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
 # Module-level so it stays a real re.Pattern; Pydantic v2 wraps any leading-underscore
 # class attribute in ModelPrivateAttr regardless of ClassVar annotation.

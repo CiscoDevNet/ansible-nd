@@ -17,9 +17,7 @@ from typing import ClassVar, Type
 from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import AccessHostPolicyTypeEnum
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
-    EthernetAccessInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
 
 

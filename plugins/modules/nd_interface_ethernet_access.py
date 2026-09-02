@@ -428,26 +428,14 @@ import logging
 import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
-    NDStateMachineError,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    require_pydantic,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
-    EthernetAccessInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
-    NDStateMachine,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
-    NDBaseInterfaceOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import (
-    EthernetAccessInterfaceOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import EthernetAccessInterfaceOrchestrator
 
 
 # TODO: When all interface modules using `interface_names: list` are merged, lift
