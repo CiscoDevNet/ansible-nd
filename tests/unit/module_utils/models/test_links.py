@@ -196,6 +196,25 @@ def test_non_secret_fields_survive_in_config():
     assert config_ti["default_vrf_ebgp_neighbor_password"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
 
 
+def test_gathered_omits_controller_typed_empties_rejected_on_write():
+    """Controller sentinels remain inspectable in normal output but are omitted
+    from gathered configuration so the gathered item validates when reapplied."""
+    existing = NDLinkModel.from_response(
+        _link("layer2Dci", {"trunkAllowedVlans": "100,200", "nativeVlan": 1}).to_payload()
+    )
+
+    normal_inputs = existing.to_config()["config_data"]["template_inputs"]
+    gathered = existing.to_gathered_config()
+    gathered_inputs = gathered["config_data"]["template_inputs"]
+
+    assert normal_inputs["bpdu_guard"] == ""
+    assert normal_inputs["mtu_type"] == ""
+    assert "bpdu_guard" not in gathered_inputs
+    assert "mtu_type" not in gathered_inputs
+    round_tripped = NDLinkModel.from_config(gathered, context={"state": "merged"})
+    assert existing.get_diff(round_tripped, exclude_unset=True) is True
+
+
 def test_minimal_numbered_payload_sends_documented_defaults():
     """A minimal numbered create sends ND's documented defaults for defaulted fields
     (mtu 9216, admin_state true, fec auto, speed auto) instead of schema-violating
@@ -217,10 +236,57 @@ def test_minimal_numbered_payload_sends_documented_defaults():
     assert ti["srcInterfaceDescription"] == ""
 
 
+def test_replaced_is_idempotent_after_controller_echoes_payload_defaults():
+    """A replaced declaration is sparse, but its PUT carries all link-template
+    defaults. When ND echoes that effective payload, the next run must compare as
+    equal instead of repeatedly updating because defaulted fields were omitted by
+    the user."""
+    proposed = _link(
+        "numbered",
+        {
+            "srcIp": "10.99.30.1",
+            "dstIp": "10.99.30.2",
+            "mtu": 9216,
+            "interfaceAdminState": True,
+        },
+    )
+    existing = NDLinkModel.from_response(proposed.to_payload())
+
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+def test_replaced_still_detects_nondefault_field_removal():
+    """Default normalization must not hide a real replaced-state reset. A
+    non-empty interface description present on ND and omitted by the proposed
+    declaration still requires one update."""
+    configured = _link(
+        "numbered",
+        {
+            "srcIp": "10.99.30.1",
+            "dstIp": "10.99.30.2",
+            "mtu": 9216,
+            "interfaceAdminState": True,
+            "srcInterfaceDescription": "remove me",
+        },
+    )
+    existing = NDLinkModel.from_response(configured.to_payload())
+    proposed = _link(
+        "numbered",
+        {
+            "srcIp": "10.99.30.1",
+            "dstIp": "10.99.30.2",
+            "mtu": 9216,
+            "interfaceAdminState": True,
+        },
+    )
+
+    assert existing.get_diff(proposed, exclude_unset=False) is False
+
+
 def test_unset_secret_sent_empty_but_excluded_from_diff():
     """An unset secret is sent as an empty key (ND's template requires the key to be
-    present) but is excluded from the diff, so a secret-only change never triggers an
-    update. Documented defaults still flow for the other fields."""
+    present) but is excluded from serialized diff output. Documented defaults still
+    flow for the other fields."""
     link = _link("multisiteUnderlay", {"srcEbgpAsn": "1", "dstEbgpAsn": "2"})
     payload_ti = link.to_payload()["configData"]["templateInputs"]
     diff_ti = link.to_diff_dict()["configData"]["templateInputs"]
@@ -230,13 +296,119 @@ def test_unset_secret_sent_empty_but_excluded_from_diff():
     assert payload_ti["enableEbgpPassword"] is True
 
 
-def test_collect_secret_values_finds_free_form_template_input_secrets():
-    """collect_secret_values surfaces free-form template_inputs secrets for no_log."""
+def test_explicit_secret_is_update_intent_without_leaking_into_diff():
+    """A write-only secret cannot be compared with controller state. Supplying one
+    therefore schedules an update, while serialized diff output still omits it."""
+    existing = _link("multisiteUnderlay", {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002"})
+    proposed = _link(
+        "multisiteUnderlay",
+        {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002", "ebgpPassword": "RotateMe!"},
+    )
+
+    assert existing.get_diff(proposed, exclude_unset=True) is False
+    assert "ebgpPassword" not in proposed.to_diff_dict()["configData"]["templateInputs"]
+
+
+def test_omitted_secret_remains_idempotent():
+    """Omitting write-only secrets does not force an update."""
+    existing = _link("multisiteUnderlay", {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002"})
+    proposed = _link("multisiteUnderlay", {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002"})
+
+    assert existing.get_diff(proposed, exclude_unset=True) is True
+
+
+@pytest.mark.parametrize(
+    "policy_type,base_inputs,secret_alias",
+    [
+        (
+            "ebgpVrfLite",
+            {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002", "srcIpAddressMask": "10.99.30.1/30", "dstIpAddress": "10.99.30.2"},
+            "defaultVrfEbgpNeighborPassword",
+        ),
+        ("ebgpVrfLite", {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002"}, "macsecPrimaryKeyString"),
+        ("ebgpVrfLite", {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002"}, "macsecFallbackKeyString"),
+        ("layer2Dci", {"trunkAllowedVlans": "100,200", "nativeVlan": 1}, "macsecPrimaryKeyString"),
+        ("layer2Dci", {"trunkAllowedVlans": "100,200", "nativeVlan": 1}, "macsecFallbackKeyString"),
+        ("layer3DciVrfLite", {"srcIpAddressMask": "10.99.30.1/30", "dstIpAddressMask": "10.99.30.2/30"}, "macsecPrimaryKeyString"),
+        ("layer3DciVrfLite", {"srcIpAddressMask": "10.99.30.1/30", "dstIpAddressMask": "10.99.30.2/30"}, "macsecFallbackKeyString"),
+        (
+            "multisiteOverlay",
+            {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002", "srcIpAddress": "10.99.30.1", "dstIpAddress": "10.99.30.2"},
+            "ebgpPassword",
+        ),
+        (
+            "multisiteOverlay",
+            {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002", "srcIpAddress": "10.99.30.1", "dstIpAddress": "10.99.30.2"},
+            "macsecPrimaryKeyString",
+        ),
+        (
+            "multisiteOverlay",
+            {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002", "srcIpAddress": "10.99.30.1", "dstIpAddress": "10.99.30.2"},
+            "macsecFallbackKeyString",
+        ),
+        ("multisiteUnderlay", {"srcEbgpAsn": "65001", "dstEbgpAsn": "65002"}, "ebgpPassword"),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_secret_lifecycle_for_every_secret_bearing_link_template(policy_type, base_inputs, secret_alias):
+    """For every supported secret field: controller echoes are idempotent,
+    explicit user values are update intent and report changed, output is masked,
+    and a fresh controller read returns to idempotent."""
+    response = _link(policy_type, base_inputs).to_payload()
+    before = NDLinkModel.from_response(response)
+    identical_response = NDLinkModel.from_response(response)
+    omitted_secret = _link(policy_type, base_inputs)
+
+    assert before._has_explicit_secret_template_input() is False
+    assert before.get_diff(identical_response, exclude_unset=False) is True
+    assert before.get_diff(omitted_secret, exclude_unset=True) is True
+
+    explicit_secret = _link(policy_type, {**base_inputs, secret_alias: "RotateMe!"})
+    assert before.get_diff(explicit_secret, exclude_unset=True) is False
+
+    after = identical_response.merge(explicit_secret)
+    assert after._has_explicit_secret_template_input() is True
+    assert before.get_diff(after, exclude_unset=False) is False
+
+    template_model = type(after.config_data.template_inputs)
+    secret_python_name = next(
+        field_name for field_name, field_info in template_model.model_fields.items() if (field_info.alias or field_name) == secret_alias
+    )
+    assert after.to_config()["config_data"]["template_inputs"][secret_python_name] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+    assert secret_alias not in after.to_diff_dict()["configData"]["templateInputs"]
+
+    next_read = NDLinkModel.from_response(response)
+    assert next_read.get_diff(NDLinkModel.from_response(response), exclude_unset=False) is True
+
+    gathered = next_read.to_gathered_config()
+    gathered_inputs = gathered["config_data"]["template_inputs"]
+    for secret_field in template_model.secret_field_keys(by_alias=False):
+        assert secret_field not in gathered_inputs
+    round_tripped = NDLinkModel.from_config(gathered, context={"state": "merged"})
+    assert next_read.get_diff(round_tripped, exclude_unset=True) is True
+
+
+@pytest.mark.parametrize(
+    "secret_key",
+    [
+        "default_vrf_ebgp_neighbor_password",
+        "defaultVrfEbgpNeighborPassword",
+        "macsec_primary_key_string",
+        "macsecPrimaryKeyString",
+        "macsec_fallback_key_string",
+        "macsecFallbackKeyString",
+        "ebgp_password",
+        "ebgpPassword",
+    ],
+)
+def test_collect_secret_values_finds_free_form_template_input_secrets(secret_key):
+    """Both documented names and API aliases are registered with Ansible's
+    global value scrubber before free-form template input validation."""
     config_item = {
         "src_interface_name": "Ethernet1/30",
         "config_data": {
             "policy_type": "ebgpVrfLite",
-            "template_inputs": {"ebgp_password": "S3cret!", "link_mtu": 9216},
+            "template_inputs": {secret_key: "S3cret!", "link_mtu": 9216},
         },
     }
     assert NDLinkModel.collect_secret_values(config_item) == {"S3cret!"}
@@ -337,6 +509,74 @@ def test_collection_read_tolerates_unsupported_alongside_supported():
     assert len(items) == 2
     unsupported = [i for i in items if i.is_unsupported_policy]
     assert [i.link_id for i in unsupported] == ["L2"]
+
+
+def test_collection_preserves_duplicate_endpoint_records_for_gathered():
+    """Distinct controller records sharing endpoint identity remain visible instead
+    of aborting collection construction before gathered can return them."""
+    from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+
+    response = [
+        _response_link("numbered", {"srcIp": "1.1.1.1", "dstIp": "1.1.1.2"}, link_id="L1"),
+        _response_link("numbered", {"srcIp": "1.1.1.1", "dstIp": "1.1.1.2"}, link_id="L2"),
+    ]
+    collection = NDConfigCollection.from_api_response(response_data=response, model_class=NDLinkModel)
+
+    assert len(collection) == 2
+    assert [item.link_id for item in collection] == ["L1", "L2"]
+
+
+def test_override_preserves_unsupported_controller_link():
+    """An authoritative override never implicitly deletes an opaque policy."""
+    from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+    from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+
+    existing = NDConfigCollection.from_api_response(
+        response_data=[_response_link("ipfmNumbered", {"srcIp": "9.9.9.9"}, link_id="L-opaque")],
+        model_class=NDLinkModel,
+    )
+    state_machine = object.__new__(NDStateMachine)
+    state_machine.before = existing
+    state_machine.existing = existing.copy()
+    state_machine.proposed = NDConfigCollection(model_class=NDLinkModel)
+
+    state_machine._manage_override_deletions()
+
+    assert [item.link_id for item in state_machine.existing] == ["L-opaque"]
+
+
+def test_explicit_delete_rejects_unsupported_controller_link():
+    """An explicit delete of an opaque policy fails before any mutation."""
+    from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+    from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+    from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+
+    existing = NDConfigCollection.from_api_response(
+        response_data=[_response_link("ipfmNumbered", {"srcIp": "9.9.9.9"}, link_id="L-opaque")],
+        model_class=NDLinkModel,
+    )
+    proposed = NDConfigCollection.from_ansible_config(
+        data=[
+            {
+                "src_cluster_name": "c1",
+                "dst_cluster_name": "c1",
+                "src_fabric_name": "f1",
+                "dst_fabric_name": "f1",
+                "src_switch_name": "a",
+                "dst_switch_name": "b",
+                "src_interface_name": "Ethernet1/1",
+                "dst_interface_name": "Ethernet1/1",
+            }
+        ],
+        model_class=NDLinkModel,
+        context={"state": "deleted"},
+    )
+    state_machine = object.__new__(NDStateMachine)
+    state_machine.existing = existing.copy()
+    state_machine.proposed = proposed
+
+    with pytest.raises(NDStateMachineError, match="cannot delete"):
+        state_machine._manage_delete_state()
 
 
 # ---------------------------------------------------------------------------
@@ -458,22 +698,35 @@ def _ebgp_vrf_lite_link(src_sw, src_fabric, dst_sw, dst_fabric, template_inputs)
 
 
 def test_reversed_inter_fabric_link_compares_equal():
-    """A reversed inter-fabric (VRF-lite) cable with its symmetric directional fields
-    correspondingly swapped (srcEbgpAsn/dstEbgpAsn, per-interface descriptions) shows
-    no diff, so merged stays idempotent across fabrics."""
+    """A reversed inter-fabric cable compares by physical endpoint, including the
+    asymmetric masked-source/plain-destination IPv4 representation."""
     fwd = _ebgp_vrf_lite_link(
         "X",
         "f1",
         "Y",
         "f2",
-        {"srcEbgpAsn": "100", "dstEbgpAsn": "200", "srcInterfaceDescription": "to-Y", "dstInterfaceDescription": "to-X"},
+        {
+            "srcEbgpAsn": "100",
+            "dstEbgpAsn": "200",
+            "srcIpAddressMask": "10.0.0.1/30",
+            "dstIpAddress": "10.0.0.2",
+            "srcInterfaceDescription": "to-Y",
+            "dstInterfaceDescription": "to-X",
+        },
     )
     rev = _ebgp_vrf_lite_link(
         "Y",
         "f2",
         "X",
         "f1",
-        {"srcEbgpAsn": "200", "dstEbgpAsn": "100", "srcInterfaceDescription": "to-X", "dstInterfaceDescription": "to-Y"},
+        {
+            "srcEbgpAsn": "200",
+            "dstEbgpAsn": "100",
+            "srcIpAddressMask": "10.0.0.2/30",
+            "dstIpAddress": "10.0.0.1",
+            "srcInterfaceDescription": "to-X",
+            "dstInterfaceDescription": "to-Y",
+        },
     )
     assert fwd.get_identifier_value() == rev.get_identifier_value()
     assert fwd.to_diff_dict() == rev.to_diff_dict()
@@ -482,12 +735,13 @@ def test_reversed_inter_fabric_link_compares_equal():
 def test_directional_pairs_are_policy_specific():
     """The directional swap set is derived per policy from the model's own fields:
     ebgpVrfLite pairs the symmetric srcEbgpAsn/dstEbgpAsn; numbered pairs srcIp/dstIp
-    and the dhcp/bfd per-interface toggles. The asymmetric srcIpAddressMask/dstIpAddress
-    pair is deliberately excluded (a value swap would move the mask to the wrong end)."""
+    and the dhcp/bfd per-interface toggles. Asymmetric address fields use their own
+    prefix-preserving canonicalization path rather than the plain value-swap set."""
     ebgp = _ebgp_vrf_lite_link("X", "f1", "Y", "f2", {"srcEbgpAsn": "100", "dstEbgpAsn": "200"})
     pairs = set(ebgp._template_directional_pairs())
     assert ("srcEbgpAsn", "dstEbgpAsn") in pairs
-    assert ("srcIpAddressMask", "dstIpAddress") not in pairs  # asymmetric, intentionally not reoriented
+    assert ("srcIpAddressMask", "dstIpAddress") not in pairs
+    assert ("srcIpAddressMask", "dstIpAddress") in set(ebgp._template_asymmetric_address_pairs())
     numbered = _phys_link("X", "Ethernet1/1", "Y", "Ethernet1/1", {"srcIp": "1.1.1.1", "dstIp": "1.1.1.2"})
     npairs = set(numbered._template_directional_pairs())
     assert ("srcIp", "dstIp") in npairs
@@ -499,7 +753,9 @@ def test_directional_pairs_are_policy_specific():
 # ---------------------------------------------------------------------------
 
 
-def _proposed_preprovision():
+def _proposed_preprovision(template_inputs=None):
+    if template_inputs is None:
+        template_inputs = {"src_interface_description": "planned"}
     return NDLinkModel.from_config(
         {
             "src_fabric_name": "f1",
@@ -508,7 +764,7 @@ def _proposed_preprovision():
             "dst_switch_name": "SPINE1",
             "src_interface_name": "Ethernet1/1",
             "dst_interface_name": "Ethernet1/1",
-            "config_data": {"policy_type": "preprovision", "template_inputs": {"src_interface_description": "planned"}},
+            "config_data": {"policy_type": "preprovision", "template_inputs": template_inputs},
         },
         context={"state": "merged"},
     )
@@ -583,6 +839,34 @@ def test_realized_preprovision_merge_stays_numbered_and_applies_user_field():
     assert merged.config_data.policy_type == "numbered"  # stays numbered (no policy change)
     assert merged.config_data.template_inputs.src_interface_description == "updated"  # user field applied
     assert merged.config_data.template_inputs.src_ip == "10.4.0.1"  # ND-assigned address preserved
+
+
+@pytest.mark.parametrize(
+    "field,alias,existing_value,changed_value",
+    [
+        ("mtu", "mtu", 9216, 9000),
+        ("speed", "speed", "auto", "100Gb"),
+    ],
+)
+def test_realized_preprovision_persists_mtu_and_speed(field, alias, existing_value, changed_value):
+    """mtu and speed remain declarative intent after ND realizes a preprovision
+    link as numbered: unchanged values are idempotent and edits survive the merge."""
+    existing = _phys_link(
+        "LEAF1",
+        "Ethernet1/1",
+        "SPINE1",
+        "Ethernet1/1",
+        {"srcIp": "10.4.0.1", "dstIp": "10.4.0.2", alias: existing_value},
+    )
+
+    assert existing.get_diff(_proposed_preprovision({field: existing_value})) is True
+
+    changed = _proposed_preprovision({field: changed_value})
+    assert existing.get_diff(changed) is False
+    merged = existing.merge(changed)
+    assert merged.config_data.policy_type == "numbered"
+    assert getattr(merged.config_data.template_inputs, field) == changed_value
+    assert merged.config_data.template_inputs.src_ip == "10.4.0.1"
 
 
 def test_non_realized_policy_difference_still_diffs():

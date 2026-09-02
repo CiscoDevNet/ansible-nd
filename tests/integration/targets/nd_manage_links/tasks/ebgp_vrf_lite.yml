@@ -87,6 +87,42 @@
 
           - nm_vrflite_create_again is not changed
 
+    - name: Verify gathered output for ebgpVrfLite links
+      ansible.builtin.include_tasks: gathered.yml
+      vars:
+        gathered_policy_type: ebgpVrfLite
+        gathered_src_fabric: '{{ test_fabric_vrflite_src }}'
+        gathered_dst_fabric: '{{ test_fabric_vrflite_dst }}'
+        gathered_interface_name: Ethernet1/30
+
+    - name: Re-apply ebgpVrfLite link Eth1/30 with endpoints reversed
+      cisco.nd.nd_manage_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_vrflite_dst }}'
+            dst_fabric_name: '{{ test_fabric_vrflite_src }}'
+            src_switch_name: '{{ test_switch_b }}'
+            dst_switch_name: '{{ test_switch_a }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: ebgpVrfLite
+              template_inputs:
+                src_ebgp_asn: "65002"
+                dst_ebgp_asn: "65001"
+                src_ip_address_mask: "10.99.30.2/30"
+                dst_ip_address: "10.99.30.1"
+                link_mtu: 9216
+                src_interface_description: ansible vrflite 30 destination
+                dst_interface_description: ansible vrflite 30 source
+        state: merged
+      check_mode: true
+      register: cm_vrflite_reversed
+
+    - name: Assert reversed asymmetric declaration is idempotent
+      ansible.builtin.assert:
+        that:
+          - cm_vrflite_reversed is not changed
+
     - name: Update ebgpVrfLite link Eth1/30 (merged - check mode)
       cisco.nd.nd_manage_links: &vrflite_update
         config:
@@ -264,6 +300,7 @@
           - (nm_vrflite_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 0
           - nm_vrflite_bulk_delete_again is not changed
 
-    - name: Final cleanup of ebgpVrfLite links
+  always:
+    - name: Always clean up ebgpVrfLite links
       cisco.nd.nd_manage_links:
         <<: *vrflite_cleanup

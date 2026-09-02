@@ -44,6 +44,8 @@
             config_data:
               policy_type: preprovision
               template_inputs:
+                mtu: 9000
+                speed: auto
                 src_interface_description: ansible preprovision 30 source
                 dst_interface_description: ansible preprovision 30 destination
           - src_fabric_name: '{{ test_fabric_preprovision }}'
@@ -86,12 +88,24 @@
           - cm_preprovision_create is changed
           - cm_preprovision_create.proposed | length == 3
           - cm_preprovision_create.proposed.0.config_data.policy_type == "preprovision"
+          - cm_preprovision_create.proposed.0.config_data.template_inputs.mtu == 9000
+          - cm_preprovision_create.proposed.0.config_data.template_inputs.speed == "auto"
 
           - nm_preprovision_create is changed
           - (nm_preprovision_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "preprovision"
+          - (nm_preprovision_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.mtu == 9000
+          - (nm_preprovision_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.speed == "auto"
           - (nm_preprovision_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.src_interface_description == "ansible preprovision 30 source"
 
           - nm_preprovision_create_again is not changed
+
+    - name: Verify gathered output for preprovision links
+      ansible.builtin.include_tasks: gathered.yml
+      vars:
+        gathered_policy_type: preprovision
+        gathered_src_fabric: '{{ test_fabric_preprovision }}'
+        gathered_dst_fabric: '{{ test_fabric_preprovision }}'
+        gathered_interface_name: Ethernet1/30
 
     - name: Update preprovision link Eth1/30 (merged - check mode)
       cisco.nd.nd_manage_links: &preprovision_update
@@ -105,6 +119,8 @@
             config_data:
               policy_type: preprovision
               template_inputs:
+                mtu: 9100
+                speed: auto
                 src_interface_description: updated preprovision source
                 dst_interface_description: updated preprovision destination
         state: merged
@@ -125,9 +141,12 @@
       ansible.builtin.assert:
         that:
           - cm_preprovision_update is changed
+          - cm_preprovision_update.proposed.0.config_data.template_inputs.mtu == 9100
           - cm_preprovision_update.proposed.0.config_data.template_inputs.src_interface_description == "updated preprovision source"
 
           - nm_preprovision_update is changed
+          - (nm_preprovision_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.mtu == 9100
+          - (nm_preprovision_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.speed == "auto"
           - (nm_preprovision_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.src_interface_description == "updated preprovision source"
 
           - nm_preprovision_update_again is not changed
@@ -289,6 +308,7 @@
           - (nm_preprovision_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 0
           - nm_preprovision_bulk_delete_again is not changed
 
-    - name: Final cleanup of preprovision links
+  always:
+    - name: Always clean up preprovision links
       cisco.nd.nd_manage_links:
         <<: *preprovision_cleanup

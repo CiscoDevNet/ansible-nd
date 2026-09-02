@@ -78,12 +78,14 @@ options:
         - The hostname of the source switch.
         - At least one of O(config.src_switch_name), O(config.src_switch_ip) or O(config.src_switch_id) is required to identify the source switch.
         - When more than one is set, priority is O(config.src_switch_id), then O(config.src_switch_ip), then O(config.src_switch_name).
+        - Multiple supplied selectors must resolve to the same switch or the module fails before making a change.
         type: str
       dst_switch_name:
         description:
         - The hostname of the destination switch.
         - At least one of O(config.dst_switch_name), O(config.dst_switch_ip) or O(config.dst_switch_id) is required to identify the destination switch.
         - When more than one is set, priority is O(config.dst_switch_id), then O(config.dst_switch_ip), then O(config.dst_switch_name).
+        - Multiple supplied selectors must resolve to the same switch or the module fails before making a change.
         type: str
       src_switch_ip:
         description:
@@ -164,18 +166,17 @@ options:
             - This is a free-form dictionary validated per policy type by the module. It is intentionally not modeled as static suboptions because the
               valid keys differ by O(config.config_data.policy_type); the supported keys for each policy type are enumerated below.
             - The accepted keys depend on O(config.config_data.policy_type). Keys that do not belong to the selected policy type are rejected.
-            - ND's template engine requires every declared key to be present, so for any documented field you omit the module sends ND's documented
-              default (for example C(mtu) 9216, C(interface_admin_state) C(true), C(fec) C(auto)); fields with no documented default are sent as a
-              typed empty value (C("") / C(0) / C(false)), including secrets. See the note on secret fields below.
+            - Omitted fields are sent with ND's documented default (for example C(mtu) 9216, C(interface_admin_state) C(true), C(fec) C(auto)) or,
+              when no documented default exists, a typed empty value (C("") / C(0) / C(false)), including secrets. See the note on secret fields below.
             - This module can create and update the policy types listed below. Other valid ND policy types (for example C(ipfmNumbered) or
               C(routedFabric)) are still read back by O(state=gathered) and preserved as opaque records; the module warns about them and never
               modifies or deletes them.
             - 'In the lists below, a key shown as C(name) (int) or C(name) (bool) takes that type; all other keys are strings.'
             - 'Secret fields - C(ebgp_password), C(default_vrf_ebgp_neighbor_password), C(macsec_primary_key_string) and C(macsec_fallback_key_string)
               are sent to the controller but their values are masked as C(VALUE_SPECIFIED_IN_NO_LOG_PARAMETER) in this module''s output and excluded
-              from diffs. A change to only a secret value is therefore not detected as a change. Nexus Dashboard does not return secret values on
-              read, so re-supply a secret whenever you update a link, otherwise it is written empty. Because O(config.config_data.template_inputs) is
-              a free-form dict these values are not individually marked no_log, so they may appear in task invocation logs at high verbosity.'
+              from rendered diffs. Nexus Dashboard does not return secret values on read, so explicitly supplying a secret is treated as update
+              intent. Omit it for an idempotent reapplication; re-supply it when updating a link for another reason, otherwise it is written empty.
+              The module registers supplied values for no-log masking before it prepares or validates link identities.'
             - 'Common interface fields, available on V(numbered), V(unnumbered) and V(ipv6LinkLocal) - C(interface_admin_state) (bool), C(mtu) (int),
               C(speed), C(fec), C(src_interface_description), C(dst_interface_description), C(src_interface_config), C(dst_interface_config)
               and C(macsec) (bool).'
@@ -192,13 +193,13 @@ options:
               C(vrf_name_nx_peer_switch), the interface description fields, the full MACsec fields, the QKD fields
               and C(inherit_ttag_fabric_setting) (bool).'
             - 'V(layer2Dci) - C(trunk_allowed_vlans), C(native_vlan) (int), C(bpdu_guard), C(port_type_fast) (bool), C(mtu_type), C(speed),
-              the interface description fields, the full MACsec fields, the QKD fields and C(inherit_ttag_fabric_setting) (bool).'
+              the interface description fields, the full MACsec fields and the QKD fields.'
             - 'V(layer3DciVrfLite) - C(src_ip_address_mask), C(dst_ip_address_mask), C(src_ipv6_address_mask), C(dst_ipv6_address_mask), C(src_vrf_name),
               C(dst_vrf_name), C(link_mtu) (int), C(speed), C(ip_redirects) (bool), C(ipv4_pim) (bool), C(ipv6_pim) (bool), the interface description fields,
               the full MACsec fields, the QKD fields, the Netflow fields and C(inherit_ttag_fabric_setting) (bool).'
             - 'V(multisiteOverlay) - C(src_ebgp_asn), C(dst_ebgp_asn), C(src_ip_address), C(dst_ip_address), C(ebgp_multihop) (int), C(ipv4_trm) (bool),
               C(ipv6_trm) (bool), C(redistribute_route_server) (bool), C(route_server_routing_tag), C(skip_config_generation) (bool),
-              C(src_interface_description), C(dst_interface_description), C(macsec_cipher_suite) and the eBGP password fields.'
+              the interface description fields, the full MACsec fields, the QKD fields and the eBGP password fields.'
             - 'V(multisiteUnderlay) - C(src_ebgp_asn), C(dst_ebgp_asn), C(ebgp_bfd) (bool), C(ebgp_log_neighbor_change) (bool), C(ebgp_maximum_paths) (int),
               C(ebgp_send_comboth) (bool), C(src_ip_address_mask), C(src_ipv6_address_mask), C(dst_ip_address), C(dst_ipv6_address), C(link_mtu) (int),
               C(speed), C(routing_tag), C(dci_tracking_enable_flag) (bool), the interface description fields, the eBGP password fields
@@ -207,7 +208,8 @@ options:
             - 'V(mplsUnderlay) - C(mpls_fabric_type), C(dci_routing_protocol), C(dci_routing_tag), C(ospf_area_id), C(sr_global_block_range),
               C(src_sr_index) (int), C(dst_sr_index) (int), C(src_ip_address_mask), C(dst_ip_address), C(link_mtu) (int), the interface description fields
               and C(inherit_ttag_fabric_setting) (bool).'
-            - 'V(preprovision) - C(src_interface_description), C(dst_interface_description), C(src_interface_config) and C(dst_interface_config) only.'
+            - 'V(preprovision) - C(src_interface_description), C(dst_interface_description), C(src_interface_config), C(dst_interface_config),
+              C(mtu) (int) and C(speed).'
             - 'V(vpcPeerKeepalive) - C(src_ip), C(dst_ip), C(src_ipv6), C(dst_ipv6), C(interface_vrf), C(interface_admin_state) (bool), C(mtu) (int)
               and the interface description fields.'
             - 'V(userDefined) - an open set of fields validated by ND; C(allowed_vlans) and C(mtu) (int) are recognized,
@@ -468,7 +470,8 @@ EXAMPLES = r"""
         config_data:
           policy_type: mplsUnderlay
           template_inputs:
-            dci_routing_protocol: isis
+            mpls_fabric_type: mplsSr
+            dci_routing_protocol: is-is
             sr_global_block_range: "16000-23999"
             src_sr_index: 100
             dst_sr_index: 101
@@ -771,6 +774,20 @@ def validate_scope_identity(module: AnsibleModule, strategy: ManageLinkStrategy 
             )
 
 
+def register_secret_values(module: AnsibleModule) -> None:
+    """Register free-form template secrets before any preparation can fail.
+
+    ``NDStateMachine`` also performs generic model-level registration, but link
+    identity preparation runs before state-machine construction. Register the raw
+    user values here so Ansible can scrub them from invocation data even when switch
+    resolution or other preparation fails early.
+    """
+    if not hasattr(module, "no_log_values"):
+        return
+    for config_item in module.params.get("config") or []:
+        module.no_log_values |= NDLinkModel.collect_secret_values(config_item)
+
+
 def main() -> None:
     argument_spec = nd_argument_spec()
     argument_spec.update(NDLinkModel.get_argument_spec())
@@ -796,6 +813,7 @@ def main() -> None:
         ],
     )
     require_pydantic(module)
+    register_secret_values(module)
 
     try:
         strategy = determine_strategy(module)

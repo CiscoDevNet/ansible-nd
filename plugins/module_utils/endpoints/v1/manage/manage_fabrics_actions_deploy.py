@@ -4,6 +4,7 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from typing import Literal
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
@@ -44,7 +45,7 @@ class EpFabricDeployPost(
     def path(self) -> str:
         if self.fabric_name is None:
             raise ValueError("fabric_name is required")
-        return BasePath.path("fabrics", self.fabric_name, "actions", "deploy")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "actions", "deploy")
 
     @property
     def verb(self) -> HttpVerbEnum:

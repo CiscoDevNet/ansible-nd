@@ -57,7 +57,16 @@ class SwitchCredentialsRequestModel(NDBaseModel):
     @field_validator("switch_ids", mode="before")
     @classmethod
     def validate_switch_ids(cls, v: list[str]) -> list[str]:
-        """Validate all switch IDs."""
+        """
+        # Summary
+
+        Validate and normalize the switch IDs used by a switch action payload.
+
+        ## Raises
+
+        - `ValueError`: Raised when no switch IDs are supplied or no supplied value
+            is a valid serial/switch identifier.
+        """
         if not v:
             raise ValueError("At least one switch ID is required")
         validated = []
@@ -71,7 +80,17 @@ class SwitchCredentialsRequestModel(NDBaseModel):
 
     @model_validator(mode="after")
     def validate_credentials(self) -> "SwitchCredentialsRequestModel":
-        """Ensure either local or remote credentials are provided."""
+        """
+        # Summary
+
+        Ensure either local credentials or remote credential-store references
+        are provided.
+
+        ## Raises
+
+        - `ValueError`: Raised when neither local nor remote credential fields are
+            complete enough for the credential-save payload.
+        """
         has_local = self.switch_username is not None and self.switch_password is not None
         has_remote = self.remote_credential_store_key is not None and self.remote_credential_store_type is not None
         if not has_local and not has_remote:
@@ -96,6 +115,16 @@ class ChangeSwitchSerialNumberRequestModel(NDBaseModel):
     @field_validator("new_switch_id", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
+        """
+        # Summary
+
+        Validate the replacement switch serial number.
+
+        ## Raises
+
+        - `ValueError`: Raised when the replacement serial number is empty or
+            invalid.
+        """
         result = validate_serial_number(v)
         if result is None:
             raise ValueError("new_switch_id cannot be empty")

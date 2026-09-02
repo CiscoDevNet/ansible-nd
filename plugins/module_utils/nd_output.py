@@ -26,16 +26,18 @@ class NDOutput:
         self._gathered_spec: dict[str, Any] = {}
 
     def format(self, **kwargs) -> dict[str, Any]:
-        # Read-only gathered state follows the Ansible resource-module
-        # convention: return the fetched objects under a ``gathered`` key and
-        # omit the change-oriented before/after/diff/proposed keys.
+        # Read-only gathered state returns fetched objects under ``gathered``.
+        # Keep empty before/after snapshots for a consistent result shape, but
+        # omit diff/proposed because no reconciliation is performed.
         if self._state == "gathered":
-            gathered_items = self._after.to_ansible_config() if isinstance(self._after, NDConfigCollection) else self._after
+            gathered_items = self._after.to_gathered_config() if isinstance(self._after, NDConfigCollection) else self._after
             if self._gathered_spec and isinstance(gathered_items, list):
                 gathered_items = [prune_to_spec(item, self._gathered_spec) for item in gathered_items]
             gathered_output = {
                 "output_level": self._output_level,
                 "changed": False,
+                "before": [],
+                "after": [],
                 "gathered": gathered_items,
             }
             if self._output_level == "debug":

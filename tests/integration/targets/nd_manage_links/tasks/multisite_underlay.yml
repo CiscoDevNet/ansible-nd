@@ -92,6 +92,14 @@
 
           - nm_msite_underlay_create_again is not changed
 
+    - name: Verify gathered output for multisiteUnderlay links
+      ansible.builtin.include_tasks: gathered.yml
+      vars:
+        gathered_policy_type: multisiteUnderlay
+        gathered_src_fabric: '{{ test_fabric_msite_src }}'
+        gathered_dst_fabric: '{{ test_fabric_msite_dst }}'
+        gathered_interface_name: Ethernet1/42
+
     - name: Update multisiteUnderlay link Eth1/42 (merged - check mode)
       cisco.nd.nd_manage_links: &msite_underlay_update
         config:
@@ -232,6 +240,7 @@
           - (nm_msite_underlay_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/43') | list) | length == 0
           - nm_msite_underlay_bulk_delete_again is not changed
 
-    - name: Final cleanup of multisiteUnderlay links
+  always:
+    - name: Always clean up multisiteUnderlay links
       cisco.nd.nd_manage_links:
         <<: *msite_underlay_cleanup

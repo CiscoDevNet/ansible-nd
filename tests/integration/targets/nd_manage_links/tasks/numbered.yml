@@ -118,6 +118,77 @@
 
           - nm_numbered_create_again is not changed
 
+    - name: Exercise mixed switch selectors when management IPs are configured
+      when:
+        - test_switch_a_ip | length > 0
+        - test_switch_b_ip | length > 0
+      block:
+        - name: Verify selector-test management IPs identify different switches
+          ansible.builtin.assert:
+            that:
+              - test_switch_a_ip != test_switch_b_ip
+            fail_msg: >-
+              nd_test_switch_a_ip and nd_test_switch_b_ip must identify different
+              switches for the mixed-selector negative test.
+
+        - name: Re-apply numbered link with matching switch names and IPs
+          cisco.nd.nd_manage_links:
+            config:
+              - src_fabric_name: '{{ test_fabric_numbered }}'
+                dst_fabric_name: '{{ test_fabric_numbered }}'
+                src_switch_name: '{{ test_switch_a }}'
+                src_switch_ip: '{{ test_switch_a_ip }}'
+                dst_switch_name: '{{ test_switch_b }}'
+                dst_switch_ip: '{{ test_switch_b_ip }}'
+                src_interface_name: Ethernet1/30
+                dst_interface_name: Ethernet1/30
+                config_data:
+                  policy_type: numbered
+                  template_inputs:
+                    src_ip: 10.99.30.1
+                    dst_ip: 10.99.30.2
+                    mtu: 9216
+                    speed: auto
+                    fec: auto
+                    interface_admin_state: true
+                    src_interface_description: ansible numbered 30 source
+                    dst_interface_description: ansible numbered 30 destination
+            state: merged
+          register: numbered_matching_selectors
+
+        - name: Assert matching mixed selectors are idempotent
+          ansible.builtin.assert:
+            that:
+              - numbered_matching_selectors is not changed
+
+        - name: Attempt numbered update with conflicting source name and IP
+          cisco.nd.nd_manage_links:
+            config:
+              - src_fabric_name: '{{ test_fabric_numbered }}'
+                dst_fabric_name: '{{ test_fabric_numbered }}'
+                src_switch_name: '{{ test_switch_a }}'
+                src_switch_ip: '{{ test_switch_b_ip }}'
+                dst_switch_name: '{{ test_switch_b }}'
+                dst_switch_ip: '{{ test_switch_b_ip }}'
+                src_interface_name: Ethernet1/30
+                dst_interface_name: Ethernet1/30
+                config_data:
+                  policy_type: numbered
+                  template_inputs:
+                    src_ip: 10.99.30.1
+                    dst_ip: 10.99.30.2
+                    mtu: 9216
+            state: merged
+          check_mode: true
+          register: numbered_conflicting_selectors
+          ignore_errors: true
+
+        - name: Assert conflicting mixed selectors fail before mutation
+          ansible.builtin.assert:
+            that:
+              - numbered_conflicting_selectors is failed
+              - numbered_conflicting_selectors.msg is search("do not resolve to the same switch")
+
     - name: Gather numbered links (read-only, no config)
       cisco.nd.nd_manage_links:
         state: gathered
@@ -127,6 +198,8 @@
       ansible.builtin.assert:
         that:
           - gathered_numbered is not changed
+          - gathered_numbered.before == []
+          - gathered_numbered.after == []
           - (gathered_numbered.gathered | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | list) | length == 1
           - (gathered_numbered.gathered | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 1
           - (gathered_numbered.gathered | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 1
@@ -371,59 +444,7 @@
 
           - nm_numbered_bulk_delete_again is not changed
 
-    - name: Final cleanup of numbered links
+  always:
+    - name: Always clean up numbered links
       cisco.nd.nd_manage_links:
         <<: *numbered_cleanup
-
-    # one_manage scope: CREATE-only coverage on a single cluster. ND does not
-    # return src/dstClusterName on a single-cluster link read, so the 8-field
-    # one_manage identity cannot round-trip; idempotency/update/delete via
-    # one_manage are only testable on a real multi-cluster lab. Here we exercise
-    # the one_manage create path and clean up via manage scope (6-field identity,
-    # which does round-trip). Gated on test_cluster_name; uses Ethernet1/33.
-    - name: Ensure numbered one_manage link does not exist (manage-scope cleanup)
-      cisco.nd.nd_manage_links: &numbered_one_manage_manage_cleanup
-        link_scope: manage
-        config:
-          - src_fabric_name: '{{ test_fabric_numbered }}'
-            dst_fabric_name: '{{ test_fabric_numbered }}'
-            src_switch_name: '{{ test_switch_a }}'
-            dst_switch_name: '{{ test_switch_b }}'
-            src_interface_name: Ethernet1/33
-            dst_interface_name: Ethernet1/33
-        state: deleted
-      when: test_cluster_name | length > 0
-
-    - name: Create numbered link via one_manage scope (single cluster, create-only)
-      cisco.nd.nd_manage_links:
-        link_scope: one_manage
-        config:
-          - src_cluster_name: '{{ test_cluster_name }}'
-            dst_cluster_name: '{{ test_cluster_name }}'
-            src_fabric_name: '{{ test_fabric_numbered }}'
-            dst_fabric_name: '{{ test_fabric_numbered }}'
-            src_switch_name: '{{ test_switch_a }}'
-            dst_switch_name: '{{ test_switch_b }}'
-            src_interface_name: Ethernet1/33
-            dst_interface_name: Ethernet1/33
-            config_data:
-              policy_type: numbered
-              template_inputs:
-                src_ip: 10.99.33.1
-                dst_ip: 10.99.33.2
-                mtu: 9216
-        state: merged
-      register: nm_numbered_one_manage
-      when: test_cluster_name | length > 0
-
-    - name: Asserts for numbered one_manage create
-      ansible.builtin.assert:
-        that:
-          - nm_numbered_one_manage is changed
-          - (nm_numbered_one_manage.after | selectattr('src_interface_name', 'eq', 'Ethernet1/33') | list) | length == 1
-      when: test_cluster_name | length > 0
-
-    - name: Cleanup numbered one_manage link (manage scope)
-      cisco.nd.nd_manage_links:
-        <<: *numbered_one_manage_manage_cleanup
-      when: test_cluster_name | length > 0

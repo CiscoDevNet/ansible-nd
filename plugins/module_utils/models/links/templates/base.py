@@ -222,6 +222,37 @@ class LinkTemplateBase(NDNestedModel):
                 raise ValueError("'{0}' exceeds the maximum length of {1} characters for policy_type '{2}'.".format(alias, max_length, policy))
         return self
 
+    def write_contract_invalid_field_keys(self, by_alias: bool = False) -> set[str]:
+        """Return controller values that cannot be replayed as user input.
+
+        ND link payloads require every template key, so fields without a documented
+        default are sent as typed empties. The controller can echo those sentinels
+        (for example ``nativeVlan: 0`` or ``bpduGuard: ""``) even though the write
+        contract rejects them. Gathered output omits such values instead of
+        returning configuration that fails validation when reapplied.
+        """
+        invalid: set[str] = set()
+        for field_name, field_info in type(self).model_fields.items():
+            if field_info.exclude:
+                continue
+            extra = field_info.json_schema_extra
+            if not isinstance(extra, dict):
+                continue
+            value = getattr(self, field_name, None)
+            choices = extra.get("choices")
+            minimum = extra.get("minimum")
+            maximum = extra.get("maximum")
+            max_length = extra.get("max_length")
+            violates_contract = (
+                (choices is not None and value is not None and value not in choices)
+                or (minimum is not None and isinstance(value, int) and not isinstance(value, bool) and value < minimum)
+                or (maximum is not None and isinstance(value, int) and not isinstance(value, bool) and value > maximum)
+                or (max_length is not None and isinstance(value, str) and len(value) > max_length)
+            )
+            if violates_contract:
+                invalid.add((field_info.alias or field_name) if by_alias else field_name)
+        return invalid
+
     @classmethod
     def secret_field_keys(cls, by_alias: bool = True) -> set[str]:
         """Keys of secret fields (tagged ``json_schema_extra={"secret": True}``).
@@ -291,6 +322,31 @@ class LinkTemplateBase(NDNestedModel):
         if annotation is float:
             return 0.0
         return ""
+
+    def _scrub_reverse_diff_dict(self, data: dict[str, Any]) -> None:
+        """Normalize the effective defaults sent by link PUT payloads.
+
+        ``state=replaced`` compares the sparse user declaration with ND's response,
+        while :meth:`apply_payload_defaults` expands that declaration before the
+        PUT. ND then echoes the expanded fields. Without applying the same contract
+        to the reverse/removal pass, documented defaults such as ``speed=auto`` and
+        typed empty values appear to be user fields pending removal on every run,
+        making replace permanently non-idempotent.
+
+        The forward subset comparison runs before this scrub, so a requested value
+        that differs from ND is still detected. Here we remove only the exact value
+        this model would send when the field is omitted.
+        """
+        super()._scrub_reverse_diff_dict(data)
+        for field_name, field_info in type(self).model_fields.items():
+            if field_info.exclude:
+                continue
+            alias = field_info.alias or field_name
+            effective_default = self._documented_default(field_info)
+            if effective_default is _NO_DEFAULT:
+                effective_default = self._empty_for_annotation(field_info.annotation)
+            if data.get(alias) == effective_default:
+                data.pop(alias, None)
 
     def to_payload(self, **kwargs: Any) -> dict[str, Any]:
         """Serialize for POST/PUT, sending ND's documented defaults for unset fields."""

@@ -694,7 +694,7 @@ def test_manage_policies_config_models_00600() -> None:
     - All expected keys are present.
     - ``fabric_name`` is required and aliased to ``fabric``.
     - ``state`` defaults to ``merged`` with the documented choices.
-    - ``deploy`` defaults to ``True`` and ``use_description_as_key`` defaults to
+    - ``deploy`` defaults to ``False`` and ``use_description_as_key`` defaults to
       ``False``.
 
     ## Classes and Methods
@@ -716,7 +716,7 @@ def test_manage_policies_config_models_00600() -> None:
     assert spec["fabric_name"]["aliases"] == ["fabric"]
     assert spec["state"]["default"] == "merged"
     assert spec["state"]["choices"] == ["merged", "deleted", "gathered"]
-    assert spec["deploy"]["default"] is True
+    assert spec["deploy"]["default"] is False
     assert spec["use_description_as_key"]["default"] is False
     assert spec["config"]["type"] == "list"
     assert spec["config"]["elements"] == "dict"

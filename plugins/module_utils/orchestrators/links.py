@@ -60,6 +60,7 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         if self.strategy is None:
             raise ValueError("NDLinkOrchestrator requires a strategy instance")
         object.__setattr__(self, "_link_id_map", {})
+        object.__setattr__(self, "_link_ids_by_key", {})
         object.__setattr__(self, "_existing_by_key", {})
         object.__setattr__(self, "_switch_index_by_fabric", {})
         object.__setattr__(self, "_log", logging.getLogger("nd.LinkOrchestrator"))
@@ -90,7 +91,12 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         return raw_config
 
     def _backfill_switch_for_side(self, entry: dict[str, Any], side: str) -> None:
-        """Priority switch_id > switch_ip > switch_name. Higher priority overwrites lower with the canonical hostname from the index."""
+        """Resolve every supplied selector, require consistency, then apply priority.
+
+        Priority remains ``switch_id > switch_ip > switch_name``, but lower-priority
+        selectors are no longer silently ignored: if they identify another switch,
+        fail before targeting a link different from the visible declaration.
+        """
         name_key = "{0}_switch_name".format(side)
         ip_key = "{0}_switch_ip".format(side)
         id_key = "{0}_switch_id".format(side)
@@ -109,37 +115,54 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
 
         index = self._index_for_fabric(fabric)
 
+        resolved = {}
         if sid:
-            sw = index.by_id().get(sid)
-            if not sw:
+            switch = index.by_id().get(sid)
+            if not switch:
                 raise Exception("Could not find switch with {0}_switch_id='{1}' in fabric '{2}'.".format(side, sid, fabric))
-            if sw.hostname:
-                entry[name_key] = sw.hostname
-            return
+            resolved["switch_id"] = switch
 
         if ip:
-            sw = index.by_ip().get(ip)
-            if not sw:
+            switch = index.by_ip().get(ip)
+            if not switch:
                 raise Exception(
                     "Could not resolve {0}_switch_ip='{1}' in fabric '{2}'. " "No switch with that management IP was found.".format(side, ip, fabric)
                 )
-            entry[id_key] = sw.switch_id
-            if sw.hostname:
-                entry[name_key] = sw.hostname
-            return
+            resolved["switch_ip"] = switch
 
-        matches = inventory_by_name(index).get(name, [])
-        if len(matches) == 1:
-            entry[id_key] = matches[0].switch_id
-            return
-        if len(matches) > 1:
-            ids = [m.switch_id for m in matches]
-            raise Exception(
-                "{0}_switch_name='{1}' is ambiguous in fabric '{2}' "
-                "(matches {3} switches: {4}). Use {0}_switch_ip or "
-                "{0}_switch_id to disambiguate.".format(side, name, fabric, len(matches), ", ".join(ids))
+        if name:
+            matches = inventory_by_name(index).get(name, [])
+            if len(matches) == 1:
+                resolved["switch_name"] = matches[0]
+            elif len(matches) > 1:
+                higher_priority = resolved.get("switch_id") or resolved.get("switch_ip")
+                if higher_priority and any(match.switch_id == higher_priority.switch_id for match in matches):
+                    resolved["switch_name"] = higher_priority
+                else:
+                    ids = [match.switch_id for match in matches]
+                    raise Exception(
+                        "{0}_switch_name='{1}' is ambiguous in fabric '{2}' "
+                        "(matches {3} switches: {4}). Use {0}_switch_ip or "
+                        "{0}_switch_id to disambiguate.".format(side, name, fabric, len(matches), ", ".join(ids))
+                    )
+            else:
+                raise Exception(
+                    "Could not resolve {0}_switch_name='{1}' in fabric '{2}'. " "No switch with that hostname was found.".format(side, name, fabric)
+                )
+
+        resolved_ids = {switch.switch_id for switch in resolved.values()}
+        if len(resolved_ids) > 1:
+            supplied = ", ".join(
+                "{0}_{1}='{2}'".format(side, selector, value) for selector, value in (("switch_id", sid), ("switch_ip", ip), ("switch_name", name)) if value
             )
-        raise Exception("Could not resolve {0}_switch_name='{1}' in fabric '{2}'. " "No switch with that hostname was found.".format(side, name, fabric))
+            raise Exception("Switch selectors {0} do not resolve to the same switch in fabric '{1}'.".format(supplied, fabric))
+
+        switch = resolved.get("switch_id") or resolved.get("switch_ip") or resolved.get("switch_name")
+        if switch is None:
+            return
+        entry[id_key] = switch.switch_id
+        if switch.hostname:
+            entry[name_key] = switch.hostname
 
     def query_all(self, model_instance: NDLinkModel | None = None, **kwargs: Any) -> ResponseType:
         """GET all links in scope and populate linkId / policy_type caches."""
@@ -162,30 +185,44 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
 
     def _build_caches(self, links_list: list[dict[str, Any]]) -> None:
         """Populate ``_link_id_map`` (for PUT and DELETE) and ``_existing_by_key`` (for policy change detection)."""
-        link_id_map = {}
+        link_ids_by_key = {}
         existing_by_key = {}
         for link_data in links_list:
             try:
                 model = NDLinkModel.from_response(link_data)
                 composite_key = model.get_identifier_value()
                 link_id = link_data.get("linkId")
-                if composite_key and link_id:
-                    link_id_map[composite_key] = link_id
+                if composite_key:
+                    link_ids_by_key.setdefault(composite_key, []).append(link_id or "<missing linkId>")
                     existing_policy = (link_data.get("configData") or {}).get("policyType")
-                    if existing_policy:
+                    if existing_policy and composite_key not in existing_by_key:
                         existing_by_key[composite_key] = existing_policy
             except (ValueError, KeyError):
                 continue
+        link_id_map = {key: values[0] for key, values in link_ids_by_key.items() if len(values) == 1 and values[0] != "<missing linkId>"}
+        object.__setattr__(self, "_link_ids_by_key", link_ids_by_key)
         object.__setattr__(self, "_link_id_map", link_id_map)
         object.__setattr__(self, "_existing_by_key", existing_by_key)
 
-    def _resolve_link_id(self, model_instance: NDLinkModel) -> str:
+    def _raise_if_ambiguous(self, model_instance: NDLinkModel, action: str) -> None:
+        """Reject a mutation when one endpoint tuple maps to multiple ND records."""
+        composite_key = model_instance.get_identifier_value()
+        link_ids = self._link_ids_by_key.get(composite_key, [])
+        if len(link_ids) <= 1:
+            return
+        raise ValueError(
+            "Cannot {0} link {1}: ND returned {2} records with the same endpoint identity (linkIds: {3}). "
+            "Disambiguate or remove the duplicate controller records first.".format(action, composite_key, len(link_ids), ", ".join(link_ids))
+        )
+
+    def _resolve_link_id(self, model_instance: NDLinkModel, action: str = "modify") -> str:
         """Look up the API generated linkId for a model's composite identity."""
         try:
             composite_key = model_instance.get_identifier_value()
         except ValueError as e:
             raise ValueError("Cannot resolve linkId - invalid composite key: {0}".format(e)) from e
 
+        self._raise_if_ambiguous(model_instance, action)
         link_id = self._link_id_map.get(composite_key)
         if not link_id:
             raise ValueError("Cannot resolve linkId for {0}. Link may not exist on ND or " "query_all() wasn't called.".format(composite_key))
@@ -244,8 +281,20 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         mode. Rejects cross-policy transitions here so check mode is a reliable
         preflight gate rather than approving a change that normal mode will reject.
         """
+        state = self.rest_send.params.get("state")
+        if state == "overridden":
+            ambiguous = {key: values for key, values in self._link_ids_by_key.items() if len(values) > 1}
+            if ambiguous:
+                details = "; ".join("{0}: {1}".format(key, ", ".join(values)) for key, values in ambiguous.items())
+                raise ValueError("Cannot override link scope while duplicate endpoint identities exist: {0}.".format(details))
         for model_instance in model_instances:
+            self._raise_if_ambiguous(model_instance, "modify")
             self._raise_if_policy_type_change(model_instance)
+
+    def preflight_delete(self, model_instances: Sequence[NDLinkModel]) -> None:
+        """Reject ambiguous endpoint identities before check mode predicts delete."""
+        for model_instance in model_instances:
+            self._raise_if_ambiguous(model_instance, "delete")
 
     def create(self, model_instance: NDLinkModel, **kwargs: Any) -> ResponseType:
         """Single create delegates to the bulk path (ND only exposes bulk POST)."""
@@ -276,7 +325,7 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         self._raise_if_policy_type_change(model_instance)
 
         try:
-            link_id = self._resolve_link_id(model_instance)
+            link_id = self._resolve_link_id(model_instance, action="update")
             endpoint = self.strategy.link_put_cls()
             endpoint.link_uuid = link_id
             self.strategy.configure_mutation(endpoint)
@@ -298,7 +347,7 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         if not model_instances:
             return {}
         try:
-            link_ids = [self._resolve_link_id(inst) for inst in model_instances]
+            link_ids = [self._resolve_link_id(inst, action="delete") for inst in model_instances]
             endpoint = self.strategy.link_actions_remove_post_cls()
             self.strategy.configure_mutation(endpoint)
             response = self._post_bulk(endpoint, link_ids, operation_type=OperationType.DELETE)

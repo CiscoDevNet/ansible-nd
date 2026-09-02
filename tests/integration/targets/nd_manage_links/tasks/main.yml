@@ -15,9 +15,9 @@
     test_switch_a: '{{ nd_test_switch_a | default("n9k-z17-62") }}'
     test_switch_b: '{{ nd_test_switch_b | default("n9k-z17-63") }}'
 
-    # Optional management IPs. By default per policy tests resolve switches by name.
-    # Set these (and switch each per policy file to src_switch_ip/dst_switch_ip) to
-    # exercise IP based resolution if your lab has duplicate hostnames.
+    # Optional management IPs. By default policy tests resolve switches by name.
+    # Set both to opt in to the numbered-policy mixed-selector tests, which verify
+    # that matching name/IP selectors are accepted and conflicting ones fail safely.
     test_switch_a_ip: '{{ nd_test_switch_a_ip | default("") }}'
     test_switch_b_ip: '{{ nd_test_switch_b_ip | default("") }}'
 
@@ -49,6 +49,9 @@
     run_multisite_overlay: '{{ nd_test_run_multisite_overlay | default(false) }}'
     run_multisite_underlay: '{{ nd_test_run_multisite_underlay | default(false) }}'
     run_ebgp_vrf_lite: '{{ nd_test_run_ebgp_vrf_lite | default(false) }}'
+
+    # This target intentionally exercises link_scope=manage only. OneManage needs
+    # a real multi-cluster environment and is covered by unit tests in this lab.
 
 - name: Run nd_manage_links lifecycle for numbered policy
   ansible.builtin.import_tasks: numbered.yml

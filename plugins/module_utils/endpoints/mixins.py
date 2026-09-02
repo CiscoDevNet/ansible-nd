@@ -9,7 +9,7 @@ This module provides mixin classes that can be composed to add common
 fields to endpoint models without duplication.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
@@ -120,10 +120,28 @@ class UpdateGroupNameMixin(BaseModel):
     update_group_name: str | None = Field(default=None, min_length=1, description="Update group name")
 
 
+class PrefixListNameMixin(BaseModel):
+    """Mixin for endpoints that require prefix_list_name parameter."""
+
+    prefix_list_name: str | None = Field(default=None, min_length=1, max_length=115, description="Prefix list name")
+
+
 class RouteMapNameMixin(BaseModel):
     """Mixin for endpoints that require route_map_name parameter."""
 
     route_map_name: str | None = Field(default=None, min_length=1, max_length=115, description="Route map name")
+
+
+class CommunityListNameMixin(BaseModel):
+    """Mixin for endpoints that require community_list_name parameter."""
+
+    community_list_name: str | None = Field(default=None, min_length=1, max_length=115, description="Community list name")
+
+
+class ExtendedCommunityListNameMixin(BaseModel):
+    """Mixin for endpoints that require extended_community_list_name parameter."""
+
+    extended_community_list_name: str | None = Field(default=None, min_length=1, max_length=115, description="Extended community list name")
 
 
 class TenantNameMixin(BaseModel):

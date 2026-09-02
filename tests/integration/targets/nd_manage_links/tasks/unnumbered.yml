@@ -100,6 +100,14 @@
 
           - nm_unnumbered_create_again is not changed
 
+    - name: Verify gathered output for unnumbered links
+      ansible.builtin.include_tasks: gathered.yml
+      vars:
+        gathered_policy_type: unnumbered
+        gathered_src_fabric: '{{ test_fabric_unnumbered }}'
+        gathered_dst_fabric: '{{ test_fabric_unnumbered }}'
+        gathered_interface_name: Ethernet1/30
+
     - name: Update unnumbered link Eth1/30 (merged - check mode)
       cisco.nd.nd_manage_links: &unnumbered_update
         config:
@@ -306,6 +314,7 @@
           - (nm_unnumbered_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 0
           - nm_unnumbered_bulk_delete_again is not changed
 
-    - name: Final cleanup of unnumbered links
+  always:
+    - name: Always clean up unnumbered links
       cisco.nd.nd_manage_links:
         <<: *unnumbered_cleanup

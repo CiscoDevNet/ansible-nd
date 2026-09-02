@@ -86,6 +86,14 @@
 
           - nm_l2dci_create_again is not changed
 
+    - name: Verify gathered output for layer2Dci links
+      ansible.builtin.include_tasks: gathered.yml
+      vars:
+        gathered_policy_type: layer2Dci
+        gathered_src_fabric: '{{ test_fabric_l2dci_src }}'
+        gathered_dst_fabric: '{{ test_fabric_l2dci_dst }}'
+        gathered_interface_name: Ethernet1/30
+
     - name: Update layer2Dci link Eth1/30 (merged - check mode)
       cisco.nd.nd_manage_links: &l2dci_update
         config:
@@ -219,6 +227,7 @@
           - (nm_l2dci_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 0
           - nm_l2dci_bulk_delete_again is not changed
 
-    - name: Final cleanup of layer2Dci links
+  always:
+    - name: Always clean up layer2Dci links
       cisco.nd.nd_manage_links:
         <<: *l2dci_cleanup

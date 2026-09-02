@@ -313,6 +313,12 @@ class NDStateMachine:
             if getattr(existing_item, "is_unsupported_policy", False):
                 raise NDStateMachineError(existing_item.describe_unsupported_policy() + "; this module cannot delete it.")
             items_to_delete.append(existing_item)
+        try:
+            self.model_orchestrator.preflight_delete(items_to_delete)
+        except NDStateMachineError:
+            raise
+        except Exception as e:
+            raise NDStateMachineError(f"Delete preflight failed: {e}") from e
         self._delete_items(items_to_delete)
 
     def _delete_items(self, items: list[NDBaseModel]) -> None:

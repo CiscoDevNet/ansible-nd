@@ -84,16 +84,11 @@ class VrfStateMachine:
         if state == "deleted":
             return self.run_deleted(module_args, active_strategy)
 
-        if state == "overridden":
-            return self.run_overridden(module_args, active_strategy, defer_deploy)
+        if state in ("replaced", "overridden"):
+            return self._run_state_machine_aware_with_attachments(module_args, active_strategy, defer_deploy)
 
         desired_attachments = None
         desired_vrf_names = None
-        if state in ("replaced", "overridden"):
-            desired_attachments = self.coordinator._desired_attachment_map(
-                module_args,
-                active_strategy,
-            )
 
         self._trace("attachment_phase_pre_start", state=state)
         pre_attach = self.coordinator._apply_attachment_phase(
@@ -145,6 +140,22 @@ class VrfStateMachine:
         """
         Run overridden using the state machine's initial current-state query.
         """
+        return self._run_state_machine_aware_with_attachments(module_args, strategy, defer_deploy)
+
+    def _run_state_machine_aware_with_attachments(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        defer_deploy: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Run replaced/overridden after deriving current VRF names from the state machine.
+
+        The pre-detach phase must only query attachments for VRFs that already
+        exist. First-create ``state=replaced`` tasks can then create the VRF
+        before the post-attach phase runs.
+        """
+        state = module_args.get("state", "merged")
         config = module_args.get("config") or []
         desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
         desired_vrf_names = self.coordinator._configured_vrf_names(config)
@@ -154,15 +165,15 @@ class VrfStateMachine:
             current_vrf_names = self._vrf_names_from_models(sm.existing)
             current_vrf_name_set = set(current_vrf_names)
             desired_vrf_name_set = set(desired_vrf_names)
-            omitted_vrf_names = [vrf_name for vrf_name in current_vrf_names if vrf_name not in desired_vrf_name_set]
             current_desired_vrf_names = [vrf_name for vrf_name in desired_vrf_names if vrf_name in current_vrf_name_set]
+            attachment_query_vrf_names = current_vrf_names if state == "overridden" else current_desired_vrf_names
             current_attachment_details = (
                 self.coordinator._current_attachment_details_ignore_missing(
                     module_args,
                     strategy,
-                    current_vrf_names,
+                    attachment_query_vrf_names,
                 )
-                if current_vrf_names
+                if attachment_query_vrf_names
                 else []
             )
             current_desired_attachments = self.coordinator._attachment_map_from_details(
@@ -170,13 +181,17 @@ class VrfStateMachine:
                 current_desired_vrf_names,
             )
 
-            pre_delete_traces = self._prepare_overridden_deletions(
-                module_args,
-                strategy,
-                omitted_vrf_names,
-                current_attachment_details,
-            )
-            self._trace("attachment_phase_pre_start", state="overridden")
+            pre_delete_traces: list[dict[str, Any]] = []
+            if state == "overridden":
+                omitted_vrf_names = [vrf_name for vrf_name in current_vrf_names if vrf_name not in desired_vrf_name_set]
+                pre_delete_traces = self._prepare_overridden_deletions(
+                    module_args,
+                    strategy,
+                    omitted_vrf_names,
+                    current_attachment_details,
+                )
+
+            self._trace("attachment_phase_pre_start", state=state)
             pre_attach = self.coordinator._apply_attachment_phase(
                 module_args,
                 strategy,
@@ -184,6 +199,7 @@ class VrfStateMachine:
                 desired=desired_attachments,
                 current_vrf_names=current_desired_vrf_names,
                 current=current_desired_attachments,
+                attachment_details=current_attachment_details,
             )
             self._trace("attachment_phase_pre_end", changed=pre_attach.get("changed"), payload_count=len(pre_attach.get("payloads", [])))
             desired_attachments = pre_attach.get("desired", desired_attachments)
@@ -192,9 +208,9 @@ class VrfStateMachine:
                 empty_when_absent=current_desired_vrf_names == [],
             )
 
-            self._trace("manage_state_start", state="overridden")
+            self._trace("manage_state_start", state=state)
             sm.manage_state()
-            self._trace("manage_state_end", state="overridden")
+            self._trace("manage_state_end", state=state)
             result = self.coordinator._format_state_machine_output(sm)
 
             self._prepend_traces(result, pre_delete_traces + [pre_attach])
@@ -202,14 +218,34 @@ class VrfStateMachine:
             if result.get("failed", False):
                 return result
 
-            self._trace("attachment_phase_post_start", state="overridden")
+            post_attachment_details = list(current_attachment_details or [])
+            post_current_attachments = dict(current_attachments or {})
+            new_desired_vrf_names = [vrf_name for vrf_name in desired_vrf_names if vrf_name not in current_vrf_name_set]
+            if state in ("replaced", "overridden") and desired_attachments and new_desired_vrf_names and not self._check_mode():
+                self._trace("attachment_phase_post_new_current_query_start", vrf_names=new_desired_vrf_names)
+                new_attachment_details = self.coordinator._current_attachment_details(
+                    module_args,
+                    strategy,
+                    new_desired_vrf_names,
+                )
+                post_attachment_details.extend(new_attachment_details)
+                post_current_attachments.update(self.coordinator._attachment_map_from_details(new_attachment_details, new_desired_vrf_names))
+                self._trace(
+                    "attachment_phase_post_new_current_query_end",
+                    vrf_names=new_desired_vrf_names,
+                    attachment_count=len(new_attachment_details or []),
+                    current_count=len(post_current_attachments),
+                )
+
+            self._trace("attachment_phase_post_start", state=state)
             post_attach = self.coordinator._apply_attachment_phase(
                 module_args,
                 strategy,
                 phase="post",
                 desired=desired_attachments,
                 current_vrf_names=desired_vrf_names,
-                current=current_attachments,
+                current=post_current_attachments,
+                attachment_details=post_attachment_details,
             )
             self._trace("attachment_phase_post_end", changed=post_attach.get("changed"), payload_count=len(post_attach.get("payloads", [])))
             self.coordinator._merge_api_trace(result, post_attach)

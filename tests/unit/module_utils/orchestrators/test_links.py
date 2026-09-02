@@ -14,6 +14,7 @@ both link scopes and the bulk per-item failure guard.
 from __future__ import annotations
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.links.links import NDLinkModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.links import NDLinkOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.manage_link import ManageLinkStrategy
@@ -129,14 +130,16 @@ class _FakeSwitch:
 
 
 class _FakeIndex:
-    def __init__(self, by_ip_map):
-        self._by_ip = by_ip_map
+    def __init__(self, by_ip_map=None, by_id_map=None, switches=None):
+        self._by_ip = by_ip_map or {}
+        self._by_id = by_id_map or {}
+        self.switches = switches or list({switch.switch_id: switch for switch in [*self._by_ip.values(), *self._by_id.values()]}.values())
 
     def by_ip(self):
         return self._by_ip
 
     def by_id(self):
-        return {}
+        return self._by_id
 
 
 def _orchestrator():
@@ -160,6 +163,46 @@ def test_prepare_config_data_backfills_on_copy_not_input():
     assert result is not raw
     assert result[0]["src_switch_name"] == "host1"
     assert result[0]["src_switch_id"] == "SID1"
+
+
+def test_prepare_config_data_accepts_consistent_mixed_switch_selectors():
+    switch = _FakeSwitch("SID1", "leaf1")
+    orch = _orchestrator()
+    orch._switch_index_by_fabric["f"] = _FakeIndex(by_ip_map={"1.1.1.1": switch}, by_id_map={"SID1": switch})
+    raw = [
+        {
+            "src_fabric_name": "f",
+            "src_switch_id": "SID1",
+            "src_switch_ip": "1.1.1.1",
+            "src_switch_name": "leaf1",
+            "dst_fabric_name": "f",
+            "dst_switch_id": "SID1",
+        }
+    ]
+
+    result = orch.prepare_config_data(raw)
+
+    assert result[0]["src_switch_id"] == "SID1"
+    assert result[0]["src_switch_name"] == "leaf1"
+
+
+def test_prepare_config_data_rejects_inconsistent_mixed_switch_selectors():
+    first = _FakeSwitch("SID1", "leaf1")
+    second = _FakeSwitch("SID2", "leaf2")
+    orch = _orchestrator()
+    orch._switch_index_by_fabric["f"] = _FakeIndex(by_ip_map={"2.2.2.2": second}, by_id_map={"SID1": first})
+    raw = [
+        {
+            "src_fabric_name": "f",
+            "src_switch_id": "SID1",
+            "src_switch_ip": "2.2.2.2",
+            "dst_fabric_name": "f",
+            "dst_switch_id": "SID1",
+        }
+    ]
+
+    with pytest.raises(Exception, match="do not resolve to the same switch"):
+        orch.prepare_config_data(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -209,3 +252,88 @@ def test_is_policy_type_change_false_for_realized_preprovision():
     proposed = _link_model("preprovision")
     object.__setattr__(orch, "_existing_by_key", {proposed.get_identifier_value(): "numbered"})
     assert orch._is_policy_type_change(proposed) is False
+
+
+def _link_response(link_id):
+    return {
+        "linkId": link_id,
+        "srcFabricName": "f",
+        "dstFabricName": "f",
+        "srcSwitchName": "leaf1",
+        "dstSwitchName": "spine1",
+        "srcInterfaceName": "Ethernet1/1",
+        "dstInterfaceName": "Ethernet1/1",
+        "configData": {"policyType": "numbered", "templateInputs": {}},
+    }
+
+
+def test_duplicate_endpoint_cache_rejects_ambiguous_update_and_delete():
+    orch = _orchestrator()
+    proposed = _link_model("numbered")
+    orch._build_caches([_link_response("L1"), _link_response("L2")])
+
+    with pytest.raises(ValueError, match=r"linkIds: L1, L2"):
+        orch._resolve_link_id(proposed, action="update")
+    with pytest.raises(ValueError, match=r"linkIds: L1, L2"):
+        orch._resolve_link_id(proposed, action="delete")
+    with pytest.raises(ValueError, match=r"linkIds: L1, L2"):
+        orch.preflight_delete([proposed])
+
+
+def test_duplicate_endpoint_cache_blocks_authoritative_override():
+    orch = _orchestrator()
+    orch.rest_send.params["state"] = "overridden"
+    orch._build_caches([_link_response("L1"), _link_response("L2")])
+
+    with pytest.raises(ValueError, match="Cannot override link scope"):
+        orch.preflight([_link_model("numbered")])
+
+
+def test_create_bulk_passes_create_operation_type(monkeypatch):
+    observed = {}
+
+    def fake_post_bulk(self, endpoint, items, operation_type):
+        observed["operation_type"] = operation_type
+        return {"links": [{"status": "success"}]}
+
+    monkeypatch.setattr(NDLinkOrchestrator, "_post_bulk", fake_post_bulk)
+    _orchestrator().create_bulk([_link_model("numbered")])
+
+    assert observed["operation_type"] == OperationType.CREATE
+
+
+def test_update_passes_update_operation_type(monkeypatch):
+    observed = {}
+    orch = _orchestrator()
+    model = _link_model("numbered")
+    key = model.get_identifier_value()
+    object.__setattr__(orch, "_link_id_map", {key: "L1"})
+    object.__setattr__(orch, "_link_ids_by_key", {key: ["L1"]})
+
+    def fake_request(self, path, verb, data=None, not_found_ok=False, operation_type=OperationType.QUERY):
+        observed["operation_type"] = operation_type
+        return {}
+
+    monkeypatch.setattr(NDLinkOrchestrator, "_request", fake_request)
+    orch.update(model)
+
+    assert observed["operation_type"] == OperationType.UPDATE
+
+
+def test_delete_bulk_passes_delete_operation_type(monkeypatch):
+    observed = {}
+    orch = _orchestrator()
+    model = _link_model("numbered")
+    key = model.get_identifier_value()
+    object.__setattr__(orch, "_link_id_map", {key: "L1"})
+    object.__setattr__(orch, "_link_ids_by_key", {key: ["L1"]})
+
+    def fake_post_bulk(self, endpoint, items, operation_type):
+        observed["items"] = items
+        observed["operation_type"] = operation_type
+        return {"links": [{"status": "success"}]}
+
+    monkeypatch.setattr(NDLinkOrchestrator, "_post_bulk", fake_post_bulk)
+    orch.delete_bulk([model])
+
+    assert observed == {"items": ["L1"], "operation_type": OperationType.DELETE}

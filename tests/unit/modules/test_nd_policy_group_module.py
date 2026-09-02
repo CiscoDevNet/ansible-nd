@@ -32,6 +32,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import yaml
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_policy_group
 from ansible_collections.cisco.nd.plugins.modules.nd_manage_policy_group import (
     _FabricInventoryRestClient,
@@ -52,6 +53,15 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
 
 class FailJsonError(Exception):
     """Raised by ``FakeModule.fail_json`` so tests can ``pytest.raises`` cleanly."""
+
+
+def test_nd_policy_group_module_00005_deploy_default_matches_documentation() -> None:
+    """Verify the safe deploy default is identical in docs and argument spec."""
+    documentation = yaml.safe_load(nd_manage_policy_group.DOCUMENTATION)
+    argument_spec = nd_manage_policy_group.PolicyGroupCreate.get_argument_spec()
+
+    assert documentation["options"]["deploy"]["default"] is False
+    assert argument_spec["deploy"]["default"] is False
 
 
 class FakeModule:

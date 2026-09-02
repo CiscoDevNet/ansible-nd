@@ -1056,3 +1056,57 @@ def test_endpoints_api_v1_manage_fabrics_00810():
     assert add_members.verb == HttpVerbEnum.POST
     assert remove_members.path == "/api/v1/manage/fabrics/my-fabric/actions/removeMembers?clusterName=cluster1&ticketId=CHG456"
     assert remove_members.verb == HttpVerbEnum.POST
+
+
+# =============================================================================
+# Test: fabric_name is URL-encoded in the path (issue #292)
+# =============================================================================
+
+
+def test_endpoints_api_v1_manage_fabrics_00940():
+    """
+    # Summary
+
+    Verify fabric_name is percent-encoded in the base path builder.
+
+    ## Test
+
+    - Reserved characters (``/``, space, ``#``) in fabric_name are encoded so a
+      malformed request path is not produced.
+
+    ## Classes and Methods
+
+    - EpManageFabricsGet.path
+    - EpManageFabricsSummaryGet.path
+    """
+    with does_not_raise():
+        get_instance = EpManageFabricsGet()
+        get_instance.fabric_name = "my/fabric name#1"
+        get_result = get_instance.path
+        summary_instance = EpManageFabricsSummaryGet()
+        summary_instance.fabric_name = "my/fabric name#1"
+        summary_result = summary_instance.path
+    assert get_result == "/api/v1/manage/fabrics/my%2Ffabric%20name%231"
+    assert summary_result == "/api/v1/manage/fabrics/my%2Ffabric%20name%231/summary"
+
+
+def test_endpoints_api_v1_manage_fabrics_00950():
+    """
+    # Summary
+
+    Verify fabric_name is percent-encoded in the config deploy path builder.
+
+    ## Test
+
+    - Reserved characters in fabric_name are encoded in the overridden
+      EpManageFabricConfigDeployPost.path.
+
+    ## Classes and Methods
+
+    - EpManageFabricConfigDeployPost.path
+    """
+    with does_not_raise():
+        instance = EpManageFabricConfigDeployPost()
+        instance.fabric_name = "my/fabric name#1"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/my%2Ffabric%20name%231/actions/configDeploy"

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, ValidationError, model_validator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, PrivateAttr, ValidationError, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.base import LinkTemplateBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.discriminated_union import LinkTemplateInputs, all_secret_template_input_keys
@@ -136,6 +136,16 @@ class NDLinkModel(NDBaseModel):
         "dst_interface_name",
     ]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
+    # ND can return distinct controller records with the same physical endpoint
+    # tuple. Preserve all of them for gathered output; the link orchestrator keeps
+    # an endpoint multimap and rejects ambiguous mutations safely.
+    allow_duplicate_identifiers: ClassVar[bool] = True
+
+    # Validation context is not retained by Pydantic. Keep the read origin as a
+    # private attribute so controller-echoed write-only secret keys are not
+    # mistaken for explicit user update intent during before/after comparison.
+    _from_controller_response: bool = PrivateAttr(default=False)
+    _explicit_secret_update_intent: bool = PrivateAttr(default=False)
 
     unwanted_keys: ClassVar[list] = [
         ["linkId"],
@@ -182,6 +192,13 @@ class NDLinkModel(NDBaseModel):
 
     config_data: LinkConfigDataModel | None = Field(default=None, alias="configData")
 
+    @classmethod
+    def from_response(cls, response: dict[str, Any], **kwargs: Any) -> "NDLinkModel":
+        """Parse a controller link and retain its response origin for diff logic."""
+        instance = super().from_response(response, **kwargs)
+        instance._from_controller_response = True
+        return instance
+
     @property
     def is_unsupported_policy(self) -> bool:
         """True when this link uses a policy type the module does not model.
@@ -210,12 +227,10 @@ class NDLinkModel(NDBaseModel):
     # only. The directional template pairs are derived per policy from the model's
     # own fields, so each policy gets its own src/dst set.
     #
-    # Known limitation: a few inter-fabric policies pair a masked source address
-    # with a plain destination (srcIpAddressMask / dstIpAddress); the mask lives on
-    # the field, not the endpoint, so a value swap would move it to the wrong end.
-    # Those asymmetric address fields are deliberately NOT reoriented -- identity is
-    # still orientation-independent, but declare such a link in ND's orientation to
-    # stay idempotent on the addressing fields.
+    # A few inter-fabric wire schemas pair a masked source address with a plain
+    # destination address. Canonicalization moves the prefix length with the
+    # physical source endpoint so reversed declarations remain idempotent without
+    # rendering an invalid masked destination field.
 
     _IDENTITY_ALIAS_PAIRS: ClassVar[list] = [
         ("srcClusterName", "dstClusterName"),
@@ -223,6 +238,17 @@ class NDLinkModel(NDBaseModel):
         ("srcSwitchName", "dstSwitchName"),
         ("srcInterfaceName", "dstInterfaceName"),
     ]
+    _ASYMMETRIC_MASKED_ADDRESS_PAIRS: ClassVar[list] = [
+        ("srcIpAddressMask", "dstIpAddress"),
+        ("srcIpv6AddressMask", "dstIpv6Address"),
+    ]
+
+    def _template_input_aliases(self) -> set[str]:
+        """Aliases declared by this link's selected policy model."""
+        template_inputs = getattr(self.config_data, "template_inputs", None)
+        if template_inputs is None:
+            return set()
+        return {(field_info.alias or name) for name, field_info in type(template_inputs).model_fields.items()}
 
     @staticmethod
     def _dst_counterpart(alias: str) -> str | None:
@@ -243,10 +269,7 @@ class NDLinkModel(NDBaseModel):
         """The (srcAlias, dstAlias) template-input pairs to swap when this link is
         reversed, derived from this link's own policy model so each policy gets its
         own directional set (every symmetric src/dst field the model declares)."""
-        template_inputs = getattr(self.config_data, "template_inputs", None)
-        if template_inputs is None:
-            return []
-        aliases = {(field_info.alias or name) for name, field_info in type(template_inputs).model_fields.items()}
+        aliases = self._template_input_aliases()
         pairs: list = []
         paired: set = set()
         for alias in sorted(aliases):
@@ -255,6 +278,11 @@ class NDLinkModel(NDBaseModel):
                 pairs.append((alias, counterpart))
                 paired.update((alias, counterpart))
         return pairs
+
+    def _template_asymmetric_address_pairs(self) -> list:
+        """Masked-source/plain-destination pairs declared by the selected policy."""
+        aliases = self._template_input_aliases()
+        return [(src, dst) for src, dst in self._ASYMMETRIC_MASKED_ADDRESS_PAIRS if src in aliases and dst in aliases]
 
     def _endpoints(self) -> tuple:
         ids = self.identifiers or []
@@ -288,6 +316,32 @@ class NDLinkModel(NDBaseModel):
         if first_value is not None:
             data[second] = first_value
 
+    @staticmethod
+    def _swap_masked_source_plain_destination(data: dict[str, Any], src_alias: str, dst_alias: str) -> None:
+        """Reverse an asymmetric address pair while keeping the prefix on source.
+
+        For example, reversed ``Y/30 -> X`` becomes canonical ``X/30 -> Y``.
+        Malformed or prefix-less values are still swapped without raising so a
+        tolerant controller read remains inspectable.
+        """
+        if src_alias not in data and dst_alias not in data:
+            return
+        source_value = data.pop(src_alias, None)
+        destination_value = data.pop(dst_alias, None)
+
+        source_address = source_value
+        prefix = None
+        if isinstance(source_value, str) and "/" in source_value:
+            source_address, prefix = source_value.rsplit("/", 1)
+
+        if destination_value is not None:
+            canonical_source = destination_value
+            if prefix is not None:
+                canonical_source = "{0}/{1}".format(destination_value, prefix)
+            data[src_alias] = canonical_source
+        if source_address is not None:
+            data[dst_alias] = source_address
+
     def _canonicalize_orientation(self, data: dict[str, Any]) -> None:
         """Reorient a diff dict to a canonical endpoint order for any physical link.
 
@@ -305,16 +359,20 @@ class NDLinkModel(NDBaseModel):
         if isinstance(template_inputs, dict):
             for first, second in self._template_directional_pairs():
                 self._swap_keys(template_inputs, first, second)
+            for src_alias, dst_alias in self._template_asymmetric_address_pairs():
+                self._swap_masked_source_plain_destination(template_inputs, src_alias, dst_alias)
 
-    # User-managed interface fields that survive the preprovision->numbered
-    # realization: after ND converts the link, the preprovision declaration still
-    # governs these (persistent declarative intent). ND-assigned addresses and
-    # numbered-only fields are preserved and never compared against the declaration.
+    # User-managed fields that survive the preprovision->numbered realization:
+    # after ND converts the link, the preprovision declaration still governs these
+    # (persistent declarative intent). ND-assigned addresses and numbered-only
+    # fields are preserved and never compared against the declaration.
     _PREPROVISION_MANAGED_FIELDS: ClassVar[tuple] = (
         "src_interface_description",
         "dst_interface_description",
         "src_interface_config",
         "dst_interface_config",
+        "mtu",
+        "speed",
     )
 
     def _is_realized_preprovision_of(self, other: Any) -> bool:
@@ -353,11 +411,13 @@ class NDLinkModel(NDBaseModel):
 
         Persistent-intent lifecycle for a realized ``preprovision``->``numbered`` link:
         the link stays ``numbered`` on ND, but the ``preprovision`` declaration still
-        governs the interface description/config fields. Report no diff only when those
-        user-managed fields are unchanged; a later edit to one of them is a real change
+        governs the user-managed preprovision fields. Report no diff only when those
+        fields are unchanged; a later edit to one of them is a real change
         (so the module keeps ND's realized numbered link and its assigned addresses,
         yet still applies description/config updates).
         """
+        if isinstance(other, NDLinkModel) and other._has_explicit_secret_template_input():
+            return False
         if self._is_realized_preprovision_of(other):
             return self._preprovision_managed_fields_match(other)
         return super().get_diff(other, exclude_unset=exclude_unset)
@@ -366,11 +426,12 @@ class NDLinkModel(NDBaseModel):
         """Merge a proposed declaration into this existing link.
 
         For a realized ``preprovision``->``numbered`` link, overlay only the
-        user-managed interface description/config fields onto the existing
+        user-managed preprovision fields onto the existing
         ``numbered`` link and keep it ``numbered``, so the resulting update is a valid
         ``numbered`` PUT that preserves ND-assigned addresses and numbered-only fields
         (never a rejected policy change). Every other case uses the standard merge.
         """
+        explicit_secret_update = isinstance(other, NDLinkModel) and other._has_explicit_secret_template_input()
         if self._is_realized_preprovision_of(other):
             existing_ti = self.config_data.template_inputs
             proposed_ti = getattr(other.config_data, "template_inputs", None)
@@ -378,8 +439,31 @@ class NDLinkModel(NDBaseModel):
             for field_name in self._PREPROVISION_MANAGED_FIELDS:
                 if field_name in declared:
                     setattr(existing_ti, field_name, getattr(proposed_ti, field_name, None))
-            return self
-        return super().merge(other)
+            merged = self
+        else:
+            merged = super().merge(other)
+        if explicit_secret_update:
+            merged._explicit_secret_update_intent = True
+        return merged
+
+    def _has_explicit_secret_template_input(self) -> bool:
+        """Return True when the user explicitly supplied a write-only secret.
+
+        Nexus Dashboard does not return secret values, so equality cannot be
+        established from controller state. Treat an explicitly declared secret as
+        update intent while continuing to remove its plaintext from serialized diffs.
+        Omitting a secret remains idempotent.
+        """
+        if self._explicit_secret_update_intent:
+            return True
+        if self._from_controller_response:
+            return False
+        template_inputs = getattr(self.config_data, "template_inputs", None)
+        if template_inputs is None:
+            return False
+        declared = getattr(template_inputs, "model_fields_set", set())
+        secret_fields = type(template_inputs).secret_field_keys(by_alias=False)
+        return bool(declared & secret_fields)
 
     @classmethod
     def collect_secret_values(cls, config_item: dict[str, Any]) -> set[str]:
@@ -387,14 +471,17 @@ class NDLinkModel(NDBaseModel):
 
         Extends the base (top-level secret fields) to also cover the secret keys
         nested inside the free-form ``config_data.template_inputs`` dict, which
-        Ansible cannot mark ``no_log`` in the argument spec.
+        Ansible cannot mark ``no_log`` in the argument spec. Scan both documented
+        snake_case names and accepted API aliases so values are registered before
+        Pydantic validation and cannot leak through an early failure result.
         """
         values = super().collect_secret_values(config_item)
         if isinstance(config_item, dict):
             config_data = config_item.get("config_data") or {}
             template_inputs = config_data.get("template_inputs") or {}
             if isinstance(template_inputs, dict):
-                for key in all_secret_template_input_keys(by_alias=False):
+                secret_keys = all_secret_template_input_keys(by_alias=False) | all_secret_template_input_keys(by_alias=True)
+                for key in secret_keys:
                     value = template_inputs.get(key)
                     if value:
                         values.add(value)
@@ -419,18 +506,48 @@ class NDLinkModel(NDBaseModel):
         """Config/output view with secret template_inputs fields scrubbed.
 
         Secrets are kept only in to_payload() (the controller request); they are
-        removed from after/before/proposed output and from the diff.
+        masked in after/before/proposed output and removed from the diff.
         """
         data = super().to_config(**kwargs)
         self._strip_secret_template_inputs(data, by_alias=False, mask=True)
         return data
 
+    def to_gathered_config(self, **kwargs: Any) -> dict[str, Any]:
+        """Replay-safe gathered view with write-only secret fields omitted.
+
+        ND echoes secret template keys without their values. Returning masked
+        placeholders in ``gathered`` makes a direct gather-and-reapply look like
+        explicit secret rotation, so those keys must be absent from reusable
+        gathered configuration.
+        """
+        data = self.to_config(**kwargs)
+        self._strip_secret_template_inputs(data, by_alias=False)
+        self._strip_unwritable_template_inputs(data, by_alias=False)
+        return data
+
+    def _strip_unwritable_template_inputs(self, data: dict[str, Any], by_alias: bool) -> None:
+        """Remove controller values that the link write contract rejects."""
+        template_model = getattr(self.config_data, "template_inputs", None)
+        if not isinstance(template_model, LinkTemplateBase):
+            return
+        config_data_key = "configData" if by_alias else "config_data"
+        template_inputs_key = "templateInputs" if by_alias else "template_inputs"
+        config_data = data.get(config_data_key)
+        if not isinstance(config_data, dict):
+            return
+        template_inputs = config_data.get(template_inputs_key)
+        if not isinstance(template_inputs, dict):
+            return
+        for key in template_model.write_contract_invalid_field_keys(by_alias=by_alias):
+            template_inputs.pop(key, None)
+
     def _strip_secret_template_inputs(self, data: dict[str, Any], by_alias: bool, mask: bool = False) -> None:
         """Handle secret template_inputs fields in an output/diff dict in place.
 
         ``mask=True`` (output) replaces a present secret with ``NO_LOG_PLACEHOLDER``
-        so the key stays visible; ``mask=False`` (diff) pops it entirely so a
-        secret-only change is never detected.
+        so the key stays visible; ``mask=False`` (diff) pops it entirely so plaintext
+        never enters diff output. ``get_diff`` separately treats an explicitly
+        supplied write-only secret as update intent.
         """
         if self.config_data is None or self.config_data.template_inputs is None:
             return
@@ -474,9 +591,10 @@ class NDLinkModel(NDBaseModel):
         missing key raises during template execution. Each field the user did not
         set is sent with its documented ND default when it has one (``mtu 9216``,
         ``speed auto``), otherwise as a typed empty (``""`` / ``0`` / ``false``).
-        Secrets have no documented default, so an unset secret is sent as ``""``;
-        it is still excluded from the diff, so a secret-only change never triggers
-        an update. Re-supply a secret when updating a link, or it is written empty.
+        Secrets have no documented default, so an unset secret is sent as ``""``.
+        Explicitly supplying a secret is treated as update intent even though its
+        plaintext is excluded from diff output. Re-supply a secret when updating a
+        link for another reason, or it is written empty.
         """
         if self.config_data is None or self.config_data.template_inputs is None:
             return

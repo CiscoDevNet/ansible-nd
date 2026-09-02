@@ -159,6 +159,16 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         """
         return
 
+    def preflight_delete(self, model_instances: Sequence[ModelType]) -> None:
+        """Pre-delete safety hook executed in check and normal mode.
+
+        This is distinct from the capability ``preflight`` hook: deletes do not
+        require switch capability validation, but an orchestrator may still need
+        local/controller-inventory validation before check mode predicts a safe
+        deletion (for example, detecting an ambiguous controller identity).
+        """
+        return
+
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:

@@ -224,8 +224,9 @@ options:
           execution via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
+        - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
-        default: true
+        default: false
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -282,6 +283,8 @@ EXAMPLES = r"""
               ip: 10.99.101.1
               prefix: 24
               description: Tenant SVI 335
+    config_actions:
+      deploy: true
     state: merged
   register: result
 
@@ -305,6 +308,8 @@ EXAMPLES = r"""
               admin_state: true
               ip: 10.99.99.2
               prefix: 24
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Replace the configuration of specific SVIs
@@ -320,6 +325,8 @@ EXAMPLES = r"""
               ip: 10.99.99.10
               prefix: 24
               description: Reprovisioned tenant SVI 333
+    config_actions:
+      deploy: true
     state: replaced
 
 # state=overridden is fabric-wide: every SVI in the fabric that is managed by this module and is NOT
@@ -337,6 +344,8 @@ EXAMPLES = r"""
               ip: 10.99.99.1
               prefix: 24
               description: SVI to keep; all other SVIs deleted
+    config_actions:
+      deploy: true
     state: overridden
 
 - name: Delete SVI interfaces
@@ -347,6 +356,8 @@ EXAMPLES = r"""
         interface_name: vlan333
       - switch_ip: 192.168.1.1
         interface_name: vlan334
+    config_actions:
+      deploy: true
     state: deleted
 
 - name: Stage SVI changes without deploying (for batching)
@@ -385,6 +396,8 @@ EXAMPLES = r"""
               hsrp_priority: 110
               preempt: true
               mac: "0000.0c07.ac05"
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Create an SVI with HSRP configured via extra_config (raw CLI)
@@ -405,6 +418,8 @@ EXAMPLES = r"""
                   priority 110
                   authentication md5 key-chain hsrp-keys
                   track 1 decrement 20
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Create an SVI with DHCP relay servers
@@ -424,6 +439,8 @@ EXAMPLES = r"""
               vrf_dhcp1: shared_services
               dhcp_server_address2: 10.10.10.11
               vrf_dhcp2: shared_services
+    config_actions:
+      deploy: true
     state: merged
 """
 
@@ -539,7 +556,7 @@ def main():
         config_actions={
             "type": "dict",
             "options": {
-                "deploy": {"type": "bool", "default": True},
+                "deploy": {"type": "bool", "default": False},
             },
         },
     )
@@ -571,7 +588,7 @@ def main():
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
         config_actions = module.params.get("config_actions") or {}
-        deploy = config_actions.get("deploy", True)
+        deploy = config_actions.get("deploy", False)
         nd_state_machine.model_orchestrator.deploy = deploy
 
         module_log.debug(

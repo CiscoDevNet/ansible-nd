@@ -32,7 +32,6 @@ def nd_argument_spec() -> dict[str, Any]:
         "username": {"type": "str", "fallback": (env_fallback, ["ND_USERNAME", "ANSIBLE_NET_USERNAME"])},
         "password": {"type": "str", "required": False, "no_log": True, "fallback": (env_fallback, ["ND_PASSWORD", "ANSIBLE_NET_PASSWORD"])},
         "output_level": {"type": "str", "default": "normal", "choices": ["debug", "info", "normal"], "fallback": (env_fallback, ["ND_OUTPUT_LEVEL"])},
-        "timeout": {"type": "int", "default": 30, "fallback": (env_fallback, ["ND_TIMEOUT"])},
         "use_proxy": {"type": "bool", "fallback": (env_fallback, ["ND_USE_PROXY"])},
         "use_ssl": {"type": "bool", "fallback": (env_fallback, ["ND_USE_SSL"])},
         "validate_certs": {"type": "bool", "fallback": (env_fallback, ["ND_VALIDATE_CERTS"])},
@@ -85,7 +84,7 @@ def config_actions_spec(include: Iterable[str] | None = None) -> dict[str, Any]:
     """
     options: dict[str, Any] = {
         "save": {"type": "bool", "default": True},
-        "deploy": {"type": "bool", "default": True},
+        "deploy": {"type": "bool", "default": False},
         "type": {"type": "str", "default": "switch", "choices": ["resource", "switch", "global"]},
     }
     return {"config_actions": {"type": "dict", "options": _select_options(options, include)}}

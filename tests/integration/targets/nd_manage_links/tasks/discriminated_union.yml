@@ -172,6 +172,8 @@
             config_data:
               policy_type: preprovision
               template_inputs:
+                mtu: 9000
+                speed: auto
                 src_interface_description: persistent intent applied on realized link
         state: merged
       register: preprovision_over_realized
@@ -185,6 +187,8 @@
           - preprovision_over_realized is not failed
           - preprovision_over_realized.changed == true
           - (preprovision_over_realized.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "numbered"
+          - (preprovision_over_realized.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.mtu == 9000
+          - (preprovision_over_realized.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.speed == "auto"
 
     - name: Reapply the same preprovision declaration again (now idempotent under persistent intent)
       cisco.nd.nd_manage_links:
@@ -198,6 +202,8 @@
             config_data:
               policy_type: preprovision
               template_inputs:
+                mtu: 9000
+                speed: auto
                 src_interface_description: persistent intent applied on realized link
         state: merged
       register: preprovision_over_realized_again
@@ -208,6 +214,8 @@
           - preprovision_over_realized_again is not failed
           - preprovision_over_realized_again.changed == false
           - (preprovision_over_realized_again.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "numbered"
+          - (preprovision_over_realized_again.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.mtu == 9000
+          - (preprovision_over_realized_again.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.speed == "auto"
 
     - name: Clean up baseline numbered link
       cisco.nd.nd_manage_links:
@@ -300,3 +308,15 @@
                 src_interface_name: Ethernet1/30
                 dst_interface_name: Ethernet1/30
             state: deleted
+
+  always:
+    - name: Always clean up the numbered baseline link
+      cisco.nd.nd_manage_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_numbered }}'
+            dst_fabric_name: '{{ test_fabric_numbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+        state: deleted

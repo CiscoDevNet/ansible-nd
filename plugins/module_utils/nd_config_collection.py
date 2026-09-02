@@ -44,7 +44,10 @@ class NDConfigCollection:
         self._index.clear()
         for index, item in enumerate(self._items):
             key = self._extract_key(item)
-            self._index[key] = index
+            # Models that opt into duplicate controller identities preserve every
+            # record in ``_items`` while lookups consistently resolve to the first.
+            # Their orchestrator is responsible for rejecting ambiguous mutations.
+            self._index.setdefault(key, index)
 
     # Core Operations
 
@@ -58,6 +61,9 @@ class NDConfigCollection:
         key = self._extract_key(item)
 
         if key in self._index:
+            if getattr(self._model_class, "allow_duplicate_identifiers", False):
+                self._items.append(item)
+                return key
             raise ValueError(f"Item with identifier {key} already exists. Use replace() to update")
 
         position = len(self._items)
@@ -232,6 +238,10 @@ class NDConfigCollection:
         Export as an Ansible config.
         """
         return [item.to_config(**kwargs) for item in self._items]
+
+    def to_gathered_config(self, **kwargs) -> List[Dict]:
+        """Export replay-safe configuration for ``state=gathered``."""
+        return [item.to_gathered_config(**kwargs) for item in self._items]
 
     def to_payload_list(self, **kwargs) -> List[Dict[str, Any]]:
         """

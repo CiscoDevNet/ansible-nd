@@ -89,6 +89,14 @@
 
           - nm_msite_overlay_create_again is not changed
 
+    - name: Verify gathered output for multisiteOverlay links
+      ansible.builtin.include_tasks: gathered.yml
+      vars:
+        gathered_policy_type: multisiteOverlay
+        gathered_src_fabric: '{{ test_fabric_msite_src }}'
+        gathered_dst_fabric: '{{ test_fabric_msite_dst }}'
+        gathered_interface_name: Ethernet1/40
+
     - name: Update multisiteOverlay link Eth1/40 (merged - check mode)
       cisco.nd.nd_manage_links: &msite_overlay_update
         config:
@@ -226,6 +234,7 @@
           - (nm_msite_overlay_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/41') | list) | length == 0
           - nm_msite_overlay_bulk_delete_again is not changed
 
-    - name: Final cleanup of multisiteOverlay links
+  always:
+    - name: Always clean up multisiteOverlay links
       cisco.nd.nd_manage_links:
         <<: *msite_overlay_cleanup
