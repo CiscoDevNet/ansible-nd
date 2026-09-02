@@ -5,35 +5,35 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 # --- SETUP ---
-# At this point loopback101 and loopback102 exist from overridden tests.
+# At this point loopback201 and loopback202 exist from overridden tests.
 
 # --- DELETED: SINGLE INTERFACE ---
 
-- name: "DELETED: Delete loopback101 (check mode)"
+- name: "DELETED: Delete loopback201 (check mode)"
   cisco.nd.nd_interface_loopback: &delete_lb101
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback101
+        interface_name: loopback201
     state: deleted
   check_mode: true
   register: cm_deleted_101
 
-- name: "DELETED: Delete loopback101 (normal mode)"
+- name: "DELETED: Delete loopback201 (normal mode)"
   cisco.nd.nd_interface_loopback: *delete_lb101
   register: nm_deleted_101
 
-- name: "DELETED: Verify loopback101 was deleted"
+- name: "DELETED: Verify loopback201 was deleted"
   ansible.builtin.assert:
     that:
       - cm_deleted_101 is changed
       - nm_deleted_101 is changed
-      - nm_deleted_101.after | selectattr('interface_name', 'equalto', 'loopback101') | list | length == 0
+      - nm_deleted_101.after | selectattr('interface_name', 'equalto', 'loopback201') | list | length == 0
 
 # --- DELETED: IDEMPOTENCY ---
 
-- name: "DELETED IDEMPOTENT: Delete loopback101 again"
+- name: "DELETED IDEMPOTENT: Delete loopback201 again"
   cisco.nd.nd_interface_loopback: *delete_lb101
   register: nm_deleted_101_idem
 
@@ -44,32 +44,32 @@
 
 # --- DELETED: MULTIPLE INTERFACES ---
 
-# First recreate loopback100 and loopback101 so we can test multi-delete
-- name: "SETUP: Recreate loopback100 and loopback101 for multi-delete test"
+# First recreate loopback200 and loopback201 so we can test multi-delete
+- name: "SETUP: Recreate loopback200 and loopback201 for multi-delete test"
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - "{{ loopback_100 }}"
-      - "{{ loopback_101 }}"
+      - "{{ loopback_200 }}"
+      - "{{ loopback_201 }}"
     state: merged
 
-- name: "DELETED MULTI: Delete loopback100, loopback101, and loopback102 (check mode)"
+- name: "DELETED MULTI: Delete loopback200, loopback201, and loopback202 (check mode)"
   cisco.nd.nd_interface_loopback: &delete_multi
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback100
+        interface_name: loopback200
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback101
+        interface_name: loopback201
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback102
+        interface_name: loopback202
     state: deleted
   check_mode: true
   register: cm_deleted_multi
 
-- name: "DELETED MULTI: Delete loopback100, loopback101, and loopback102 (normal mode)"
+- name: "DELETED MULTI: Delete loopback200, loopback201, and loopback202 (normal mode)"
   cisco.nd.nd_interface_loopback: *delete_multi
   register: nm_deleted_multi
 
@@ -78,9 +78,9 @@
     that:
       - cm_deleted_multi is changed
       - nm_deleted_multi is changed
-      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'loopback100') | list | length == 0
-      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'loopback101') | list | length == 0
-      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'loopback102') | list | length == 0
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'loopback200') | list | length == 0
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'loopback201') | list | length == 0
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'loopback202') | list | length == 0
 
 # --- DELETED: NON-EXISTENT INTERFACE ---
 
@@ -90,7 +90,7 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback199
+        interface_name: loopback299
     state: deleted
   register: nm_deleted_nonexistent
 

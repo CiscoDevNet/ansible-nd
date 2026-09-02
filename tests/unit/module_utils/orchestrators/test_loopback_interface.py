@@ -30,8 +30,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
-    LoopbackNetworkOSModel,
-    LoopbackPolicyModel,
+    MplsLoopbackPolicyModel,
+    NexusLoopbackNetworkOSModel,
+    NexusLoopbackPolicyModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
@@ -86,11 +87,26 @@ def _build_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str
     kwargs: dict = {"switch_ip": switch_ip, "interface_name": interface_name}
     if include_config:
         kwargs["config_data"] = LoopbackConfigDataModel(
-            network_os=LoopbackNetworkOSModel(
-                policy=LoopbackPolicyModel(admin_state=True, ip="10.1.1.1/32"),
+            network_os=NexusLoopbackNetworkOSModel(
+                network_os_type="nx-os",
+                policy=NexusLoopbackPolicyModel(policy_type="loopback", admin_state=True, ip="10.1.1.1/32"),
             ),
         )
     return LoopbackInterfaceModel(**kwargs)
+
+
+def _build_mpls_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str = "loopback30") -> LoopbackInterfaceModel:
+    """Build a minimal `LoopbackInterfaceModel` instance with an `mplsLoopback` policy, for policy-type-grouping tests."""
+    return LoopbackInterfaceModel(
+        switch_ip=switch_ip,
+        interface_name=interface_name,
+        config_data=LoopbackConfigDataModel(
+            network_os=NexusLoopbackNetworkOSModel(
+                network_os_type="nx-os",
+                policy=MplsLoopbackPolicyModel(policy_type="mplsLoopback", admin_state=True, ip="10.3.3.1/32"),
+            ),
+        ),
+    )
 
 
 # =============================================================================
@@ -276,6 +292,45 @@ def test_loopback_interface_00120() -> None:
     model = _build_loopback_model(switch_ip="192.168.12.151")
 
     match = r"Create failed for .*loopback10.*No switch found with fabricManagementIp '192\.168\.12\.151'"
+    with pytest.raises(RuntimeError, match=match):
+        instance.create(model)
+
+    assert instance._pending_deploys == []
+
+
+def test_loopback_interface_00130() -> None:
+    """
+    # Summary
+
+    Verify `create` raises `RuntimeError` when the create response's `DATA.results[]` contains a failed item, even
+    though the HTTP-level request itself succeeded (207 multi-status). Lab-verified 2026-07-18: ND can return a
+    per-item failure while the top-level status looks benign. The per-item scan lives centrally in
+    `NdV1Strategy.is_success` (PR #398), which `_request` consults, so the failure surfaces through `_request`.
+
+    ## Test
+
+    - switches-list succeeds
+    - POST returns 207 with a single `results[]` item whose `status` is `"failed"`
+    - `RuntimeError` matches `Create failed`
+    - No deploy is queued
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create()
+    - NdV1Strategy.is_success()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_loopback_model()
+
+    match = r"Create failed"
     with pytest.raises(RuntimeError, match=match):
         instance.create(model)
 
@@ -566,6 +621,228 @@ def test_loopback_interface_00420() -> None:
 
     assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces"
     assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
+def test_loopback_interface_00430() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` groups interfaces by `(switch_id, policy_type)`, not by switch alone. ND rejects an
+    `interfaces[]` array that mixes `policyType` values in a single bulk create (207 with a single failed item;
+    nothing created), even though both interfaces here target the same switch (bug-tracker vault:
+    `bulk-interface-create-rejects-mixed-policy-types`).
+
+    ## Test
+
+    - Two interfaces on the SAME switch with DIFFERENT policy types: loopback10 (`policyType: loopback`) and
+      loopback30 (`policyType: mplsLoopback`)
+    - TWO POSTs are issued (one per policy-type group), each with a single-item `interfaces` array - proven by
+      `rest_send.responses` containing exactly 3 entries (switches-list + 2 POSTs; a combined single POST would
+      leave one fixture unconsumed and `rest_send.responses` would have only 2 entries) and by the last committed
+      payload containing exactly one interface
+    - Both interfaces' deploys are queued
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback10"),
+        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
+    ]
+
+    with does_not_raise():
+        instance.create_bulk(models)
+
+    assert len(rest_send.responses) == 3
+    body = rest_send.committed_payload
+    assert isinstance(body, dict)
+    assert len(body["interfaces"]) == 1
+    assert sorted(instance._pending_deploys) == sorted(
+        [
+            ("loopback10", "FDO12345ABC"),
+            ("loopback30", "FDO12345ABC"),
+        ]
+    )
+
+
+def test_loopback_interface_00440() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` raises `RuntimeError` and queues no deploys when the create response's `DATA.results[]`
+    contains a failed item, using the real lab-verified (2026-07-18) rejection wire shape: HTTP 207 with a single
+    `results[]` item whose `status` is `"failed"` and whose `message` names the mixed-policy-type rejection. Nothing
+    is created on the controller side in this scenario, so no deploy may be queued (bug-tracker vault:
+    `bulk-interface-create-rejects-mixed-policy-types`, `multi-status-207-status-field-inconsistent`). The per-item
+    failure is detected centrally by `NdV1Strategy.is_success` (PR #398) and surfaces through `_request`.
+
+    ## Test
+
+    - switches-list succeeds
+    - The single POST returns 207 with `DATA.results == [{"name": "loopback206", "status": "failed", "message":
+      "Mixed policy types [iosXeLoopback, csrLoopback] are not allowed in bulk interface creation..."}]`
+    - `RuntimeError` matches `Bulk create failed.*Mixed policy types`
+    - No deploy is queued
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    - NdV1Strategy.is_success()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [_build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback206")]
+
+    match = r"Bulk create failed.*Mixed policy types"
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk(models)
+
+    assert instance._pending_deploys == []
+
+
+def test_loopback_interface_00450() -> None:
+    """
+    # Summary
+
+    Two-run convergence for a first-group-success / later-group-failure bulk create (PR #403 review). Run 1: the first
+    `(switch, policy_type)` group's POST succeeds and its deploy is queued, the second group's POST fails, and `create_bulk`
+    raises — then `deploy_accepted_mutations` (the module's failure-path finalizer) deploys the accepted first group so it is
+    not stranded staged-but-undeployed. Run 2 (the retry): the first group's interface is already converged, so only the second
+    group is created and deployed via the normal `deploy_pending` path. Across the two runs, both interfaces end up deployed.
+
+    ## Test
+
+    - Run 1: loopback10 (`policyType: loopback`) POST succeeds, loopback30 (`policyType: mplsLoopback`) POST returns 500
+    - `create_bulk` raises `RuntimeError` matching `Bulk create failed`; `_pending_deploys` holds only loopback10
+    - `deploy_accepted_mutations` POSTs `interfaceActions/deploy` with only loopback10 and clears it from the queue
+    - Run 2 (fresh orchestrator, retry): `create_bulk` for loopback30 alone succeeds; `deploy_pending` deploys loopback30
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    - NDBaseInterfaceOrchestrator.deploy_pending()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses_run1():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
+        yield responses_loopback_interface(f"{method_name}d")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses_run1()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    models = [
+        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback10"),
+        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
+    ]
+
+    match = r"Bulk create failed"
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk(models)
+
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+    with does_not_raise():
+        deployed = instance.deploy_accepted_mutations()
+
+    assert deployed == [("loopback10", "FDO12345ABC")]
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy"
+    assert rest_send.committed_payload == {"interfaces": [{"interfaceName": "loopback10", "switchId": "FDO12345ABC"}]}
+    assert instance._pending_deploys == []
+
+    def responses_run2():
+        yield responses_loopback_interface(f"{method_name}e")
+        yield responses_loopback_interface(f"{method_name}f")
+        yield responses_loopback_interface(f"{method_name}g")
+
+    rest_send_retry = _build_rest_send(ResponseGenerator(responses_run2()))
+    instance_retry = LoopbackInterfaceOrchestrator(rest_send=rest_send_retry)
+    instance_retry.deploy = True
+
+    with does_not_raise():
+        instance_retry.create_bulk([_build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30")])
+        instance_retry.deploy_pending()
+
+    assert rest_send_retry.path == "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy"
+    assert rest_send_retry.committed_payload == {"interfaces": [{"interfaceName": "loopback30", "switchId": "FDO12345ABC"}]}
+    assert instance_retry._pending_deploys == []
+
+
+def test_loopback_interface_00460() -> None:
+    """
+    # Summary
+
+    Verify the failure-path finalizer with a mixed-result 207 as the failing group (PR #403 review): the first group's POST
+    succeeds, the second group's POST returns HTTP 207 whose `DATA.results[]` mixes a success item and a failed item, and
+    `create_bulk` raises. `deploy_accepted_mutations` then deploys only the accepted first group.
+
+    Within-group recovery of the 207's reported-success item is deliberately NOT attempted: whether ND actually creates the
+    reported-success subset of a mixed-result 207 is not lab-characterized, and the per-item `status` field is known to be
+    inconsistent (bug-tracker vault: `multi-status-207-status-field-inconsistent`), so nothing from the failed group is queued.
+
+    ## Test
+
+    - loopback10 (`policyType: loopback`) POST succeeds
+    - The mplsLoopback group (loopback30, loopback31) POST returns 207 with `results[]` mixing success and failed items
+    - `create_bulk` raises `RuntimeError` matching `Bulk create failed`; `_pending_deploys` holds only loopback10
+    - `deploy_accepted_mutations` deploys only loopback10; nothing from the failed group is deployed or queued
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    - NdV1Strategy.is_success()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
+        yield responses_loopback_interface(f"{method_name}d")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    models = [
+        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback10"),
+        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
+        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback31"),
+    ]
+
+    match = r"Bulk create failed"
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk(models)
+
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+    with does_not_raise():
+        deployed = instance.deploy_accepted_mutations()
+
+    assert deployed == [("loopback10", "FDO12345ABC")]
+    assert rest_send.committed_payload == {"interfaces": [{"interfaceName": "loopback10", "switchId": "FDO12345ABC"}]}
+    assert instance._pending_deploys == []
 
 
 # =============================================================================
@@ -908,6 +1185,82 @@ def test_loopback_interface_00750() -> None:
     assert len(result) == 1
     assert result[0]["interfaceName"] == "loopback10"
     assert result[0]["switchIp"] == "192.168.12.151"
+
+
+def test_loopback_interface_00760() -> None:
+    """
+    # Summary
+
+    Verify `query_all` returns interfaces of all three managed policy types (`loopback`, `ipfmLoopback`, `mplsLoopback`)
+    and excludes `userDefined` and system-provisioned (`underlayLoopback`) interfaces.
+
+    ## Test
+
+    - state is `overridden`, so the switch's interfaces are fetched (fabric-wide scope)
+    - Switch's interfaces list contains `loopback`, `ipfmLoopback`, and `mplsLoopback` entries, plus excluded
+      `userDefined` and `underlayLoopback` entries
+    - `query_all` returns exactly the three managed-type entries
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.query_all()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, state="overridden")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    returned = {item["configData"]["networkOS"]["policy"]["policyType"] for item in result}
+    assert returned == {"loopback", "ipfmLoopback", "mplsLoopback"}
+
+
+def test_loopback_interface_00770() -> None:
+    """
+    # Summary
+
+    Verify `query_all` unions NX-OS and IOS-XE managed loopback policy types (`LoopbackPolicyTypeEnum` |
+    `XeLoopbackPolicyTypeEnum`), keeping XE `iosXeLoopback` and XE `csrLoopback` alongside NX `loopback`, and
+    excludes `userDefined`.
+
+    ## Test
+
+    - state is `overridden`, so the switch's interfaces are fetched (fabric-wide scope)
+    - Switch's interfaces list contains one NX `loopback`, one XE `iosXeLoopback`, one XE `csrLoopback`
+      (wire-verified name, lab probe 2026-07-18), and one `userDefined` entry
+    - `query_all` returns exactly the three managed-type entries and excludes `userDefined`
+    - Each returned item is enriched with `switchIp` set to the source switch's IP
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.query_all()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, state="overridden")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert len(result) == 3
+    returned_policy_types = {item["configData"]["networkOS"]["policy"]["policyType"] for item in result}
+    assert returned_policy_types == {"loopback", "iosXeLoopback", "csrLoopback"}
+    assert all(item["switchIp"] == "192.168.12.150" for item in result)
 
 
 # =============================================================================
