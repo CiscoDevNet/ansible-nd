@@ -59,7 +59,10 @@ ONE_HANDLER_MODULES = (
 INTERFACE_MODULES = TWO_HANDLER_MODULES + ONE_HANDLER_MODULES
 
 ACCEPTED_PAIR = ("Ethernet1/1", "FDO12345ABC")
-ACCEPTED_NOTE = " NOTE: before the failure, the controller had already accepted changes for interface(s) [Ethernet1/1 (switchId FDO12345ABC)]; those changes were deployed."
+ACCEPTED_NOTE = (
+    " NOTE: before the failure, the controller had already accepted changes for interface(s) "
+    "[Ethernet1/1 (switchId FDO12345ABC)]; those changes were deployed."
+)
 
 
 class _FailJson(Exception):
