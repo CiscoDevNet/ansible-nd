@@ -40,9 +40,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPut,
     EpManageInterfacesRemove,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
-    GatheredLuceneSpec,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import LoopbackPolicyTypeEnum, XeLoopbackPolicyTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
@@ -107,7 +105,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, or is in deployment-freeze mode for a state
+      that mutates configuration.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `create` if the create API request fails, or if the response's per-item `results[]` reports a failure.
     - Via `create_bulk` if any create API request fails, or if a response's per-item `results[]` reports a failure.
@@ -360,7 +359,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         try:

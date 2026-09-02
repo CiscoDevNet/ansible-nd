@@ -58,7 +58,8 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, or is in deployment-freeze mode for a state
+      that mutates configuration.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `create` if the create API request fails.
     - Via `update` if the update API request fails.
@@ -241,7 +242,7 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         managed_policy_types = {e.value for e in SubinterfaceManagedPolicyTypeEnum}

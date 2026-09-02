@@ -200,5 +200,39 @@
             "local": false,
             "fabricStatus": "default"
         }
+    },
+    "test_fabric_context_00400a": {
+        "TEST_NOTES": ["Fabric summary: fabric exists, local=true, fabricStatus=frozen (validate_for_read must NOT raise on freeze)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a",
+            "local": true,
+            "fabricStatus": "frozen"
+        }
+    },
+   "test_fabric_context_00410a": {
+        "TEST_NOTES": ["Fabric summary: 404 not found (validate_for_read must raise on missing fabric)"],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+    "test_fabric_context_00420a": {
+        "TEST_NOTES": ["Fabric summary: fabric exists, local=false (validate_for_read must raise on non-local)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_b",
+            "local": false,
+            "fabricStatus": "default"
+        }
     }
 }
