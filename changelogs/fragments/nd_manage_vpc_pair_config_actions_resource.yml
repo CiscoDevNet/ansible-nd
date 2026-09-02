@@ -1,9 +1,0 @@
----
-minor_changes:
-  - Add ``resource`` as a supported ``config_actions.type`` value in nd_manage_vpc_pair. When selected, the module deploys only the
-    peer switches that make up the managed vPC pair(s) and are left out-of-sync, instead of every out-of-sync switch in the fabric
-    (``switch``) or the entire fabric (``global``). A vPC pair resource maps to its two peer switches, which are resolved from
-    fabric inventory by serial number or management IP.
-  - Change the default of ``config_actions.deploy`` in nd_manage_vpc_pair to ``false`` so configuration changes are saved but not
-    deployed unless deployment is explicitly requested with ``config_actions.deploy=true``. Deployment is now opt-in across the
-    model, argument spec, and runtime normalization.
