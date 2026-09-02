@@ -125,6 +125,32 @@ def test_load_switch_caches_indexes_and_isolates_callers() -> None:
     }
 
 
+def test_cached_interface_is_read_only_case_insensitive_and_never_fetches():
+    """Target projection can read current/original rows without adding inventory GETs."""
+    original = _interface("Ethernet1/1", "ethernet", "accessHost")
+    recorder = _RequestRecorder([{"interfaces": [original]}])
+    snapshot = _snapshot(recorder)
+
+    assert snapshot.cached_interface("SERIAL1", "Ethernet1/1") is None
+    assert recorder.calls == []
+
+    snapshot.load_switch("SERIAL1")
+    cached = snapshot.cached_interface("SERIAL1", "ETHERNET1/1")
+    cached["configData"]["networkOS"]["policy"]["policyType"] = "callerMutation"
+    assert snapshot.policy_type(snapshot.cached_interface("SERIAL1", "ethernet1/1")) == "accessHost"
+
+    snapshot.apply_overlay(
+        "SERIAL1",
+        upserts=[_interface("Ethernet1/1", "ethernet", "trunkHost")],
+    )
+
+    assert snapshot.policy_type(snapshot.cached_interface("SERIAL1", "Ethernet1/1")) == "trunkHost"
+    assert snapshot.policy_type(snapshot.cached_interface("SERIAL1", "Ethernet1/1", original=True)) == "accessHost"
+    assert snapshot.cached_interface("SERIAL1", "Ethernet1/99") is None
+    assert len(recorder.calls) == 1
+    assert snapshot.request_stats["interface_inventory_gets"] == 1
+
+
 def test_interface_summaries_are_lazy_batched_cached_and_isolated() -> None:
     """Requested identities share one full summary fetch per switch and isolated cached rows."""
     recorder = _RequestRecorder(
@@ -265,9 +291,7 @@ def test_interface_summary_ignores_rows_for_other_switches() -> None:
 
     result = snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/40")])
 
-    assert result == {
-        ("SERIAL1", "ethernet1/40"): _summary("Ethernet1/40", "SERIAL1", "ethernet", "trunkHost")
-    }
+    assert result == {("SERIAL1", "ethernet1/40"): _summary("Ethernet1/40", "SERIAL1", "ethernet", "trunkHost")}
     assert snapshot.interface_summaries_by_identity == result
     assert len(recorder.calls) == 1
     assert "switchId=SERIAL1" in recorder.calls[0]["path"]
@@ -276,9 +300,7 @@ def test_interface_summary_ignores_rows_for_other_switches() -> None:
 
 def test_interface_summary_foreign_only_page_returns_no_requested_identity() -> None:
     """Unrelated fabric rows do not poison a requested switch's summary cache."""
-    recorder = _RequestRecorder(
-        [{"interfaces": [_summary("Ethernet1/40", "SERIAL2", "ethernet", "accessHost")]}]
-    )
+    recorder = _RequestRecorder([{"interfaces": [_summary("Ethernet1/40", "SERIAL2", "ethernet", "accessHost")]}])
     snapshot = _snapshot(recorder)
 
     assert snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/40")]) == {}
@@ -305,9 +327,7 @@ def test_interface_summary_mixed_pagination_advances_by_raw_page_length() -> Non
 
     result = snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/40")])
 
-    assert result == {
-        ("SERIAL1", "ethernet1/40"): _summary("Ethernet1/40", "SERIAL1", "ethernet", "trunkHost")
-    }
+    assert result == {("SERIAL1", "ethernet1/40"): _summary("Ethernet1/40", "SERIAL1", "ethernet", "trunkHost")}
     assert len(recorder.calls) == 2
     assert "offset=0" in recorder.calls[0]["path"]
     assert "offset=2" in recorder.calls[1]["path"]

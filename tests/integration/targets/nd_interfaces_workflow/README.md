@@ -47,7 +47,53 @@ The target treats request counts as part of the module contract:
   one bulk request per switch rather than one PUT per interface.
 - Compatible physical resets, logical removals, and deployments remain consolidated. The live Ethernet delete scenario asserts that two
   opposite-family deletes on one switch share one normalize request and send no deployment when deployment is disabled.
+- An exact `deploy: true` replay after an earlier `deploy: false` mutation can deploy already-staged intent with zero new interface
+  mutations. Candidate selection reuses the fabric switch rows already fetched for identity resolution, adds no GET, and sends all
+  qualifying explicitly requested identities in one de-duplicated deployment POST.
+- Only an explicitly normalized `outOfSync` or `pending` switch status qualifies for deployment-only execution. An `inSync`, absent, or unknown status
+  does not trigger deployment. A vPC target qualifies when either authoritative peer is explicitly out of sync or pending.
+- Switch sync status is coarser than interface sync status. Unrelated pending intent on the same switch can therefore cause a harmless
+  redeploy of a requested interface, but the request never expands to unrelated interface identities.
+- A later replay cannot recover interfaces implicitly removed because they were omitted from an earlier `overridden` resource. A future
+  deployment-only task must name each intended target explicitly.
 
+### Compact result contract
+
+The complete configured-family snapshot remains available internally for planning, conflict detection, transition safety, and authoritative
+override behavior. Successful public output has one authoritative resource-level representation and deliberately avoids repeating task
+inputs or snapshots:
+
+- The top level contains `changed`, `planned_changed`, `mutation_count`, `target_switch_ids`, `resources`, `request_stats`, and
+  `execution`. It does not echo `check_mode`, `output_level`, `fabric_name`, or `config_actions`, and it does not duplicate
+  `before`, `after`, or `diff`.
+- Each ordered resource result retains `resource_index`, `type`, `module`, `state`, `changed`, `planned_changed`, `before`,
+  `after`, and `after_verified`.
+- `resources[].operations` is the single action ledger. Each entry reports `action`, `switch_ip`, `switch_id`,
+  `interface_name`, and `status`. Transitions also report `from_policy_type` and `to_policy_type`. Update, transition, and
+  physical-reset entries can report `changes: [{path, before, after}]`; creates and logical deletes omit leaf deltas.
+- Physical Ethernet normalization is `action: reset`; logical removal is `action: delete`. Check mode reports `status: planned`.
+  Normal mode carries the matching execution outcome into the same operation entry, so `execution.items` is not duplicated.
+- `output_level: info` adds `resources[].proposed`. `output_level: debug` adds `resources[].proposed`,
+  `resources[].family_before`, and `resources[].family_after`. The selected output level is an input control and is not echoed.
+- `request_stats` contains only read, cache, refresh, overlay, and vPC metrics. `execution.mutations_sent` and
+  `execution.deployments_sent` are the sole write-request counters.
+
+Resource snapshot scope remains state-aware:
+
+- `merged`, `replaced`, and `deleted` report only identities explicitly listed in the corresponding resource group under `before`
+  and `after`.
+- `overridden` remains authoritative and reports the complete selected-family scope because omitted resources are intentional mutation
+  targets.
+- Target records include `policy_type`. Cross-policy transitions and policy-independent deletes therefore show the actual source policy
+  in `before` and the destination or normalized policy in `after`.
+- Logical deletion removes the requested identity from `after`. Physical Ethernet deletion keeps the requested identity in `after`
+  with the normalized default `trunkHost` policy.
+- Port-channel and vPC members remain nested in their requested aggregate-interface policy; unrelated Ethernet-family records are not
+  added.
+- Full-family debug projection and compact operation deltas are derived in memory and require no additional controller GETs.
+- A successful deployment-only run, and its prospective check-mode form, reports top-level `changed: true`,
+  `planned_changed: false`, and `mutation_count: 0`; each resource remains unchanged. Check mode reports deployment status
+  `would_deploy` while both write counters stay zero.
 
 ## Live and destructive safety gates
 
@@ -66,6 +112,11 @@ nd_iw_enable_destructive: true
 ```
 
 Physical deployment is independently gated by `nd_iw_enable_deploy: true`. Leave it false unless the reserved interfaces may safely be deployed. The target cleans only its reserved identities before and after live execution; `nd_iw_cleanup_strict` defaults to true so cleanup failures fail the run.
+
+With that gate enabled, `deploy_controls.yaml` stages an exact reserved configuration with deployment disabled, previews an identical
+deployment-only replay in check mode, performs the identical replay as one zero-mutation deployment, and replays it once more. The final
+no-deployment assertion is conditional on the independently observed switch status having converged to `inSync`; a shared switch can
+remain out of sync because of unrelated lab intent.
 
 Some shared-lab inventories or wrapper tooling use a `STOP` marker as an operator safety interlock. If one is present, do not delete, bypass, or automate around it. Confirm why the marker was placed, that the fabric and reserved resources are available, and that the owner has authorized the run before clearing it. A stale marker can explain why an otherwise valid invocation does not start, but it must not be assumed stale.
 

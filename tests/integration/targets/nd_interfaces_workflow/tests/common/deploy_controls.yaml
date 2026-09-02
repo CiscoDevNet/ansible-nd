@@ -10,6 +10,15 @@
     nd_iw_deploy_case: >-
       {{ nd_iw_ethernet_deploy_cases | first if nd_iw_ethernet_deploy_cases | length > 0 else nd_iw_active_cases | first }}
 
+- name: Build the explicitly requested deployment target set
+  ansible.builtin.set_fact:
+    nd_iw_deploy_target_names: >-
+      {{
+        (nd_iw_deploy_case.create_config | map(attribute='interface_names') | flatten | list)
+        if nd_iw_deploy_case.create_config[0].interface_names is defined
+        else (nd_iw_deploy_case.create_config | map(attribute='interface_name') | list)
+      }}
+
 - name: Preview a change with deployment requested
   cisco.nd.nd_interfaces_workflow:
     fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
@@ -24,19 +33,16 @@
   register: nd_iw_deploy_preview
   delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
 
-- name: Verify check mode never mutates or deploys
+- name: Verify check mode never sends a mutation or deployment
   ansible.builtin.assert:
     that:
-      - nd_iw_deploy_preview.check_mode
       - nd_iw_deploy_preview.execution.status == 'check_mode'
       - nd_iw_deploy_preview.execution.deployment.requested
-      - nd_iw_deploy_preview.execution.deployment.status == 'not_needed'
+      - nd_iw_deploy_preview.execution.deployment.status in ['not_needed', 'would_deploy']
       - nd_iw_deploy_preview.execution.mutations_sent == 0
       - nd_iw_deploy_preview.execution.deployments_sent == 0
-      - nd_iw_deploy_preview.request_stats.mutation_requests == 0
-      - nd_iw_deploy_preview.request_stats.deploy_requests == 0
 
-- name: Exercise live deployment controls on one reserved identity
+- name: Exercise live deployment controls on explicitly requested reserved identities
   when: not nd_iw_module_check_mode
   block:
     - name: Remove the reserved deployment-control identity
@@ -45,11 +51,7 @@
         resources:
           - type: "{{ nd_iw_deploy_case.family }}"
             state: deleted
-            config: >-
-              {{
-                nd_iw_deploy_case.delete_all
-                | default(nd_iw_deploy_case.delete_config | default(nd_iw_deploy_case.delete))
-              }}
+            config: "{{ nd_iw_deploy_case.delete_config }}"
         config_actions:
           deploy: false
         output_level: normal
@@ -80,15 +82,47 @@
           - nd_iw_deploy_disabled.execution.deployment.status in ['disabled', 'not_needed']
           - nd_iw_deploy_disabled.execution.mutations_sent > 0
           - nd_iw_deploy_disabled.execution.deployments_sent == 0
-          - nd_iw_deploy_disabled.request_stats.deploy_requests == 0
 
-    - name: Update and deploy the reserved interface once
+    - name: Preview staged intent with an identical zero-mutation replay
       cisco.nd.nd_interfaces_workflow:
         fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
         resources:
           - type: "{{ nd_iw_deploy_case.family }}"
             state: merged
-            config: "{{ nd_iw_deploy_case.update_config }}"
+            config: "{{ nd_iw_deploy_case.create_config }}"
+        config_actions:
+          deploy: true
+        output_level: normal
+      check_mode: true
+      register: nd_iw_deploy_only_preview
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      retries: 10
+      delay: 2
+      until: nd_iw_deploy_only_preview.execution.deployment.status == 'would_deploy'
+      when: nd_iw_enable_deploy | bool
+
+    - name: Verify the deployment-only preview is changed but sends no writes
+      ansible.builtin.assert:
+        that:
+          - nd_iw_deploy_only_preview is changed
+          - not nd_iw_deploy_only_preview.planned_changed
+          - nd_iw_deploy_only_preview.mutation_count == 0
+          - nd_iw_deploy_only_preview.resources | selectattr('changed', 'equalto', true) | list | length == 0
+          - nd_iw_deploy_only_preview.execution.status == 'check_mode'
+          - nd_iw_deploy_only_preview.execution.deployment.requested
+          - nd_iw_deploy_only_preview.execution.deployment.status == 'would_deploy'
+          - nd_iw_deploy_only_preview.execution.mutations_sent == 0
+          - nd_iw_deploy_only_preview.execution.deployments_sent == 0
+          - nd_iw_deploy_only_preview.execution.deployment.targets | map(attribute='interface_name') | list | sort == nd_iw_deploy_target_names | unique | sort
+      when: nd_iw_enable_deploy | bool
+
+    - name: Deploy the already-staged exact configuration with zero mutations
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_deploy_case.family }}"
+            state: merged
+            config: "{{ nd_iw_deploy_case.create_config }}"
         config_actions:
           deploy: true
         output_level: normal
@@ -97,16 +131,23 @@
       delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
       when: nd_iw_enable_deploy | bool
 
-    - name: Verify all successful mutations produce exactly one consolidated deployment
+    - name: Verify staged intent used one exact-target deployment and zero mutations
       ansible.builtin.assert:
         that:
           - nd_iw_deploy_enabled is changed
+          - not nd_iw_deploy_enabled.planned_changed
+          - nd_iw_deploy_enabled.mutation_count == 0
+          - nd_iw_deploy_enabled.resources | selectattr('changed', 'equalto', true) | list | length == 0
           - nd_iw_deploy_enabled.execution.status == 'completed'
           - nd_iw_deploy_enabled.execution.deployment.requested
           - nd_iw_deploy_enabled.execution.deployment.status == 'succeeded'
-          - nd_iw_deploy_enabled.execution.mutations_sent > 0
+          - nd_iw_deploy_enabled.execution.mutations_sent == 0
           - nd_iw_deploy_enabled.execution.deployments_sent == 1
-          - nd_iw_deploy_enabled.request_stats.deploy_requests == 1
+          - nd_iw_deploy_enabled.execution.deployment.targets | map(attribute='interface_name') | list | sort == nd_iw_deploy_target_names | unique | sort
+          - >-
+            nd_iw_deploy_enabled.execution.deployment.targets
+            | selectattr('status', 'equalto', 'succeeded') | list | length
+            == nd_iw_deploy_target_names | unique | length
       when: nd_iw_enable_deploy | bool
 
     - name: Record that physical deployment cleanup is required
@@ -116,13 +157,57 @@
         - nd_iw_enable_deploy | bool
         - nd_iw_deploy_enabled.execution.deployment.status == 'succeeded'
 
-    - name: Reapply deployed intent to prove no-change suppresses deployment
+    - name: Read fabric switch sync status after deployment
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ nd_iw_current_fabric.fabric_name | urlencode }}/switches?max=500&offset=0
+        method: get
+      register: nd_iw_deploy_sync_query
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: nd_iw_enable_deploy | bool
+
+    - name: Verify the independent switch-status read succeeded
+      ansible.builtin.assert:
+        that:
+          - nd_iw_deploy_sync_query.status | int == 200
+          - nd_iw_deploy_sync_query.current.switches | default([]) is sequence
+      when: nd_iw_enable_deploy | bool
+
+    - name: Reset independently observed target-switch sync statuses
+      ansible.builtin.set_fact:
+        nd_iw_deploy_observed_sync_statuses: []
+      when: nd_iw_enable_deploy | bool
+
+    - name: Record sync status for every workflow target switch
+      vars:
+        nd_iw_deploy_sync_switch_id: >-
+          {{ item.get('switchId', item.get('serialNumber', '')) }}
+        nd_iw_deploy_sync_additional: "{{ item.get('additionalData', {}) }}"
+        nd_iw_deploy_sync_status: >-
+          {{
+            nd_iw_deploy_sync_additional.get(
+              'configSyncStatus',
+              item.get('configSyncStatus', '')
+            )
+            | string | lower | regex_replace('[^a-z0-9]', '')
+          }}
+      ansible.builtin.set_fact:
+        nd_iw_deploy_observed_sync_statuses: >-
+          {{ nd_iw_deploy_observed_sync_statuses + [nd_iw_deploy_sync_status] }}
+      loop: "{{ nd_iw_deploy_sync_query.current.switches | default([]) }}"
+      loop_control:
+        label: "{{ nd_iw_deploy_sync_switch_id | default('unidentified') }}"
+      when:
+        - nd_iw_enable_deploy | bool
+        - nd_iw_deploy_sync_switch_id in nd_iw_deploy_enabled.target_switch_ids
+
+    - name: Reapply the exact deployed intent once
       cisco.nd.nd_interfaces_workflow:
         fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
         resources:
           - type: "{{ nd_iw_deploy_case.family }}"
             state: merged
-            config: "{{ nd_iw_deploy_case.update_config }}"
+            config: "{{ nd_iw_deploy_case.create_config }}"
         config_actions:
           deploy: true
         output_level: normal
@@ -131,16 +216,44 @@
       delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
       when: nd_iw_enable_deploy | bool
 
-    - name: Verify idempotency sends no mutation or deployment
+    - name: Verify the exact replay remains mutation-free
+      ansible.builtin.assert:
+        that:
+          - not nd_iw_deploy_idempotent.planned_changed
+          - nd_iw_deploy_idempotent.mutation_count == 0
+          - nd_iw_deploy_idempotent.resources | selectattr('changed', 'equalto', true) | list | length == 0
+          - nd_iw_deploy_idempotent.execution.mutations_sent == 0
+          - nd_iw_deploy_idempotent.execution.deployments_sent in [0, 1]
+      when: nd_iw_enable_deploy | bool
+
+    - name: Verify a controller-confirmed in-sync replay sends no deployment
       ansible.builtin.assert:
         that:
           - nd_iw_deploy_idempotent is not changed
           - nd_iw_deploy_idempotent.execution.status == 'no_change'
-          - nd_iw_deploy_idempotent.execution.mutations_sent == 0
+          - nd_iw_deploy_idempotent.execution.deployment.status == 'not_needed'
           - nd_iw_deploy_idempotent.execution.deployments_sent == 0
-          - nd_iw_deploy_idempotent.request_stats.mutation_requests == 0
-          - nd_iw_deploy_idempotent.request_stats.deploy_requests == 0
-      when: nd_iw_enable_deploy | bool
+      when:
+        - nd_iw_enable_deploy | bool
+        - nd_iw_deploy_observed_sync_statuses | length == nd_iw_deploy_enabled.target_switch_ids | length
+        - nd_iw_deploy_observed_sync_statuses | reject('equalto', 'insync') | list | length == 0
+
+    - name: Verify any shared-lab redeploy remains consolidated and exact-target scoped
+      ansible.builtin.assert:
+        that:
+          - nd_iw_deploy_idempotent is changed
+          - nd_iw_deploy_idempotent.execution.status == 'completed'
+          - nd_iw_deploy_idempotent.execution.deployment.requested
+          - nd_iw_deploy_idempotent.execution.deployment.status == 'succeeded'
+          - nd_iw_deploy_idempotent.execution.deployments_sent == 1
+          - nd_iw_deploy_idempotent.execution.deployment.targets | map(attribute='interface_name') | list | sort == nd_iw_deploy_target_names | unique | sort
+          - >-
+            nd_iw_deploy_idempotent.execution.deployment.targets
+            | selectattr('status', 'equalto', 'succeeded') | list | length
+            == nd_iw_deploy_target_names | unique | length
+      when:
+        - nd_iw_enable_deploy | bool
+        - nd_iw_deploy_idempotent.execution.deployments_sent == 1
 
   always:
     - name: Remove only the reserved deployment-control identity
@@ -149,11 +262,7 @@
         resources:
           - type: "{{ nd_iw_deploy_case.family }}"
             state: deleted
-            config: >-
-              {{
-                nd_iw_deploy_case.delete_all
-                | default(nd_iw_deploy_case.delete_config | default(nd_iw_deploy_case.delete))
-              }}
+            config: "{{ nd_iw_deploy_case.delete_config }}"
         config_actions:
           deploy: "{{ (nd_iw_enable_deploy | bool) or (nd_iw_deployment_exercised | default(false) | bool) }}"
         output_level: normal
