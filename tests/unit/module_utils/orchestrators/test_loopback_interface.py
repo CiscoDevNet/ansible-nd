@@ -1273,3 +1273,77 @@ def test_loopback_interface_00800() -> None:
         instance.create(model)
 
     assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
+# =============================================================================
+# Test: read-only vs mutation pre-flight (deployment freeze)
+# =============================================================================
+
+
+def test_loopback_interface_00810() -> None:
+    """
+    # Summary
+
+    Verify `query_all` succeeds for `state: gathered` when the fabric is in deployment freeze mode.
+
+    ## Test
+
+    - Fabric summary returns `fabricStatus: frozen`
+    - state is `gathered`, so `validate_prerequisites` selects `validate_for_read`, which does not
+      check deployment freeze
+    - Switches list returns no switches, so `query_all` returns []
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator.validate_prerequisites()
+    - FabricContext.validate_for_read()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+        yield responses_loopback_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, state="gathered", config=[])
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all(gathered_filters=[])
+
+    assert result == []
+
+
+def test_loopback_interface_00820() -> None:
+    """
+    # Summary
+
+    Verify `query_all` still raises for `state: deleted` when the fabric is in deployment freeze mode.
+
+    ## Test
+
+    - Fabric summary returns `fabricStatus: frozen`
+    - state is `deleted`, which mutates configuration, so `validate_for_mutation` applies
+    - `query_all` raises `RuntimeError` with `Query all failed.*deployment freeze`
+
+    `NDStateMachine.manage_state` does not route `deleted` through `preflight`, so `query_all` is the
+    only deployment-freeze guard for that state.
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator.validate_prerequisites()
+    - FabricContext.validate_for_mutation()
+    """
+
+    def responses():
+        yield responses_loopback_interface("test_loopback_interface_00730a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, state="deleted", config=[{"switch_ip": "192.168.12.151"}])
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    match = r"Query all failed.*deployment freeze"
+    with pytest.raises(RuntimeError, match=match):
+        instance.query_all()

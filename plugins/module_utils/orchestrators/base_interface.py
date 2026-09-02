@@ -24,9 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesRemove,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
-from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
-    build_lucene_expressions,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import build_lucene_expressions
 from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import InterfaceCapabilityPreflight
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import ModelType, NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -49,7 +47,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, or is in deployment-freeze mode for a state
+      that mutates configuration.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `deploy_pending` if the bulk deploy API request fails.
     - Via `remove_pending` if the bulk remove API request fails.
@@ -314,15 +313,24 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         # Summary
 
-        Run pre-flight validation before any CRUD operations. Checks that the fabric exists and is modifiable.
+        Run pre-flight validation before any CRUD operations. Read-only states (see `read_only_states`) require
+        only that the fabric exists and is reachable through the targeted controller. Every other state also
+        requires the fabric to accept configuration changes, so deployment freeze is rejected.
+
+        `query_all` is the single entry point common to every state, so the read/mutation distinction is derived
+        from the module state here rather than passed in by `NDStateMachine`.
 
         ## Raises
 
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is owned by a different controller in the cluster.
+        - If the fabric is in deployment-freeze mode and the state is not read-only.
         """
+        if self.is_read_only_operation:
+            self.fabric_context.validate_for_read()
+            return
         self.fabric_context.validate_for_mutation()
 
     def _configure_endpoint(self, api_endpoint, switch_sn: str):

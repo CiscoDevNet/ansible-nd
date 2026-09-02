@@ -67,6 +67,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     # e.g. "links" for /api/v1/manage/links POST.
     bulk_payload_key: ClassVar[str] = "items"
 
+    # Module states that never mutate configuration. Any state not listed here is treated as a
+    # mutation, so an unrecognised or absent state keeps the stricter pre-flight.
+    read_only_states: ClassVar[frozenset[str]] = frozenset({"gathered"})
+
     # NOTE: if not defined by subclasses, return an error as they are required
     create_endpoint: type[NDEndpointBaseModel]
     update_endpoint: type[NDEndpointBaseModel]
@@ -81,6 +85,12 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     # REST infrastructure
     rest_send: RestSend
     results: Optional[Results] = None
+
+    @property
+    def is_read_only_operation(self) -> bool:
+        """Whether the module's current state performs no configuration changes."""
+        params = self.rest_send.params if self.rest_send else None
+        return bool(params) and params.get("state") in self.read_only_states
 
     def _register_api_call(
         self,

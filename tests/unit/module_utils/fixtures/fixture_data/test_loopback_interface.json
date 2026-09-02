@@ -544,5 +544,27 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
         "MESSAGE": "OK",
         "DATA": {"status": "ok"}
+    },
+    "test_loopback_interface_00810a": {
+        "TEST_NOTES": ["gathered on frozen fabric: fabric summary reports fabricStatus=frozen (validate_for_read must not raise)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "local": true,
+            "fabricStatus": "frozen"
+        }
+    },
+    "test_loopback_interface_00810b": {
+        "TEST_NOTES": ["gathered on frozen fabric: switches list returns no switches"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": []
+        }
     }
 }
