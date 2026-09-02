@@ -40,9 +40,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPut,
     EpManageInterfacesRemove,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
-    GatheredLuceneSpec,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
     LoopbackPolicyTypeEnum,
