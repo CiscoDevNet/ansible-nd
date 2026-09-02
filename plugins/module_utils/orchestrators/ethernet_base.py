@@ -33,12 +33,8 @@ from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
-    NDEndpointBaseModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import (
-    EpVpcPairGet,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import EpVpcPairGet
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
@@ -119,7 +115,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, or is in deployment-freeze mode for a state
+      that mutates configuration.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `_check_port_channel_restrictions` if a non-whitelisted field is modified on a port-channel member.
     - Via `create` if the create API request fails.
@@ -1980,7 +1977,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         managed_types = self._managed_policy_types()
