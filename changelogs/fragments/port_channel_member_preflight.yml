@@ -1,0 +1,5 @@
+---
+bugfixes:
+  - nd_interface_port_channel_access, nd_interface_port_channel_trunk_host - fail fast with a validation error naming the
+    member and its current owner when a port-channel lists a member ethernet already belonging to a different port-channel,
+    instead of surfacing the controller's opaque mid-run HTTP 500 (https://github.com/CiscoDevNet/ansible-nd/issues/369).
