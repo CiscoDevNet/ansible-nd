@@ -2251,6 +2251,9 @@ def test_mcfg_parent_delete_does_not_seed_empty_network_level_deploy():
         def _wait_for_networks_delete_ready(self, *_args):
             return None
 
+        def _network_delete_wait_deadline(self, item_count):
+            return 100.0 + item_count, 300
+
     coordinator = Coordinator()
 
     traces = NetworkStateMachine(coordinator)._deploy_detach_traces(
@@ -2264,6 +2267,47 @@ def test_mcfg_parent_delete_does_not_seed_empty_network_level_deploy():
 
     assert traces == []
     assert coordinator.deploy_maps == ({},)
+
+
+def test_network_delete_wait_uses_one_combined_gate():
+    class Module:
+        check_mode = False
+
+    class Strategy:
+        is_parent = False
+        is_multicluster = False
+
+    class Coordinator:
+        module = Module()
+
+        def __init__(self):
+            self.wait_calls = []
+
+        def _configured_network_names(self, _config):
+            return ["BLUE_NET"]
+
+        def _build_delete_deploy_payloads(self, _config, *target_maps):
+            return []
+
+        def _wait_for_network_attachments_delete_ready(self, *_args):
+            raise AssertionError("network delete flow must use the combined readiness gate")
+
+        def _wait_for_networks_delete_ready(self, _args, _strategy, names):
+            self.wait_calls.append(("networks", names))
+
+    coordinator = Coordinator()
+
+    traces = NetworkStateMachine(coordinator)._deploy_detach_traces(
+        api_args={},
+        wait_args={},
+        strategy=Strategy(),
+        config=[{"network_name": "BLUE_NET"}],
+        detach_trace={},
+        wait_network_names=["BLUE_NET"],
+    )
+
+    assert traces == []
+    assert coordinator.wait_calls == [("networks", ["BLUE_NET"])]
 
 
 def test_network_check_mode_delete_skips_deploy_and_wait():
@@ -3133,17 +3177,15 @@ def test_pending_network_status_is_not_delete_ready():
     class Coordinator:
         module = Module()
 
-        def _new_network_orchestrator(self, _module_args, _strategy):
-            class Orchestrator:
-                def query_all(self):
-                    return [{"networkName": "BLUE_NET", "networkStatus": "pending"}]
-
-            return Orchestrator(), {}
+        def _query_current_networks_by_names(self, _module_args, _strategy, network_names):
+            assert network_names == ["BLUE_NET"]
+            return [{"networkName": "BLUE_NET", "networkStatus": "pending"}]
 
     manager = NetworkAttachmentManager(coordinator=Coordinator())
     manager.wait_attempts = 1
     manager.wait_delay = 0
     manager.undeploy_retry_attempts = 0
+    manager.current_attachment_details_ignore_missing = lambda *_args: []
 
     with pytest.raises(RuntimeError, match="Timed out waiting for networks"):
         manager.wait_for_networks_delete_ready(
@@ -3278,17 +3320,15 @@ def test_pending_network_delete_wait_retries_undeploy():
     class Coordinator:
         module = Module()
 
-        def _new_network_orchestrator(self, _module_args, _strategy):
-            class Orchestrator:
-                def query_all(self):
-                    return [{"networkName": "BLUE_NET", "networkStatus": "pending"}]
-
-            return Orchestrator(), {}
+        def _query_current_networks_by_names(self, _module_args, _strategy, network_names):
+            assert network_names == ["BLUE_NET"]
+            return [{"networkName": "BLUE_NET", "networkStatus": "pending"}]
 
     manager = NetworkAttachmentManager(coordinator=Coordinator())
     manager.wait_attempts = 1
     manager.wait_delay = 0
     manager.undeploy_retry_attempts = 1
+    manager.current_attachment_details_ignore_missing = lambda *_args: []
     deploy_payloads = []
     manager.deploy_network_attachments = lambda _module_args, _strategy, payload: deploy_payloads.append(payload)
 
@@ -3299,6 +3339,73 @@ def test_pending_network_delete_wait_retries_undeploy():
         )
 
     assert deploy_payloads == [{"networkNames": ["BLUE_NET"]}]
+
+
+def test_network_delete_wait_allows_deployed_definition_after_detached_attachment_rows():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs)
+
+    class Coordinator:
+        module = Module()
+
+        def _query_current_networks_by_names(self, _module_args, _strategy, network_names):
+            assert network_names == ["BLUE_NET"]
+            return [{"networkName": "BLUE_NET", "networkStatus": "deployed"}]
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.wait_attempts = 1
+    manager.wait_delay = 0
+    manager.undeploy_retry_attempts = 0
+    manager.current_attachment_details_ignore_missing = lambda *_args: [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "attach": False,
+            "status": "notApplicable",
+        }
+    ]
+
+    manager.wait_for_networks_delete_ready(
+        {"config": [{"network_name": "BLUE_NET"}]},
+        _orchestrator().strategy,
+    )
+
+
+def test_network_delete_wait_blocks_on_pending_attachment_even_when_network_status_is_ready():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs)
+
+    class Coordinator:
+        module = Module()
+
+        def _query_current_networks_by_names(self, _module_args, _strategy, network_names):
+            assert network_names == ["BLUE_NET"]
+            return [{"networkName": "BLUE_NET", "networkStatus": "notApplicable"}]
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.wait_attempts = 1
+    manager.wait_delay = 0
+    manager.undeploy_retry_attempts = 0
+    manager.current_attachment_details_ignore_missing = lambda *_args: [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "attach": False,
+            "status": "pending",
+        }
+    ]
+
+    with pytest.raises(RuntimeError, match="last_attachment_blockers"):
+        manager.wait_for_networks_delete_ready(
+            {"config": [{"network_name": "BLUE_NET"}]},
+            _orchestrator().strategy,
+        )
 
 
 def test_network_response_omits_disable_rt_auto_without_normalizing_rt_auto():

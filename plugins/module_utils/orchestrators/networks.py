@@ -524,14 +524,28 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         try:
             if not scoped_network_names:
                 return self._query_all_unfiltered()
-            if self._is_mcfg_parent():
-                return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_network_names)
-            if len(scoped_network_names) >= self.scoped_query_threshold:
+            return self.query_by_names(scoped_network_names)
+        except Exception as exc:
+            if scoped_network_names:
                 return self._query_all_unfiltered()
+            raise Exception(f"Query all networks failed: {exc}") from exc
+
+    def query_by_names(self, network_names: list[str]) -> ResponseType:
+        """GET selected Networks using the most efficient safe query path."""
+        scoped_network_names = [name for name in dict.fromkeys(network_names) if name]
+        if not scoped_network_names:
+            return []
+        if self._is_mcfg_parent():
+            return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_network_names)
+        if len(scoped_network_names) >= self.scoped_query_threshold:
+            return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_network_names)
+
+        try:
             if len(scoped_network_names) > 1:
                 return self._query_all_scoped(scoped_network_names)
+
             endpoint = self._make_endpoint(self.strategy.networks_get_cls())
-            if scoped_network_names and hasattr(endpoint, "endpoint_params"):
+            if hasattr(endpoint, "endpoint_params"):
                 endpoint.endpoint_params.filter = self._network_name_filter(scoped_network_names)
             result = self._request(
                 path=endpoint.path,
@@ -542,10 +556,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             if isinstance(result, dict):
                 return self._normalize_query_network_items(result.get("networks") or result.get("items") or [])
             return self._normalize_query_network_items(result)
-        except Exception as exc:
-            if scoped_network_names:
-                return self._query_all_unfiltered()
-            raise Exception(f"Query all networks failed: {exc}") from exc
+        except Exception:
+            return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_network_names)
 
     def _query_all_scoped(self, network_names: list[str]) -> ResponseType:
         networks: list[dict[str, Any]] = []

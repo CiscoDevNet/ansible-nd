@@ -42,6 +42,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_vpc_peer_expander import (
     expand_desired_attachments_with_vpc_peers,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.delete_readiness import (
+    DeleteReadinessPolicy,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_config_utils import (
     configured_network_names,
     deploy_enabled_by_network,
@@ -58,6 +61,9 @@ class NetworkAttachmentManager:
     wait_attempts = 20
     wait_delay = 15
     wait_chunk_size = 30
+    delete_wait_base_timeout = 600
+    delete_wait_extra_chunk_timeout = 30
+    delete_wait_max_timeout = 900
     undeploy_retry_attempts = 3
     attachment_query_page_size = 10000
 
@@ -766,13 +772,18 @@ class NetworkAttachmentManager:
         module_args: dict,
         strategy: BaseNetworkStrategy,
         network_names: list[str] | None = None,
+        deadline: float | None = None,
+        timeout_seconds: int | None = None,
     ) -> None:
         pending = set(network_names if network_names is not None else configured_network_names(module_args.get("config") or []))
         if not pending:
             return
+        if deadline is None or timeout_seconds is None:
+            deadline, timeout_seconds = self.delete_wait_deadline(len(pending))
+        started_at = DeleteReadinessPolicy.now()
         last_blockers: dict[str, list[dict[str, Any]]] = {}
         retried_targets: dict[tuple[str, str], int] = {}
-        for attempt in range(self._delete_wait_attempts(len(pending))):
+        while pending:
             attachments = self._current_attachment_details_for_wait(module_args, strategy, sorted(pending))
             blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending}
             retry_targets: dict[str, set[str]] = {}
@@ -803,49 +814,128 @@ class NetworkAttachmentManager:
             if not pending:
                 return
             last_blockers = {name: values for name, values in blockers.items() if name in pending}
+            if DeleteReadinessPolicy.now() >= deadline:
+                self.coordinator.module.fail_json(
+                    msg=f"Timed out waiting for network attachments to become deletable on fabric '{strategy.fabric_name}'.",
+                    pending_network_names=sorted(pending),
+                    last_blockers=last_blockers,
+                    elapsed_seconds=int(DeleteReadinessPolicy.now() - started_at),
+                    timeout_seconds=timeout_seconds,
+                )
             time.sleep(self.wait_delay)
-        self.coordinator.module.fail_json(
-            msg=f"Timed out waiting for network attachments to become deletable on fabric '{strategy.fabric_name}': {last_blockers}"
-        )
 
-    def wait_for_networks_delete_ready(self, module_args: dict, strategy: BaseNetworkStrategy, network_names: list[str] | None = None) -> None:
+    def wait_for_networks_delete_ready(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        network_names: list[str] | None = None,
+        deadline: float | None = None,
+        timeout_seconds: int | None = None,
+    ) -> None:
+        """Wait until Network attachments and Network definitions no longer block deletion."""
         pending = set(network_names if network_names is not None else configured_network_names(module_args.get("config") or []))
         if not pending:
             return
+        if deadline is None or timeout_seconds is None:
+            deadline, timeout_seconds = self.delete_wait_deadline(len(pending))
+        started_at = DeleteReadinessPolicy.now()
         ready_statuses = {"", "na", "notapplicable", "notdeployed", "deleted", "outofsync", "failed"}
         retry_statuses = {"pending", "inprogress", "deploymentinprogress", "previewinprogress"}
         last_statuses: dict[str, str] = {}
+        last_blockers: dict[str, list[dict[str, Any]]] = {}
+        retried_targets: dict[tuple[str, str, str], int] = {}
         retried_networks: dict[str, int] = {}
-        for attempt in range(self._delete_wait_attempts(len(pending))):
-            orchestrator, _results = self.coordinator._new_network_orchestrator(module_args, strategy)
-            networks = orchestrator.query_all() or []
+        while pending:
+            attachments = self._current_attachment_details_for_wait(module_args, strategy, sorted(pending))
+            blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending}
+            attachment_retry_targets: dict[str, set[str]] = {}
+            detached_attachment_networks: set[str] = set()
+            for attachment in attachments:
+                network_name = attachment.get("networkName")
+                if network_name not in pending:
+                    continue
+                if self.attachment_blocks_delete(attachment):
+                    switch_id = attachment.get("switchId")
+                    status = self.attachment_status(attachment)
+                    blockers.setdefault(network_name, []).append(
+                        {
+                            "switchId": switch_id,
+                            "attach": attachment.get("attach"),
+                            "status": status,
+                        }
+                    )
+                    retry_key = (network_name, switch_id or "", status.lower())
+                    if retried_targets.get(retry_key, 0) < self.undeploy_retry_attempts:
+                        attachment_retry_targets.setdefault(network_name, set())
+                        if switch_id:
+                            attachment_retry_targets[network_name].add(switch_id)
+                        retried_targets[retry_key] = retried_targets.get(retry_key, 0) + 1
+                else:
+                    detached_attachment_networks.add(network_name)
+
+            networks = self.coordinator._query_current_networks_by_names(module_args, strategy, sorted(pending))
             last_statuses = {}
             for network in networks:
                 name = network.get("networkName") or network.get("network_name")
                 if name in pending:
                     last_statuses[name] = network.get("networkStatus") or network.get("network_status") or ""
-            retry_targets = {
+            network_retry_targets = {
                 name: set()
                 for name, status in last_statuses.items()
                 if (name in pending and retried_networks.get(name, 0) < self.undeploy_retry_attempts and str(status).strip().lower() in retry_statuses)
             }
+            retry_targets = self._merge_deploy_target_maps(attachment_retry_targets, network_retry_targets)
             if retry_targets:
                 for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets):
                     self.deploy_network_attachments(module_args, strategy, deploy_payload)
-                for network_name in retry_targets:
+                for network_name in network_retry_targets:
                     retried_networks[network_name] = retried_networks.get(network_name, 0) + 1
-            ready = {name for name in pending if name not in last_statuses or str(last_statuses[name]).strip().lower() in ready_statuses}
+            ready = {
+                name
+                for name in pending
+                if not blockers.get(name)
+                and (name in detached_attachment_networks or name not in last_statuses or str(last_statuses[name]).strip().lower() in ready_statuses)
+            }
             pending.difference_update(ready)
             if not pending:
                 return
+            last_blockers = {name: values for name, values in blockers.items() if name in pending and values}
+            if DeleteReadinessPolicy.now() >= deadline:
+                self.coordinator.module.fail_json(
+                    msg=f"Timed out waiting for networks to become deletable on fabric '{strategy.fabric_name}'.",
+                    pending_network_names=sorted(pending),
+                    last_statuses=last_statuses,
+                    last_attachment_blockers=last_blockers,
+                    elapsed_seconds=int(DeleteReadinessPolicy.now() - started_at),
+                    timeout_seconds=timeout_seconds,
+                )
             time.sleep(self.wait_delay)
-        self.coordinator.module.fail_json(msg=f"Timed out waiting for networks to become deletable on fabric '{strategy.fabric_name}': {last_statuses}")
 
-    def _delete_wait_attempts(self, item_count: int) -> int:
+    @staticmethod
+    def _merge_deploy_target_maps(*target_maps: dict[str, set[str]]) -> dict[str, set[str]]:
+        merged: dict[str, set[str]] = {}
+        for target_map in target_maps:
+            for network_name, switch_ids in target_map.items():
+                merged.setdefault(network_name, set()).update(switch_ids)
+        return merged
+
+    def _delete_wait_timeout(self, item_count: int) -> int:
         if self.wait_attempts != type(self).wait_attempts:
-            return int(self.wait_attempts)
-        extra_attempts = max(0, (max(item_count, 1) - 1) // self.wait_chunk_size)
-        return min(80, int(self.wait_attempts) + extra_attempts)
+            return max(0, int(self.wait_attempts) * int(self.wait_delay))
+        return self._delete_wait_policy().timeout_for(item_count)
+
+    def delete_wait_deadline(self, item_count: int) -> tuple[float, int]:
+        timeout = self._delete_wait_timeout(item_count)
+        return DeleteReadinessPolicy.now() + timeout, timeout
+
+    def _delete_wait_policy(self) -> DeleteReadinessPolicy:
+        return DeleteReadinessPolicy(
+            poll_interval=self.wait_delay,
+            chunk_size=self.wait_chunk_size,
+            base_timeout=self.delete_wait_base_timeout,
+            extra_chunk_timeout=self.delete_wait_extra_chunk_timeout,
+            max_timeout=self.delete_wait_max_timeout,
+        )
 
     def _current_attachment_details_for_wait(
         self,

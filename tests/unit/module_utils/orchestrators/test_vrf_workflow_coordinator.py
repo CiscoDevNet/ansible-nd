@@ -495,10 +495,115 @@ def test_vrf_delete_wait_timeout_ignores_removed_override_and_scales_adaptively_
     manager = VrfAttachmentManager(coordinator=Coordinator())
 
     # Stale top-level timeout values no longer override this internal wait policy.
-    assert manager._delete_wait_timeout({"timeout": 300}, 1) == 30
-    assert manager._delete_wait_timeout({"timeout": 300}, 30) == 30
-    assert manager._delete_wait_timeout({"timeout": 300}, 31) == 35
-    assert manager._delete_wait_timeout({"timeout": 300}, 6000) == 900
+    assert manager._delete_wait_timeout(1) == 600
+    assert manager._delete_wait_timeout(30) == 600
+    assert manager._delete_wait_timeout(31) == 630
+    assert manager._delete_wait_timeout(6000) == 900
+
+
+def test_vrf_delete_wait_uses_scoped_vrf_query_and_attachment_gate():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise AssertionError(kwargs)
+
+    class Coordinator:
+        module = Module()
+
+        def __init__(self):
+            self.queried_names = []
+            self.queried_attachments = []
+
+        def _current_attachment_details(self, _module_args, _strategy, vrf_names):
+            self.queried_attachments.append(vrf_names)
+            return []
+
+        def _query_current_vrfs_by_names(self, _module_args, _strategy, vrf_names):
+            self.queried_names.append(vrf_names)
+            return [{"vrfName": "BLUE", "vrfStatus": "notApplicable"}]
+
+        def _query_current_vrfs(self, *_args):
+            raise AssertionError("delete readiness must use scoped VRF queries")
+
+    coordinator = Coordinator()
+    manager = VrfAttachmentManager(coordinator=coordinator)
+
+    manager.wait_for_vrfs_delete_ready(
+        {"config": [{"vrf_name": "BLUE"}]},
+        _StandaloneStrategy(),
+    )
+
+    assert coordinator.queried_attachments == [["BLUE"]]
+    assert coordinator.queried_names == [["BLUE"]]
+
+
+def test_vrf_delete_wait_blocks_on_pending_attachment_even_when_vrf_status_is_ready():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs)
+
+    class Coordinator:
+        module = Module()
+
+        def _current_attachment_details(self, _module_args, _strategy, vrf_names):
+            assert vrf_names == ["BLUE"]
+            return [{"vrfName": "BLUE", "switchId": "FDO123", "attach": False, "status": "pending"}]
+
+        def _query_current_vrfs_by_names(self, _module_args, _strategy, vrf_names):
+            assert vrf_names == ["BLUE"]
+            return [{"vrfName": "BLUE", "vrfStatus": "notApplicable"}]
+
+    manager = VrfAttachmentManager(coordinator=Coordinator())
+    manager.delete_wait_base_timeout = 0
+    manager.delete_wait_extra_chunk_timeout = 0
+    manager.delete_wait_max_timeout = 0
+    manager.delete_wait_delay = 0
+    manager.undeploy_retry_attempts = 0
+
+    with pytest.raises(RuntimeError, match="last_attachment_blockers"):
+        manager.wait_for_vrfs_delete_ready(
+            {"config": [{"vrf_name": "BLUE"}]},
+            _StandaloneStrategy(),
+        )
+
+
+def test_vrf_delete_wait_retries_undeploy_for_pending_status():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs["msg"])
+
+    class Coordinator:
+        module = Module()
+
+        def _current_attachment_details(self, _module_args, _strategy, vrf_names):
+            assert vrf_names == ["BLUE"]
+            return []
+
+        def _query_current_vrfs_by_names(self, _module_args, _strategy, vrf_names):
+            assert vrf_names == ["BLUE"]
+            return [{"vrfName": "BLUE", "vrfStatus": "pending"}]
+
+    manager = VrfAttachmentManager(coordinator=Coordinator())
+    manager.delete_wait_base_timeout = 0
+    manager.delete_wait_extra_chunk_timeout = 0
+    manager.delete_wait_max_timeout = 0
+    manager.delete_wait_delay = 0
+    manager.undeploy_retry_attempts = 1
+    deploy_payloads = []
+    manager.deploy_vrf_attachments = lambda _module_args, _strategy, payload: deploy_payloads.append(payload)
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for VRFs"):
+        manager.wait_for_vrfs_delete_ready(
+            {"config": [{"vrf_name": "BLUE"}]},
+            _StandaloneStrategy(),
+        )
+
+    assert deploy_payloads == [{"vrfNames": ["BLUE"]}]
 
 
 def test_vrf_attachment_query_missing_fallback_uses_unscoped_read():

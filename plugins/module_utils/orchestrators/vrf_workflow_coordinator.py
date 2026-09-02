@@ -1085,6 +1085,21 @@ class VrfWorkflowCoordinator:
             vrfs = []
         return vrfs, self._finalize_api_trace(results)
 
+    def _query_current_vrfs_by_names(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        vrf_names: list[str],
+    ) -> list[dict[str, Any]]:
+        """Gather selected current VRF records for the target fabric."""
+        orchestrator, _results = self._new_vrf_orchestrator(module_args, strategy)
+        data = orchestrator.query_by_names(vrf_names)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("vrfs") or data.get("items") or []
+        return []
+
     def _wait_for_vrfs_delete_ready(
         self,
         module_args: dict,

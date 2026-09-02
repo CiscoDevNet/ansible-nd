@@ -544,7 +544,6 @@ class NetworkStateMachine:
 
         if target_network_names:
             self._trace("delete_wait_ready_start", network_names=target_network_names)
-            self.coordinator._wait_for_network_attachments_delete_ready(wait_args, strategy, target_network_names)
             self.coordinator._wait_for_networks_delete_ready(wait_args, strategy, target_network_names)
             self._trace("delete_wait_ready_end", network_names=target_network_names)
         return traces

@@ -701,7 +701,7 @@ def test_vrfs_00080_query_all_scopes_targeted_state_reads():
         {"vrfName": "ansible-vrf-a"},
     ]
     assert requested_paths == [
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=10000",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?max=10000&filter=%28vrfName%3Aansible-vrf-a%20OR%20vrfName%3Aansible-vrf-b%29",
     ]
 
 
@@ -766,8 +766,8 @@ def test_vrfs_00081a_query_all_scoped_multi_name_uses_unfiltered_local_filter():
     """
     # Summary
 
-    Verify multi-name VRF reads avoid unsupported Lucene OR filters and
-    exact-filter the paginated read in module code.
+    Verify multi-name VRF reads use a scoped Lucene filter below the threshold
+    and exact-filter the response in module code.
     """
     orchestrator = _orchestrator_for_request_tests(
         {
@@ -797,7 +797,7 @@ def test_vrfs_00081a_query_all_scoped_multi_name_uses_unfiltered_local_filter():
         {"vrfName": "ansible-vrf-a"},
     ]
     assert requested_paths == [
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=10000",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?max=10000&filter=%28vrfName%3Aansible-vrf-a%20OR%20vrfName%3Aansible-vrf-b%29",
     ]
 
 

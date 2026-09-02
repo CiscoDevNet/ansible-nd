@@ -623,9 +623,12 @@ api_metadata:
   elements: dict
 """
 
+import logging
+
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_workflow_coordinator import (
     NetworkWorkflowCoordinator,
@@ -662,11 +665,15 @@ def main():
         supports_check_mode=True,
     )
     require_pydantic(module)
+    setup_logging(module)
+    module_log = logging.getLogger("nd.nd_manage_networks")
 
     try:
+        module_log.debug("main: starting Network workflow")
         coordinator = NetworkWorkflowCoordinator(module=module)
         result = coordinator.run()
 
+        module_log.debug("main: completed Network workflow changed=%s failed=%s", result.get("changed"), result.get("failed"))
         module.exit_json(**result)
 
     except NDStateMachineError as e:

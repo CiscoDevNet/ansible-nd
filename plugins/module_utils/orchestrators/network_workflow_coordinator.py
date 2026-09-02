@@ -1054,27 +1054,50 @@ class NetworkWorkflowCoordinator:
             networks = []
         return networks, self._finalize_api_trace(results)
 
+    def _query_current_networks_by_names(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        network_names: list[str],
+    ) -> list[dict[str, Any]]:
+        """Gather selected current Network records for the target fabric."""
+        orchestrator, _results = self._new_network_orchestrator(module_args, strategy)
+        data = orchestrator.query_by_names(network_names)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("networks") or data.get("items") or []
+        return []
+
     def _wait_for_networks_delete_ready(
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
         network_names: list[str] | None = None,
+        deadline: float | None = None,
+        timeout_seconds: int | None = None,
     ) -> None:
         """Wait until configured Networks are absent or in notApplicable state."""
         if self.module.check_mode:
             return
-        self.attachments.wait_for_networks_delete_ready(module_args, strategy, network_names)
+        self.attachments.wait_for_networks_delete_ready(module_args, strategy, network_names, deadline, timeout_seconds)
 
     def _wait_for_network_attachments_delete_ready(
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
         network_names: list[str] | None = None,
+        deadline: float | None = None,
+        timeout_seconds: int | None = None,
     ) -> None:
         """Wait until configured Network attachments no longer block deletion."""
         if self.module.check_mode:
             return
-        self.attachments.wait_for_attachments_delete_ready(module_args, strategy, network_names)
+        self.attachments.wait_for_attachments_delete_ready(module_args, strategy, network_names, deadline, timeout_seconds)
+
+    def _network_delete_wait_deadline(self, item_count: int) -> tuple[float, int]:
+        """Return the shared Network delete-readiness deadline and timeout."""
+        return self.attachments.delete_wait_deadline(item_count)
 
     def _deploy_network_attachments(
         self,

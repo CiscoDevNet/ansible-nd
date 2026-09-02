@@ -462,14 +462,28 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         try:
             if not scoped_vrf_names:
                 return self._query_all_unfiltered()
-            if self._is_mcfg_parent():
-                return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
-            if len(scoped_vrf_names) >= self.scoped_query_threshold:
+            return self.query_by_names(scoped_vrf_names)
+        except Exception as e:
+            if scoped_vrf_names:
                 return self._query_all_unfiltered()
+            raise Exception(f"Query all VRFs failed: {e}") from e
+
+    def query_by_names(self, vrf_names: list[str]) -> ResponseType:
+        """GET selected VRFs using the most efficient safe query path."""
+        scoped_vrf_names = [name for name in dict.fromkeys(vrf_names) if name]
+        if not scoped_vrf_names:
+            return []
+        if self._is_mcfg_parent():
+            return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
+        if len(scoped_vrf_names) >= self.scoped_query_threshold:
+            return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
+
+        try:
             if len(scoped_vrf_names) > 1:
-                return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
+                return self._query_all_scoped(scoped_vrf_names)
+
             endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
-            if scoped_vrf_names and hasattr(endpoint, "endpoint_params"):
+            if hasattr(endpoint, "endpoint_params"):
                 endpoint.endpoint_params.filter = self._vrf_name_filter(scoped_vrf_names)
             result = self._request(
                 path=endpoint.path,
@@ -480,10 +494,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             if isinstance(result, dict):
                 return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result.get("vrfs") or result.get("items") or []))
             return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result))
-        except Exception as e:
-            if scoped_vrf_names:
-                return self._query_all_unfiltered()
-            raise Exception(f"Query all VRFs failed: {e}") from e
+        except Exception:
+            return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
 
     def _query_all_scoped(self, vrf_names: list[str]) -> ResponseType:
         """GET selected VRFs with a single batched filter."""
@@ -502,7 +514,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
         if hasattr(endpoint, "endpoint_params"):
             endpoint.endpoint_params.filter = self._vrf_name_filter(vrf_names)
-            endpoint.endpoint_params.max = 1
+            endpoint.endpoint_params.max = self.unfiltered_query_page_size if len(vrf_names) > 1 else 1
         result = self._request(
             path=endpoint.path,
             verb=endpoint.verb,
