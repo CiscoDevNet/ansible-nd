@@ -114,29 +114,6 @@ def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
     return any(signature in message for signature in non_fatal_signatures)
 
 
-def _get_switches_needing_deploy(nd_v2: Any, fabric_name: str) -> list[str]:
-    """
-    Return serial numbers of fabric switches that require deployment.
-
-    Queries the fabric switch inventory and selects every switch whose
-    config-sync state is not confirmed in-sync. Any switch that is not
-    explicitly in-sync (including unknown or missing status) is treated as
-    needing deployment so a pending change is never silently skipped. This
-    mirrors the collection's switch-scoped deploy contract used elsewhere for
-    config_actions.type == "switch".
-
-    Args:
-        nd_v2: NDModuleV2 instance for RestSend
-        fabric_name: Fabric name to query
-
-    Returns:
-        Sorted list of unique switch serial numbers needing deployment
-    """
-    switches = _validate_fabric_switches(nd_v2, fabric_name)
-    switch_ids = [serial_number for serial_number, switch_data in switches.items() if _is_switch_config_in_sync(switch_data) is not True]
-    return sorted(set(switch_ids))
-
-
 def _get_managed_pair_switches_needing_deploy(
     nd_v2: Any,
     fabric_name: str,
@@ -147,7 +124,7 @@ def _get_managed_pair_switches_needing_deploy(
     Return serials of the managed vPC pairs' peer switches that need deployment.
 
     Scopes the switch-level deploy to only the switches forming the vPC pairs
-    changed by this run (config_actions.type == "resource"), rather than every
+    changed by this run (config_actions.type == "switch"), rather than every
     out-of-sync switch in the fabric. Nexus Dashboard has no vPC-pair-level deploy
     primitive, so a vPC pair maps to its two peer switches.
 
@@ -163,7 +140,7 @@ def _get_managed_pair_switches_needing_deploy(
         serial tuples from controller state.
 
     A config peer absent from inventory (mistyped serial, wrong fabric) is warned
-    rather than silently skipped, so a resource deploy never becomes a silent
+    rather than silently skipped, so a switch-scoped deploy never becomes a silent
     no-op. A deleted peer already gone from inventory needs no deploy and is
     skipped quietly. Only switches not confirmed in-sync are returned so an
     already deployed pair is a no-op.
@@ -192,7 +169,7 @@ def _get_managed_pair_switches_needing_deploy(
                 unresolved_serials.append(identifier)
         if unresolved_serials:
             nd_v2.module.warn(
-                f"config_actions.type=resource: vPC pair peer(s) {unresolved_serials} not found in fabric "
+                f"config_actions.type=switch: vPC pair peer(s) {unresolved_serials} not found in fabric "
                 f"'{fabric_name}' inventory; skipping switch-scoped deploy for those switches."
             )
     # Pairs removed this run are absent from config; recover their peers so the
@@ -211,9 +188,8 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
     - Optional Step 1: Save fabric configuration
     - Optional Step 2: Deploy scope depends on config_actions.type:
       * "global": deploy the whole fabric via .../actions/deploy (forceShowRun=true)
-      * "switch": deploy every out-of-sync switch via .../switchActions/deploy
-      * "resource": deploy only the managed pair's out-of-sync peer switches via
-        .../switchActions/deploy
+      * "switch": deploy only the out-of-sync peer switches of the vPC pairs
+        changed by this run via .../switchActions/deploy
     - Proper error handling with NDModuleError
     - Results aggregation
     - Executes only if there are actual changes or pending operations
@@ -357,10 +333,8 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
     #
     # config_actions.type selects the deploy scope:
     #   - "global": deploy the entire fabric via .../actions/deploy.
-    #   - "switch": deploy every switch left out-of-sync by the vPC pair changes
-    #     above, via .../switchActions/deploy.
-    #   - "resource": deploy only the managed pair's out-of-sync peer switches,
-    #     via .../switchActions/deploy.
+    #   - "switch": deploy only the out-of-sync peer switches of the vPC pairs
+    #     changed by this run, via .../switchActions/deploy.
     if deploy_enabled:
         if action_type in SWITCH_DEPLOY_ACTION_TYPES:
             deploy_path = fabric_utils.switch_deploy_path
@@ -369,10 +343,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
 
         try:
             if action_type in SWITCH_DEPLOY_ACTION_TYPES:
-                if action_type == "resource":
-                    switch_ids = _get_managed_pair_switches_needing_deploy(nd_v2, fabric_name, nrm.module.params.get("config"), result.get("class_diff"))
-                else:
-                    switch_ids = _get_switches_needing_deploy(nd_v2, fabric_name)
+                switch_ids = _get_managed_pair_switches_needing_deploy(nd_v2, fabric_name, nrm.module.params.get("config"), result.get("class_diff"))
                 deploy_payload = {"switchIds": switch_ids}
                 if switch_ids:
                     response = fabric_utils.deploy_switches(switch_ids)
@@ -386,7 +357,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                         changed=True,
                     )
                 else:
-                    # Switch/resource scope requested but nothing is out-of-sync;
+                    # Switch scope requested but nothing is out-of-sync;
                     # record a successful no-op instead of posting an empty list.
                     register_action_api_call(
                         results=results,

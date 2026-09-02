@@ -107,49 +107,6 @@ def test_manage_vpc_pair_deploy_00010_global_scope_uses_fabric_deploy():
     assert fake_nd.payloads_for(GLOBAL_DEPLOY_PATH) == [{"type": "global"}]
 
 
-def test_manage_vpc_pair_deploy_00020_switch_scope_deploys_only_out_of_sync_switches():
-    # type=switch routes deploy to switchActions/deploy with only the switch
-    # serials that are not confirmed in-sync (out-of-sync + unknown status).
-    nrm = _make_nrm("switch")
-    switches_response = {
-        "switches": [
-            {"serialNumber": "FOX222AAA", "configSyncStatus": "In-Sync"},
-            {"serialNumber": "FOX111AAA", "configSyncStatus": "Out-of-Sync"},
-            {"serialNumber": "FOX333AAA"},  # unknown/missing status -> must deploy
-        ]
-    }
-    fake_nd = _FakeNDModuleV2(nrm.module, switches_response=switches_response)
-
-    _run_deploy(nrm, fake_nd)
-
-    paths = fake_nd.paths()
-    assert SAVE_PATH in paths  # save stays fabric-scoped configSave
-    assert SWITCHES_PATH in paths  # switch inventory queried at deploy time
-    assert GLOBAL_DEPLOY_PATH not in paths
-    assert SWITCH_DEPLOY_PATH in paths
-    assert fake_nd.payloads_for(SWITCH_DEPLOY_PATH) == [{"switchIds": ["FOX111AAA", "FOX333AAA"]}]
-
-
-def test_manage_vpc_pair_deploy_00030_switch_scope_noop_when_all_in_sync():
-    # type=switch with every switch in-sync: still saves, queries switches, but
-    # never posts an empty switchActions/deploy.
-    nrm = _make_nrm("switch")
-    switches_response = {
-        "switches": [
-            {"serialNumber": "FOX222AAA", "configSyncStatus": "In-Sync"},
-            {"serialNumber": "FOX444AAA", "additionalData": {"configSyncStatus": "in_sync"}},
-        ]
-    }
-    fake_nd = _FakeNDModuleV2(nrm.module, switches_response=switches_response)
-
-    _run_deploy(nrm, fake_nd)
-
-    paths = fake_nd.paths()
-    assert SAVE_PATH in paths
-    assert SWITCHES_PATH in paths
-    assert SWITCH_DEPLOY_PATH not in paths
-
-
 def test_manage_vpc_pair_deploy_00040_check_mode_switch_scope_previews_switch_endpoint():
     # check_mode must be side-effect free: no NDModuleV2 is constructed and the
     # preview names the switch-scoped endpoint.
@@ -233,37 +190,19 @@ def test_manage_vpc_pair_deploy_00090_switch_deploy_path_builders_match_endpoint
     assert fabric_utils.switch_deploy_path == SWITCH_DEPLOY_PATH
 
 
-def test_manage_vpc_pair_deploy_00100_get_switches_needing_deploy_filters_and_sorts():
-    # In-sync excluded; out-of-sync + unknown included; duplicate serials deduped;
-    # result sorted for deterministic payloads.
-    switches_response = {
-        "switches": [
-            {"serialNumber": "FOXZZZ", "configSyncStatus": "In-Sync"},
-            {"serialNumber": "FOXBBB", "configSyncStatus": "Pending"},
-            {"serialNumber": "FOXAAA"},
-            {"serialNumber": "FOXAAA", "configSyncStatus": "Out-of-Sync"},
-        ]
-    }
-    fake_nd = _FakeNDModuleV2(_FakeModule({}), switches_response=switches_response)
-
-    result = deploy._get_switches_needing_deploy(fake_nd, "fab1")
-
-    assert result == ["FOXAAA", "FOXBBB"]
-
-
-def _make_resource_nrm(config, save=True, deploy_flag=True, check_mode=False):
+def _make_switch_nrm(config, save=True, deploy_flag=True, check_mode=False):
     params = {
         "fabric_name": "fab1",
-        "config_actions": {"save": save, "deploy": deploy_flag, "type": "resource"},
+        "config_actions": {"save": save, "deploy": deploy_flag, "type": "switch"},
         "config": config,
     }
     return _FakeNrm(params, check_mode=check_mode)
 
 
-def test_manage_vpc_pair_deploy_00110_resource_scope_deploys_only_managed_pair_switches():
-    # type=resource scopes switchActions/deploy to just the managed pair's peers
+def test_manage_vpc_pair_deploy_00110_switch_scope_deploys_only_managed_pair_switches():
+    # type=switch scopes switchActions/deploy to just the changed pair's peers
     # that are out-of-sync, ignoring unrelated out-of-sync switches in the fabric.
-    nrm = _make_resource_nrm(config=[{"switch_id": "FOX111AAA", "peer_switch_id": "FOX222AAA"}])
+    nrm = _make_switch_nrm(config=[{"switch_id": "FOX111AAA", "peer_switch_id": "FOX222AAA"}])
     switches_response = {
         "switches": [
             {"serialNumber": "FOX111AAA", "configSyncStatus": "Out-of-Sync"},
@@ -283,10 +222,10 @@ def test_manage_vpc_pair_deploy_00110_resource_scope_deploys_only_managed_pair_s
     assert fake_nd.payloads_for(SWITCH_DEPLOY_PATH) == [{"switchIds": ["FOX111AAA", "FOX222AAA"]}]
 
 
-def test_manage_vpc_pair_deploy_00120_resource_scope_warns_when_peer_not_in_inventory():
+def test_manage_vpc_pair_deploy_00120_switch_scope_warns_when_peer_not_in_inventory():
     # Peers absent from fabric inventory (typo/wrong fabric) must warn instead of
     # silently no-opping, and no switchActions/deploy is posted.
-    nrm = _make_resource_nrm(config=[{"switch_id": "FOXABSENT1", "peer_switch_id": "FOXABSENT2"}])
+    nrm = _make_switch_nrm(config=[{"switch_id": "FOXABSENT1", "peer_switch_id": "FOXABSENT2"}])
     switches_response = {
         "switches": [
             {"serialNumber": "FOX111AAA", "configSyncStatus": "Out-of-Sync"},  # unrelated
@@ -300,11 +239,11 @@ def test_manage_vpc_pair_deploy_00120_resource_scope_warns_when_peer_not_in_inve
     assert any("not found in fabric" in warning for warning in nrm.module.warnings)
 
 
-def test_manage_vpc_pair_deploy_00130_resource_scope_noop_when_pair_in_sync():
-    # type=resource with both pair switches in-sync: still saves and queries the
+def test_manage_vpc_pair_deploy_00130_switch_scope_noop_when_pair_in_sync():
+    # type=switch with both pair switches in-sync: still saves and queries the
     # inventory, but never posts switchActions/deploy even if other switches are
     # out-of-sync.
-    nrm = _make_resource_nrm(config=[{"switch_id": "FOX111AAA", "peer_switch_id": "FOX222AAA"}])
+    nrm = _make_switch_nrm(config=[{"switch_id": "FOX111AAA", "peer_switch_id": "FOX222AAA"}])
     switches_response = {
         "switches": [
             {"serialNumber": "FOX111AAA", "configSyncStatus": "In-Sync"},
@@ -320,20 +259,6 @@ def test_manage_vpc_pair_deploy_00130_resource_scope_noop_when_pair_in_sync():
     assert SAVE_PATH in paths
     assert SWITCHES_PATH in paths
     assert SWITCH_DEPLOY_PATH not in paths
-
-
-def test_manage_vpc_pair_deploy_00140_check_mode_resource_scope_previews_switch_endpoint():
-    # check_mode resource preview names the switch-scoped endpoint and stays
-    # side-effect free (no NDModuleV2 construction).
-    nrm = _make_resource_nrm(config=[{"switch_id": "FOX111AAA", "peer_switch_id": "FOX222AAA"}], check_mode=True)
-
-    with patch.object(deploy, "NDModuleV2", _boom):
-        out = deploy.custom_vpc_deploy(nrm, "fab1", {"changed": True})
-
-    assert out["deployment_needed"] is True
-    planned = out["planned_actions"]
-    assert any(SWITCH_DEPLOY_PATH in action for action in planned)
-    assert all(GLOBAL_DEPLOY_PATH not in action for action in planned)
 
 
 def test_manage_vpc_pair_deploy_00150_get_managed_pair_switches_scopes_and_filters_sync():
@@ -358,11 +283,11 @@ def test_manage_vpc_pair_deploy_00150_get_managed_pair_switches_scopes_and_filte
     assert module.warnings == []
 
 
-def test_manage_vpc_pair_deploy_00160_resource_scope_deploys_overridden_deleted_pair_peers():
+def test_manage_vpc_pair_deploy_00160_switch_scope_deploys_overridden_deleted_pair_peers():
     # Regression: state=overridden removes a pair by omitting it from config. The
     # kept pair is in-sync, but the removed pair's peers are out-of-sync and must
     # still be deployed. Deleted peers come from class_diff, not config.
-    nrm = _make_resource_nrm(config=[{"switch_id": "KEEP1AAA", "peer_switch_id": "KEEP2AAA"}])
+    nrm = _make_switch_nrm(config=[{"switch_id": "KEEP1AAA", "peer_switch_id": "KEEP2AAA"}])
     switches_response = {
         "switches": [
             {"serialNumber": "KEEP1AAA", "configSyncStatus": "In-Sync"},
@@ -384,10 +309,10 @@ def test_manage_vpc_pair_deploy_00160_resource_scope_deploys_overridden_deleted_
     assert fake_nd.payloads_for(SWITCH_DEPLOY_PATH) == [{"switchIds": ["DROP1AAA", "DROP2AAA"]}]
 
 
-def test_manage_vpc_pair_deploy_00170_resource_scope_purge_all_deploys_deleted_pair_peers():
+def test_manage_vpc_pair_deploy_00170_switch_scope_purge_all_deploys_deleted_pair_peers():
     # Regression: state=overridden with config: [] removes every pair. With no
     # desired config, the deploy target comes entirely from class_diff.deleted.
-    nrm = _make_resource_nrm(config=[])
+    nrm = _make_switch_nrm(config=[])
     switches_response = {
         "switches": [
             {"serialNumber": "DROP1AAA", "configSyncStatus": "Out-of-Sync"},
@@ -427,10 +352,10 @@ def test_manage_vpc_pair_deploy_00180_get_managed_pair_switches_merges_deleted_f
     assert module.warnings == []
 
 
-def test_manage_vpc_pair_deploy_00190_resource_scope_warns_when_inventory_empty():
+def test_manage_vpc_pair_deploy_00190_switch_scope_warns_when_inventory_empty():
     # Empty fabric inventory must not become a silent no-op: every configured
     # peer is warned as unresolved and no switchActions/deploy is posted.
-    nrm = _make_resource_nrm(config=[{"switch_id": "FOX111AAA", "peer_switch_id": "FOX222AAA"}])
+    nrm = _make_switch_nrm(config=[{"switch_id": "FOX111AAA", "peer_switch_id": "FOX222AAA"}])
     fake_nd = _FakeNDModuleV2(nrm.module, switches_response={"switches": []})
 
     _run_deploy(nrm, fake_nd)

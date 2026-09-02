@@ -56,14 +56,13 @@ options:
             type:
                 description:
                 - Deploy scope for configuration actions.
-                - C(resource) deploys only the switches that make up the managed vPC pair(s) and are left out-of-sync, using the per-switch deploy action.
+                - C(switch) deploys only the out-of-sync peer switches of the vPC pair(s) changed by this task, using the per-switch deploy action.
                 - Peers of vPC pairs removed by this task (via O(state=overridden) omissions, an empty O(config), or O(state=deleted))
                   are also deployed so the removal takes effect.
-                - C(switch) deploys every switch in the fabric left out-of-sync by the vPC pair changes using the per-switch deploy action.
                 - C(global) deploys the entire fabric.
                 - Configuration is saved at the fabric level before deploying for all scopes.
                 type: str
-                choices: [resource, switch, global]
+                choices: [switch, global]
                 default: switch
     force:
         description:
@@ -190,7 +189,7 @@ EXAMPLES = """
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
 
-# Deploy only the managed vPC pair's peer switches (resource scope)
+# Deploy only the changed vPC pair's peer switches (switch scope)
 - name: Reconcile a vPC pair and deploy only its peer switches
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: myFabric
@@ -198,7 +197,7 @@ EXAMPLES = """
     config_actions:
       save: true
       deploy: true
-      type: resource
+      type: switch
     config:
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
