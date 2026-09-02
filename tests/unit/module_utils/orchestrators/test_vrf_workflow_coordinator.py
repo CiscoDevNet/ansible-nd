@@ -399,7 +399,7 @@ class _StagedVrfCoordinator:
         return VrfAttachmentManager.filter_attachment_details_by_vrf(attachments, vrf_names)
 
     def _ensure_vrfs_have_no_networks(self, _module_args, _strategy, vrf_names):
-        self.calls.append(("dependency_check", vrf_names))
+        raise AssertionError(f"staged must not run VRF deletion dependency checks: {vrf_names}")
 
     def _apply_deleted_attachment_phase(self, _module_args, _strategy, vrf_names, attachment_details=None):
         self.calls.append(("omitted_detach", vrf_names, attachment_details))
@@ -529,7 +529,6 @@ def test_vrf_staged_detaches_omitted_vrfs_without_running_overridden_crud_delete
     assert ("new_state_machine", "overridden") in coordinator.calls
     assert ("manage_state", "replaced") in coordinator.calls
     assert ("attachment_query", ["BLUE", "OMIT"]) in coordinator.calls
-    assert ("dependency_check", ["OMIT"]) in coordinator.calls
     assert (
         "omitted_detach",
         ["OMIT"],

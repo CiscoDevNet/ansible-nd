@@ -269,7 +269,7 @@ class _StagedNetworkCoordinator:
         return NetworkAttachmentManager.filter_attachment_details_by_network(attachments, network_names)
 
     def _ensure_networks_have_no_networks(self, _module_args, _strategy, network_names):
-        self.calls.append(("dependency_check", network_names))
+        raise AssertionError(f"staged must not run Network deletion dependency checks: {network_names}")
 
     def _apply_deleted_attachment_phase(self, _module_args, _strategy, network_names, attachment_details=None):
         self.calls.append(("omitted_detach", network_names, attachment_details))
@@ -427,7 +427,6 @@ def test_network_staged_detaches_omitted_networks_without_running_overridden_cru
     assert ("new_state_machine", "overridden") in coordinator.calls
     assert ("manage_state", "replaced") in coordinator.calls
     assert ("attachment_query", ["BLUE_NET", "OMIT_NET"]) in coordinator.calls
-    assert ("dependency_check", ["OMIT_NET"]) in coordinator.calls
     assert (
         "omitted_detach",
         ["OMIT_NET"],

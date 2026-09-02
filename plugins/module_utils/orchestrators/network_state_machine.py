@@ -29,6 +29,11 @@ from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_network import (
     BaseNetworkStrategy,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.staged_state_helpers import (
+    crud_module_args,
+    prepare_crud_state,
+    query_module_args,
+)
 
 
 class NetworkStateMachine:
@@ -58,8 +63,9 @@ class NetworkStateMachine:
         Run only the generic NDStateMachine-backed Network CRUD/gathered flow.
         """
         state = module_args.get("state", "merged")
-        sm, original_config, original_state = self.coordinator._new_state_machine(self._crud_module_args(module_args), strategy)
+        sm, original_config, original_state = self.coordinator._new_state_machine(crud_module_args(module_args), strategy)
         try:
+            prepare_crud_state(sm, state)
             if state != "gathered":
                 self._trace("manage_state_start", state=state)
                 sm.manage_state()
@@ -170,9 +176,9 @@ class NetworkStateMachine:
         desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
         desired_network_names = self.coordinator._configured_network_names(config)
 
-        sm, original_config, original_state = self.coordinator._new_state_machine(self._query_module_args(module_args), strategy)
+        sm, original_config, original_state = self.coordinator._new_state_machine(query_module_args(module_args), strategy)
         try:
-            self._prepare_crud_state(sm, state)
+            prepare_crud_state(sm, state)
             current_network_names = self._network_names_from_models(sm.existing)
             current_network_name_set = set(current_network_names)
             desired_network_name_set = set(desired_network_names)
@@ -290,31 +296,6 @@ class NetworkStateMachine:
             pre_attach.get("payloads", []),
         )
 
-    @staticmethod
-    def _crud_module_args(module_args: dict) -> dict:
-        """Return module args for the generic CRUD state machine."""
-        if module_args.get("state") != "staged":
-            return module_args
-        crud_args = dict(module_args)
-        crud_args["state"] = "replaced"
-        return crud_args
-
-    @staticmethod
-    def _query_module_args(module_args: dict) -> dict:
-        """Return module args for the current-state query phase."""
-        if module_args.get("state") != "staged":
-            return module_args
-        query_args = dict(module_args)
-        query_args["state"] = "overridden"
-        return query_args
-
-    @staticmethod
-    def _prepare_crud_state(sm: Any, requested_state: str) -> None:
-        """Switch staged workflows to replacement CRUD after query."""
-        if requested_state != "staged":
-            return
-        sm.state = "replaced"
-
     def _deploy_after_attachment_changes(
         self,
         result: dict[str, Any],
@@ -409,7 +390,8 @@ class NetworkStateMachine:
         if not omitted_network_names:
             return []
 
-        self.coordinator._ensure_networks_have_no_networks(module_args, strategy, omitted_network_names)
+        if module_args.get("state") != "staged":
+            self.coordinator._ensure_networks_have_no_networks(module_args, strategy, omitted_network_names)
         omitted_attachment_details = (
             self.coordinator._filter_attachment_details_by_network(
                 current_attachment_details,
