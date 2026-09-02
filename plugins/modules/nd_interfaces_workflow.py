@@ -14,12 +14,15 @@ description:
 - Coordinates several interface resource families in one module execution.
 - Validates and plans every resource group before the first possible mutation.
 - Fetches the complete configured-interface inventory once per targeted switch and shares it across all requested families.
+- Keeps that complete family inventory internal for planning and safety while reporting only explicitly requested identities for
+  V(merged), V(replaced), and V(deleted). V(overridden) continues to report its complete authoritative family scope.
 - Each O(resources[].config) uses the authoritative input contract and validation logic of the standalone module selected by
   O(resources[].type).
-- Check mode returns the complete multi-family plan, aggregate diff, conflicts, and request statistics without sending mutation or
-  deployment requests.
+- Check mode returns the complete multi-family plan, aggregate diff, conflicts, prospective deployment-only targets, and request
+  statistics without sending mutation or deployment requests.
 - Normal mode executes the complete validated plan in dependency-safe order, consolidates deferred remove and deploy actions, and
-  refetches affected switches to report actual controller state.
+  refetches switches affected by interface mutations to report actual controller state. It can also deploy previously staged intent for
+  explicitly requested interfaces when the current workflow has no interface mutations.
 author:
 - Mike Wiebe (@mikewiebe)
 options:
@@ -93,12 +96,16 @@ options:
     description:
     - Controls actions coordinated after all interface mutation groups complete.
     - Deployment is attempted only after every planned interface mutation succeeds. A mutation failure stops later writes and deployment.
+    - A zero-mutation workflow can deploy previously staged controller intent for explicitly requested interfaces when the already-fetched
+      fabric switch record has an explicit out-of-sync or pending status.
     type: dict
     suboptions:
       deploy:
         description:
-        - Whether changed interfaces should be deployed in one consolidated action after successful mutation groups.
-        - Has no side effect in check mode.
+        - Whether changed interfaces and explicitly requested interfaces with staged controller intent should be deployed in one
+          consolidated action.
+        - An identical replay after O(config_actions.deploy=false) can therefore perform deployment with no new interface mutation.
+        - Check mode reports a prospective deployment but sends no request.
         type: bool
         default: false
 extends_documentation_fragment:
@@ -130,10 +137,34 @@ notes:
   per-interface transition, preserving the workflow's scale advantage.
 - Interface inventories and transition/delete safety data are shared for the complete workflow. They are not fetched once per resource
   group or once per interface; pagination may require more than one GET for a switch or fabric-level safety inventory.
+- Deployment-only candidate detection reuses the fabric switch records already fetched to resolve switch identities. It sends no
+  additional GET request. Only an explicitly normalized out-of-sync or pending switch status qualifies; an in-sync, missing, or unknown status does
+  not cause deployment.
+- Deployment-only requests contain only explicitly requested interface identities and are combined with any mutation-produced targets in
+  one de-duplicated deployment POST. The switch status is coarser than an interface status, so an explicitly requested interface can be
+  harmlessly redeployed when different pending intent keeps the same switch out of sync; unrelated interfaces are never added.
+- For a vPC identity, an explicit out-of-sync or pending status on either authoritative peer qualifies the pair-scoped target. The consolidated
+  request retains the vPC orchestrator's primary-switch target convention.
+- Deployment-only replay cannot reconstruct interfaces implicitly removed by a prior V(overridden) task because those omitted identities
+  are not explicit in the later task. Include an interface explicitly when a later deployment-only action must target it.
+- A successful deployment-only run, or its check-mode preview, reports C(changed=true), C(planned_changed=false), and
+  C(mutation_count=0). Its per-resource C(changed) values remain false because controller intent did not change.
 - The authoritative vPC-pair map is shared with all vPC resource orchestrators, preventing repeated per-resource peer-lookup GETs.
 - The shared snapshot is execution-scoped and is never accepted from arbitrary caller input or persisted across Ansible tasks.
 - Normal-mode execution uses the same current interface model and orchestrator contracts as the standalone modules, so merged validation,
   normalization, and deployment behavior is inherited automatically.
+- For V(merged), V(replaced), and V(deleted), C(resources[].before) and C(resources[].after) contain only identities explicitly listed in
+  that resource group. Aggregate-interface members remain visible inside the requested port-channel or vPC policy instead of being mixed
+  into the result as unrelated Ethernet-family records.
+- Target-scoped C(before) and C(after) include C(policy_type), including when a requested identity starts in another eligible policy family.
+  A deleted logical interface is absent from C(after); a deleted physical Ethernet interface remains present with the normalized default
+  V(trunkHost) policy.
+- C(resources[].operations) is the single operation ledger. It combines create, update, transition, physical-reset, and logical-delete
+  actions with their target identities and execution status; update-like actions can include leaf-level C(changes).
+- Successful output intentionally omits duplicate top-level snapshots and task-input echoes. C(request_stats) contains read, cache,
+  refresh, overlay, and vPC metrics; C(execution) exclusively owns mutation and deployment write counters.
+- At O(output_level=debug), C(resources[].family_before) and C(resources[].family_after) expose the complete selected-family collections
+  used for diagnostics. Result projection is in-memory and sends no additional controller GET requests.
 - Deletes and deferred normalize/reset operations run before transitions, updates, and creates. Deployments are consolidated across
   compatible resource groups.
 - The Ethernet V(routedHost) to V(accessHost) and V(accessHost) to V(trunkHost) cross-policy PUTs have been live-qualified during this
@@ -223,6 +254,24 @@ EXAMPLES = r"""
     config_actions:
       deploy: false
 
+- name: Deploy the same explicitly requested interface after staging it in an earlier task
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: FABRIC1
+    resources:
+      - type: ethernet_access
+        state: merged
+        config:
+          - switch_ip: 192.168.1.11
+            interface_names:
+              - Ethernet1/40
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 3900
+    config_actions:
+      deploy: true
+
 - name: Reset an explicitly named physical interface regardless of its current policy
   cisco.nd.nd_interfaces_workflow:
     fabric_name: FABRIC1
@@ -240,32 +289,18 @@ EXAMPLES = r"""
 RETURN = r"""
 changed:
   description:
-  - In check mode, whether the plan contains at least one transition, create, update, or delete.
-  - In normal mode, whether mutation responses or the reconciled actual state show a controller change.
+  - In check mode, whether the plan contains a mutation or an explicitly requested deployment-only target.
+  - In normal mode, whether mutation responses, reconciled actual state, or a successful deployment request show a controller action.
   returned: always
   type: bool
 planned_changed:
-  description: Whether the validated aggregate plan contains at least one mutation.
+  description:
+  - Whether the validated aggregate plan contains at least one interface mutation.
+  - Remains V(false) for deployment-only execution.
   returned: always
   type: bool
-check_mode:
-  description: Whether the module executed in Ansible check mode.
-  returned: always
-  type: bool
-output_level:
-  description: Output detail level selected for the task.
-  returned: always
-  type: str
-fabric_name:
-  description: Fabric used by the shared snapshot and every resource group.
-  returned: always
-  type: str
-config_actions:
-  description: Coordinated action settings accepted by the task.
-  returned: always
-  type: dict
 mutation_count:
-  description: Total number of planned transitions, creates, updates, and deletes across resource groups.
+  description: Total number of planned creates, updates, transitions, physical resets, and logical deletes across resource groups.
   returned: always
   type: int
 target_switch_ids:
@@ -292,13 +327,18 @@ resources:
     state:
       description: State planned for this group.
       type: str
-    transitions:
-      description: One-request implicit policy transitions planned for this group.
+    operations:
+      description:
+      - Unified planned or executed operation records for this group.
+      - Update, transition, and physical-reset records include C(changes) when their reported before and after values differ.
+      - Create and logical-delete records omit C(changes).
       type: list
       elements: dict
       contains:
         action:
-          description: Always V(transition).
+          description:
+          - One of V(create), V(update), V(transition), V(reset), or V(delete).
+          - Physical resets use V(reset); logical removals use V(delete).
           type: str
         switch_ip:
           description: Management IP of the target switch.
@@ -309,71 +349,86 @@ resources:
         interface_name:
           description: Interface name.
           type: str
+        status:
+          description:
+          - V(planned) in check mode.
+          - The actual execution outcome in normal mode.
+          type: str
+        message:
+          description: Controller or execution detail associated with this operation outcome.
+          returned: when the controller or executor supplies detail
+          type: str
         from_policy_type:
-          description: Current controller policy discriminator.
+          description: Current controller policy discriminator for a transition.
+          returned: for transition operations
           type: str
         to_policy_type:
-          description: Destination controller policy discriminator.
+          description: Destination controller policy discriminator for a transition.
+          returned: for transition operations
           type: str
+        changes:
+          description: Leaf-level differences for update, transition, or physical-reset operations whose reported values differ.
+          returned: when an update-like operation has reported differences
+          type: list
+          elements: dict
+          contains:
+            path:
+              description: Dot-delimited path of the changed property.
+              type: str
+            before:
+              description: Value before the operation.
+              type: raw
+            after:
+              description: Value after the operation.
+              type: raw
     changed:
       description:
       - Whether C(before) and the reported C(after) differ.
       - In check mode this is prospective; in normal mode it is actual when reconciliation succeeds.
+      - Remains V(false) when this resource is only a target of deployment for already-staged intent.
       type: bool
     planned_changed:
-      description: Whether this group had a planned transition, create, update, or delete.
+      description: Whether this group had a planned create, update, transition, physical reset, or logical delete.
       type: bool
     before:
-      description: Existing selected family configuration before execution.
+      description:
+      - Initial observed controller state for the identities explicitly listed by this group when O(resources[].state) is V(merged),
+        V(replaced), or V(deleted).
+      - For V(overridden), the complete selected-family configuration in the authoritative fabric scope.
+      - Each returned target includes C(policy_type), so a source policy owned by another eligible family remains visible.
       type: list
       elements: dict
     after:
-      description: Prospective family configuration in check mode and reconciled actual configuration after normal-mode writes.
+      description:
+      - Target-scoped prospective configuration in check mode and reconciled observed configuration after normal-mode writes.
+      - A removed logical interface is absent. A reset physical Ethernet interface remains present with C(policy_type=trunkHost) and its
+        normalized default configuration.
+      - For V(overridden), the complete selected-family configuration in the authoritative fabric scope.
       type: list
       elements: dict
     after_verified:
-      description: Whether C(after) represents observed controller state rather than an unverified plan after a reconciliation failure.
+      description:
+      - Whether C(after) represents coherent observed controller state rather than an unverified plan after reconciliation failure.
+      - V(false) also covers reconciliation that cannot establish consistent vPC state because a peer record is missing or incoherent.
       type: bool
-    diff:
-      description: An Ansible-style C(before) and C(after) dictionary, or an empty dictionary when the collections match.
-      type: dict
     proposed:
       description: Normalized user configuration validated by the standalone model.
       returned: when O(output_level) is V(info) or V(debug)
       type: list
       elements: dict
-    created:
-      description: Models planned for creation.
+    family_before:
+      description: Complete unprojected selected-family configuration before execution for diagnostic use.
+      returned: when O(output_level) is V(debug)
       type: list
       elements: dict
-    updated:
-      description: Models planned for update.
+    family_after:
+      description: Complete unprojected prospective or reconciled selected-family configuration after execution for diagnostic use.
+      returned: when O(output_level) is V(debug)
       type: list
       elements: dict
-    deleted:
-      description:
-      - Models planned for deletion.
-      - Physical Ethernet entries represent reset-to-default operations; deletable logical entries represent removals.
-      type: list
-      elements: dict
-before:
-  description: Per-resource C(before) collections retaining resource index and type.
-  returned: always
-  type: list
-  elements: dict
-after:
-  description: Per-resource prospective C(after) collections retaining resource index and type.
-  returned: always
-  type: list
-  elements: dict
-diff:
-  description: Per-resource differences retaining resource index and type.
-  returned: always
-  type: list
-  elements: dict
 request_stats:
-  description: Shared configured-interface inventory, lazy transition/delete safety inventory, vPC context, mutation, deployment, cache,
-    refresh, and overlay counters for this execution.
+  description: Shared configured-interface inventory, lazy transition/delete safety inventory, vPC context, cache, refresh, and overlay
+    counters for this execution. Write counters are reported only under C(execution).
   returned: always
   type: dict
   contains:
@@ -390,10 +445,19 @@ request_stats:
       description: Family reads served from the shared snapshot.
       type: int
     interface_inventory_refreshes:
-      description: Explicit switch refreshes.
+      description:
+      - Number of per-switch interface-inventory refresh attempts explicitly initiated during this execution.
+      - A refresh invalidates the execution-scoped local snapshot before loading it again, so the same operation also increments
+        C(interface_inventory_dirty_refetches).
+      - This is a logical per-switch count. Paginated HTTP requests are counted separately by C(interface_inventory_gets).
       type: int
     interface_inventory_dirty_refetches:
-      description: Automatic refetches caused by dirty snapshot state.
+      description:
+      - Number of switch-inventory load attempts caused by an execution-scoped local snapshot being marked stale.
+      - Local dirty state is unrelated to controller C(configSyncStatus) values such as C(outOfSync) or C(pending).
+      - The counter increments once before each dirty switch fetch, including a fetch initiated by an explicit refresh. A switch can
+        contribute more than once if it is marked stale and loaded again, and paginated HTTP requests are counted separately by
+        C(interface_inventory_gets).
       type: int
     interface_summary_switches:
       description: Number of switches fetched into the lazy transition/delete safety summary cache.
@@ -413,12 +477,6 @@ request_stats:
     vpc_pair_gets:
       description: Fabric vPC-pair inventory GETs.
       type: int
-    mutation_requests:
-      description: Interface mutation requests sent.
-      type: int
-    deploy_requests:
-      description: Consolidated deployment requests sent.
-      type: int
 execution:
   description: Execution status and write counters.
   returned: always
@@ -437,13 +495,9 @@ execution:
       description: Switch serial numbers refreshed after mutation requests.
       type: list
       elements: str
-    items:
-      description: Per-planned-mutation execution status, identity, transition source and destination policy types when applicable, and
-        controller message when available.
-      type: list
-      elements: dict
     deployment:
-      description: Consolidated deployment request, target, and partial-success details.
+      description: Consolidated deployment request, prospective or attempted exact targets, and partial-success details. A check-mode
+        deployment-only preview uses V(would_deploy) status without incrementing C(deployments_sent).
       type: dict
     errors:
       description: Execution and reconciliation errors collected for the failed result.

@@ -24,8 +24,8 @@
       - nd_iw_observed_mixed_families | difference(nd_iw_expected_ten_families) | length == 0
       - nd_iw_expected_ten_families | difference(nd_iw_observed_mixed_families) | length == 0
       - nd_iw_batch_create_preview.resources | map(attribute='resource_index') | list == range(0, 10) | list
-      - nd_iw_batch_create_preview.request_stats.mutation_requests == 0
-      - nd_iw_batch_create_preview.request_stats.deploy_requests == 0
+      - nd_iw_batch_create_preview.execution.mutations_sent == 0
+      - nd_iw_batch_create_preview.execution.deployments_sent == 0
   when: nd_iw_active_cases | length == 10
 
 - name: Record why ten-family coverage is unavailable on this fabric

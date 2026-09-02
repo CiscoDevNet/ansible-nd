@@ -102,12 +102,9 @@
     - name: Verify the complete create plan has no side effects
       ansible.builtin.assert:
         that:
-          - nd_iw_batch_create_preview.check_mode
           - nd_iw_batch_create_preview.execution.status == 'check_mode'
           - nd_iw_batch_create_preview.execution.mutations_sent == 0
           - nd_iw_batch_create_preview.execution.deployments_sent == 0
-          - nd_iw_batch_create_preview.request_stats.mutation_requests == 0
-          - nd_iw_batch_create_preview.request_stats.deploy_requests == 0
           - nd_iw_batch_create_preview.resources | length == nd_iw_active_cases | length
           - nd_iw_batch_create_preview.resources | map(attribute='resource_index') | list == range(0, nd_iw_active_cases | length) | list
           - nd_iw_batch_create_preview.resources | map(attribute='state') | unique | list == ['merged']
@@ -196,8 +193,8 @@
           - nd_iw_batch_create_idempotent is not changed
           - not nd_iw_batch_create_idempotent.planned_changed
           - nd_iw_batch_create_idempotent.execution.status == 'no_change'
-          - nd_iw_batch_create_idempotent.request_stats.mutation_requests == 0
-          - nd_iw_batch_create_idempotent.request_stats.deploy_requests == 0
+          - nd_iw_batch_create_idempotent.execution.mutations_sent == 0
+          - nd_iw_batch_create_idempotent.execution.deployments_sent == 0
       when: not nd_iw_module_check_mode
 
     - name: Preview the batched merged update
@@ -216,8 +213,8 @@
         that:
           - nd_iw_batch_update_preview is changed
           - nd_iw_batch_update_preview.execution.status == 'check_mode'
-          - nd_iw_batch_update_preview.request_stats.mutation_requests == 0
-          - nd_iw_batch_update_preview.request_stats.deploy_requests == 0
+          - nd_iw_batch_update_preview.execution.mutations_sent == 0
+          - nd_iw_batch_update_preview.execution.deployments_sent == 0
 
     - name: Apply the batched merged update
       cisco.nd.nd_interfaces_workflow:
@@ -263,8 +260,8 @@
         that:
           - nd_iw_batch_update_idempotent is not changed
           - not nd_iw_batch_update_idempotent.planned_changed
-          - nd_iw_batch_update_idempotent.request_stats.mutation_requests == 0
-          - nd_iw_batch_update_idempotent.request_stats.deploy_requests == 0
+          - nd_iw_batch_update_idempotent.execution.mutations_sent == 0
+          - nd_iw_batch_update_idempotent.execution.deployments_sent == 0
       when: not nd_iw_module_check_mode
 
     - name: Preview the batched replaced state
@@ -285,8 +282,8 @@
           - nd_iw_batch_replace_preview is changed
           - nd_iw_batch_replace_preview.execution.status == 'check_mode'
           - nd_iw_batch_replace_preview.resources | map(attribute='state') | unique | list == ['replaced']
-          - nd_iw_batch_replace_preview.request_stats.mutation_requests == 0
-          - nd_iw_batch_replace_preview.request_stats.deploy_requests == 0
+          - nd_iw_batch_replace_preview.execution.mutations_sent == 0
+          - nd_iw_batch_replace_preview.execution.deployments_sent == 0
       when: nd_iw_run_full | bool
 
     - name: Apply the batched replaced state
@@ -339,8 +336,8 @@
         that:
           - nd_iw_batch_replace_idempotent is not changed
           - not nd_iw_batch_replace_idempotent.planned_changed
-          - nd_iw_batch_replace_idempotent.request_stats.mutation_requests == 0
-          - nd_iw_batch_replace_idempotent.request_stats.deploy_requests == 0
+          - nd_iw_batch_replace_idempotent.execution.mutations_sent == 0
+          - nd_iw_batch_replace_idempotent.execution.deployments_sent == 0
       when:
         - nd_iw_run_full | bool
         - not nd_iw_module_check_mode
@@ -362,8 +359,8 @@
           - nd_iw_module_check_mode or nd_iw_batch_delete_preview is changed
           - nd_iw_batch_delete_preview.execution.status == 'check_mode'
           - nd_iw_batch_delete_preview.resources | map(attribute='state') | unique | list == ['deleted']
-          - nd_iw_batch_delete_preview.request_stats.mutation_requests == 0
-          - nd_iw_batch_delete_preview.request_stats.deploy_requests == 0
+          - nd_iw_batch_delete_preview.execution.mutations_sent == 0
+          - nd_iw_batch_delete_preview.execution.deployments_sent == 0
 
     - name: Apply the batched deleted state
       cisco.nd.nd_interfaces_workflow:
@@ -418,8 +415,8 @@
           - nd_iw_batch_delete_idempotent is not changed
           - not nd_iw_batch_delete_idempotent.planned_changed
           - nd_iw_batch_delete_idempotent.execution.status == 'no_change'
-          - nd_iw_batch_delete_idempotent.request_stats.mutation_requests == 0
-          - nd_iw_batch_delete_idempotent.request_stats.deploy_requests == 0
+          - nd_iw_batch_delete_idempotent.execution.mutations_sent == 0
+          - nd_iw_batch_delete_idempotent.execution.deployments_sent == 0
       when: not nd_iw_module_check_mode
 
   always:

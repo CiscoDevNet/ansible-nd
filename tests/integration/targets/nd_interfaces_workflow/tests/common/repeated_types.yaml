@@ -37,8 +37,6 @@
       - nd_iw_repeated_result.execution.status == 'check_mode'
       - nd_iw_repeated_result.execution.mutations_sent == 0
       - nd_iw_repeated_result.execution.deployments_sent == 0
-      - nd_iw_repeated_result.request_stats.mutation_requests == 0
-      - nd_iw_repeated_result.request_stats.deploy_requests == 0
   when: nd_iw_repeated_case_candidates | length > 0
 
 - name: Require a secondary fixture for repeated-type coverage

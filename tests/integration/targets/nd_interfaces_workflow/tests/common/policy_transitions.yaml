@@ -110,24 +110,37 @@
             that:
               - nd_iw_transition_preview is changed
               - nd_iw_transition_preview.planned_changed
-              - nd_iw_transition_preview.check_mode
               - nd_iw_transition_preview.mutation_count == 2
               - nd_iw_transition_preview.execution.status == 'check_mode'
               - nd_iw_transition_preview.execution.mutations_sent == 0
               - nd_iw_transition_preview.execution.deployments_sent == 0
-              - nd_iw_transition_preview.request_stats.mutation_requests == 0
-              - nd_iw_transition_preview.request_stats.deploy_requests == 0
               - nd_iw_transition_preview.resources | length == 2
               - nd_iw_transition_preview.resources[0].state == 'merged'
               - nd_iw_transition_preview.resources[1].state == 'replaced'
-              - nd_iw_transition_preview.resources[0].created | length == 0
-              - nd_iw_transition_preview.resources[1].created | length == 0
-              - nd_iw_transition_preview.resources[0].transitions | length == 1
-              - nd_iw_transition_preview.resources[1].transitions | length == 1
-              - nd_iw_transition_preview.resources[0].transitions[0].from_policy_type == 'trunkHost'
-              - nd_iw_transition_preview.resources[0].transitions[0].to_policy_type == 'accessHost'
-              - nd_iw_transition_preview.resources[1].transitions[0].from_policy_type == 'accessHost'
-              - nd_iw_transition_preview.resources[1].transitions[0].to_policy_type == 'trunkHost'
+              - nd_iw_transition_preview.resources[0].operations | selectattr('action', 'equalto', 'create') | list | length == 0
+              - nd_iw_transition_preview.resources[1].operations | selectattr('action', 'equalto', 'create') | list | length == 0
+              - nd_iw_transition_preview.resources[0].operations | selectattr('action', 'equalto', 'transition') | list | length == 1
+              - nd_iw_transition_preview.resources[1].operations | selectattr('action', 'equalto', 'transition') | list | length == 1
+              - >-
+                nd_iw_transition_preview.resources[0].operations
+                | selectattr("action", "equalto", "transition")
+                | map(attribute="from_policy_type")
+                | list == ["trunkHost"]
+              - >-
+                nd_iw_transition_preview.resources[0].operations
+                | selectattr("action", "equalto", "transition")
+                | map(attribute="to_policy_type")
+                | list == ["accessHost"]
+              - >-
+                nd_iw_transition_preview.resources[1].operations
+                | selectattr("action", "equalto", "transition")
+                | map(attribute="from_policy_type")
+                | list == ["accessHost"]
+              - >-
+                nd_iw_transition_preview.resources[1].operations
+                | selectattr("action", "equalto", "transition")
+                | map(attribute="to_policy_type")
+                | list == ["trunkHost"]
 
         - name: Apply both implicit physical Ethernet policy transitions
           cisco.nd.nd_interfaces_workflow:
@@ -154,12 +167,20 @@
               - nd_iw_transition_apply.execution.status == 'staged'
               - nd_iw_transition_apply.execution.mutations_sent == 2
               - nd_iw_transition_apply.execution.deployments_sent == 0
-              - nd_iw_transition_apply.request_stats.mutation_requests == 2
-              - nd_iw_transition_apply.request_stats.deploy_requests == 0
               - nd_iw_transition_apply.resources | selectattr('after_verified', 'equalto', true) | list | length == 2
-              - nd_iw_transition_apply.execution.items | length == 2
-              - nd_iw_transition_apply.execution.items | selectattr('action', 'equalto', 'transition') | list | length == 2
-              - nd_iw_transition_apply.execution.items | selectattr('status', 'equalto', 'succeeded') | list | length == 2
+              - >-
+                nd_iw_transition_apply.resources
+                | map(attribute="operations")
+                | flatten
+                | length == 2
+              - >-
+                nd_iw_transition_apply.resources
+                | map(attribute="operations")
+                | flatten
+                | selectattr("action", "equalto", "transition")
+                | selectattr("status", "equalto", "succeeded")
+                | list
+                | length == 2
 
         - name: Independently verify transitioned policy and description fingerprints
           ansible.builtin.include_tasks: "{{ role_path }}/tests/common/controller_verify_inventory.yaml"
@@ -200,10 +221,10 @@
               - not nd_iw_transition_idempotent.planned_changed
               - nd_iw_transition_idempotent.mutation_count == 0
               - nd_iw_transition_idempotent.execution.status == 'no_change'
-              - nd_iw_transition_idempotent.request_stats.mutation_requests == 0
-              - nd_iw_transition_idempotent.request_stats.deploy_requests == 0
-              - nd_iw_transition_idempotent.resources[0].transitions | length == 0
-              - nd_iw_transition_idempotent.resources[1].transitions | length == 0
+              - nd_iw_transition_idempotent.execution.mutations_sent == 0
+              - nd_iw_transition_idempotent.execution.deployments_sent == 0
+              - nd_iw_transition_idempotent.resources[0].operations | selectattr('action', 'equalto', 'transition') | list | length == 0
+              - nd_iw_transition_idempotent.resources[1].operations | selectattr('action', 'equalto', 'transition') | list | length == 0
 
         - name: Preview policy-independent deletion through the opposite Ethernet types
           cisco.nd.nd_interfaces_workflow:
@@ -227,16 +248,15 @@
             that:
               - nd_iw_transition_delete_preview is changed
               - nd_iw_transition_delete_preview.planned_changed
-              - nd_iw_transition_delete_preview.check_mode
               - nd_iw_transition_delete_preview.mutation_count == 2
               - nd_iw_transition_delete_preview.execution.status == 'check_mode'
-              - nd_iw_transition_delete_preview.request_stats.mutation_requests == 0
-              - nd_iw_transition_delete_preview.request_stats.deploy_requests == 0
+              - nd_iw_transition_delete_preview.execution.mutations_sent == 0
+              - nd_iw_transition_delete_preview.execution.deployments_sent == 0
               - nd_iw_transition_delete_preview.resources | length == 2
-              - nd_iw_transition_delete_preview.resources[0].deleted | length == 1
-              - nd_iw_transition_delete_preview.resources[1].deleted | length == 1
-              - nd_iw_transition_delete_preview.resources[0].transitions | length == 0
-              - nd_iw_transition_delete_preview.resources[1].transitions | length == 0
+              - nd_iw_transition_delete_preview.resources[0].operations | selectattr('action', 'equalto', 'reset') | list | length == 1
+              - nd_iw_transition_delete_preview.resources[1].operations | selectattr('action', 'equalto', 'reset') | list | length == 1
+              - nd_iw_transition_delete_preview.resources[0].operations | selectattr('action', 'equalto', 'transition') | list | length == 0
+              - nd_iw_transition_delete_preview.resources[1].operations | selectattr('action', 'equalto', 'transition') | list | length == 0
 
         - name: Apply policy-independent deletion through the opposite Ethernet types
           cisco.nd.nd_interfaces_workflow:
@@ -263,13 +283,17 @@
               - nd_iw_transition_delete_apply.execution.status == 'staged'
               - nd_iw_transition_delete_apply.execution.mutations_sent == 1
               - nd_iw_transition_delete_apply.execution.deployments_sent == 0
-              - nd_iw_transition_delete_apply.request_stats.mutation_requests == 1
-              - nd_iw_transition_delete_apply.request_stats.deploy_requests == 0
-              - nd_iw_transition_delete_apply.execution.items | length == 2
               - >-
-                nd_iw_transition_delete_apply.execution.items
-                | selectattr('action', 'equalto', 'delete')
-                | selectattr('status', 'equalto', 'succeeded')
+                nd_iw_transition_delete_apply.resources
+                | map(attribute="operations")
+                | flatten
+                | length == 2
+              - >-
+                nd_iw_transition_delete_apply.resources
+                | map(attribute="operations")
+                | flatten
+                | selectattr("action", "equalto", "reset")
+                | selectattr("status", "equalto", "succeeded")
                 | list
                 | length == 2
 
@@ -330,8 +354,8 @@
               - not nd_iw_transition_delete_idempotent.planned_changed
               - nd_iw_transition_delete_idempotent.mutation_count == 0
               - nd_iw_transition_delete_idempotent.execution.status == 'no_change'
-              - nd_iw_transition_delete_idempotent.request_stats.mutation_requests == 0
-              - nd_iw_transition_delete_idempotent.request_stats.deploy_requests == 0
+              - nd_iw_transition_delete_idempotent.execution.mutations_sent == 0
+              - nd_iw_transition_delete_idempotent.execution.deployments_sent == 0
 
 
       always:

@@ -16,6 +16,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot 
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planner import (
     InterfaceResourcePlan,
     InterfaceWorkflowPlan,
+    InterfaceWorkflowPlanner,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
@@ -290,6 +291,9 @@ class InterfaceWorkflowExecutor:
             if plan.resources:
                 plan.resources[0].orchestrator.validate_prerequisites()
             for resource in plan.resources:
+                has_mutations = bool(resource.transitions or resource.operations.deletes or resource.operations.updates or resource.operations.creates)
+                if not has_mutations:
+                    continue
                 if resource.state == "deleted":
                     continue
                 create_candidates = [*resource.operations.creates, *(transition.desired for transition in resource.transitions)]
@@ -413,9 +417,7 @@ class InterfaceWorkflowExecutor:
                 if not self._call_items(
                     resource.orchestrator,
                     [item],
-                    lambda resource=resource, transition=transition: resource.orchestrator.update(
-                        transition.desired, existing_data=transition.current
-                    ),
+                    lambda resource=resource, transition=transition: resource.orchestrator.update(transition.desired, existing_data=transition.current),
                     f"resources[{resource.resource_index}] {resource.resource_type} policy transition failed",
                 ):
                     return False
@@ -464,8 +466,13 @@ class InterfaceWorkflowExecutor:
                     return False
         return True
 
-    def _deploy_pending(self, plan: InterfaceWorkflowPlan) -> bool:
-        targets = tuple(dict.fromkeys(pair for resource in plan.resources for pair in resource.orchestrator.pending_deploys))
+    def _deploy_pending(
+        self,
+        plan: InterfaceWorkflowPlan,
+        supplemental_targets: Iterable[Target] = (),
+    ) -> bool:
+        mutation_targets = (pair for resource in plan.resources for pair in resource.orchestrator.pending_deploys)
+        targets = tuple(dict.fromkeys((*mutation_targets, *supplemental_targets)))
         self._deployment = {
             "requested": self.deploy,
             "status": ("not_needed" if not targets else ("disabled" if not self.deploy else "pending")),
@@ -539,16 +546,31 @@ class InterfaceWorkflowExecutor:
                 self._errors.append(f"Post-mutation interface snapshot refresh failed: {exc}")
                 return {}
         actual: dict[int, NDConfigCollection] = {}
+        vpc_inventory = None
         try:
             for resource in plan.resources:
-                actual[resource.resource_index] = resource.adapter.existing_collection(resource.orchestrator)
+                if resource.adapter.ownership_domain != "vpc":
+                    actual[resource.resource_index] = resource.adapter.existing_collection(resource.orchestrator)
+                    continue
+                if vpc_inventory is None:
+                    vpc_inventory = self.snapshot.interfaces_by_identity
+                actual[resource.resource_index] = InterfaceWorkflowPlanner.pair_scoped_vpc_collection(
+                    inventory=vpc_inventory,
+                    adapter=resource.adapter,
+                    orchestrator=resource.orchestrator,
+                    proposed=resource.proposed,
+                )
         except Exception as exc:  # pylint: disable=broad-except
             self._errors.append(f"Post-mutation actual-state selection failed: {exc}")
             return {}
         return actual
 
-    def execute(self, plan: InterfaceWorkflowPlan) -> InterfaceWorkflowExecution:
-        """Execute delete, transition, update, create, and deploy phases, then refetch actual state."""
+    def execute(
+        self,
+        plan: InterfaceWorkflowPlan,
+        deployment_targets: Iterable[Target] = (),
+    ) -> InterfaceWorkflowExecution:
+        """Execute mutation and exact-target deployment phases, then reconcile intended state."""
         self._build_items(plan)
         phases_ok = self._enable_writes_and_preflight(plan)
         if phases_ok:
@@ -564,7 +586,7 @@ class InterfaceWorkflowExecutor:
         if phases_ok:
             phases_ok = self._execute_creates(plan)
         if phases_ok:
-            phases_ok = self._deploy_pending(plan)
+            phases_ok = self._deploy_pending(plan, deployment_targets)
 
         mutation_requests, deploy_requests, mutation_changed = self._write_observations(plan)
         actual = self._reconcile(plan, wrote=bool(mutation_requests))
@@ -572,7 +594,8 @@ class InterfaceWorkflowExecutor:
             resource.before.get_diff_collection(actual[resource.resource_index]) for resource in plan.resources if resource.resource_index in actual
         )
         failed = not phases_ok or bool(self._errors)
-        changed = mutation_changed or actual_changed
+        deployment_changed = any(target["status"] in {"succeeded", "uncertain"} for target in self._deployment["targets"])
+        changed = mutation_changed or actual_changed or deployment_changed
         if failed:
             item_statuses = {item.status for item in self._items}
             status = "partial_failure" if changed or item_statuses & {"succeeded", "uncertain"} else "failed"
