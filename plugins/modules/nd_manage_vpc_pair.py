@@ -50,16 +50,20 @@ options:
             deploy:
                 description:
                 - Deploy configuration after save.
+                - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
                 type: bool
-                default: true
+                default: false
             type:
                 description:
                 - Deploy scope for configuration actions.
-                - C(switch) deploys only the switches left out-of-sync by the vPC pair changes using the per-switch deploy action.
+                - C(resource) deploys only the switches that make up the managed vPC pair(s) and are left out-of-sync, using the per-switch deploy action.
+                - Peers of vPC pairs removed by this task (via O(state=overridden) omissions, an empty O(config), or O(state=deleted))
+                  are also deployed so the removal takes effect.
+                - C(switch) deploys every switch in the fabric left out-of-sync by the vPC pair changes using the per-switch deploy action.
                 - C(global) deploys the entire fabric.
-                - Configuration is saved at the fabric level before deploying for both scopes.
+                - Configuration is saved at the fabric level before deploying for all scopes.
                 type: str
-                choices: [switch, global]
+                choices: [resource, switch, global]
                 default: switch
     force:
         description:
@@ -182,6 +186,19 @@ EXAMPLES = """
       save: true
       deploy: true
       type: switch
+    config:
+      - peer1_switch_id: "FDO23040Q85"
+        peer2_switch_id: "FDO23040Q86"
+
+# Deploy only the managed vPC pair's peer switches (resource scope)
+- name: Reconcile a vPC pair and deploy only its peer switches
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: myFabric
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+      type: resource
     config:
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"

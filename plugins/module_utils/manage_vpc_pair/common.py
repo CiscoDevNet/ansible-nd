@@ -15,7 +15,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
 DEFAULT_VERIFY_TIMEOUT = 10
 DEFAULT_VERIFY_RETRIES = 5
 DEFAULT_CONFIG_ACTION_TYPE = "switch"
-CONFIG_ACTION_TYPE_CHOICES = ("switch", "global")
+CONFIG_ACTION_TYPE_CHOICES = ("resource", "switch", "global")
+# Action types whose deploy is scoped per-switch via .../switchActions/deploy.
+SWITCH_DEPLOY_ACTION_TYPES = ("switch", "resource")
 
 
 def _collection_to_list_flex(collection: Any) -> list[dict[str, Any]]:
@@ -199,12 +201,12 @@ def get_config_actions(module: Any) -> dict[str, Any]:
         config_actions:
           save: bool
           deploy: bool
-          type: "switch" | "global"
+          type: "resource" | "switch" | "global"
     """
     raw_actions = module.params.get("config_actions")
     if isinstance(raw_actions, dict):
         save = raw_actions.get("save", True)
-        deploy = raw_actions.get("deploy", True)
+        deploy = raw_actions.get("deploy", False)
         action_type_raw = raw_actions.get("type", DEFAULT_CONFIG_ACTION_TYPE)
         action_type = str(action_type_raw).strip().lower() if action_type_raw is not None else DEFAULT_CONFIG_ACTION_TYPE
         if action_type not in CONFIG_ACTION_TYPE_CHOICES:
@@ -228,7 +230,7 @@ def get_config_actions(module: Any) -> dict[str, Any]:
 
     return {
         "save": True,
-        "deploy": True,
+        "deploy": False,
         "type": DEFAULT_CONFIG_ACTION_TYPE,
     }
 

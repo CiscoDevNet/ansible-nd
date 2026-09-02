@@ -1588,6 +1588,48 @@
   tags: merge
 
 # TC18 - config_actions save-only path (save=true, deploy=false)
+# Settle the controller after TC17's deploy so the save-only configSave is not dropped by a busy controller (RemoteDisconnected).
+- name: MERGE - TC18 - PREP - Stabilization delay before save-only config_actions test
+  ansible.builtin.pause:
+    seconds: "{{ nd_vpc_pair_tc18_pre_delay | default(10) | int }}"
+  when: (nd_vpc_pair_tc18_pre_delay | default(10) | int) > 0
+  tags: merge
+
+- name: MERGE - TC18 - PREP - Wait for vPC overview sync convergence after prior deploy
+  cisco.nd.nd_rest:
+    <<: *nd_info
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairOverview?componentType=full"
+    method: get
+  register: tc18_overview
+  vars:
+    tc18_sync_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(120) | int }}"
+    tc18_sync_poll_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(10) | int)] | max }}"
+    tc18_inventory_sync: "{{ tc18_overview.current.inventory.syncStatus | default({}) }}"
+    tc18_overlay_network_sync: "{{ tc18_overview.current.overlay.networkCount | default({}) }}"
+    tc18_overlay_vrf_sync: "{{ tc18_overview.current.overlay.vrfCount | default({}) }}"
+  until:
+    - tc18_overview.failed == false
+    - (tc18_inventory_sync.pending | default(0) | int) == 0
+    - (tc18_inventory_sync.outOfSync | default(0) | int) == 0
+    - (tc18_overlay_network_sync.pending | default(0) | int) == 0
+    - (tc18_overlay_network_sync.outOfSync | default(0) | int) == 0
+    - (tc18_overlay_network_sync.inProgress | default(0) | int) == 0
+    - (tc18_overlay_vrf_sync.pending | default(0) | int) == 0
+    - (tc18_overlay_vrf_sync.outOfSync | default(0) | int) == 0
+    - (tc18_overlay_vrf_sync.inProgress | default(0) | int) == 0
+  retries: >-
+    {{
+      [
+        1,
+        (
+          ((tc18_sync_wait_timeout | int) + (tc18_sync_poll_interval | int) - 1)
+          // (tc18_sync_poll_interval | int)
+        ),
+      ] | max
+    }}
+  delay: "{{ tc18_sync_poll_interval | int }}"
+  tags: merge
+
 - name: MERGE - TC18 - DELETE - Ensure vPC pair is absent before save-only config_actions test
   cisco.nd.nd_manage_vpc_pair:
     <<: *nd_info

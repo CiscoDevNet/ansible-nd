@@ -1,0 +1,352 @@
+---
+##############################################
+##                 SETUP                    ##
+##############################################
+# Regression coverage for config_actions.type == "resource": the scope must
+# deploy only the managed vPC pair's peer switches (never an unrelated fabric
+# switch), and must also deploy the peers of a pair removed by this run
+# (state: deleted / state: overridden with an empty config).
+#
+# The unresolved-peer warning path (a config/deleted peer absent from fabric
+# inventory) is covered by unit tests 00120 and 00190 in
+# tests/unit/module_utils/test_manage_vpc_pair_deploy.py, since it is not
+# reliably reproducible against a live fabric.
+
+- name: Import nd_vpc_pair Base Tasks
+  ansible.builtin.import_tasks: base_tasks.yaml
+  tags: resource
+
+- name: RESOURCE - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
+  tags: resource
+
+- name: RESOURCE - Setup managed pair config
+  ansible.builtin.set_fact:
+    resource_pair_conf:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: false
+    resource_pair_serials: "{{ [test_switch1, test_switch2] | sort }}"
+  delegate_to: localhost
+  tags: resource
+
+##############################################
+##          RESOURCE DEPLOY TESTS           ##
+##############################################
+
+# TC1 - check_mode create with resource deploy previews the switch-scoped
+# endpoint without applying anything.
+- name: RESOURCE - TC1 - DELETE - Ensure pair absent before check_mode preview
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: resource
+    config: "{{ resource_pair_conf }}"
+  failed_when: false
+  tags: resource
+
+- name: RESOURCE - TC1 - MERGE - check_mode create with resource deploy preview
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+      type: resource
+    config: "{{ resource_pair_conf }}"
+  check_mode: true
+  register: result
+  tags: resource
+
+- name: RESOURCE - TC1 - ASSERT - Preview names switch-scoped deploy, no change applied
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.deployment is defined
+      - result.deployment.config_actions.type == "resource"
+      - result.deployment.would_deploy | bool == true
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
+      - result.deployment.planned_actions is defined
+      - result.deployment.planned_actions | to_json is search('/switchActions/deploy')
+      - result.deployment.planned_actions | to_json is search('/actions/configSave')
+  tags: resource
+
+- name: RESOURCE - TC1 - GATHER - Confirm check_mode did not create the pair
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: resource
+    config: "{{ resource_pair_conf }}"
+  register: tc1_gather
+  tags: resource
+
+- name: RESOURCE - TC1 - VALIDATE - No persistent pair from check_mode
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ tc1_gather }}"
+    expected_data: []
+    mode: "count_only"
+  register: tc1_validation
+  tags: resource
+
+- name: RESOURCE - TC1 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - tc1_validation.failed == false
+  tags: resource
+
+# TC2 - create + resource deploy targets exactly the managed pair's peers.
+- name: RESOURCE - TC2 - MERGE - Create pair and deploy (resource scope)
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+      type: resource
+    config: "{{ resource_pair_conf }}"
+  register: result
+  tags: resource
+
+- name: RESOURCE - TC2 - ASSERT - configSave + deploy of only the managed pair peers
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.deployment is defined
+      - result.deployment.config_actions.type == "resource"
+      - result.deployment.response is defined
+      - >
+        (result.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+         | list | length) > 0
+      - >
+        (result.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | list | length) > 0
+      # switchIds is exactly the managed pair's two peers (both serials present)...
+      - >
+        ((result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+          | map(attribute='DATA.switchIds') | list | first | default([])) | sort)
+        == resource_pair_serials
+      # ...and never an unrelated fabric switch.
+      - >
+        (result.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | map(attribute='DATA.switchIds')
+         | map('difference', [test_switch1, test_switch2])
+         | map('length') | sum) == 0
+  tags: resource
+
+# TC3 - a second identical run is an idempotent no-op (nothing out-of-sync).
+- name: RESOURCE - TC3 - PREP - Wait for vPC overview sync convergence
+  cisco.nd.nd_rest:
+    <<: *nd_info
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairOverview?componentType=full"
+    method: get
+  register: tc3_overview
+  vars:
+    tc3_sync_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(120) | int }}"
+    tc3_sync_poll_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(10) | int)] | max }}"
+    tc3_inventory_sync: "{{ tc3_overview.current.inventory.syncStatus | default({}) }}"
+  until:
+    - tc3_overview.failed == false
+    - (tc3_inventory_sync.pending | default(0) | int) == 0
+    - (tc3_inventory_sync.outOfSync | default(0) | int) == 0
+  retries: >-
+    {{
+      [
+        1,
+        (
+          ((tc3_sync_wait_timeout | int) + (tc3_sync_poll_interval | int) - 1)
+          // (tc3_sync_poll_interval | int)
+        ),
+      ] | max
+    }}
+  delay: "{{ tc3_sync_poll_interval | int }}"
+  tags: resource
+
+- name: RESOURCE - TC3 - MERGE - Re-run same config with resource deploy
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+      type: resource
+    config: "{{ resource_pair_conf }}"
+  register: result
+  tags: resource
+
+- name: RESOURCE - TC3 - ASSERT - Idempotent no-op skips deploy
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == false
+      - result.deployment.msg is search("skipping")
+  tags: resource
+
+# TC4 - replaced must never widen the resource scope to unrelated switches.
+- name: RESOURCE - TC4 - REPLACE - Replace pair with resource deploy
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    config_actions:
+      save: true
+      deploy: true
+      type: resource
+    config: "{{ resource_pair_conf }}"
+  register: result
+  tags: resource
+
+- name: RESOURCE - TC4 - ASSERT - Resource scope stays limited to the pair peers
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.deployment is defined
+      - result.deployment.config_actions.type == "resource"
+      # Whether or not a deploy was needed, no unrelated switch is ever targeted.
+      - >
+        (result.deployment.response | default([])
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | map(attribute='DATA.switchIds')
+         | map('difference', [test_switch1, test_switch2])
+         | map('length') | sum) == 0
+  tags: resource
+
+# TC5 - explicit state: deleted deploys the removed pair's peers so the removal
+# takes effect (the peers come from class_diff, not from config).
+- name: RESOURCE - TC5 - DELETE - Remove pair and deploy (resource scope)
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: true
+      deploy: true
+      type: resource
+    config: "{{ resource_pair_conf }}"
+  register: result
+  tags: resource
+
+- name: RESOURCE - TC5 - ASSERT - Removal deploys only the removed pair's peers
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+      - result.deployment.config_actions.type == "resource"
+      - >
+        (result.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+         | list | length) > 0
+      - >
+        (result.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | list | length) > 0
+      - >
+        ((result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+          | map(attribute='DATA.switchIds') | list | first | default([])) | sort)
+        == resource_pair_serials
+      - >
+        (result.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | map(attribute='DATA.switchIds')
+         | map('difference', [test_switch1, test_switch2])
+         | map('length') | sum) == 0
+  tags: resource
+
+# TC6 - state: overridden with an empty config purges every pair; the resource
+# scope must still deploy the purged pair's peers.
+- name: RESOURCE - TC6 - PREP - Recreate pair before overridden purge
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+      type: resource
+    config: "{{ resource_pair_conf }}"
+  register: tc6_recreate
+  tags: resource
+
+- name: RESOURCE - TC6 - PREP - Wait for vPC overview sync convergence
+  cisco.nd.nd_rest:
+    <<: *nd_info
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairOverview?componentType=full"
+    method: get
+  register: tc6_overview
+  vars:
+    tc6_sync_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(120) | int }}"
+    tc6_sync_poll_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(10) | int)] | max }}"
+    tc6_inventory_sync: "{{ tc6_overview.current.inventory.syncStatus | default({}) }}"
+  until:
+    - tc6_overview.failed == false
+    - (tc6_inventory_sync.pending | default(0) | int) == 0
+    - (tc6_inventory_sync.outOfSync | default(0) | int) == 0
+  retries: >-
+    {{
+      [
+        1,
+        (
+          ((tc6_sync_wait_timeout | int) + (tc6_sync_poll_interval | int) - 1)
+          // (tc6_sync_poll_interval | int)
+        ),
+      ] | max
+    }}
+  delay: "{{ tc6_sync_poll_interval | int }}"
+  tags: resource
+
+- name: RESOURCE - TC6 - OVERRIDE - Purge all pairs and deploy (resource scope)
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: overridden
+    config_actions:
+      save: true
+      deploy: true
+      type: resource
+    config: []
+  register: result
+  tags: resource
+
+- name: RESOURCE - TC6 - ASSERT - Purge deploys only the removed pair's peers
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+      - result.deployment.config_actions.type == "resource"
+      - >
+        (result.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | list | length) > 0
+      - >
+        ((result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+          | map(attribute='DATA.switchIds') | list | first | default([])) | sort)
+        == resource_pair_serials
+      - >
+        (result.deployment.response
+         | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+         | map(attribute='DATA.switchIds')
+         | map('difference', [test_switch1, test_switch2])
+         | map('length') | sum) == 0
+  tags: resource
