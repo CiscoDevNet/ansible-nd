@@ -139,9 +139,11 @@ def _get_managed_pair_switches_needing_deploy(
         the removal deployed. Deleted identifiers are (switch_id, peer_switch_id)
         serial tuples from controller state.
 
-    A config peer absent from inventory (mistyped serial, wrong fabric) is warned
-    rather than silently skipped, so a switch-scoped deploy never becomes a silent
-    no-op. A deleted peer already gone from inventory needs no deploy and is
+    A config pair is resolved atomically: if either peer is absent from inventory
+    (mistyped serial, wrong fabric, or an incomplete inventory response) the whole
+    pair is warned and skipped rather than deploying a single peer, so a
+    switch-scoped deploy never becomes a silent no-op nor an asymmetric half-pair
+    deploy. A deleted peer already gone from inventory needs no deploy and is
     skipped quietly. Only switches not confirmed in-sync are returned so an
     already deployed pair is a no-op.
 
@@ -156,22 +158,26 @@ def _get_managed_pair_switches_needing_deploy(
         Sorted list of unique switch serial numbers needing deployment
     """
     switches = _validate_fabric_switches(nd_v2, fabric_name)
-    # No early return on empty inventory: fall through so every configured peer is warned.
+    # No early return on empty inventory: fall through so every configured pair is warned.
     managed_serials: set[str] = set()
     for config_entry in config_entries or []:
         if not isinstance(config_entry, dict):
             continue
-        unresolved_serials: list[str] = []
-        for identifier in (config_entry["switch_id"], config_entry["peer_switch_id"]):
-            if identifier in switches:
-                managed_serials.add(identifier)
-            else:
-                unresolved_serials.append(identifier)
+        pair_serials = (config_entry["switch_id"], config_entry["peer_switch_id"])
+        unresolved_serials = [serial for serial in pair_serials if serial not in switches]
         if unresolved_serials:
+            # Resolve a vPC pair atomically: both peers must be present in the
+            # inventory snapshot before either is deployed. Deploying a lone peer
+            # (typo, wrong fabric, or a transient/incomplete inventory response)
+            # would leave the two members in inconsistent states, so warn and skip
+            # the whole pair instead of half-deploying it.
             nd_v2.module.warn(
                 f"config_actions.type=switch: vPC pair peer(s) {unresolved_serials} not found in fabric "
-                f"'{fabric_name}' inventory; skipping switch-scoped deploy for those switches."
+                f"'{fabric_name}' inventory; skipping switch-scoped deploy for the entire pair "
+                f"{list(pair_serials)} to avoid deploying only one peer."
             )
+            continue
+        managed_serials.update(pair_serials)
     # Pairs removed this run are absent from config; recover their peers so the
     # removal is deployed. A peer already gone from inventory needs no deploy.
     for identifier in (class_diff or {}).get("deleted") or []:
@@ -242,7 +248,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
         planned_actions = []
         if save_enabled:
             save_path = FabricUtils.build_config_save_path(fabric_name)
-            planned_actions.append(f"POST {save_path} payload={action_payload}")
+            planned_actions.append(f"POST {save_path}")
         if deploy_enabled:
             if action_type in SWITCH_DEPLOY_ACTION_TYPES:
                 deploy_path = FabricUtils.build_switch_deploy_path(fabric_name)
@@ -286,11 +292,11 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
         save_path = fabric_utils.config_save_path
 
         try:
-            response = fabric_utils.save_config(action_payload)
+            response = fabric_utils.save_config()
             register_action_api_call(
                 results=results,
                 request_path=save_path,
-                payload=action_payload,
+                payload=None,
                 return_code=response.get("status"),
                 message="Config saved successfully",
                 success=True,
@@ -306,7 +312,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 register_action_api_call(
                     results=results,
                     request_path=save_path,
-                    payload=action_payload,
+                    payload=None,
                     return_code=error.status,
                     message=error.msg,
                     success=True,
@@ -318,7 +324,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 register_action_api_call(
                     results=results,
                     request_path=save_path,
-                    payload=action_payload,
+                    payload=None,
                     return_code=error.status,
                     message=error.msg,
                     success=False,

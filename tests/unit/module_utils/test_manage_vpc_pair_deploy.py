@@ -105,6 +105,7 @@ def test_manage_vpc_pair_deploy_00010_global_scope_uses_fabric_deploy():
     assert SWITCH_DEPLOY_PATH not in paths
     assert SWITCHES_PATH not in paths
     assert fake_nd.payloads_for(GLOBAL_DEPLOY_PATH) == [{"type": "global"}]
+    assert fake_nd.payloads_for(SAVE_PATH) == [None]  # config-save is bodyless
 
 
 def test_manage_vpc_pair_deploy_00040_check_mode_switch_scope_previews_switch_endpoint():
@@ -220,6 +221,7 @@ def test_manage_vpc_pair_deploy_00110_switch_scope_deploys_only_managed_pair_swi
     assert GLOBAL_DEPLOY_PATH not in paths
     assert SWITCH_DEPLOY_PATH in paths
     assert fake_nd.payloads_for(SWITCH_DEPLOY_PATH) == [{"switchIds": ["FOX111AAA", "FOX222AAA"]}]
+    assert fake_nd.payloads_for(SAVE_PATH) == [None]  # config-save is bodyless
 
 
 def test_manage_vpc_pair_deploy_00120_switch_scope_warns_when_peer_not_in_inventory():
@@ -364,3 +366,63 @@ def test_manage_vpc_pair_deploy_00190_switch_scope_warns_when_inventory_empty():
     assert any("not found in fabric" in warning for warning in nrm.module.warnings)
     warnings = " ".join(nrm.module.warnings)
     assert "FOX111AAA" in warnings and "FOX222AAA" in warnings
+
+
+def test_manage_vpc_pair_deploy_00200_switch_scope_skips_pair_when_one_peer_absent():
+    # Atomic pair resolution: when only one peer of a configured pair is present
+    # in inventory (mistyped serial or a transient/incomplete snapshot), the pair
+    # is warned and skipped rather than deploying a single member asymmetrically.
+    nrm = _make_switch_nrm(config=[{"switch_id": "FOX111AAA", "peer_switch_id": "FOXABSENT2"}])
+    switches_response = {
+        "switches": [
+            {"serialNumber": "FOX111AAA", "configSyncStatus": "Out-of-Sync"},
+        ]
+    }
+    fake_nd = _FakeNDModuleV2(nrm.module, switches_response=switches_response)
+
+    _run_deploy(nrm, fake_nd)
+
+    # No half-pair deploy: switchActions/deploy is never posted for a lone peer.
+    assert SWITCH_DEPLOY_PATH not in fake_nd.paths()
+    warnings = " ".join(nrm.module.warnings)
+    assert "FOXABSENT2" in warnings
+    assert "only one peer" in warnings
+
+
+def test_manage_vpc_pair_deploy_00205_get_managed_pair_switches_skips_asymmetric_pair():
+    # Direct helper: a configured pair with a single resolvable peer returns no
+    # switches (atomic) and warns; the lone present peer is never returned.
+    switches_response = {
+        "switches": [
+            {"serialNumber": "FOX111AAA", "configSyncStatus": "Out-of-Sync"},
+        ]
+    }
+    module = _FakeModule({})
+    fake_nd = _FakeNDModuleV2(module, switches_response=switches_response)
+    config_entries = [{"switch_id": "FOX111AAA", "peer_switch_id": "FOXABSENT2"}]
+
+    result = deploy._get_managed_pair_switches_needing_deploy(fake_nd, "fab1", config_entries)
+
+    assert result == []
+    assert any("only one peer" in warning for warning in module.warnings)
+
+
+def test_manage_vpc_pair_deploy_00210_deploy_of_staged_pair_reports_changed_true():
+    # The declarative state produced no diff (changed=False) but a previously
+    # staged pair is still out-of-sync. Deploying it is a real switch mutation, so
+    # the aggregated deploy result must report changed=true and must not be
+    # discarded as a read-only QUERY operation.
+    nrm = _make_switch_nrm(config=[{"switch_id": "FOX111AAA", "peer_switch_id": "FOX222AAA"}])
+    nrm.module.params["_not_in_sync_pairs"] = [("FOX111AAA", "FOX222AAA")]
+    switches_response = {
+        "switches": [
+            {"serialNumber": "FOX111AAA", "configSyncStatus": "Out-of-Sync"},
+            {"serialNumber": "FOX222AAA", "configSyncStatus": "Out-of-Sync"},
+        ]
+    }
+    fake_nd = _FakeNDModuleV2(nrm.module, switches_response=switches_response)
+
+    out = _run_deploy(nrm, fake_nd, result={"changed": False})
+
+    assert SWITCH_DEPLOY_PATH in fake_nd.paths()
+    assert out["changed"] is True
