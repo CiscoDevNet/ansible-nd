@@ -30,6 +30,13 @@ class InterfaceStateSnapshot:
     existing family orchestrators enrich selected records with ``switchIp``;
     isolating those working copies keeps one family from changing the shared
     source observed by another family.
+
+    A dirty switch means only that this execution-scoped local cache may be
+    stale. It is unrelated to controller configuration synchronization status.
+    Loading a dirty switch increments ``_dirty_refetches`` once before
+    fetching its inventory; pagination is counted separately by
+    ``_interface_inventory_gets``. An explicit refresh invalidates the local
+    entry first, so it increments both the refresh and dirty-refetch counters.
     """
 
     def __init__(
@@ -167,9 +174,7 @@ class InterfaceStateSnapshot:
                     continue
                 returned_switch_id = summary.get("switchId")
                 if not isinstance(returned_switch_id, str) or not returned_switch_id:
-                    raise RuntimeError(
-                        f"Interface summary row has invalid switchId {returned_switch_id!r} while fetching switch '{switch_id}'."
-                    )
+                    raise RuntimeError(f"Interface summary row has invalid switchId {returned_switch_id!r} while fetching switch '{switch_id}'.")
                 key = self._interface_key(summary)
                 if key is None:
                     continue
@@ -179,19 +184,14 @@ class InterfaceStateSnapshot:
                 if returned_switch_id != switch_id:
                     continue
                 if key in page_keys or key in summaries_by_name:
-                    raise RuntimeError(
-                        f"Interface summary contains duplicate case-insensitive interface identity '{key}' "
-                        f"for switch '{switch_id}'."
-                    )
+                    raise RuntimeError(f"Interface summary contains duplicate case-insensitive interface identity '{key}' " f"for switch '{switch_id}'.")
                 page_keys.add(key)
                 keyed_page.append((key, summary))
 
             if self.page_size is not None and len(page) >= self.page_size:
                 signature = tuple(page_identities)
                 if signature in seen_full_pages:
-                    raise RuntimeError(
-                        f"Interface summary pagination repeated a full page for switch '{switch_id}' at offset {offset}."
-                    )
+                    raise RuntimeError(f"Interface summary pagination repeated a full page for switch '{switch_id}' at offset {offset}.")
                 seen_full_pages.add(signature)
 
             for key, summary in keyed_page:
@@ -204,7 +204,13 @@ class InterfaceStateSnapshot:
         return summaries_by_name
 
     def load_switch(self, switch_id: str) -> dict[str, dict]:
-        """Return current state, automatically refetching a dirty switch."""
+        """Return current state, automatically refetching a locally dirty switch.
+
+        A clean cached inventory is returned without a request. A dirty marker
+        causes one logical refetch attempt and increments ``_dirty_refetches``
+        before ``_fetch_switch`` runs. Any paginated HTTP requests made by that
+        fetch are tracked independently by ``_interface_inventory_gets``.
+        """
         if not switch_id:
             raise ValueError("InterfaceStateSnapshot.load_switch requires a non-empty switch_id.")
         if switch_id in self._interfaces_by_switch and switch_id not in self._dirty_switches:
@@ -223,6 +229,22 @@ class InterfaceStateSnapshot:
     def load_switches(self, switch_ids: Iterable[str]) -> dict[str, dict[str, dict]]:
         """Load several switches, de-duplicating IDs supplied by the caller."""
         return {switch_id: self.load_switch(switch_id) for switch_id in self._normalise_switch_ids(switch_ids)}
+
+    def cached_interface(
+        self,
+        switch_id: str,
+        interface_name: str,
+        *,
+        original: bool = False,
+    ) -> dict | None:
+        """Return one cached interface without loading, refetching, or copying the full inventory."""
+        if not isinstance(switch_id, str) or not switch_id:
+            raise ValueError("InterfaceStateSnapshot.cached_interface requires a non-empty switch_id.")
+        if not isinstance(interface_name, str) or not interface_name:
+            raise ValueError("InterfaceStateSnapshot.cached_interface requires a non-empty interface_name.")
+        inventory = self._original_interfaces_by_switch if original else self._interfaces_by_switch
+        current = inventory.get(switch_id, {}).get(interface_name.lower())
+        return deepcopy(current) if current is not None else None
 
     def load_interface_summaries(
         self,
@@ -355,18 +377,30 @@ class InterfaceStateSnapshot:
         return deepcopy(candidate)
 
     def mark_dirty(self, switch_ids: str | Iterable[str]) -> None:
-        """Mark one or more switches as stale after an uncertain mutation."""
+        """Mark local switch inventories stale without issuing a request.
+
+        This is used after mutation requests, or any other event that can make
+        cached controller intent unreliable. It does not inspect or change the
+        controller configuration synchronization status.
+        """
         self._dirty_switches.update(self._normalise_switch_ids(switch_ids))
 
     def invalidate(self, switch_ids: str | Iterable[str]) -> None:
-        """Discard current cached state for switches while retaining originals."""
+        """Discard current switch caches, retain originals, and mark locally dirty."""
         for switch_id in self._normalise_switch_ids(switch_ids):
             self._interfaces_by_switch.pop(switch_id, None)
             self._interface_summaries_by_switch.pop(switch_id, None)
             self._dirty_switches.add(switch_id)
 
     def refresh(self, switch_ids: str | Iterable[str]) -> dict[str, dict[str, dict]]:
-        """Refetch one or more switches and clear their dirty markers."""
+        """Explicitly refetch unique switches and clear their local dirty markers.
+
+        Each switch increments ``_interface_inventory_refreshes`` before the
+        attempt. ``invalidate`` then marks it dirty and ``load_switch`` increments
+        ``_dirty_refetches`` before fetching. Therefore one explicit refresh
+        normally contributes one to both counters; HTTP pages are counted by
+        ``_interface_inventory_gets``.
+        """
         normalised = self._normalise_switch_ids(switch_ids)
         self._interface_inventory_refreshes += len(normalised)
         self.invalidate(normalised)
@@ -374,7 +408,7 @@ class InterfaceStateSnapshot:
 
     @property
     def request_stats(self) -> dict[str, int]:
-        """Return interface-inventory and snapshot lifecycle counts."""
+        """Return logical snapshot lifecycle counts and separate HTTP request counts."""
         return {
             "switches": len(self._requested_switches),
             "interface_inventory_gets": self._interface_inventory_gets,

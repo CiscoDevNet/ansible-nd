@@ -8,15 +8,19 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
+from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor import (
     InterfaceWorkflowExecutor,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planner import (
     InterfacePolicyTransition,
+    InterfaceWorkflowPlanner,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_interface_base import (
     VpcInterfaceBaseOrchestrator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
 
 class FakeModel:
@@ -329,6 +333,77 @@ def test_executor_defaults_to_staging_changes_without_deployment():
     assert "deploy" not in [event[0] for event in events]
 
 
+def test_deployment_only_execution_sends_one_exact_target_without_mutation_or_refresh():
+    events = []
+    orchestrator = FakeOrchestrator("only", events)
+    workflow_plan = plan(resource(0, orchestrator, actual=("before",)))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(
+        workflow_plan,
+        deployment_targets=(("loopback1", "SERIAL1"),),
+    )
+
+    assert result.failed is False
+    assert result.status == "completed"
+    assert result.changed is True
+    assert result.mutation_requests == 0
+    assert result.deploy_requests == 1
+    assert result.affected_switch_ids == ()
+    assert result.items == ()
+    assert result.deployment == {
+        "requested": True,
+        "status": "succeeded",
+        "targets": [{"interface_name": "loopback1", "switch_id": "SERIAL1", "status": "succeeded"}],
+    }
+    assert events == [
+        ("validate", "only"),
+        ("deploy", "only", (("loopback1", "SERIAL1"),)),
+    ]
+
+
+def test_supplemental_and_mutation_deployment_targets_are_deduplicated_into_one_post():
+    events = []
+    orchestrator = FakeOrchestrator("only", events)
+    workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1")]))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(
+        workflow_plan,
+        deployment_targets=(("loopback1", "SERIAL1"), ("loopback2", "SERIAL1")),
+    )
+
+    deploy_events = [event for event in events if event[0] == "deploy"]
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 1
+    assert len(deploy_events) == 1
+    assert set(deploy_events[0][2]) == {
+        ("loopback1", "SERIAL1"),
+        ("loopback2", "SERIAL1"),
+    }
+
+
+def test_partial_deployment_only_failure_reports_successful_target_as_changed():
+    events = []
+    orchestrator = FakeOrchestrator("only", events, fail_deploy=True)
+    workflow_plan = plan(resource(0, orchestrator, actual=("before",)))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(
+        workflow_plan,
+        deployment_targets=(("loopback1", "SERIAL1"), ("loopback2", "SERIAL1")),
+    )
+
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert result.changed is True
+    assert result.mutation_requests == 0
+    assert result.deploy_requests == 1
+    assert result.deployment["status"] == "partial_failure"
+    assert {target["interface_name"]: target["status"] for target in result.deployment["targets"]} == {
+        "loopback1": "succeeded",
+        "loopback2": "failed",
+    }
+
+
 def test_transition_put_precedes_ordinary_updates_and_creates_then_deploys_once():
     events = []
     orchestrator = FakeOrchestrator("only", events)
@@ -433,6 +508,94 @@ def test_preflight_failure_sends_no_writes_and_leaves_every_item_not_attempted()
     assert result.deploy_requests == 0
     assert result.items[0].status == "not_attempted"
     assert not any(event[0] in {"create", "deploy", "dirty", "refresh"} for event in events)
+
+
+def test_preflight_failure_reconciles_equal_vpc_names_by_pair_without_false_change(monkeypatch):
+    """A read-only failed run keeps independent same-name pairs and reports no controller change."""
+    switch_map = {
+        "192.0.2.1": "SERIAL1",
+        "192.0.2.2": "SERIAL2",
+        "192.0.2.3": "SERIAL3",
+        "192.0.2.4": "SERIAL4",
+    }
+    peer_ids = ("SERIAL2", "SERIAL1", "SERIAL4", "SERIAL3")
+    responses = iter(
+        {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc10",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessVpcHost",
+                                "accessVlan": 10,
+                                "peerSwitchId": peer_id,
+                            },
+                        },
+                    },
+                }
+            ]
+        }
+        for peer_id in peer_ids
+    )
+    rest_send = RestSend({"fabric_name": "FABRIC1", "check_mode": True})
+    context = FabricContext(rest_send=rest_send, fabric_name="FABRIC1")
+    context._fabric_summary = {"local": True, "fabricStatus": "default"}
+    context._switch_map = switch_map
+    context._switch_map_by_id = {switch_id: switch_ip for switch_ip, switch_id in switch_map.items()}
+    snapshot = InterfaceStateSnapshot(
+        fabric_name="FABRIC1",
+        fabric_context=context,
+        request=lambda **_kwargs: next(responses),
+    )
+    planner = InterfaceWorkflowPlanner(
+        snapshot=snapshot,
+        vpc_pair_by_switch_ip={
+            "192.0.2.1": "SERIAL2",
+            "192.0.2.2": "SERIAL1",
+            "192.0.2.3": "SERIAL4",
+            "192.0.2.4": "SERIAL3",
+        },
+    )
+    workflow_plan = planner.plan(
+        [
+            {
+                "type": "vpc_access",
+                "state": "merged",
+                "config": [
+                    {
+                        "switch_ip": switch_ip,
+                        "interface_name": "vpc10",
+                        "config_data": {"network_os": {"policy": {"access_vlan": 20}}},
+                    }
+                    for switch_ip in ("192.0.2.1", "192.0.2.3")
+                ],
+            }
+        ]
+    )
+    resource_plan = workflow_plan.resources[0]
+
+    def reject_preflight(_self, _models):
+        raise RuntimeError("switch is not capable")
+
+    monkeypatch.setattr(type(resource_plan.orchestrator), "preflight", reject_preflight)
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot).execute(workflow_plan)
+
+    actual = result.actual_after_by_resource[0]
+    assert result.failed is True
+    assert result.mutation_requests == 0
+    assert snapshot.request_stats["interface_inventory_gets"] == 4
+    assert len(actual) == 2
+    assert {item.get_identifier_value() for item in actual} == {
+        ("192.0.2.1", "vpc10"),
+        ("192.0.2.3", "vpc10"),
+    }
+    assert result.changed is False
+    assert result.status == "failed"
 
 
 def test_mixed_create_response_preserves_per_item_partial_success_and_stops_deploy():

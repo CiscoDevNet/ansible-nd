@@ -31,8 +31,6 @@
       - item.execution.status == 'check_mode'
       - item.execution.mutations_sent == 0
       - item.execution.deployments_sent == 0
-      - item.request_stats.mutation_requests == 0
-      - item.request_stats.deploy_requests == 0
     fail_msg: >-
       Optional pack {{ item.item.name }} for {{ nd_iw_current_case.family }} did not validate.
       Requirements={{ item.item.requirements | default([]) }}; error={{ item.msg | default('none') }}.

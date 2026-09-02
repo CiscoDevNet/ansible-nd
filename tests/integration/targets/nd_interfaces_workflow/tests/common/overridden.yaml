@@ -77,14 +77,23 @@
           - nd_iw_override_preview.target_switch_ids | length >= nd_iw_active_switches.values() | reject('equalto', '') | unique | list | length
           - nd_iw_override_preview.execution.mutations_sent == 0
           - nd_iw_override_preview.execution.deployments_sent == 0
-          - nd_iw_override_preview.request_stats.mutation_requests == 0
-          - nd_iw_override_preview.request_stats.deploy_requests == 0
 
     - name: Verify override preview plans removal of the secondary identity
+      vars:
+        nd_iw_override_removal_action: >-
+          {{
+            "reset"
+            if nd_iw_current_case.family in ["ethernet_access", "ethernet_trunk_host"]
+            else "delete"
+          }}
       ansible.builtin.assert:
         that:
           - nd_iw_override_preview is changed
-          - nd_iw_override_preview.resources[0].deleted | length > 0
+          - >-
+            nd_iw_override_preview.resources[0].operations
+            | selectattr("action", "equalto", nd_iw_override_removal_action)
+            | list
+            | length > 0
       when: not nd_iw_module_check_mode
 
     - name: Apply authoritative retention of only the primary identity
@@ -103,12 +112,23 @@
       when: not nd_iw_module_check_mode
 
     - name: Verify overridden state retained primary and removed secondary intent
+      vars:
+        nd_iw_override_removal_action: >-
+          {{
+            "reset"
+            if nd_iw_current_case.family in ["ethernet_access", "ethernet_trunk_host"]
+            else "delete"
+          }}
       ansible.builtin.assert:
         that:
           - nd_iw_override_apply is changed
           - nd_iw_override_apply.resources[0].state == 'overridden'
           - nd_iw_override_apply.resources[0].after_verified
-          - nd_iw_override_apply.resources[0].deleted | length > 0
+          - >-
+            nd_iw_override_apply.resources[0].operations
+            | selectattr("action", "equalto", nd_iw_override_removal_action)
+            | list
+            | length > 0
       when: not nd_iw_module_check_mode
 
     - name: Verify secondary override identities are absent
@@ -145,8 +165,8 @@
         that:
           - nd_iw_override_idempotent is not changed
           - nd_iw_override_idempotent.execution.status == 'no_change'
-          - nd_iw_override_idempotent.request_stats.mutation_requests == 0
-          - nd_iw_override_idempotent.request_stats.deploy_requests == 0
+          - nd_iw_override_idempotent.execution.mutations_sent == 0
+          - nd_iw_override_idempotent.execution.deployments_sent == 0
       when: not nd_iw_module_check_mode
 
   always:

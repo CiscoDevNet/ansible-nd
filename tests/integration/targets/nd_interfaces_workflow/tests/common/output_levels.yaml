@@ -49,19 +49,119 @@
   register: nd_iw_output_debug
   delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
 
-- name: Verify normal, info, and debug output contracts
+- name: Verify compact successful-result contract at every output level
   ansible.builtin.assert:
     that:
-      - nd_iw_output_normal.output_level == 'normal'
-      - nd_iw_output_info.output_level == 'info'
-      - nd_iw_output_debug.output_level == 'debug'
+      - nd_iw_output_result.changed is defined
+      - nd_iw_output_result.planned_changed is defined
+      - nd_iw_output_result.mutation_count is defined
+      - nd_iw_output_result.target_switch_ids is sequence
+      - nd_iw_output_result.resources is sequence
+      - nd_iw_output_result.resources | length == 1
+      - nd_iw_output_result.request_stats is mapping
+      - nd_iw_output_result.execution is mapping
+      - nd_iw_output_result.before is not defined
+      - nd_iw_output_result.after is not defined
+      - nd_iw_output_result.diff is not defined
+      - nd_iw_output_result.check_mode is not defined
+      - nd_iw_output_result.output_level is not defined
+      - nd_iw_output_result.fabric_name is not defined
+      - nd_iw_output_result.config_actions is not defined
+      - nd_iw_output_result.resources[0].resource_index is defined
+      - nd_iw_output_result.resources[0].type is defined
+      - nd_iw_output_result.resources[0].module is defined
+      - nd_iw_output_result.resources[0].state is defined
+      - nd_iw_output_result.resources[0].changed is defined
+      - nd_iw_output_result.resources[0].planned_changed is defined
+      - nd_iw_output_result.resources[0].before is sequence
+      - nd_iw_output_result.resources[0].after is sequence
+      - nd_iw_output_result.resources[0].after_verified is defined
+      - nd_iw_output_result.resources[0].operations is sequence
+      - nd_iw_output_result.resources[0].diff is not defined
+      - nd_iw_output_result.resources[0].family_diff is not defined
+      - nd_iw_output_result.resources[0].transitions is not defined
+      - nd_iw_output_result.resources[0].created is not defined
+      - nd_iw_output_result.resources[0].updated is not defined
+      - nd_iw_output_result.resources[0].deleted is not defined
+      - nd_iw_output_result.request_stats.switches is defined
+      - nd_iw_output_result.request_stats.interface_inventory_gets is defined
+      - nd_iw_output_result.request_stats.interface_inventory_pages is defined
+      - nd_iw_output_result.request_stats.interface_inventory_cache_hits is defined
+      - nd_iw_output_result.request_stats.interface_inventory_refreshes is defined
+      - nd_iw_output_result.request_stats.interface_inventory_dirty_refetches is defined
+      - nd_iw_output_result.request_stats.interface_summary_switches is defined
+      - nd_iw_output_result.request_stats.interface_summary_gets is defined
+      - nd_iw_output_result.request_stats.interface_summary_pages is defined
+      - nd_iw_output_result.request_stats.interface_summary_cache_hits is defined
+      - nd_iw_output_result.request_stats.snapshot_overlays is defined
+      - nd_iw_output_result.request_stats.vpc_pair_gets is defined
+      - nd_iw_output_result.request_stats.mutation_requests is not defined
+      - nd_iw_output_result.request_stats.deploy_requests is not defined
+      - nd_iw_output_result.execution.mutations_sent == 0
+      - nd_iw_output_result.execution.deployments_sent == 0
+      - nd_iw_output_result.execution.items is not defined
+  loop:
+    - "{{ nd_iw_output_normal }}"
+    - "{{ nd_iw_output_info }}"
+    - "{{ nd_iw_output_debug }}"
+  loop_control:
+    loop_var: nd_iw_output_result
+    label: "{{ nd_iw_output_result.resources[0].type }}"
+
+- name: Verify normal, info, and debug resource projections
+  ansible.builtin.assert:
+    that:
       - nd_iw_output_normal.resources | rejectattr('proposed', 'defined') | list | length == 1
       - nd_iw_output_info.resources | selectattr('proposed', 'defined') | list | length == 1
       - nd_iw_output_debug.resources | selectattr('proposed', 'defined') | list | length == 1
       - nd_iw_output_info.resources[0].proposed == nd_iw_output_debug.resources[0].proposed
-      - nd_iw_output_normal.execution.mutations_sent == 0
-      - nd_iw_output_info.execution.mutations_sent == 0
-      - nd_iw_output_debug.execution.mutations_sent == 0
-      - nd_iw_output_normal.execution.deployments_sent == 0
-      - nd_iw_output_info.execution.deployments_sent == 0
-      - nd_iw_output_debug.execution.deployments_sent == 0
+      - nd_iw_output_normal.resources[0].family_before is not defined
+      - nd_iw_output_normal.resources[0].family_after is not defined
+      - nd_iw_output_info.resources[0].family_before is not defined
+      - nd_iw_output_info.resources[0].family_after is not defined
+      - nd_iw_output_debug.resources[0].family_before is sequence
+      - nd_iw_output_debug.resources[0].family_after is sequence
+      - nd_iw_output_normal.resources[0].before == nd_iw_output_info.resources[0].before
+      - nd_iw_output_info.resources[0].before == nd_iw_output_debug.resources[0].before
+      - nd_iw_output_normal.resources[0].after == nd_iw_output_info.resources[0].after
+      - nd_iw_output_info.resources[0].after == nd_iw_output_debug.resources[0].after
+      - nd_iw_output_normal.resources[0].operations == nd_iw_output_info.resources[0].operations
+      - nd_iw_output_info.resources[0].operations == nd_iw_output_debug.resources[0].operations
+      - nd_iw_output_normal.resources[0].after | length == nd_iw_output_info.resources[0].proposed | length
+      - nd_iw_output_debug.resources[0].family_before | length >= nd_iw_output_debug.resources[0].before | length
+      - nd_iw_output_debug.resources[0].family_after | length >= nd_iw_output_debug.resources[0].after | length
+
+- name: Verify compact operation identities and check-mode status
+  ansible.builtin.assert:
+    that:
+      - nd_iw_operation.action in ['create', 'update', 'transition', 'reset', 'delete']
+      - nd_iw_operation.switch_ip is defined
+      - nd_iw_operation.switch_id is defined
+      - nd_iw_operation.interface_name is defined
+      - nd_iw_operation.status == 'planned'
+      - nd_iw_operation.changes is not defined or nd_iw_operation.changes is sequence
+      - nd_iw_operation.action != 'transition' or nd_iw_operation.from_policy_type is defined
+      - nd_iw_operation.action != 'transition' or nd_iw_operation.to_policy_type is defined
+      - nd_iw_operation.action != 'create' or nd_iw_operation.changes is not defined
+      - nd_iw_operation.action != 'delete' or nd_iw_operation.changes is not defined
+  loop: "{{ nd_iw_output_normal.resources[0].operations }}"
+  loop_control:
+    loop_var: nd_iw_operation
+    label: "{{ nd_iw_operation.action }} {{ nd_iw_operation.switch_ip }}/{{ nd_iw_operation.interface_name }}"
+
+- name: Verify optional operation leaf-delta shape
+  ansible.builtin.assert:
+    that:
+      - nd_iw_operation_change.path is string
+      - nd_iw_operation_change.before is defined
+      - nd_iw_operation_change.after is defined
+  loop: >-
+    {{
+      nd_iw_output_normal.resources[0].operations
+      | selectattr('changes', 'defined')
+      | map(attribute='changes')
+      | flatten
+    }}
+  loop_control:
+    loop_var: nd_iw_operation_change
+    label: "{{ nd_iw_operation_change.path }}"

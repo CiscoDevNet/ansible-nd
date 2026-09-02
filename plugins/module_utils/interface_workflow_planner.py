@@ -273,9 +273,7 @@ class InterfaceWorkflowPlanner:
             request_stats=self.snapshot.request_stats,
         )
 
-    def _validate_resource_groups(
-        self, resources: list[dict[str, Any]]
-    ) -> list[tuple[int, InterfaceFamilyAdapter, str, NDConfigCollection]]:
+    def _validate_resource_groups(self, resources: list[dict[str, Any]]) -> list[tuple[int, InterfaceFamilyAdapter, str, NDConfigCollection]]:
         """Validate group envelopes and delegate each config to its family adapter."""
         if not isinstance(resources, list):
             raise InterfaceWorkflowValidationError("resources must be a list.")
@@ -300,9 +298,7 @@ class InterfaceWorkflowPlanner:
             validated.append((resource_index, adapter, state, proposed))
         return validated
 
-    def _target_switch_ids(
-        self, validated: list[tuple[int, InterfaceFamilyAdapter, str, NDConfigCollection]]
-    ) -> tuple[str, ...]:
+    def _target_switch_ids(self, validated: list[tuple[int, InterfaceFamilyAdapter, str, NDConfigCollection]]) -> tuple[str, ...]:
         """Resolve the union of configured switches, expanding override to the fabric."""
         fabric_wide = any(state == "overridden" for _index, _adapter, state, _proposed in validated)
         switch_ids: list[str] = []
@@ -364,16 +360,6 @@ class InterfaceWorkflowPlanner:
             self._inventory_by_identity = self.snapshot.interfaces_by_identity
         return self._inventory_by_identity
 
-    def _vpc_pair_scopes_by_switch_id(self) -> dict[str, tuple[str, ...]]:
-        """Return authoritative pair scopes indexed by either member switch ID."""
-        scopes: dict[str, tuple[str, ...]] = {}
-        for switch_ip in self.vpc_pair_by_switch_ip:
-            scope = self._vpc_pair_scope(switch_ip)
-            if len(scope) == 2:
-                for switch_id in scope:
-                    scopes[switch_id] = scope
-        return scopes
-
     def _shared_vpc_peer_serial_cache(self) -> dict[str, str]:
         """Return one authoritative peer cache shared by all workflow vPC orchestrators."""
         if self._vpc_peer_serial_cache is None:
@@ -386,28 +372,33 @@ class InterfaceWorkflowPlanner:
             self._vpc_peer_serial_cache = cache
         return self._vpc_peer_serial_cache
 
-    def _existing_collection(
-        self,
+    @classmethod
+    def pair_scoped_vpc_collection(
+        cls,
+        *,
+        inventory: Mapping[tuple[str, str], dict[str, Any]],
         adapter: InterfaceFamilyAdapter,
         orchestrator: NDBaseInterfaceOrchestrator,
         proposed: NDConfigCollection,
     ) -> NDConfigCollection:
-        """Select pair-scoped vPC state without name-global query deduplication."""
-        if adapter.ownership_domain != "vpc":
-            return adapter.existing_collection(orchestrator)
+        """Select one stable representative per authoritative vPC pair and interface name."""
+        context = orchestrator.fabric_context
+        peer_by_switch = getattr(orchestrator, "_peer_serial_cache", {})
+        scopes_by_switch_id: dict[str, tuple[str, ...]] = {}
+        for switch_id, peer_id in peer_by_switch.items():
+            scope = tuple(sorted((switch_id, peer_id)))
+            scopes_by_switch_id[switch_id] = scope
+            scopes_by_switch_id[peer_id] = scope
 
-        orchestrator.validate_prerequisites()
-        scopes_by_switch_id = self._vpc_pair_scopes_by_switch_id()
-        preferred_switch_by_key = {
-            (
-                self._vpc_pair_scope(getattr(item, "switch_ip")),
-                getattr(item, "interface_name").lower(),
-            ): self.fabric_context.get_switch_id(getattr(item, "switch_ip"))
-            for item in proposed
-        }
+        preferred_switch_by_key = {}
+        for item in proposed:
+            primary_id = context.get_switch_id(getattr(item, "switch_ip"))
+            scope = scopes_by_switch_id.get(primary_id, (primary_id,))
+            preferred_switch_by_key[(scope, getattr(item, "interface_name").lower())] = primary_id
+
         selected: dict[tuple[tuple[str, ...], str], tuple[tuple[int, str], str, dict[str, Any]]] = {}
-        for (switch_id, interface_name), current in self._inventory().items():
-            if self._canonical_interface_type(current.get("interfaceType")) != "vpc":
+        for (switch_id, interface_name), current in inventory.items():
+            if cls._canonical_interface_type(current.get("interfaceType")) != "vpc":
                 continue
             if InterfaceStateSnapshot.policy_type(current) not in adapter.policy_types:
                 continue
@@ -423,9 +414,22 @@ class InterfaceWorkflowPlanner:
         for key in sorted(selected):
             _rank, switch_id, current = selected[key]
             enriched = deepcopy(current)
-            enriched["switchIp"] = self.fabric_context.get_switch_ip(switch_id)
+            enriched["switchIp"] = context.get_switch_ip(switch_id)
             response.append(enriched)
         return NDConfigCollection.from_api_response(response_data=response, model_class=adapter.model_class)
+
+    def _existing_collection(
+        self,
+        adapter: InterfaceFamilyAdapter,
+        orchestrator: NDBaseInterfaceOrchestrator,
+        proposed: NDConfigCollection,
+    ) -> NDConfigCollection:
+        """Select pair-scoped vPC state without name-global query deduplication."""
+        if adapter.ownership_domain != "vpc":
+            return adapter.existing_collection(orchestrator)
+
+        orchestrator.validate_prerequisites()
+        return self.pair_scoped_vpc_collection(inventory=self._inventory(), adapter=adapter, orchestrator=orchestrator, proposed=proposed)
 
     @classmethod
     def _desired_policy_type(cls, model: NDBaseModel) -> str | None:
@@ -517,17 +521,13 @@ class InterfaceWorkflowPlanner:
         scope = self._vpc_pair_scope(switch_ip)
         label = f"{switch_ip}/{getattr(model, 'interface_name')}"
         if len(scope) != 2:
-            raise InterfaceWorkflowValidationError(
-                f"{label} requires an authoritative two-switch vPC pair; resolved scope is {list(scope)}."
-            )
+            raise InterfaceWorkflowValidationError(f"{label} requires an authoritative two-switch vPC pair; resolved scope is {list(scope)}.")
         present = tuple((switch_id, inventory[(switch_id, interface_name)]) for switch_id in scope if (switch_id, interface_name) in inventory)
         if not present:
             return ()
         if len(present) != 2:
             missing = sorted(set(scope) - {switch_id for switch_id, _current in present})
-            raise InterfaceWorkflowValidationError(
-                f"{label} has inconsistent vPC pair state: the interface record is missing on peer(s) {missing}."
-            )
+            raise InterfaceWorkflowValidationError(f"{label} has inconsistent vPC pair state: the interface record is missing on peer(s) {missing}.")
 
         for switch_id, current in present:
             peer_ids = [candidate for candidate in scope if candidate != switch_id]
@@ -591,9 +591,7 @@ class InterfaceWorkflowPlanner:
         if check_membership and resource.adapter.ownership_domain == "ethernet" and current_records:
             port_channel_id = self._effective_port_channel_id(current_records[0][1])
             if port_channel_id is not None:
-                errors.append(
-                    f"{label} cannot {action} while it is a member of port-channel {port_channel_id}. Remove the membership first."
-                )
+                errors.append(f"{label} cannot {action} while it is a member of port-channel {port_channel_id}. Remove the membership first.")
         if resource.adapter.safety.guards_child_subinterfaces:
             switch_ids = {switch_id for switch_id, _current in current_records}
             if not switch_ids:
@@ -616,11 +614,7 @@ class InterfaceWorkflowPlanner:
         values = value.split(",") if isinstance(value, str) else value
         if not isinstance(values, Iterable) or isinstance(values, (bytes, Mapping)):
             return ()
-        return tuple(
-            member.strip().lower()
-            for item in values
-            if isinstance(item, str) and (member := item.strip())
-        )
+        return tuple(member.strip().lower() for item in values if isinstance(item, str) and (member := item.strip()))
 
     def _duplicate_member_errors(self, resource: InterfaceResourcePlan) -> list[str]:
         """Reject duplicate final members within one aggregate interface."""
@@ -633,11 +627,7 @@ class InterfaceWorkflowPlanner:
             policy = self._policy(item)
             if policy is None:
                 continue
-            fields = (
-                ("ports",)
-                if resource.adapter.ownership_domain == "port_channel"
-                else ("peer1_member_ports", "peer2_member_ports")
-            )
+            fields = ("ports",) if resource.adapter.ownership_domain == "port_channel" else ("peer1_member_ports", "peer2_member_ports")
             for field_name in fields:
                 members = self._member_names(getattr(policy, field_name, None))
                 seen: set[str] = set()
@@ -681,10 +671,7 @@ class InterfaceWorkflowPlanner:
         """Validate raw/summary agreement and controller eligibility."""
         desired_policy_type = self._desired_policy_type(candidate.desired)
         desired_network_os_type = self._desired_network_os_type(candidate.desired)
-        label = (
-            f"resources[{resource.resource_index}] {getattr(candidate.desired, 'switch_ip')}/"
-            f"{getattr(candidate.desired, 'interface_name')}"
-        )
+        label = f"resources[{resource.resource_index}] {getattr(candidate.desired, 'switch_ip')}/" f"{getattr(candidate.desired, 'interface_name')}"
         errors: list[str] = []
         if action == "transition":
             if desired_policy_type is None:
@@ -774,10 +761,7 @@ class InterfaceWorkflowPlanner:
                             f"{getattr(desired, 'switch_ip')}/{getattr(desired, 'interface_name')}: {exc}"
                         )
             if resource.adapter.safety.guards_child_subinterfaces:
-                parent_writes: list[tuple[str, NDBaseModel]] = [
-                    ("update", desired)
-                    for desired in resource.operations.updates
-                ]
+                parent_writes: list[tuple[str, NDBaseModel]] = [("update", desired) for desired in resource.operations.updates]
                 if resource.state not in resource.adapter.transition_states:
                     parent_writes.extend(("create", desired) for desired in resource.operations.creates)
                 for action, desired in parent_writes:
@@ -831,10 +815,7 @@ class InterfaceWorkflowPlanner:
                     if not current_records:
                         retained_creates.append(desired)
                         continue
-                    current_types = {
-                        self._canonical_interface_type(current.get("interfaceType"))
-                        for _switch_id, current in current_records
-                    }
+                    current_types = {self._canonical_interface_type(current.get("interfaceType")) for _switch_id, current in current_records}
                     if not current_types.issubset(resource.adapter.interface_types):
                         structural_collisions.append(self._structural_collision(resource, desired, current_records))
                         continue
@@ -873,10 +854,7 @@ class InterfaceWorkflowPlanner:
                     continue
                 if not current_records:
                     continue
-                current_types = {
-                    self._canonical_interface_type(current.get("interfaceType"))
-                    for _switch_id, current in current_records
-                }
+                current_types = {self._canonical_interface_type(current.get("interfaceType")) for _switch_id, current in current_records}
                 if not current_types.issubset(resource.adapter.interface_types):
                     structural_collisions.append(self._structural_collision(resource, desired, current_records))
                     continue
@@ -932,9 +910,7 @@ class InterfaceWorkflowPlanner:
             from_policy_type = InterfaceStateSnapshot.policy_type(current)
             to_policy_type = self._desired_policy_type(candidate.desired)
             if from_policy_type is None or to_policy_type is None:
-                raise InterfaceWorkflowValidationError(
-                    f"resources[{resource.resource_index}] cannot transition without source and destination policy types."
-                )
+                raise InterfaceWorkflowValidationError(f"resources[{resource.resource_index}] cannot transition without source and destination policy types.")
             transitions_by_index[resource.resource_index].append(
                 InterfacePolicyTransition(
                     desired=candidate.desired,
@@ -1128,18 +1104,12 @@ class InterfaceWorkflowPlanner:
                     interface_type = self._canonical_interface_type(current.get("interfaceType"))
                     required_policy = routed_policy_by_type.get(interface_type)
                     if required_policy is None:
-                        reason = (
-                            f"the parent has structural interfaceType {current.get('interfaceType')!r}, "
-                            "expected 'ethernet' or 'portChannel'"
-                        )
+                        reason = f"the parent has structural interfaceType {current.get('interfaceType')!r}, " "expected 'ethernet' or 'portChannel'"
                     else:
                         policy_type = InterfaceStateSnapshot.policy_type(current)
                         if policy_type == required_policy:
                             continue
-                        reason = (
-                            f"the parent policyType is {policy_type!r}, "
-                            f"expected routed policy {required_policy!r}"
-                        )
+                        reason = f"the parent policyType is {policy_type!r}, " f"expected routed policy {required_policy!r}"
                 add(
                     "subinterface_parent_prerequisite",
                     parent_identity,
@@ -1382,11 +1352,7 @@ class InterfaceWorkflowPlanner:
             port_channel_id = self._effective_port_channel_id(ethernet)
             if port_channel_id is not None:
                 matching_owners = existing_owners.intersection(logical_identities)
-                expected_ids = {
-                    expected_id
-                    for owner in matching_owners
-                    for expected_id in current_owner_ids.get(member_identity, {}).get(owner, set())
-                }
+                expected_ids = {expected_id for owner in matching_owners for expected_id in current_owner_ids.get(member_identity, {}).get(owner, set())}
                 if not matching_owners or not expected_ids:
                     add(
                         "operational_member_ownership",
@@ -1432,11 +1398,7 @@ class InterfaceWorkflowPlanner:
                     continue
                 membership_record = self._ethernet_membership_record(ethernet)
                 if membership_record is ethernet and operational_id is None:
-                    expected_ids = {
-                        expected_id
-                        for owner in existing_owners
-                        for expected_id in current_owner_ids.get(member_identity, {}).get(owner, set())
-                    }
+                    expected_ids = {expected_id for owner in existing_owners for expected_id in current_owner_ids.get(member_identity, {}).get(owner, set())}
                     membership_record = deepcopy(ethernet) if ethernet is not None else {}
                     membership_record["operData"] = {
                         **(membership_record.get("operData") or {}),
