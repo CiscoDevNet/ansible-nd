@@ -16,7 +16,7 @@ import inspect
 import json
 import logging
 from time import sleep
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_handler import ResponseHandlerProtocol
@@ -117,9 +117,10 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self.log.debug(msg)
 
         self._check_mode: bool = False
-        self._committed_payload: Optional[dict] = None
+        self._committed_payload: Optional[Union[dict, list]] = None
+        self._controller_version: Optional[str] = None
         self._path: Optional[str] = None
-        self._payload: Optional[dict] = None
+        self._payload: Optional[Union[dict, list]] = None
         self._response: list[dict[str, Any]] = []
         self._response_current: dict[str, Any] = {}
         self._response_handler: Optional[ResponseHandlerProtocol] = None
@@ -535,24 +536,28 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._path = value
 
     @property
-    def payload(self) -> Optional[dict]:
+    def payload(self) -> Optional[Union[dict, list]]:
         """
         # Summary
 
         Return the payload to send to the controller, or None.
 
+        Most endpoints take a JSON object (``dict``). A few ND action
+        endpoints (e.g. access/ToR associate/disassociate) take a top-level
+        JSON array, so a ``list`` is also accepted.
+
         ## Raises
 
-        -   setter: `TypeError` if value is not a `dict`
+        -   setter: `TypeError` if value is not a `dict` or `list`
         """
         return self._payload
 
     @payload.setter
-    def payload(self, value: dict):
+    def payload(self, value: Union[dict, list]):
         method_name = "payload"
-        if not isinstance(value, dict):
+        if not isinstance(value, (dict, list)):
             msg = f"{self.class_name}.{method_name}: "
-            msg += f"{method_name} must be a dict. Got {value}."
+            msg += f"{method_name} must be a dict or list. Got {value}."
             raise TypeError(msg)
         self._payload = value
 
@@ -800,6 +805,28 @@ class RestSend:  # pylint: disable=too-many-public-methods
             msg += f"Got type {type(value).__name__}."
             raise TypeError(msg)
         self._sender = value
+
+    @property
+    def controller_version(self) -> Optional[str]:
+        """
+        Controller build version string (e.g. ``"4.2.1.10"``), or ``None`` when unknown.
+
+        Fetched once from the sender's connection (``get_version``) and cached. Not all
+        senders expose a connection (the file-based test sender does not), so callers
+        may also set this directly to drive version-gated behaviour in unit tests.
+        """
+        if self._controller_version is None:
+            getter = getattr(self._sender, "get_version", None)
+            if callable(getter):
+                try:
+                    self._controller_version = getter()
+                except Exception:  # pragma: no cover - connection failures fall back to None
+                    self._controller_version = None
+        return self._controller_version
+
+    @controller_version.setter
+    def controller_version(self, value: Optional[str]):
+        self._controller_version = value
 
     @property
     def timeout(self) -> int:

@@ -190,7 +190,8 @@ def test_rest_send_00120():
 
     - payload can be set and retrieved
     - payload defaults to None
-    - TypeError raised if not dict
+    - TypeError raised if not dict or list
+    - a top-level JSON array (list) is accepted
 
     ## Classes and Methods
 
@@ -214,6 +215,12 @@ def test_rest_send_00120():
         instance.payload = {"key": "value"}
         result = instance.payload
     assert result == {"key": "value"}
+
+    # Test setter/getter with a top-level JSON array (list)
+    with does_not_raise():
+        instance.payload = [{"key": "value"}]
+        result = instance.payload
+    assert result == [{"key": "value"}]
 
 
 def test_rest_send_00130():
