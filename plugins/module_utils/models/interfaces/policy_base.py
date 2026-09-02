@@ -11,6 +11,8 @@ implementation; loopback adopts this base on its next touch (coordinate in the P
 
 from __future__ import annotations
 
+from typing import Any, ClassVar
+
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
@@ -34,6 +36,16 @@ class InterfacePolicyStrictBase(NDNestedModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 echoes the template default for every field the user never set; the reverse pass of `get_diff` normalizes
+    # existing-side matches to absent so replaced/overridden removal detection (issue #410) stays idempotent against
+    # default echoes. `adminState: true` is the one default shared by every interface config template on both network
+    # OS types, so it lives here. A ClassVar override REPLACES this table rather than merging with it, so per-policy
+    # tables spread it back in (`**InterfacePolicyStrictBase.reverse_diff_defaults`).
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+    }
+
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
 
     @model_validator(mode="before")
@@ -49,9 +61,10 @@ class InterfacePolicyStrictBase(NDNestedModel):
         declared field dropped here vanishes from the rebuilt `__dict__`, making the next `getattr` raise
         `AttributeError` mid-merge (found by the first nd_interface_ethernet_routed live integration run, 2026-07-27).
 
-        On the read path (validation `context={"mode": "read"}`, set by `from_response`), also drop keys not declared on
-        this model regardless of value, so ND-injected read-only keys (e.g. loopback `linkStateRoutingTag`, routedHost
-        `ptp`) do not trip `extra="forbid"` while write-side input stays strict.
+        On the read path (validation `context={"mode": "response"}`, set by `NDBaseModel.from_response` on the interface
+        model and on any policy model read directly), also drop keys not declared on this model regardless of value, so
+        ND-injected read-only keys (e.g. loopback `linkStateRoutingTag`, routedHost `ptp`) do not trip `extra="forbid"`
+        while write-side input stays strict.
 
         ## Raises
 
@@ -61,6 +74,6 @@ class InterfacePolicyStrictBase(NDNestedModel):
             return data
         allowed = set(cls.model_fields) | {field.alias for field in cls.model_fields.values() if field.alias}
         data = {key: value for key, value in data.items() if value is not None or key in allowed}
-        if info.context and info.context.get("mode") == "read":
+        if info.context and info.context.get("mode") == "response":
             data = {key: value for key, value in data.items() if key in allowed}
         return data

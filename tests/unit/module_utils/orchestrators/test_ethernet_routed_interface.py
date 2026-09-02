@@ -30,6 +30,8 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import (
     EthernetRoutedInterfaceModel,
+    NexusEthernetRoutedPolicyModel,
+    XeEthernetRoutedPolicyModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import (
     EthernetRoutedInterfaceOrchestrator,
@@ -538,3 +540,39 @@ def test_ethernet_routed_orchestrator_00410() -> None:
         result = orchestrator.query_all()
     kept = {iface["interfaceName"] for iface in result}
     assert kept == {"Ethernet1/7"}
+
+
+# =============================================================================
+# Test: unconfigured-default signature is derived from the models' reverse_diff_defaults
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "policy_type,policy_cls,injected",
+    [
+        ("routedHost", NexusEthernetRoutedPolicyModel, {"ptp": False}),
+        ("iosXeRoutedHost", XeEthernetRoutedPolicyModel, {}),
+    ],
+    ids=["routedHost", "iosXeRoutedHost"],
+)
+def test_ethernet_routed_orchestrator_00210(policy_type, policy_cls, injected) -> None:
+    """
+    # Summary
+
+    The orchestrator's unconfigured-default signature for each managed policy type is the policy model's
+    `reverse_diff_defaults` table plus the ND-injected read keys the model never declares (`ptp` on `routedHost`),
+    so the query-scope filter and the replaced/overridden reverse pass can never drift apart.
+
+    ## Test
+
+    - `_unconfigured_default_signature(policy_type)` equals `policy_cls.reverse_diff_defaults` merged with the injected keys
+    - The model table is non-empty (a missing table would silently collapse the signature to `ptp` alone)
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator._unconfigured_default_signature()
+    - InterfacePolicyStrictBase.reverse_diff_defaults
+    """
+    assert policy_cls.reverse_diff_defaults
+    expected = {**policy_cls.reverse_diff_defaults, **injected}
+    assert EthernetRoutedInterfaceOrchestrator._unconfigured_default_signature(policy_type) == expected

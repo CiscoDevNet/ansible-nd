@@ -2,4 +2,4 @@
 minor_changes:
   - Add ``nd_interface_ethernet_routed`` module managing L3 routed ethernet interfaces through a ``network_os_type`` /
     ``policy_type`` discriminated union - NX-OS ``routedHost`` (``intRoutedHostTemplate``) and IOS-XE ``iosXeRoutedHost``
-    (``iosXeIntRoutedHostTemplate``) - with merged, replaced, overridden, deleted, and query states.
+    (``iosXeIntRoutedHostTemplate``) - with merged, replaced, overridden, and deleted states.

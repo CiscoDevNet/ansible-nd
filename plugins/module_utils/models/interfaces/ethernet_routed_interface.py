@@ -31,7 +31,7 @@ both the per-interface PUT and the bulk POST accept `routedHost` on a VXLAN leaf
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -99,6 +99,24 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
     None
     """
 
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_routed_host` template defaults (schema-sourced via nd-openapi `intRoutedHostTemplate`), in the model's
+    # dumped form. `routingTag` (coerced to str on read) declares no default, so it has no entry. The ND-injected `ptp`
+    # echo is undeclared here and dropped on read, so it never reaches the reverse pass. The orchestrator derives its
+    # unconfigured-default query filter from this table - it must stay the single source of truth for these values.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        **InterfacePolicyStrictBase.reverse_diff_defaults,
+        "fec": "auto",
+        "ipRedirects": False,
+        "mtu": 9216,
+        "netflow": False,
+        "pfc": False,
+        "pimDrPriority": 1,
+        "pimSparse": False,
+        "qos": False,
+        "speed": "auto",
+    }
+
     policy_type: Literal["routedHost"] = Field(alias="policyType", description="Routed-host policy template discriminator")
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
@@ -152,6 +170,15 @@ class XeEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
 
     None
     """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `ios_xe_int_routed_host` template defaults (schema-sourced via nd-openapi `iosXeIntRoutedHostTemplate`), in
+    # the model's dumped form. The orchestrator derives its unconfigured-default query filter from this table.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        **InterfacePolicyStrictBase.reverse_diff_defaults,
+        "mtu": 1500,
+        "speed": "auto",
+    }
 
     policy_type: Literal["iosXeRoutedHost"] = Field(alias="policyType", description="IOS-XE routed-host policy template discriminator")
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
@@ -259,20 +286,6 @@ class EthernetRoutedInterfaceModel(NDBaseModel):
         if self.config_data is None or self.config_data.network_os.policy is None:
             return None
         return self.config_data.network_os.policy.policy_type
-
-    @classmethod
-    def from_response(cls, response, **kwargs):
-        """
-        # Summary
-
-        Build an `EthernetRoutedInterfaceModel` from an ND GET response, tagging validation `context={"mode": "read"}` so branch
-        models tolerate ND-injected read-only policy keys (see `InterfacePolicyStrictBase.strip_none_valued_keys`).
-
-        ## Raises
-
-        None
-        """
-        return cls.model_validate(response, by_alias=True, context={"mode": "read"}, **kwargs)
 
     @field_validator("interface_name", mode="before")
     @classmethod

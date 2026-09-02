@@ -12,14 +12,13 @@
 # routed_31 omits routing_tag, which routed_31_updated set - replacing with
 # routed_31 must clear it (field-removal detection in replaced state).
 #
-# NOTE (post-#422 rebase checklist): actually clearing the omitted
-# routing_tag requires the replaced-state reverse diff pass (PR #422) plus
-# per-policy-model reverse_diff_defaults tables for the routed models. This
-# file passes before that rebase too (the ip/description changes drive the
-# forward diff), but the removal itself is unverified until then - after the
-# rebase, add an assertion that routing_tag is absent from the after state.
-# The REPLACED IDEMPOTENT block is the lab guard that the defaults tables
-# correctly normalize ND's echoed schema defaults.
+# Clearing the omitted routing_tag rides the replaced-state reverse diff pass
+# (PR #422) plus the routed models' reverse_diff_defaults tables. The module's
+# `after` output on this path is the proposed model itself (the state machine
+# replaces the existing item with it), so asserting routing_tag is absent from
+# `after` would pass vacuously - the wire is read back via nd_rest instead. The
+# REPLACED IDEMPOTENT block is the lab guard that the defaults tables correctly
+# normalize ND's echoed schema defaults.
 
 - name: "REPLACED: Replace Ethernet1/31 config entirely (check mode)"
   cisco.nd.nd_interface_ethernet_routed: &replace_routed_31
@@ -48,6 +47,33 @@
     that:
       - routed_31_after.config_data.network_os.policy.ip == "10.99.31.1"
       - routed_31_after.config_data.network_os.policy.description == "Ansible integration test routed Ethernet1/31"
+
+- name: "REPLACED: Resolve test switch id for wire read-back"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: replaced_switches
+
+# Resolved at runtime from test_switch_ip; never hardcode it (9000v serials change on reload).
+- name: "REPLACED: Extract switch id for {{ test_switch_ip }}"
+  ansible.builtin.set_fact:
+    replaced_switch_id: >-
+      {{ (replaced_switches.current.switches | selectattr('fabricManagementIp', 'equalto', test_switch_ip)
+         | first).switchId }}
+
+- name: "REPLACED: Read back Ethernet1/31 intent from the wire"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ replaced_switch_id }}/interfaces/Ethernet1%2F31"
+    method: get
+  register: replaced_31_readback
+
+- name: "REPLACED: Verify the omitted routing_tag was actually cleared on ND"
+  vars:
+    routed_31_wire_policy: "{{ replaced_31_readback.current.configData.networkOS.policy }}"
+  ansible.builtin.assert:
+    that:
+      - routed_31_wire_policy.ip == "10.99.31.1"
+      - (routed_31_wire_policy.routingTag | default('')) | string == ""
 
 # --- REPLACED IDEMPOTENCY ---
 

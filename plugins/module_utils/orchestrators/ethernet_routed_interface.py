@@ -27,36 +27,30 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import (
     EthernetRoutedInterfaceModel,
+    NexusEthernetRoutedPolicyModel,
+    XeEthernetRoutedPolicyModel,
     normalize_ethernet_interface_name,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 logger = logging.getLogger(__name__)
 
-# Wire-form schema defaults per managed policy type (values as ND dumps them). An interface whose policy
-# carries ONLY these keys at these values is an unconfigured fabric default. `ptp` is an ND-injected read
-# key (absent from intRoutedHostTemplate) and counts as default. These values converge with the models'
-# reverse_diff_defaults tables when this branch rebases past PR #422 - keep the two in sync then.
-_UNCONFIGURED_DEFAULT_SIGNATURES: dict[str, dict] = {
-    "routedHost": {
-        "adminState": True,
-        "fec": "auto",
-        "ipRedirects": False,
-        "mtu": 9216,
-        "netflow": False,
-        "pfc": False,
-        "pimDrPriority": 1,
-        "pimSparse": False,
-        "ptp": False,
-        "qos": False,
-        "speed": "auto",
-    },
-    "iosXeRoutedHost": {
-        "adminState": True,
-        "mtu": 1500,
-        "speed": "auto",
-    },
+# Policy model per managed policy type. The unconfigured-default signature used by `query_all`'s scope filter is derived
+# from each model's `reverse_diff_defaults` table (the schema-sourced template defaults, in dumped form) so the query
+# filter and the replaced/overridden reverse pass share one source of truth.
+_POLICY_MODELS: dict[str, type[InterfacePolicyStrictBase]] = {
+    "routedHost": NexusEthernetRoutedPolicyModel,
+    "iosXeRoutedHost": XeEthernetRoutedPolicyModel,
+}
+
+# TODO(4.2.1) interface-get-undocumented-ptp-field
+# Read-only keys ND 4.2.1 injects into GET responses that the template does not declare (`ptp` is absent from
+# `intRoutedHostTemplate`). The models drop them on read, so they cannot live in `reverse_diff_defaults`; the query
+# filter still has to recognize them at their injected value as part of an unconfigured default.
+_ND_INJECTED_READ_KEY_DEFAULTS: dict[str, dict] = {
+    "routedHost": {"ptp": False},
 }
 
 
@@ -270,13 +264,31 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         return results
 
     @staticmethod
+    def _unconfigured_default_signature(policy_type: str) -> dict | None:
+        """
+        # Summary
+
+        Return the wire-form unconfigured-default signature for a managed `policy_type`: the policy model's
+        `reverse_diff_defaults` table merged with the ND-injected read keys the model never declares, or `None` when the
+        policy type is not managed by this orchestrator.
+
+        ## Raises
+
+        None
+        """
+        policy_cls = _POLICY_MODELS.get(policy_type)
+        if policy_cls is None:
+            return None
+        return {**policy_cls.reverse_diff_defaults, **_ND_INJECTED_READ_KEY_DEFAULTS.get(policy_type, {})}
+
+    @staticmethod
     def _is_unconfigured_default(iface: dict) -> bool:
         """
         # Summary
 
         Return `True` if the given interface API response represents an unconfigured fabric-default routed interface:
         every key in its policy is either `policyType` or matches the wire-form schema default for that policy type
-        (`_UNCONFIGURED_DEFAULT_SIGNATURES`). Any other key present (`ip`, `prefix`, `description`, `routingTag`,
+        (`_unconfigured_default_signature`). Any other key present (`ip`, `prefix`, `description`, `routingTag`,
         `vrfInterface`, ...) or any non-default value means the interface is user-configured and stays in scope.
 
         On switches whose fabric default interface policy is routed (borderGateway NX-OS ports, core-router IOS-XE
@@ -290,7 +302,7 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         policy_type = policy.get("policyType")
         if not isinstance(policy_type, str):
             return False
-        defaults = _UNCONFIGURED_DEFAULT_SIGNATURES.get(policy_type)
+        defaults = EthernetRoutedInterfaceOrchestrator._unconfigured_default_signature(policy_type)
         if defaults is None:
             return False
         for key, value in policy.items():

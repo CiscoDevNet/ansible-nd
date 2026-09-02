@@ -13,6 +13,7 @@ Tests the Ethernet Routed Interface Pydantic model classes (issue #447).
 from __future__ import annotations
 
 from contextlib import contextmanager
+from typing import Any
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -649,3 +650,143 @@ def test_ethernet_routed_interface_00170():
     assert policy["policy_type"]["choices"] == ["routedHost", "iosXeRoutedHost"]
     for option in ("ip", "prefix", "vrf", "fec", "pim_sparse", "speed", "mtu"):
         assert option in policy
+
+
+# =============================================================================
+# Test: reverse_diff_defaults per routed policy_type (issue #410)
+# =============================================================================
+
+# ND 4.2.1 template-default echoes per routed `policyType`, restricted to the fields each policy model declares (the
+# ND-injected `ptp` key is undeclared and dropped on read). Values are in WIRE form, sourced from the ND 4.2.1 OpenAPI
+# template schemas `intRoutedHostTemplate` and `iosXeIntRoutedHostTemplate`. Held literally (not derived from the
+# models' tables) so a wrong or missing table entry fails here.
+ROUTED_TEMPLATE_DEFAULT_ECHOES: dict[str, tuple[type[NexusEthernetRoutedPolicyModel | XeEthernetRoutedPolicyModel], dict[str, Any]]] = {
+    "routedHost": (
+        NexusEthernetRoutedPolicyModel,
+        {
+            "adminState": True,
+            "fec": "auto",
+            "ipRedirects": False,
+            "mtu": 9216,
+            "netflow": False,
+            "pfc": False,
+            "pimDrPriority": 1,
+            "pimSparse": False,
+            "qos": False,
+            "speed": "auto",
+        },
+    ),
+    "iosXeRoutedHost": (XeEthernetRoutedPolicyModel, {"adminState": True, "mtu": 1500, "speed": "auto"}),
+}
+
+# One declared, non-default existing-side value per policy type that an admin_state-only proposed config must be seen
+# to remove. `routingTag` is held as the wire integer ND 4.2.1 echoes (string in, int out).
+ROUTED_NON_DEFAULT_OVERRIDES: dict[str, dict[str, Any]] = {
+    "routedHost": {"routingTag": 54321},
+    "iosXeRoutedHost": {"mtu": 9000},
+}
+
+
+@pytest.mark.parametrize("policy_type", sorted(ROUTED_TEMPLATE_DEFAULT_ECHOES))
+def test_ethernet_routed_interface_00180(policy_type: str) -> None:
+    """
+    # Summary
+
+    Every routed policy model normalizes its ND 4.2.1 template-default echo to absent on the reverse pass of `get_diff`,
+    so a replaced/overridden run against an interface the user never customized is idempotent (issue #410), and an
+    ND-injected undeclared key (`ptp`) is never counted as a pending removal.
+
+    ## Test
+
+    - An existing policy model built via `from_response` from the schema-sourced default echo plus the undeclared `ptp` key
+    - A proposed model carrying only `policy_type` and `admin_state`
+    - `to_reverse_diff_dict()` retains only `policyType`; `get_diff(proposed, exclude_unset=False)` reports no difference
+
+    ## Classes and Methods
+
+    - InterfacePolicyStrictBase.reverse_diff_defaults (and per-policy overrides)
+    - NDBaseModel.to_reverse_diff_dict()
+    - NDBaseModel.get_diff()
+    """
+    policy_cls, echo = ROUTED_TEMPLATE_DEFAULT_ECHOES[policy_type]
+    existing = policy_cls.from_response({"policyType": policy_type, **echo, "ptp": False})
+    proposed = policy_cls.from_config({"policy_type": policy_type, "admin_state": True})
+    assert existing.to_reverse_diff_dict() == {"policyType": policy_type}
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+@pytest.mark.parametrize("policy_type", sorted(ROUTED_NON_DEFAULT_OVERRIDES))
+def test_ethernet_routed_interface_00190(policy_type: str) -> None:
+    """
+    # Summary
+
+    Default normalization does not mask real removals: for every routed policy model, an existing-side value that
+    differs from the template default is still reported as a difference against an admin_state-only proposed config
+    on the replaced/overridden path.
+
+    ## Test
+
+    - An existing policy model built from the default echo with one declared field set to a non-default value
+    - A proposed model carrying only `policy_type` and `admin_state`
+    - `get_diff(proposed, exclude_unset=False)` reports a difference
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    """
+    policy_cls, echo = ROUTED_TEMPLATE_DEFAULT_ECHOES[policy_type]
+    existing = policy_cls.from_response({"policyType": policy_type, **echo, **ROUTED_NON_DEFAULT_OVERRIDES[policy_type]})
+    proposed = policy_cls.from_config({"policy_type": policy_type, "admin_state": True})
+    assert existing.get_diff(proposed, exclude_unset=False) is False
+
+
+def test_ethernet_routed_interface_00200() -> None:
+    """
+    # Summary
+
+    The reverse pass recurses through the outer `network_os_type` union into the NX-OS policy model, so a full
+    `EthernetRoutedInterfaceModel` pair (ND response vs Ansible config) is replaced-idempotent when the response carries
+    the user's `ip`/`prefix` plus template defaults and the ND-injected `ptp` key.
+
+    ## Test
+
+    - `EthernetRoutedInterfaceModel.from_response()` on an `nx-os` / `routedHost` response echoing every template default
+      plus `ptp`
+    - `EthernetRoutedInterfaceModel.from_config()` on the matching config that sets only `ip` and `prefix`
+    - `get_diff(proposed, exclude_unset=False)` reports no difference
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceModel.from_response()
+    - EthernetRoutedInterfaceModel.from_config()
+    - NDBaseModel.get_diff()
+    """
+    policy_cls, echo = ROUTED_TEMPLATE_DEFAULT_ECHOES["routedHost"]
+    existing = EthernetRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.12.131",
+            "interfaceName": "Ethernet1/31",
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {"policyType": "routedHost", **echo, "ip": "10.99.31.1", "prefix": 30, "ptp": False},
+                },
+            },
+        }
+    )
+    proposed = EthernetRoutedInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.131",
+            "interface_name": "Ethernet1/31",
+            "config_data": {
+                "network_os": {
+                    "network_os_type": "nx-os",
+                    "policy": {"policy_type": "routedHost", "ip": "10.99.31.1", "prefix": 30},
+                }
+            },
+        }
+    )
+    assert isinstance(existing.config_data.network_os.policy, policy_cls)
+    assert existing.get_diff(proposed, exclude_unset=False) is True
