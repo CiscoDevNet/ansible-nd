@@ -388,9 +388,7 @@ class TestNDOutputGatheredState:
         assert gathered_inputs["link_mtu"] == 9216
         assert "default_vrf_ebgp_neighbor_password" not in gathered_inputs
         assert "macsec_primary_key_string" not in gathered_inputs
-        assert item.to_config()["config_data"]["template_inputs"]["default_vrf_ebgp_neighbor_password"] == (
-            "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
-        )
+        assert item.to_config()["config_data"]["template_inputs"]["default_vrf_ebgp_neighbor_password"] == ("VALUE_SPECIFIED_IN_NO_LOG_PARAMETER")
 
 
 # =============================================================================

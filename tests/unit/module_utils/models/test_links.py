@@ -199,9 +199,7 @@ def test_non_secret_fields_survive_in_config():
 def test_gathered_omits_controller_typed_empties_rejected_on_write():
     """Controller sentinels remain inspectable in normal output but are omitted
     from gathered configuration so the gathered item validates when reapplied."""
-    existing = NDLinkModel.from_response(
-        _link("layer2Dci", {"trunkAllowedVlans": "100,200", "nativeVlan": 1}).to_payload()
-    )
+    existing = NDLinkModel.from_response(_link("layer2Dci", {"trunkAllowedVlans": "100,200", "nativeVlan": 1}).to_payload())
 
     normal_inputs = existing.to_config()["config_data"]["template_inputs"]
     gathered = existing.to_gathered_config()
@@ -371,9 +369,7 @@ def test_secret_lifecycle_for_every_secret_bearing_link_template(policy_type, ba
     assert before.get_diff(after, exclude_unset=False) is False
 
     template_model = type(after.config_data.template_inputs)
-    secret_python_name = next(
-        field_name for field_name, field_info in template_model.model_fields.items() if (field_info.alias or field_name) == secret_alias
-    )
+    secret_python_name = next(field_name for field_name, field_info in template_model.model_fields.items() if (field_info.alias or field_name) == secret_alias)
     assert after.to_config()["config_data"]["template_inputs"][secret_python_name] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
     assert secret_alias not in after.to_diff_dict()["configData"]["templateInputs"]
 
