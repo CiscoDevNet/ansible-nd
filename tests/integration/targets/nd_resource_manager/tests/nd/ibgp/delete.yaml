@@ -165,7 +165,7 @@
   ansible.builtin.assert:
     that:
       - 'result.failed | default(false) == false'
-      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', (207 if result.changed else 200)) | list | length == 0
 
 - block:
     - name: iBGP delta pools - Create resources for delete test
@@ -181,7 +181,7 @@
           - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
           - 'result.failed | default(false) == false'
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 207) | list | length == 0
 
     - name: iBGP delta pools - Delete resources
       cisco.nd.nd_manage_resource_manager: *rm_delete
@@ -202,7 +202,7 @@
           - 'result["api_result"][0]["success"] == true'
           - '(result["api_diff"][0]["deleted"] | length) == (result["diff"][0]["deleted"] | length)'
           - '(result["api_payload"][0]["resourceIds"] | length) == (result["diff"][0]["deleted"] | length)'
-          - result.api_response | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | rejectattr('RETURN_CODE', 'equalto', 207) | list | length == 0
       when: result.api_response is defined
 
   always:
@@ -214,4 +214,4 @@
       ansible.builtin.assert:
         that:
           - 'result.failed | default(false) == false'
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', (207 if result.changed else 200)) | list | length == 0
