@@ -1,0 +1,5 @@
+---
+bugfixes:
+  - nd_interface_svi, nd_interface_subinterface_managed, nd_interface_subinterface_unmanaged - add the broad fallback exception
+    handler in ``main()`` so unhandled exceptions (e.g. model validation errors) are reported via ``fail_json`` with the module's
+    structured output instead of a raw traceback, matching the sibling interface modules (https://github.com/CiscoDevNet/ansible-nd/issues/379).
