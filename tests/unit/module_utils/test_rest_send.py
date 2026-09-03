@@ -24,6 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd 
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
+from ansible_collections.cisco.nd.tests.unit.module_utils.legacy_response_strategy import LegacyStrategy
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
 from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
@@ -1600,6 +1601,63 @@ def test_rest_send_01120():
     assert instance.response_current["RETURN_CODE"] == 200
     assert instance.result_current["success"] is True
     assert instance.result_current["found"] is True
+
+
+def test_rest_send_01130():
+    """
+    # Summary
+
+    Verify the end-to-end compatibility path for a legacy injected strategy (pre-#502 protocol, no
+    is_terminal_client_error()): RestSend accepts the handler carrying it, and a POST failing with 400 keeps the
+    historical retry behavior — the loop retries and consumes the recovery response instead of terminalizing.
+
+    ## Test
+
+    - A legacy structural strategy is injected into the ResponseHandler without TypeError
+    - POST returns 400 (retryable=True under the legacy strategy), then 200 on the retry
+    - timeout (10) and send_interval (5) allow exactly two submissions
+    - The loop consumes both responses and the final result is the successful 200
+
+    ## Classes and Methods
+
+    - ResponseHandler.validation_strategy (setter)
+    - ResponseHandler._is_terminal_client_error()
+    - RestSend.commit()
+    - RestSend._commit_normal_mode()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_rest_send(f"{method_name}a")
+        yield responses_rest_send(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+
+    params = {"check_mode": False}
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = gen_responses
+
+    with does_not_raise():
+        instance = RestSend(params)
+        instance.sender = sender
+        response_handler = ResponseHandler()
+        response_handler.validation_strategy = LegacyStrategy()
+        response_handler.response = {"RETURN_CODE": 200, "MESSAGE": "OK"}
+        response_handler.verb = HttpVerbEnum.GET
+        response_handler.commit()
+        instance.response_handler = response_handler
+        instance.unit_test = True
+        instance.timeout = 10
+        instance.send_interval = 5
+        instance.path = "/api/v1/test/legacy"
+        instance.verb = HttpVerbEnum.POST
+        instance.payload = {"name": "item"}
+        instance.commit()
+
+    assert instance.response_current["RETURN_CODE"] == 200
+    assert instance.result_current["success"] is True
+    assert instance.result_current["retryable"] is False
 
 
 # =============================================================================

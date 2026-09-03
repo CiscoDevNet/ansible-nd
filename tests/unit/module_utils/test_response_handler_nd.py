@@ -25,9 +25,11 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_validation import ResponseValidationStrategy, TerminalClientErrorPolicy
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_strategies.nd_v1_strategy import NdV1Strategy
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
+from ansible_collections.cisco.nd.tests.unit.module_utils.legacy_response_strategy import LegacyStrategy
 
 # =============================================================================
 # Test: ResponseHandler initialization
@@ -3060,3 +3062,128 @@ def test_response_handler_nd_01690():
     assert instance.result["success"] is False
     assert instance.result["found"] is False
     assert instance.result["retryable"] is True
+
+
+# =============================================================================
+# Test: Legacy (pre-#502) injected strategies remain accepted
+# =============================================================================
+
+
+def test_response_handler_nd_01700():
+    """
+    # Summary
+
+    Verify a strategy implementing only the pre-#502 protocol members is still accepted by the validation_strategy
+    setter: terminal-4xx classification is an optional capability, so widening the retry policy must not turn the
+    documented strategy-injection extension point into a breaking change.
+
+    ## Test
+
+    - A structural strategy without is_terminal_client_error() is assigned
+    - No TypeError is raised and the getter returns the injected instance
+
+    ## Classes and Methods
+
+    - ResponseHandler.validation_strategy (setter)
+    - ResponseHandler.validation_strategy (getter)
+    """
+    instance = ResponseHandler()
+    strategy = LegacyStrategy()
+    with does_not_raise():
+        instance.validation_strategy = strategy
+    assert instance.validation_strategy is strategy
+
+
+def test_response_handler_nd_01710():
+    """
+    # Summary
+
+    Verify a POST failing with 400 under a legacy strategy (no is_terminal_client_error()) keeps the historical
+    retryable=True behavior: when the injected strategy cannot classify client errors, the handler must not
+    terminalize on its behalf.
+
+    ## Test
+
+    - Legacy strategy is injected
+    - POST returns 400
+    - success is False, changed is False, retryable is True
+
+    ## Classes and Methods
+
+    - ResponseHandler._is_terminal_client_error()
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.validation_strategy = LegacyStrategy()
+    instance.response = {
+        "RETURN_CODE": 400,
+        "MESSAGE": "Bad Request",
+        "DATA": {"error": "Invalid fabric settings"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
+    assert instance.result["retryable"] is True
+
+
+def test_response_handler_nd_01720():
+    """
+    # Summary
+
+    Verify a GET failing with 400 under a legacy strategy (no is_terminal_client_error()) keeps the historical
+    retryable=True behavior on the GET path as well.
+
+    ## Test
+
+    - Legacy strategy is injected
+    - GET returns 400
+    - success is False, found is False, retryable is True
+
+    ## Classes and Methods
+
+    - ResponseHandler._is_terminal_client_error()
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.validation_strategy = LegacyStrategy()
+    instance.response = {
+        "RETURN_CODE": 400,
+        "MESSAGE": "Bad Request",
+        "DATA": {"error": "Invalid query"},
+    }
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["found"] is False
+    assert instance.result["retryable"] is True
+
+
+def test_response_handler_nd_01730():
+    """
+    # Summary
+
+    Verify the protocol split: NdV1Strategy satisfies both the base ResponseValidationStrategy protocol and the
+    optional TerminalClientErrorPolicy capability, while the legacy strategy satisfies only the base protocol.
+
+    ## Test
+
+    - isinstance(NdV1Strategy(), ResponseValidationStrategy) is True
+    - isinstance(NdV1Strategy(), TerminalClientErrorPolicy) is True
+    - isinstance(LegacyStrategy(), ResponseValidationStrategy) is True
+    - isinstance(LegacyStrategy(), TerminalClientErrorPolicy) is False
+
+    ## Classes and Methods
+
+    - ResponseValidationStrategy
+    - TerminalClientErrorPolicy
+    - NdV1Strategy
+    """
+    assert isinstance(NdV1Strategy(), ResponseValidationStrategy)
+    assert isinstance(NdV1Strategy(), TerminalClientErrorPolicy)
+    assert isinstance(LegacyStrategy(), ResponseValidationStrategy)
+    assert not isinstance(LegacyStrategy(), TerminalClientErrorPolicy)

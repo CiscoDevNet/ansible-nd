@@ -246,7 +246,7 @@ class NdV1Strategy:
     ## Description
 
     Implements status code validation and error message extraction
-    for ND API v1 (ND 4.2+).
+    for ND API v1 (ND 4.2+). Satisfies `ResponseValidationStrategy` and the optional `TerminalClientErrorPolicy` capability.
 
     ## Status Codes
 
