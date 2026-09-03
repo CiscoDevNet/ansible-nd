@@ -604,9 +604,9 @@ def test_nd_interface_ethernet_routed_00200(monkeypatch: pytest.MonkeyPatch) -> 
     assert msg.startswith("Module failed: IOS-XE reset failed at GigabitEthernet4 on FDO22222BBB: ")
     assert "Successfully reset before failure: ['GigabitEthernet3']. Not attempted: ['GigabitEthernet5']." in msg
     note = msg[msg.index(" NOTE:") :]
-    assert (
-        note
-        == " NOTE: before the failure, the controller had already accepted changes for interface(s) [GigabitEthernet3 (switchId FDO22222BBB)]; those changes were deployed."
+    assert note == (
+        " NOTE: before the failure, the controller had already accepted changes for interface(s) "
+        "[GigabitEthernet3 (switchId FDO22222BBB)]; those changes were deployed."
     )
     assert orchestrator.rest_send.committed_payload == {"interfaces": [{"interfaceName": "GigabitEthernet3", "switchId": "FDO22222BBB"}]}
     assert orchestrator._pending_xe_resets == [("GigabitEthernet4", "FDO22222BBB"), ("GigabitEthernet5", "FDO22222BBB")]

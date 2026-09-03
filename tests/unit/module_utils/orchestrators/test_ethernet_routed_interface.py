@@ -1009,7 +1009,10 @@ def test_ethernet_routed_orchestrator_00330() -> None:
     with does_not_raise():
         orchestrator.delete_bulk(models, existing_data={"interfaceName": "probe"})
 
-    match = r"IOS-XE reset failed at GigabitEthernet4 on FDO22222BBB: .*Successfully reset before failure: \['GigabitEthernet3'\]\. Not attempted: \['GigabitEthernet5'\]"
+    match = (
+        r"IOS-XE reset failed at GigabitEthernet4 on FDO22222BBB: .*"
+        r"Successfully reset before failure: \['GigabitEthernet3'\]\. Not attempted: \['GigabitEthernet5'\]"
+    )
     with pytest.raises(RuntimeError, match=match):
         orchestrator.remove_pending()
     assert orchestrator._pending_xe_resets == [("GigabitEthernet4", "FDO22222BBB"), ("GigabitEthernet5", "FDO22222BBB")]
