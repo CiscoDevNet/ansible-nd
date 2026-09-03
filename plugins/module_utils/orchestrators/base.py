@@ -12,7 +12,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import FinalizationContext, ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
@@ -107,11 +107,17 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         self.rest_send.verb = verb
         if data is not None:
             self.rest_send.payload = data
+
+        attempt_sequence = None
+        if self.results is not None:
+            attempt_sequence = self.results.begin_api_call(path, verb)
         self.rest_send.commit()
 
         # Register with Results before success/error checks so that
         # both successful and failed calls are captured for troubleshooting.
         self._register_api_call(path, verb, operation_type, self.rest_send.committed_payload)
+        if self.results is not None and attempt_sequence is not None:
+            self.results.complete_api_call(attempt_sequence)
 
         # Check not_found_ok before success because ResponseHandler treats
         # GET 404 as success=True (found=False).  Without this early return,
@@ -193,6 +199,15 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
+
+    def invalidate_query_cache(self) -> None:
+        """Invalidate cached query data before a forced final-state readback."""
+        return
+
+    def query_final_state(self, context: FinalizationContext) -> ResponseType:
+        """Return a fresh collection-shaped response for final reconciliation."""
+        self.invalidate_query_cache()
+        return self.query_all()
 
     def prepare_config_data(self, raw_config):
         """Hook for subclasses to backfill or normalize raw user config before the proposed collection is built. Returns the list unchanged by default."""

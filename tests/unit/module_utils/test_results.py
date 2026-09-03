@@ -300,6 +300,54 @@ class TestRegisterApiCallNewFields:
         assert task.verbosity_level == 3
 
 
+class TestApiCallAttemptTracking:
+    """Tests the pre-delivery request-attempt evidence used by reconciliation."""
+
+    def test_attempt_is_visible_before_completion(self):
+        results = Results()
+
+        sequence = results.begin_api_call("/api/v1/test", HttpVerbEnum.PUT)
+
+        assert sequence == 1
+        assert results.api_attempt_sequence_number == 1
+        assert results.attempts_since(0)[0].completed is False
+        assert results.attempts_since(0)[0].verb == "PUT"
+
+    def test_attempt_is_completed_after_registration(self):
+        results = Results()
+        sequence = results.begin_api_call("/api/v1/test", HttpVerbEnum.DELETE)
+
+        _register_task(results, path="/api/v1/test", verb=HttpVerbEnum.DELETE)
+        results.complete_api_call(sequence)
+
+        assert results.attempts_since(0)[0].completed is True
+        assert results.calls_since(0)[0].sequence_number == 1
+
+    def test_calls_since_returns_defensive_copies(self):
+        results = Results()
+        _register_task(results, path="/api/v1/one")
+        _register_task(results, path="/api/v1/two")
+
+        returned = results.calls_since(1)
+        returned[0].result["changed"] = False
+
+        assert len(returned) == 1
+        assert results.results[1]["changed"] is True
+
+    def test_new_registration_invalidates_cached_final_result(self):
+        results = Results()
+        _register_task(results, path="/api/v1/one")
+        results.build_final_result()
+        assert len(results.final_result["path"]) == 1
+
+        _register_task(results, path="/api/v1/two")
+
+        with pytest.raises(ValueError, match="build_final_result"):
+            _ = results.final_result
+        results.build_final_result()
+        assert results.final_result["path"] == ["/api/v1/one", "/api/v1/two"]
+
+
 # =============================================================================
 # Test: aggregate properties (path, verb, payload, verbosity_level)
 # =============================================================================
