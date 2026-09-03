@@ -383,15 +383,21 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             iface["switchIp"] = switch_ip
         return managed
 
-    def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
+    def query_all(
+        self,
+        model_instance: ModelType | None = None,
+        gathered_filters: list[dict] | None = None,
+        **kwargs,
+    ) -> ResponseType:
         """
         # Summary
 
         Validate the fabric context and query interfaces, filtering for vPC interfaces with policy types managed by
         this orchestrator (as defined by `_managed_policy_types()`).
 
-        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`, and
-        limited to switches named in the user config for all other states.
+        For management states, the set of switches queried is determined by `_switches_to_query`: fabric-wide for
+        `state: overridden`, and limited to switches named in the user config for all other states. For gathered
+        state, the query plan is built from gathered filters and server-side Lucene expressions.
 
         Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
 
@@ -409,6 +415,9 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         managed_types = self._managed_policy_types()
         try:
             self.validate_prerequisites()
+            if gathered_filters is not None and self.gathered_lucene_spec is not None:
+                return self._query_all_for_gathered(gathered_filters, managed_types)
+
             configured_ip_by_name = self._configured_switch_ip_by_interface_name()
             # TODO(4.2.1) vpc-interface-dual-peer-duplicate
             # ND returns each vPC interface TWICE — once per peer switch — with identical configData. Dedupe by
@@ -428,6 +437,23 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return [entry[1] for entry in interfaces_by_name.values()]
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
+
+    def _query_all_for_gathered(self, gathered_filters: list[dict], managed_types: set[str]) -> list[dict]:
+        """Query gathered candidates through Lucene, then keep one stable vPC peer representative per interface."""
+        interfaces_by_name: dict[str, tuple[str, dict]] = {}
+        for switch_ip, (switch_id, expressions) in self._build_gathered_query_plan(gathered_filters).items():
+            for expression in expressions:
+                for interface in self._query_interfaces_with_lucene(switch_id, expression):
+                    if interface.get("interfaceType") != "vpc" or self._policy_type(interface) not in managed_types:
+                        continue
+                    name = interface.get("interfaceName")
+                    if name is None:
+                        continue
+                    interface["switchIp"] = switch_ip
+                    existing = interfaces_by_name.get(name)
+                    if self._prefers_candidate(name, switch_id, switch_ip, existing, {}):
+                        interfaces_by_name[name] = (switch_id, interface)
+        return [entry[1] for entry in interfaces_by_name.values()]
 
     @staticmethod
     def _prefers_candidate(

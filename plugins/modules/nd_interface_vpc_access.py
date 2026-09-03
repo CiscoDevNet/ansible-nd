@@ -37,22 +37,32 @@ options:
     - Each item specifies the primary switch, the vPC interface name, and its configuration.
     - Multiple vPC pairs can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Not required for O(state=gathered).
+    - For O(state=gathered), every supplied field is a filter criterion. Criteria within one list item use AND semantics,
+      while multiple list items use OR semantics.
+    - Supported endpoint criteria are used to reduce candidates with server-side Lucene queries. All criteria are then
+      evaluated locally to preserve complete and consistent matching semantics.
     type: list
     elements: dict
-    required: true
+    required: false
     suboptions:
       switch_ip:
         description:
         - The management IP address of one peer in the vPC pair (typically the primary).
         - This is resolved to the switch serial number (switchId) internally; the peer's serial is auto-resolved
           via the vPC pair record.
+        - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       interface_name:
         description:
         - The vPC interface name (e.g. C(vpc100)).
+        - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       config_data:
         description:
         - The configuration data for the vPC interface, following the ND API structure.
@@ -295,9 +305,11 @@ options:
       Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
     - Use O(state=deleted) to remove the specified vPC interfaces via a per-interface C(DELETE) request to the
       interfaces endpoint. Member ethernet interfaces on both peers are reverted to their fabric default configuration.
+    - Use O(state=gathered) to read all vPC accessVpcHost interfaces in the fabric without making changes.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -418,6 +430,21 @@ EXAMPLES = r"""
     config_actions:
       deploy: false
     state: merged
+
+- name: Gather all vPC accessVpcHost interfaces in a fabric
+  cisco.nd.nd_interface_vpc_access:
+    fabric_name: my_fabric
+    state: gathered
+  register: gathered_vpc_access
+
+- name: Gather one vPC trunk interface by name from a specific switch
+  cisco.nd.nd_interface_vpc_trunk_host:
+    fabric_name: my_fabric
+    state: gathered
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: vpc100
+  register: gathered_vpc100
 """
 
 RETURN = r"""
@@ -521,15 +548,11 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_access_interface import (
-    AccessVpcHostInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_access_interface import AccessVpcHostInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_access_interface import (
-    AccessVpcHostInterfaceOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_access_interface import AccessVpcHostInterfaceOrchestrator
 
 
 def main():
@@ -557,6 +580,12 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
@@ -584,7 +613,7 @@ def main():
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
 
-        if not module.check_mode:
+        if not module.check_mode and module.params["state"] != "gathered":
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 

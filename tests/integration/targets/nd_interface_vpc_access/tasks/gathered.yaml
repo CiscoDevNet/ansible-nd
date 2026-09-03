@@ -1,0 +1,317 @@
+---
+# Gathered state tests for nd_interface_vpc_access
+# Copyright: (c) 2026, Deeksha Pandey (@deekpand)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
+# Pre-condition: merged.yaml has already created vpc100 via vpc_access_baseline
+#   (switch_ip=peer1, access_vlan=10, peer1_port_channel_id=100,
+#    peer2_port_channel_id=100, admin_state=true).
+
+# --- GATHERED: no config (fetch everything) ---
+
+- name: "GATHERED: Read all accessVpcHost interfaces in the fabric"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: nm_gathered_all
+
+- name: "GATHERED: Verify read-only behavior"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_all is not changed
+      - nm_gathered_all.gathered is defined
+      - nm_gathered_all.gathered | type_debug == "list"
+      - nm_gathered_all.gathered | length >= 1
+      - nm_gathered_all.before is not defined
+      - nm_gathered_all.after is not defined
+      - nm_gathered_all.diff is not defined
+      - nm_gathered_all.proposed is not defined
+
+# --- GATHERED: explicit empty config ---
+
+- name: "GATHERED: Read all interfaces with explicit empty config"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config: []
+  register: nm_gathered_empty_config
+
+- name: "GATHERED: Verify explicit empty config gathers all"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_config is not changed
+      - nm_gathered_empty_config.gathered == nm_gathered_all.gathered
+
+# --- GATHERED: filter by peer1 switch_ip ---
+
+- name: "GATHERED: Filter by peer1 switch IP"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+  register: nm_gathered_peer1
+
+- name: "GATHERED: Verify peer1 switch filter returns vpc100"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_peer1 is not changed
+      - nm_gathered_peer1.gathered | length >= 1
+      - nm_gathered_peer1.gathered | selectattr('interface_name', 'equalto', 'vpc100') | list | length == 1
+
+# --- GATHERED: filter by peer2 switch_ip (vPC spans both peers) ---
+
+- name: "GATHERED: Filter by peer2 switch IP"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: "{{ test_switch_ip_peer2 }}"
+  register: nm_gathered_peer2
+
+- name: "GATHERED: Verify peer2 switch filter also returns vpc100"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_peer2 is not changed
+      - nm_gathered_peer2.gathered | length >= 1
+      - nm_gathered_peer2.gathered | selectattr('interface_name', 'equalto', 'vpc100') | list | length == 1
+
+# --- GATHERED: filter by interface_name only ---
+
+- name: "GATHERED: Filter by interface name only"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - interface_name: vpc100
+  register: nm_gathered_name
+
+- name: "GATHERED: Verify interface name filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_name is not changed
+      - nm_gathered_name.gathered | length == 1
+      - nm_gathered_name.gathered[0].interface_name == "vpc100"
+
+# --- GATHERED: filter by switch_ip + interface_name ---
+
+- name: "GATHERED: Filter by switch and interface name"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: vpc100
+  register: nm_gathered_exact
+
+- name: "GATHERED: Verify exact switch and interface filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_exact is not changed
+      - nm_gathered_exact.gathered | length == 1
+      - nm_gathered_exact.gathered[0].interface_name == "vpc100"
+
+# --- GATHERED: round-trip (gathered output used as merged config) ---
+
+- name: "GATHERED: Reuse gathered output as config in check mode"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config: "{{ nm_gathered_exact.gathered }}"
+  check_mode: true
+  register: cm_reuse_gathered
+
+- name: "GATHERED: Verify gathered output round-trips as config"
+  ansible.builtin.assert:
+    that:
+      - cm_reuse_gathered is not changed
+
+# --- GATHERED: filter by access_vlan (local post-filter) ---
+
+- name: "GATHERED: Filter by access_vlan"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - config_data:
+          network_os:
+            policy:
+              access_vlan: 10
+  register: nm_gathered_vlan
+
+- name: "GATHERED: Verify access_vlan filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_vlan is not changed
+      - nm_gathered_vlan.gathered | length >= 1
+      - nm_gathered_vlan.gathered | map(attribute='config_data') | map(attribute='network_os') | map(attribute='policy') | map(attribute='access_vlan') | reject('equalto', 10) | list | length == 0
+
+# --- GATHERED: filter by admin_state (local post-filter) ---
+
+- name: "GATHERED: Filter by admin_state"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - config_data:
+          network_os:
+            policy:
+              admin_state: true
+  register: nm_gathered_admin
+
+- name: "GATHERED: Verify admin_state filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_admin is not changed
+      - nm_gathered_admin.gathered | length >= 1
+
+# --- GATHERED: combine server + local criteria (AND semantics) ---
+
+- name: "GATHERED: Combine server and local criteria (AND semantics)"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - interface_name: vpc100
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+  register: nm_gathered_mixed_and
+
+- name: "GATHERED: Verify server and local criteria use AND semantics"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_mixed_and is not changed
+      - nm_gathered_mixed_and.gathered | length == 1
+      - nm_gathered_mixed_and.gathered[0].interface_name == "vpc100"
+
+# --- GATHERED: AND semantics with non-matching local criterion ---
+
+- name: "GATHERED: AND filter with non-matching local value"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - interface_name: vpc100
+        config_data:
+          network_os:
+            policy:
+              access_vlan: 9999
+  register: nm_gathered_and_mismatch
+
+- name: "GATHERED: Verify AND mismatch returns empty"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_and_mismatch is not changed
+      - nm_gathered_and_mismatch.gathered == []
+
+# --- GATHERED: filter by peer1_port_channel_id ---
+
+- name: "GATHERED: Filter by peer1_port_channel_id"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - config_data:
+          network_os:
+            policy:
+              peer1_port_channel_id: 100
+  register: nm_gathered_po1
+
+- name: "GATHERED: Verify peer1_port_channel_id filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_po1 is not changed
+      - nm_gathered_po1.gathered | length >= 1
+      - nm_gathered_po1.gathered | map(attribute='config_data') | map(attribute='network_os') | map(attribute='policy') | map(attribute='peer1_port_channel_id') | reject('equalto', 100) | list | length == 0
+
+# --- GATHERED: filter by peer2_port_channel_id ---
+
+- name: "GATHERED: Filter by peer2_port_channel_id"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - config_data:
+          network_os:
+            policy:
+              peer2_port_channel_id: 100
+  register: nm_gathered_po2
+
+- name: "GATHERED: Verify peer2_port_channel_id filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_po2 is not changed
+      - nm_gathered_po2.gathered | length >= 1
+      - nm_gathered_po2.gathered | map(attribute='config_data') | map(attribute='network_os') | map(attribute='policy') | map(attribute='peer2_port_channel_id') | reject('equalto', 100) | list | length == 0
+
+# --- GATHERED: no-match filter ---
+
+- name: "GATHERED: Filter with no matching interface"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - interface_name: vpc999
+  register: nm_gathered_no_match
+
+- name: "GATHERED: Verify no-match filter returns empty list"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_no_match is not changed
+      - nm_gathered_no_match.gathered == []
+
+# --- GATHERED: case-insensitive interface name normalization ---
+
+- name: "GATHERED: Verify case-insensitive interface name normalization"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - interface_name: VPC100
+  register: nm_gathered_case
+
+- name: "GATHERED: Verify VPC100 resolved to vpc100"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_case is not changed
+      - nm_gathered_case.gathered | length == 1
+      - nm_gathered_case.gathered[0].interface_name == "vpc100"
+
+# --- GATHERED: reject unsupported filter property ---
+
+- name: "GATHERED: Reject unsupported filter property"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - config_data:
+          network_os:
+            policy:
+              lacp_rate: fast
+  register: nm_gathered_unsupported
+  ignore_errors: true
+
+- name: "GATHERED: Verify unsupported property is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_unsupported is failed
+      - "'lacp_rate' in nm_gathered_unsupported.msg"

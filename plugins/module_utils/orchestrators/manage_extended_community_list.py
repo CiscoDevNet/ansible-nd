@@ -20,11 +20,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import (
-    ExtendedCommunityListModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import ExtendedCommunityListModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec, build_lucene_expressions
 
 _FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 
@@ -59,6 +58,15 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageExtendedCommunityListsListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] = EpManageExtendedCommunityListsPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] = EpManageExtendedCommunityListsBulkDelete
+
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(),
+        field_map={
+            ("name",): "name",
+            ("type",): "type",
+        },
+    )
 
     _fabric_context: FabricContext | None = None
 
@@ -229,40 +237,101 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: ExtendedCommunityListModel | None = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: ExtendedCommunityListModel | None = None, gathered_filters=None, **kwargs) -> ResponseType:
         """
         Retrieve all extended community lists for the fabric.
 
-        Extracts the ``extendedCommunityLists`` wrapper key from the list response.
+        When ``gathered_filters`` is not None, routes to the gathered path
+        which uses exact GET for name-only filters and Lucene for others.
         """
         try:
-            collected: list[dict] = []
-            seen: set[str] = set()
-            offset = 0
-            pages_fetched = 0
-            while pages_fetched < self.query_all_max_pages:
-                pages_fetched += 1
-                ep = self._configure_endpoint(self.query_all_endpoint())
-                ep.lucene_params.max = self.query_all_page_size
-                ep.lucene_params.offset = offset
-                result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
-                page = result.get("extendedCommunityLists", []) or [] if isinstance(result, dict) else (result or [])
-                if not page:
-                    break
-
-                new_rows = 0
-                for row in page:
-                    name = row.get("name") if isinstance(row, dict) else None
-                    if name is not None:
-                        if name in seen:
-                            continue
-                        seen.add(name)
-                    collected.append(row)
-                    new_rows += 1
-
-                if len(page) < self.query_all_page_size or new_rows == 0:
-                    break
-                offset += self.query_all_page_size
-            return collected
+            if gathered_filters is not None:
+                return self._query_all_for_gathered(gathered_filters)
+            return self._query_all_for_management_states()
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
+
+    def _query_all_for_management_states(self, expression: str | None = None) -> list[dict]:
+        """Fetch all extended community lists with pagination, optionally filtered by Lucene expression."""
+        collected: list[dict] = []
+        seen: set[str] = set()
+        offset = 0
+        pages_fetched = 0
+        while pages_fetched < self.query_all_max_pages:
+            pages_fetched += 1
+            ep = self._configure_endpoint(self.query_all_endpoint())
+            ep.lucene_params.max = self.query_all_page_size
+            ep.lucene_params.offset = offset
+            if expression is not None:
+                ep.lucene_params.filter = expression
+            result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
+            page = result.get("extendedCommunityLists", []) or [] if isinstance(result, dict) else (result or [])
+            if not page:
+                break
+
+            new_rows = 0
+            for row in page:
+                name = row.get("name") if isinstance(row, dict) else None
+                if name is not None:
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                collected.append(row)
+                new_rows += 1
+
+            if len(page) < self.query_all_page_size or new_rows == 0:
+                break
+            offset += self.query_all_page_size
+        return collected
+
+    def _query_all_for_gathered(self, gathered_filters=None) -> list[dict]:
+        """
+        Fetch extended community lists for gathered state, optionally filtered by name and type.
+
+        Name-only filters use exact GET (faster). Others use server-side Lucene.
+        """
+        filter_items = gathered_filters or [{}]
+        results: list[dict] = []
+        seen: set[str] = set()
+        lucene_filters: list[dict] = []
+
+        for filter_item in filter_items:
+            name = filter_item.get("name")
+            other_keys = {k for k, v in filter_item.items() if v not in (None, "") and k != "name"}
+
+            if name and not other_keys:
+                ep = self._configure_endpoint(self.query_one_endpoint())
+                ep.set_identifiers(name)
+                item = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
+                if item and isinstance(item, dict):
+                    item_name = item.get("name", name)
+                    if item_name not in seen:
+                        seen.add(item_name)
+                        results.append(item)
+            else:
+                lucene_filters.append(filter_item)
+
+        if not lucene_filters and filter_items != [{}]:
+            return results
+
+        expressions = build_lucene_expressions(lucene_filters, spec=self.gathered_lucene_spec) if lucene_filters else []
+
+        # Endpoint rejects quoted Lucene values — fall back to full scan with client-side filtering.
+        if expressions and any('"' in expr for expr in expressions):
+            expressions = []
+
+        if expressions:
+            for expression in expressions:
+                for item in self._query_all_for_management_states(expression):
+                    name = item.get("name") if isinstance(item, dict) else None
+                    if name is not None and name not in seen:
+                        seen.add(name)
+                        results.append(item)
+        else:
+            for item in self._query_all_for_management_states():
+                name = item.get("name") if isinstance(item, dict) else None
+                if name is not None and name not in seen:
+                    seen.add(name)
+                    results.append(item)
+
+        return results

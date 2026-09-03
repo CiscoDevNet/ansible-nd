@@ -33,12 +33,8 @@ from __future__ import annotations
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import (
-    TrunkVpcHostInterfaceModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_trunk_host_interface import (
-    TrunkVpcHostInterfaceOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import TrunkVpcHostInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_trunk_host_interface import TrunkVpcHostInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -514,3 +510,205 @@ def test_vpc_trunk_host_orchestrator_00600_delete_uses_per_interface_endpoint() 
     assert orchestrator._pending_deploys == [("vpc500", "FDOAAAAAAAA")]
     # Bulk-remove queue stays untouched because we use per-interface DELETE.
     assert orchestrator._pending_removes == []
+
+
+# =============================================================================
+# Test: Gathered state — orchestrator ClassVars and query routing
+# =============================================================================
+
+
+def test_vpc_trunk_host_orchestrator_00700_gathered_server_filtering_classvars() -> None:
+    """
+    # Summary
+
+    Verify ``supports_gathered_server_filtering`` is ``True`` and ``gathered_lucene_spec``
+    has the correct base terms and field map.
+
+    ## Test
+
+    - supports_gathered_server_filtering is True
+    - gathered_lucene_spec.base_terms includes interfaceType:vpc and policyType:trunkVpcHost
+    - gathered_lucene_spec.field_map maps interface_name to interfaceName
+
+    ## Classes and Methods
+
+    - TrunkVpcHostInterfaceOrchestrator.supports_gathered_server_filtering
+    - TrunkVpcHostInterfaceOrchestrator.gathered_lucene_spec
+    """
+    assert TrunkVpcHostInterfaceOrchestrator.supports_gathered_server_filtering is True
+
+    spec = TrunkVpcHostInterfaceOrchestrator.gathered_lucene_spec
+    assert spec is not None
+    assert ("interfaceType", "vpc") in spec.base_terms
+    assert ("policyType", "trunkVpcHost") in spec.base_terms
+    assert spec.field_map == {("interface_name",): "interfaceName"}
+
+
+def test_vpc_trunk_host_orchestrator_00710_gathered_query_routes_and_injects_switch_ip(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify ``query_all(gathered_filters=...)`` routes through ``_query_all_for_gathered``
+    and returns server-filtered results with ``switchIp`` injected.
+
+    ## Test
+
+    - query_all with gathered_filters calls _query_all_for_gathered (not _query_all_for_management_states)
+    - Returned interfaces have switchIp injected
+    - Only trunkVpcHost policy types are returned
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.query_all()
+    - VpcInterfaceBaseOrchestrator._query_all_for_gathered()
+    """
+    from types import SimpleNamespace
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    orchestrator = _build_orchestrator(gen_responses, state="gathered")
+    orchestrator._fabric_context = SimpleNamespace(
+        fabric_name="fabric_1",
+        switch_map={"192.168.1.1": "FDOAAAAAAAA"},
+    )
+
+    monkeypatch.setattr(TrunkVpcHostInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+    monkeypatch.setattr(
+        TrunkVpcHostInterfaceOrchestrator,
+        "_request",
+        lambda self, path, verb, **kwargs: {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc200",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "trunkVpcHost",
+                                "adminState": True,
+                                "allowedVlans": "100-200",
+                                "nativeVlan": 99,
+                            }
+                        }
+                    },
+                }
+            ],
+            "meta": {"counts": {"remaining": 0}},
+        },
+    )
+
+    result = orchestrator.query_all(gathered_filters=[{"switch_ip": "192.168.1.1", "interface_name": "vpc200"}])
+    assert len(result) == 1
+    assert result[0]["switchIp"] == "192.168.1.1"
+    assert result[0]["interfaceName"] == "vpc200"
+
+
+def test_vpc_trunk_host_orchestrator_00720_gathered_excludes_access_vpc_policy(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify gathered query excludes ``accessVpcHost`` policy types even if the Lucene server
+    returns them (post-filter by ``_managed_policy_types``).
+
+    ## Test
+
+    - Server returns both trunkVpcHost and accessVpcHost interfaces
+    - Only trunkVpcHost is kept in the result
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator._query_all_for_gathered()
+    - TrunkVpcHostInterfaceOrchestrator._managed_policy_types()
+    """
+    from types import SimpleNamespace
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    orchestrator = _build_orchestrator(gen_responses, state="gathered")
+    orchestrator._fabric_context = SimpleNamespace(
+        fabric_name="fabric_1",
+        switch_map={"192.168.1.1": "FDOAAAAAAAA"},
+    )
+
+    monkeypatch.setattr(TrunkVpcHostInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+    monkeypatch.setattr(
+        TrunkVpcHostInterfaceOrchestrator,
+        "_request",
+        lambda self, path, verb, **kwargs: {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc200",
+                    "interfaceType": "vpc",
+                    "configData": {"networkOS": {"policy": {"policyType": "trunkVpcHost"}}},
+                },
+                {
+                    "interfaceName": "vpc100",
+                    "interfaceType": "vpc",
+                    "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost"}}},
+                },
+            ],
+            "meta": {"counts": {"remaining": 0}},
+        },
+    )
+
+    result = orchestrator.query_all(gathered_filters=[{"switch_ip": "192.168.1.1"}])
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "vpc200"
+
+
+def test_vpc_trunk_host_orchestrator_00730_gathered_dedup_prefers_lower_switch_id(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify gathered deduplication keeps the alphabetically-lower ``switchId`` when both peers
+    return the same vPC interface (no user config to prefer in gathered state).
+
+    ## Test
+
+    - Two switches return the same vpc200
+    - Only one entry is returned
+    - The kept entry has the lower switchId (FDOAAAAAAAA < FDOZZZZZZZ)
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator._query_all_for_gathered()
+    """
+    from types import SimpleNamespace
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    orchestrator = _build_orchestrator(gen_responses, state="gathered")
+    orchestrator._fabric_context = SimpleNamespace(
+        fabric_name="fabric_1",
+        switch_map={
+            "192.168.1.1": "FDOAAAAAAAA",
+            "192.168.1.2": "FDOZZZZZZZ",
+        },
+    )
+
+    monkeypatch.setattr(TrunkVpcHostInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+
+    def fake_request(self, path, verb, **kwargs):
+        return {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc200",
+                    "interfaceType": "vpc",
+                    "configData": {"networkOS": {"policy": {"policyType": "trunkVpcHost"}}},
+                }
+            ],
+            "meta": {"counts": {"remaining": 0}},
+        }
+
+    monkeypatch.setattr(TrunkVpcHostInterfaceOrchestrator, "_request", fake_request)
+
+    result = orchestrator.query_all(gathered_filters=[])
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "vpc200"
+    assert result[0]["switchIp"] == "192.168.1.1"

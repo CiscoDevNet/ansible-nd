@@ -28,6 +28,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.manage_prefix_list import PrefixListModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec, build_lucene_expressions
 
 _QUERY_PAGE_SIZE = 100
 _SCOPED_QUERY_MAX_IDENTIFIERS = 8
@@ -111,6 +112,14 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
 
     create_bulk_endpoint: type[NDEndpointBaseModel] = EpManageIpv4PrefixListsPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] = EpManageIpv4PrefixListsBulkDelete
+
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(),
+        field_map={
+            ("name",): "name",
+        },
+    )
 
     @property
     def fabric_name(self) -> str:
@@ -254,13 +263,17 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             return remaining > 0
         return page_count == _QUERY_PAGE_SIZE
 
-    def _query_all_for_version(self, version: str) -> list[dict[str, Any]]:
-        """Fetch all prefix lists for one address family using explicit offset/max pagination."""
+    def _query_all_for_version(self, version: str, expression: str | None = None) -> list[dict[str, Any]]:
+        """Fetch all prefix lists for one address family, optionally filtered by Lucene expression."""
         config = self._config_for_version(version)
         results: list[dict[str, Any]] = []
         offset = 0
         while True:
             api_endpoint = self._configure_endpoint(config["list"](), max_records=_QUERY_PAGE_SIZE, offset=offset)
+            if expression is not None:
+                lucene_params = getattr(api_endpoint, "lucene_params", None)
+                if lucene_params is not None:
+                    lucene_params.filter = expression
             raw = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             if not raw:
                 break
@@ -331,14 +344,21 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self) -> ResponseType:
+    def query_all(self, model_instance=None, gathered_filters=None, **kwargs) -> ResponseType:
         """
         Fetch all IPv4 and IPv6 prefix lists and combine them into a single list.
 
         The ``ipVersion`` key is injected into each raw response dict so that
         ``PrefixListModel.from_response()`` can populate the ``ip_version`` field.
+
+        When ``gathered_filters`` is not None (gathered state), skips config
+        validation and scoped-query optimization, fetching all prefix lists
+        unconditionally for read-only consumption.
         """
         try:
+            if gathered_filters is not None:
+                return self._query_all_for_gathered(gathered_filters)
+
             PrefixListModel.validate_config_for_state(self._raw_items_from_params(self.rest_send.params), self.rest_send.params.get("state", ""))
 
             proposed_identifiers = self._proposed_identifiers()
@@ -351,6 +371,73 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             return results
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
+
+    def _query_all_for_gathered(self, gathered_filters=None) -> ResponseType:
+        """
+        Fetch prefix lists for gathered state, optionally filtered by ip_version and name.
+
+        Filters by ip_version skip querying the unneeded address family entirely.
+        Filters by name use exact GET (faster) or server-side Lucene.
+        """
+        filter_items = gathered_filters or [{}]
+        versions_to_query = self._gathered_versions(filter_items)
+
+        results = []
+        seen: set[tuple[str, str | None, str]] = set()
+        lucene_filters = []
+
+        for filter_item in filter_items:
+            name = filter_item.get("name")
+            ip_version = filter_item.get("ip_version")
+            other_keys = {k for k, v in filter_item.items() if v not in (None, "") and k not in ("name", "ip_version")}
+
+            if name and not other_keys:
+                versions = [ip_version] if ip_version else list(versions_to_query)
+                for version in versions:
+                    if version not in versions_to_query:
+                        continue
+                    item = self._query_one_existing(version, None, name)
+                    if item is not None:
+                        self._append_unique(item, version, seen, results)
+            else:
+                lucene_filters.append(filter_item)
+
+        if not lucene_filters and filter_items != [{}]:
+            return results
+
+        expressions = build_lucene_expressions(lucene_filters, spec=self.gathered_lucene_spec) if lucene_filters else []
+
+        # Endpoint rejects quoted Lucene values — fall back to full scan with client-side filtering.
+        if expressions and any('"' in expr for expr in expressions):
+            expressions = []
+
+        for version in versions_to_query:
+            if expressions:
+                for expression in expressions:
+                    for item in self._query_all_for_version(version, expression):
+                        self._append_unique(item, version, seen, results)
+            else:
+                for item in self._query_all_for_version(version):
+                    self._append_unique(item, version, seen, results)
+
+        return results
+
+    def _gathered_versions(self, filter_items: list[dict]) -> set[str]:
+        """Determine which address families to query based on ip_version filters."""
+        versions = set()
+        for item in filter_items:
+            v = item.get("ip_version")
+            if v:
+                versions.add(v)
+        return versions if versions else set(_VERSION_CONFIG.keys())
+
+    @staticmethod
+    def _append_unique(item: dict, version: str, seen: set, results: list) -> None:
+        """Deduplicate gathered results by (version, tenantName, name)."""
+        ident = (version, item.get("tenantName"), item.get("name"))
+        if ident not in seen:
+            seen.add(ident)
+            results.append(item)
 
     def create_bulk(self, model_instances: list[PrefixListModel], **kwargs) -> ResponseType:
         """

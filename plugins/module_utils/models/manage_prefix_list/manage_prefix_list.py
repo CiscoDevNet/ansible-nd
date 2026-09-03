@@ -183,6 +183,13 @@ class PrefixListModel(NDBaseModel):
     payload_exclude_fields: ClassVar[set[str]] = {"ip_version", "last_update_timestamp"}
     unwanted_keys: ClassVar[list] = []
 
+    # --- Gathered Filtering Configuration ---
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "ip_version",
+        "name",
+    )
+
     # --- Fields ---
 
     ip_version: IpVersionEnum = Field(
@@ -396,17 +403,17 @@ class PrefixListModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
                     ip_version=dict(
                         type="str",
-                        required=True,
+                        required=False,
                         choices=["ipv4", "ipv6"],
                         aliases=["ipVersion"],
                     ),
                     name=dict(
                         type="str",
-                        required=True,
+                        required=False,
                     ),
                     description=dict(
                         type="str",
@@ -456,6 +463,6 @@ class PrefixListModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

@@ -34,9 +34,11 @@ options:
   config:
     description:
     - The list of prefix lists to configure.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Optional for O(state=gathered), where it may be omitted to gather all prefix lists.
     type: list
     elements: dict
-    required: True
+    required: False
     suboptions:
       ip_version:
         description:
@@ -45,8 +47,9 @@ options:
         - No default is applied because the address family is part of the resource identity.
         - A prefix list named C(PL-1) with C(ip_version=ipv4) and another with
           C(ip_version=ipv6) are treated as independent resources.
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
         choices: [ ipv4, ipv6 ]
         aliases: [ ipVersion ]
       name:
@@ -56,8 +59,9 @@ options:
         - Maximum length is 115 characters (63 for the default tenant).
         - When O(config.tenant_name) is set, the combined C(tenant_name~name)
           value must not exceed 115 characters.
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       description:
         description:
         - A human-readable description of the prefix list.
@@ -156,9 +160,12 @@ options:
       All prefix lists (both IPv4 and IPv6) on ND not present in the configuration
       will be deleted. Use with caution.
     - Use O(state=deleted) to remove the prefix lists specified in the configuration.
+    - Use O(state=gathered) to read prefix list configurations from Nexus Dashboard without making changes.
+      Omit O(config) to gather all prefix lists, or provide O(config) to return matching prefix lists.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -360,6 +367,12 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)

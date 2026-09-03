@@ -32,17 +32,20 @@ options:
   config:
     description:
     - The list of community lists to configure.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Optional for O(state=gathered), where it may be omitted to gather all community lists.
     type: list
     elements: dict
-    required: True
+    required: false
     suboptions:
       name:
         description:
         - The name of the community list.
         - Allowed characters are C([a-zA-Z0-9~_-]).
         - Maximum length is 115 characters (63 for the default tenant).
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       type:
         description:
         - The type of community list.
@@ -50,6 +53,7 @@ options:
         - C(standard) - matches well-known communities and/or explicit community
           numbers in ASN:NN format.
         - C(expanded) - matches community strings using a regular expression.
+        - Optional filter for O(state=gathered).
         type: str
         choices: [ standard, expanded ]
       tenant_name:
@@ -153,9 +157,12 @@ options:
       be deleted. Use with caution.
     - Use O(state=deleted) to remove the community lists specified in the
       configuration.
+    - Use O(state=gathered) to read community list configurations from Nexus Dashboard without making changes.
+      Omit O(config) to gather all community lists, or provide O(config) to return matching community lists.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -345,6 +352,12 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)

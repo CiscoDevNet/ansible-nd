@@ -38,6 +38,7 @@ use the ND-native `peer1_*` / `peer2_*` naming where `peer1` corresponds to `swi
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from typing import Annotated, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -523,6 +524,19 @@ class TrunkVpcHostInterfaceModel(NDBaseModel):
     identifiers: ClassVar[list[str] | None] = ["interface_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
 
+    # --- Gathered Filtering Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.allowed_vlans",
+        "config_data.network_os.policy.native_vlan",
+        "config_data.network_os.policy.peer1_port_channel_id",
+        "config_data.network_os.policy.peer2_port_channel_id",
+    )
+
     # --- Serialization Configuration ---
 
     payload_exclude_fields: ClassVar[set[str]] = {"switch_ip"}
@@ -551,6 +565,26 @@ class TrunkVpcHostInterfaceModel(NDBaseModel):
             return value.lower()
         return value
 
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """
+        # Summary
+
+        Normalize a partial gathered-state filter.
+
+        Gathered filters are not complete TrunkVpcHostInterfaceModel instances, so
+        the normal Pydantic interface_name validator does not run against them.
+
+        ## Raises
+
+        None
+        """
+        normalized = deepcopy(filter_item)
+        interface_name = normalized.get("interface_name")
+        if isinstance(interface_name, str):
+            normalized["interface_name"] = interface_name.lower()
+        return normalized
+
     # --- Argument Spec ---
 
     @classmethod
@@ -571,10 +605,10 @@ class TrunkVpcHostInterfaceModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
-                    switch_ip=dict(type="str", required=True),
-                    interface_name=dict(type="str", required=True),
+                    switch_ip=dict(type="str", required=False),
+                    interface_name=dict(type="str", required=False),
                     config_data=dict(
                         type="dict",
                         options=dict(
@@ -650,6 +684,6 @@ class TrunkVpcHostInterfaceModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

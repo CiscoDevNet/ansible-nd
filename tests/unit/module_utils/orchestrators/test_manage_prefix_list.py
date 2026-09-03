@@ -1149,3 +1149,59 @@ def test_manage_prefix_list_00230() -> None:
     assert rest_send.path.endswith("/ipv4PrefixLists/TENANT1~PL-IPV4-BORDERS")
     assert result["ipVersion"] == "ipv4"
     assert result["tenantName"] == "TENANT1"
+
+
+# =============================================================================
+# Test: Gathered state — orchestrator ClassVars and query routing
+# =============================================================================
+
+
+def test_manage_prefix_list_00300_gathered_server_filtering_classvars() -> None:
+    """
+    # Summary
+
+    Verify ``supports_gathered_server_filtering`` is ``True`` and ``gathered_lucene_spec``
+    has empty base terms and name-only field map.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.supports_gathered_server_filtering
+    - ManagePrefixListOrchestrator.gathered_lucene_spec
+    """
+    assert ManagePrefixListOrchestrator.supports_gathered_server_filtering is True
+
+    spec = ManagePrefixListOrchestrator.gathered_lucene_spec
+    assert spec is not None
+    assert spec.base_terms == ()
+    assert spec.field_map == {("name",): "name"}
+
+
+def test_manage_prefix_list_00310_query_all_routes_gathered(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify ``query_all(gathered_filters=...)`` routes through ``_query_all_for_gathered``.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.query_all()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+
+    gathered_called = {"value": False}
+
+    def fake_gathered(self, filters):
+        gathered_called["value"] = True
+        return [{"name": "PL1", "ipVersion": "ipv4"}]
+
+    monkeypatch.setattr(ManagePrefixListOrchestrator, "_query_all_for_gathered", fake_gathered)
+
+    result = instance.query_all(gathered_filters=[{"name": "PL1"}])
+    assert gathered_called["value"] is True
+    assert len(result) == 1
