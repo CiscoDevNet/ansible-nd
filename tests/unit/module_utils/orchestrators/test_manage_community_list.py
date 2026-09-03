@@ -382,3 +382,121 @@ def test_manage_community_list_00410(monkeypatch: pytest.MonkeyPatch) -> None:
         "/api/v1/manage/fabrics/fabric_1/communityLists?clusterName=cluster-1&max=100&offset=0",
         "/api/v1/manage/fabrics/fabric_1/communityLists/CL1?clusterName=cluster-1",
     ]
+
+
+# =============================================================================
+# Test: Gathered state — orchestrator ClassVars and query routing
+# =============================================================================
+
+
+def test_manage_community_list_00500_gathered_server_filtering_classvars() -> None:
+    """
+    # Summary
+
+    Verify ``supports_gathered_server_filtering`` is ``True`` and ``gathered_lucene_spec``
+    has the correct base terms and field map.
+
+    ## Test
+
+    - supports_gathered_server_filtering is True
+    - gathered_lucene_spec.base_terms is empty (no fixed policy type filter)
+    - gathered_lucene_spec.field_map maps name to name and type to type
+
+    ## Classes and Methods
+
+    - ManageCommunityListOrchestrator.supports_gathered_server_filtering
+    - ManageCommunityListOrchestrator.gathered_lucene_spec
+    """
+    assert ManageCommunityListOrchestrator.supports_gathered_server_filtering is True
+
+    spec = ManageCommunityListOrchestrator.gathered_lucene_spec
+    assert spec is not None
+    assert spec.base_terms == ()
+    assert spec.field_map == {("name",): "name", ("type",): "type"}
+
+
+def test_manage_community_list_00510_query_all_routes_gathered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify ``query_all(gathered_filters=...)`` routes through ``_query_all_for_gathered``
+    and does not call ``_query_all_for_management_states``.
+
+    ## Test
+
+    - query_all with gathered_filters returns results from the gathered path
+    - Management-state path is not invoked
+
+    ## Classes and Methods
+
+    - ManageCommunityListOrchestrator.query_all()
+    - ManageCommunityListOrchestrator._query_all_for_gathered()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send, orchestrator, fake_ctx = _instance(gen_responses)
+
+    gathered_called = {"value": False}
+    mgmt_called = {"value": False}
+
+    def fake_gathered(self, filters):
+        gathered_called["value"] = True
+        return [{"name": "CL1", "type": "standard"}]
+
+    def fake_mgmt(self):
+        mgmt_called["value"] = True
+        return []
+
+    monkeypatch.setattr(ManageCommunityListOrchestrator, "_query_all_for_gathered", fake_gathered)
+    monkeypatch.setattr(ManageCommunityListOrchestrator, "_query_all_for_management_states", fake_mgmt)
+
+    result = orchestrator.query_all(gathered_filters=[{"name": "CL1"}])
+    assert gathered_called["value"] is True
+    assert mgmt_called["value"] is False
+    assert len(result) == 1
+
+
+def test_manage_community_list_00520_query_all_routes_management(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify ``query_all()`` without ``gathered_filters`` routes through
+    ``_query_all_for_management_states``.
+
+    ## Test
+
+    - query_all without gathered_filters calls management path
+    - Gathered path is not invoked
+
+    ## Classes and Methods
+
+    - ManageCommunityListOrchestrator.query_all()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send, orchestrator, fake_ctx = _instance(gen_responses)
+
+    gathered_called = {"value": False}
+    mgmt_called = {"value": False}
+
+    def fake_gathered(self, filters):
+        gathered_called["value"] = True
+        return []
+
+    def fake_mgmt(self):
+        mgmt_called["value"] = True
+        return [{"name": "CL1", "type": "standard"}]
+
+    monkeypatch.setattr(ManageCommunityListOrchestrator, "_query_all_for_gathered", fake_gathered)
+    monkeypatch.setattr(ManageCommunityListOrchestrator, "_query_all_for_management_states", fake_mgmt)
+
+    result = orchestrator.query_all()
+    assert mgmt_called["value"] is True
+    assert gathered_called["value"] is False
+    assert len(result) == 1

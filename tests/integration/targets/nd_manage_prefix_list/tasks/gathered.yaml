@@ -1,0 +1,173 @@
+---
+# Gathered state tests for nd_manage_prefix_list
+# Copyright: (c) 2026, Deeksha Pandey (@deekpand)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
+# Pre-condition: merged.yaml has created PL-IPV4-BORDERS (ip_version=ipv4)
+#   and PL-IPV6-DATACENTER (ip_version=ipv6).
+
+# --- GATHERED: no config (fetch everything) ---
+
+- name: "GATHERED: Read all prefix lists in the fabric"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: nm_gathered_all
+
+- name: "GATHERED: Verify read-only behavior"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_all is not changed
+      - nm_gathered_all.gathered is defined
+      - nm_gathered_all.gathered | type_debug == "list"
+      - nm_gathered_all.gathered | length >= 2
+      - nm_gathered_all.before is not defined
+      - nm_gathered_all.after is not defined
+      - nm_gathered_all.diff is not defined
+      - nm_gathered_all.proposed is not defined
+
+# --- GATHERED: explicit empty config ---
+
+- name: "GATHERED: Read all with explicit empty config"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config: []
+  register: nm_gathered_empty_config
+
+- name: "GATHERED: Verify explicit empty config gathers all"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_config is not changed
+      - nm_gathered_empty_config.gathered == nm_gathered_all.gathered
+
+# --- GATHERED: filter by ip_version ---
+
+- name: "GATHERED: Filter by ip_version (ipv4)"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - ip_version: ipv4
+  register: nm_gathered_ipv4
+
+- name: "GATHERED: Verify ip_version filter returns only ipv4 lists"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_ipv4 is not changed
+      - nm_gathered_ipv4.gathered | length >= 1
+      - nm_gathered_ipv4.gathered | rejectattr('ip_version', 'equalto', 'ipv4') | list | length == 0
+
+# --- GATHERED: filter by name ---
+
+- name: "GATHERED: Filter by name"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: PL-IPV4-BORDERS
+  register: nm_gathered_name
+
+- name: "GATHERED: Verify name filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_name is not changed
+      - nm_gathered_name.gathered | length >= 1
+      - nm_gathered_name.gathered | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length >= 1
+
+# --- GATHERED: filter by ip_version + name (AND semantics) ---
+
+- name: "GATHERED: Filter by ip_version and name (AND semantics)"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - ip_version: ipv4
+        name: PL-IPV4-BORDERS
+  register: nm_gathered_and
+
+- name: "GATHERED: Verify AND semantics"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_and is not changed
+      - nm_gathered_and.gathered | length == 1
+      - nm_gathered_and.gathered[0].name == "PL-IPV4-BORDERS"
+      - nm_gathered_and.gathered[0].ip_version == "ipv4"
+
+# --- GATHERED: AND mismatch ---
+
+- name: "GATHERED: AND filter with non-matching ip_version"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - ip_version: ipv6
+        name: PL-IPV4-BORDERS
+  register: nm_gathered_and_mismatch
+
+- name: "GATHERED: Verify AND mismatch returns empty"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_and_mismatch is not changed
+      - nm_gathered_and_mismatch.gathered == []
+
+# --- GATHERED: round-trip ---
+
+- name: "GATHERED: Reuse gathered output as config in check mode"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config: "{{ nm_gathered_and.gathered }}"
+  check_mode: true
+  register: cm_reuse_gathered
+
+- name: "GATHERED: Verify gathered output round-trips as config"
+  ansible.builtin.assert:
+    that:
+      - cm_reuse_gathered is not changed
+
+# --- GATHERED: multiple OR filters ---
+
+- name: "GATHERED: Filter with multiple OR criteria"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - ip_version: ipv4
+        name: PL-IPV4-BORDERS
+      - ip_version: ipv6
+        name: PL-IPV6-DATACENTER
+  register: nm_gathered_or
+
+- name: "GATHERED: Verify multiple filters use OR semantics"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_or is not changed
+      - nm_gathered_or.gathered | length == 2
+
+# --- GATHERED: no-match filter ---
+
+- name: "GATHERED: Filter with no matching name"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - ip_version: ipv4
+        name: NONEXISTENT_PL
+  register: nm_gathered_no_match
+
+- name: "GATHERED: Verify no-match filter returns empty list"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_no_match is not changed
+      - nm_gathered_no_match.gathered == []
