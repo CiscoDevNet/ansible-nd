@@ -9,9 +9,7 @@
 from __future__ import annotations
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import (
-    ExtendedCommunityListModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import ExtendedCommunityListModel
 
 STANDARD_API_RESPONSE = {
     "name": "ECL-STANDARD",
@@ -104,7 +102,7 @@ def test_manage_extended_community_list_00040() -> None:
     spec = ExtendedCommunityListModel.get_argument_spec()
     config_options = spec["config"]["options"]
 
-    assert config_options["name"]["required"] is True
+    assert config_options["name"].get("required", False) is False
     assert spec["cluster_name"]["type"] == "str"
     assert "required" not in config_options["type"]
     assert "required" not in config_options["entries"]
@@ -384,3 +382,83 @@ def test_manage_extended_community_list_00170(selector: str, value: str) -> None
     )
 
     assert getattr(instance.entries[0], selector) == [value]
+
+
+# =============================================================================
+# Gathered state and filtering tests
+# =============================================================================
+
+
+def test_manage_extended_community_list_00200_gathered_state_in_choices() -> None:
+    """
+    # Summary
+
+    Verify state choices include ``gathered`` and default is ``merged``.
+
+    ## Classes and Methods
+
+    - ExtendedCommunityListModel.get_argument_spec()
+    """
+    spec = ExtendedCommunityListModel.get_argument_spec()
+    state_spec = spec["state"]
+    assert state_spec["choices"] == ["merged", "replaced", "overridden", "deleted", "gathered"]
+    assert state_spec["default"] == "merged"
+
+
+def test_manage_extended_community_list_00210_config_optional_for_gathered() -> None:
+    """
+    # Summary
+
+    Verify ``config`` is optional so ``state=gathered`` can run without input.
+
+    ## Classes and Methods
+
+    - ExtendedCommunityListModel.get_argument_spec()
+    """
+    spec = ExtendedCommunityListModel.get_argument_spec()
+    assert spec["config"].get("required", False) is False
+    assert spec["config"]["options"]["name"].get("required", False) is False
+
+
+def test_manage_extended_community_list_00220_supports_gathered_filtering() -> None:
+    """
+    # Summary
+
+    Verify ``supports_gathered_filtering`` is ``True`` on ``ExtendedCommunityListModel``.
+
+    ## Classes and Methods
+
+    - ExtendedCommunityListModel.supports_gathered_filtering
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+
+    assert NDBaseModel.supports_gathered_filtering is False
+    assert ExtendedCommunityListModel.supports_gathered_filtering is True
+
+
+def test_manage_extended_community_list_00230_gathered_filter_properties() -> None:
+    """
+    # Summary
+
+    Verify ``gathered_filter_properties`` contains ``name`` and ``type``.
+
+    ## Classes and Methods
+
+    - ExtendedCommunityListModel.gathered_filter_properties
+    """
+    assert ExtendedCommunityListModel.gathered_filter_properties == ("name", "type")
+
+
+def test_manage_extended_community_list_00240_normalize_gathered_filter_passthrough() -> None:
+    """
+    # Summary
+
+    Verify ``normalize_gathered_filter`` returns filters unchanged.
+
+    ## Classes and Methods
+
+    - ExtendedCommunityListModel.normalize_gathered_filter()
+    """
+    assert ExtendedCommunityListModel.normalize_gathered_filter({"name": "ECL1"}) == {"name": "ECL1"}
+    assert ExtendedCommunityListModel.normalize_gathered_filter({"type": "standard"}) == {"type": "standard"}
+    assert ExtendedCommunityListModel.normalize_gathered_filter({}) == {}
