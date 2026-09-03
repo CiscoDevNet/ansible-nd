@@ -1,0 +1,26 @@
+---
+
+fg_vxlan_aci_test_merged: "fg_vxlan_aci_test_merged"
+fg_vxlan_aci_test_replaced: "fg_vxlan_aci_test_replaced"
+fg_vxlan_aci_test_deleted: "fg_vxlan_aci_test_deleted"
+
+# Common VXLAN-to-ACI Fabric Group configuration for all fabric group tests
+fabric_config_fg_vxlan_aci:
+  management:
+    l2_vni_range: "30000-49000"
+    l3_vni_range: "50000-59000"
+    anycast_gateway_mac: "0022.bdf8.19ff"
+    multisite_overlay_inter_connect_type: directPeering
+    auto_multisite_underlay_inter_connect: true
+    multisite_delay_restore: 300
+    multisite_inter_connect_bgp_authentication: false
+    multisite_loopback_id: 100
+    border_gateway_routing_tag: 54321
+    multisite_loopback_ip_range: "10.10.0.0/24"
+    multisite_underlay_subnet_range: "10.10.1.0/24"
+    multisite_underlay_subnet_target_mask: 30
+    security_group_tag: strict
+    security_group_tag_prefix: SG_
+    security_group_tag_mac_segmentation: false
+    security_group_tag_id_range: "10000-14000"
+    security_group_tag_preprovision: true
