@@ -12,12 +12,8 @@ import inspect
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import (
-    ExtendedCommunityListModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_extended_community_list import (
-    ManageExtendedCommunityListOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import ExtendedCommunityListModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_extended_community_list import ManageExtendedCommunityListOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -386,3 +382,88 @@ def test_manage_extended_community_list_00410(monkeypatch: pytest.MonkeyPatch) -
         "/api/v1/manage/fabrics/fabric_1/extendedCommunityLists?clusterName=cluster-1&max=100&offset=0",
         "/api/v1/manage/fabrics/fabric_1/extendedCommunityLists/ECL1?clusterName=cluster-1",
     ]
+
+
+# =============================================================================
+# Test: Gathered state — orchestrator ClassVars and query routing
+# =============================================================================
+
+
+def test_manage_extended_community_list_00500_gathered_server_filtering_classvars() -> None:
+    """
+    # Summary
+
+    Verify ``supports_gathered_server_filtering`` is ``True`` and ``gathered_lucene_spec``
+    has empty base terms and correct field map.
+
+    ## Classes and Methods
+
+    - ManageExtendedCommunityListOrchestrator.supports_gathered_server_filtering
+    - ManageExtendedCommunityListOrchestrator.gathered_lucene_spec
+    """
+    assert ManageExtendedCommunityListOrchestrator.supports_gathered_server_filtering is True
+
+    spec = ManageExtendedCommunityListOrchestrator.gathered_lucene_spec
+    assert spec is not None
+    assert spec.base_terms == ()
+    assert spec.field_map == {("name",): "name", ("type",): "type"}
+
+
+def test_manage_extended_community_list_00510_query_all_routes_gathered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify ``query_all(gathered_filters=...)`` routes through ``_query_all_for_gathered``.
+
+    ## Classes and Methods
+
+    - ManageExtendedCommunityListOrchestrator.query_all()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send, orchestrator, fake_ctx = _instance(gen_responses)
+
+    gathered_called = {"value": False}
+
+    def fake_gathered(self, filters):
+        gathered_called["value"] = True
+        return [{"name": "ECL1", "type": "standard"}]
+
+    monkeypatch.setattr(ManageExtendedCommunityListOrchestrator, "_query_all_for_gathered", fake_gathered)
+
+    result = orchestrator.query_all(gathered_filters=[{"name": "ECL1"}])
+    assert gathered_called["value"] is True
+    assert len(result) == 1
+
+
+def test_manage_extended_community_list_00520_query_all_routes_management(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify ``query_all()`` without ``gathered_filters`` routes through management path.
+
+    ## Classes and Methods
+
+    - ManageExtendedCommunityListOrchestrator.query_all()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send, orchestrator, fake_ctx = _instance(gen_responses)
+
+    mgmt_called = {"value": False}
+
+    def fake_mgmt(self):
+        mgmt_called["value"] = True
+        return [{"name": "ECL1", "type": "standard"}]
+
+    monkeypatch.setattr(ManageExtendedCommunityListOrchestrator, "_query_all_for_management_states", fake_mgmt)
+
+    result = orchestrator.query_all()
+    assert mgmt_called["value"] is True
+    assert len(result) == 1
