@@ -282,5 +282,21 @@
         "REQUEST_PATH": "/api/v1/manage/links",
         "MESSAGE": "OK",
         "DATA": {"links": [{"linkId": "link-1"}]}
+    },
+    "test_rest_send_01130a": {
+        "TEST_NOTES": ["POST 400 under a legacy injected strategy with no is_terminal_client_error(). The handler cannot classify it, so it keeps the historical retryable=True and the loop must consume the follow-up 200 in 01130b."],
+        "RETURN_CODE": 400,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/legacy",
+        "MESSAGE": "Bad Request",
+        "DATA": {"code": 400, "message": "Transient validation failure"}
+    },
+    "test_rest_send_01130b": {
+        "TEST_NOTES": ["Recovery response consumed by the retry of 01130a."],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/legacy",
+        "MESSAGE": "OK",
+        "DATA": {"results": [{"name": "item", "status": "success"}]}
     }
 }

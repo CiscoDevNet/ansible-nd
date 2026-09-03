@@ -14,6 +14,9 @@ including status code validation and error message extraction.
 
 When ND API v2 is released with different status codes or response formats,
 implementing a new strategy class allows clean separation of v1 and v2 logic.
+
+`TerminalClientErrorPolicy` is an optional, separately-checked capability: a strategy that also implements it opts in to
+classifying 4xx client errors as terminal (not retryable). Strategies that omit it remain valid and keep every 4xx retryable.
 """
 
 # isort: off
@@ -145,34 +148,6 @@ class ResponseValidationStrategy(Protocol):
         """
         ...
 
-    def is_terminal_client_error(self, return_code: int, verb: HttpVerbEnum) -> bool:
-        """
-        # Summary
-
-        Check whether `return_code` is a 4xx client error that is terminal (not retryable) for `verb`.
-
-        ## Description
-
-        A 4xx response proves the request reached the application and was rejected, so an identical replay is deterministic and retrying wastes the
-        retry budget. Implementations decide which 4xx codes are nevertheless transient (and how that depends on the verb) for their API version —
-        e.g. rate limiting, or conflict codes the API documents on safe reads. Non-4xx codes must return False: this method classifies only client
-        errors, leaving success and 5xx policy to the caller.
-
-        ## Parameters
-
-        - return_code: HTTP status code to check
-        - verb: The HTTP verb of the request the response answers
-
-        ## Returns
-
-        - True if the code is a 4xx client error that is terminal for `verb`, False otherwise
-
-        ## Raises
-
-        None
-        """
-        ...
-
     def is_changed(self, response: dict) -> bool:
         """
         # Summary
@@ -249,5 +224,54 @@ class ResponseValidationStrategy(Protocol):
         ## Raises
 
         None - should return None gracefully if error message cannot be extracted
+        """
+        ...
+
+
+@runtime_checkable
+class TerminalClientErrorPolicy(Protocol):  # pylint: disable=too-few-public-methods
+    """
+    # Summary
+
+    Optional capability protocol: classify 4xx client errors as terminal (not retryable) or transient for a given verb.
+
+    ## Description
+
+    This is deliberately separate from `ResponseValidationStrategy`, which is the contract `ResponseHandler.validation_strategy` enforces at
+    assignment. A strategy written against the original protocol (every member of `ResponseValidationStrategy`, nothing more) remains valid and
+    keeps the historical behavior — every non-success 4xx stays retryable. A strategy that additionally satisfies this protocol opts in to
+    terminal-4xx classification: `ResponseHandler` feature-detects `is_terminal_client_error` and consults it before deciding `retryable`
+    (issue #457). `NdV1Strategy` implements both protocols.
+
+    ## Raises
+
+    None - implementations may raise exceptions per their logic
+    """
+
+    def is_terminal_client_error(self, return_code: int, verb: HttpVerbEnum) -> bool:
+        """
+        # Summary
+
+        Check whether `return_code` is a 4xx client error that is terminal (not retryable) for `verb`.
+
+        ## Description
+
+        A 4xx response proves the request reached the application and was rejected, so an identical replay is deterministic and retrying wastes the
+        retry budget. Implementations decide which 4xx codes are nevertheless transient (and how that depends on the verb) for their API version —
+        e.g. rate limiting, or conflict codes the API documents on safe reads. Non-4xx codes must return False: this method classifies only client
+        errors, leaving success and 5xx policy to the caller.
+
+        ## Parameters
+
+        - return_code: HTTP status code to check
+        - verb: The HTTP verb of the request the response answers
+
+        ## Returns
+
+        - True if the code is a 4xx client error that is terminal for `verb`, False otherwise
+
+        ## Raises
+
+        None
         """
         ...
