@@ -120,7 +120,7 @@
     that:
       - nm_merged_update_31_idem is not changed
 
-# --- MERGED WITH deploy: false ---
+# --- MERGED WITH config_actions.deploy: false ---
 
 - name: "MERGED NO-DEPLOY: Configure with deploy disabled"
   cisco.nd.nd_interface_ethernet_routed:
@@ -138,7 +138,8 @@
               ip: "10.99.34.1"
               prefix: 30
               description: "No-deploy test routed Ethernet1/34"
-    deploy: false
+    config_actions:
+      deploy: false
     state: merged
   register: nm_merged_no_deploy
 
@@ -156,3 +157,77 @@
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: Ethernet1/34
     state: deleted
+
+# --- MERGED DEFAULTS-ONLY (two-run convergence, PR #550 review) ---
+# Ethernet1/34 starts at trunkHost (setup.yaml's state: deleted normalizes it
+# there even on a borderGateway, whose free ports default to a defaults-only
+# routedHost). Making it routed with policy_type only must be a change on the
+# first run and converge on the second: ND echoes every template default, and
+# the module retains that defaults-only interface in before[] because the task
+# names it. Ethernet1/34 is left in this state for replaced.yaml.
+
+- name: "MERGED DEFAULTS-ONLY: Make Ethernet1/34 routed with template defaults (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &merge_routed_34_defaults
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ routed_34_defaults_only }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_defaults_34
+
+- name: "MERGED DEFAULTS-ONLY: Make Ethernet1/34 routed with template defaults (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *merge_routed_34_defaults
+  register: nm_merged_defaults_34
+
+- name: "MERGED DEFAULTS-ONLY: Verify the mode flip was a change"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_defaults_34 is changed
+      - nm_merged_defaults_34 is changed
+      - nm_merged_defaults_34.after | selectattr('interface_name', 'equalto', 'Ethernet1/34') | list | length == 1
+
+- name: "MERGED DEFAULTS-ONLY IDEMPOTENT: Re-apply (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: *merge_routed_34_defaults
+  check_mode: true
+  register: cm_merged_defaults_34_idem
+
+- name: "MERGED DEFAULTS-ONLY IDEMPOTENT: Re-apply (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *merge_routed_34_defaults
+  register: nm_merged_defaults_34_idem
+
+- name: "MERGED DEFAULTS-ONLY IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_defaults_34_idem is not changed
+      - nm_merged_defaults_34_idem is not changed
+
+# --- CHECK MODE VALIDATION (PR #550 review) ---
+# A dry run must reject an unknown switch_ip exactly like a normal run would,
+# rather than reporting a valid planned change that cannot execute.
+
+- name: "CHECK MODE: Unknown switch_ip is rejected in check mode"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: 192.0.2.254
+        interface_name: Ethernet1/34
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: routedHost
+              ip: "10.99.34.9"
+              prefix: 30
+    state: merged
+  check_mode: true
+  register: cm_unknown_switch
+  ignore_errors: true
+
+- name: "CHECK MODE: Verify the unknown switch_ip failed the dry run"
+  ansible.builtin.assert:
+    that:
+      - cm_unknown_switch is failed
+      - "'Cannot resolve switch_ip to switchId' in cm_unknown_switch.msg"
+      - "'192.0.2.254' in cm_unknown_switch.msg"

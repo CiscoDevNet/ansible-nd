@@ -9,9 +9,10 @@ test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
 
 # Ethernet interfaces used across tests.
 # Ethernet1/31 through Ethernet1/34 are reserved for these integration tests
-# (Ethernet1/34 is a spare). These interfaces must exist on the test switch and
-# must NOT be port-channel members. Each routed interface needs a unique IP, so
-# configs are per-interface (no interface_names fan-out in this module).
+# (Ethernet1/34 carries the no-deploy and defaults-only scenarios). These
+# interfaces must exist on the test switch and must NOT be port-channel
+# members. Each routed interface needs a unique IP, so configs are
+# per-interface (no interface_names fan-out in this module).
 
 # --- Base configs ---
 
@@ -72,6 +73,35 @@ routed_31_updated:
         description: "Updated routed Ethernet1/31 description"
         routing_tag: "54321"
 
+# --- Defaults-only convergence (PR #550 review) ---
+# A routed interface with policy_type only accepts every template default. ND
+# echoes those defaults, which is exactly the unconfigured-default signature the
+# module filters out of before[] for fabric-wide overridden safety; an interface
+# the task names explicitly must nevertheless be retained so the intent
+# converges (second run not changed) instead of re-creating forever.
+
+routed_34_defaults_only:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: Ethernet1/34
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: routedHost
+
+routed_34_configured:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: Ethernet1/34
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: routedHost
+        admin_state: true
+        ip: "10.99.34.1"
+        prefix: 30
+        description: "Ansible integration test routed Ethernet1/34"
+
 # --- IOS-XE coverage ---
 # Set nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name and
 # nd_test_xe_interface_name) in inventory/extra-vars to enable; xe.yaml is
@@ -113,3 +143,4 @@ cleanup_interface_names:
   - Ethernet1/31
   - Ethernet1/32
   - Ethernet1/33
+  - Ethernet1/34

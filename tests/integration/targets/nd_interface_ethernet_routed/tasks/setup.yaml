@@ -21,6 +21,8 @@
         interface_name: Ethernet1/32
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: Ethernet1/33
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Ethernet1/34
     state: deleted
   register: setup_cleanup
   tags: always

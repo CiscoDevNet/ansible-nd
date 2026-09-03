@@ -77,16 +77,21 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
     borderGateway defaults to a defaults-only `routedHost` (and core-router IOS-XE ports to `iosXeRoutedHost`).
     Without the `_is_unconfigured_default` filter, all of those ports would land in `before[]` and
     `state: overridden` would normalize every unused port on the switch. Treat any loosening of this filter
-    as review-blocking, alongside the managed-set filter above.
+    as review-blocking, alongside the managed-set filter above. The one carve-out is an interface the task
+    names explicitly: a defaults-only routed interface whose `(switch_ip, interface_name)` appears in the
+    config is retained, so "make this port routed with all defaults" converges on the second run instead of
+    re-creating forever, and a defaults-only borderGateway port named in the task is matched rather than
+    re-created (PR #550 review). Unnamed defaults stay excluded, so the `overridden` blast radius is unchanged.
 
     A mode flip (trunk -> routed) needs no special handling: a trunk-intent interface is invisible to
     `before[]` (not in the managed set), so the state machine classifies the task as a create, and the
     create POST rewrites the intent to routed (lab-verified 2026-07-27).
 
-    Per-item HTTP 207 result validation is intentionally NOT duplicated here: the known masking trigger
-    (mixed policy types in one bulk POST) cannot occur in this module's initial scope — each switch runs one
-    network OS, so per-switch bulk groups are single-policy-type by construction. PR #398 adds 207 detection
-    centrally in `NdV1Strategy`; the feature-gated follow-up branches (`endPointLocator`, `ipfmL3Port`,
+    HTTP 207 handling is inherited: `NdV1Strategy` classifies any non-exact-success `results[]` item as a
+    failure, and `EthernetBaseOrchestrator.create_bulk` queues the exact-success members of a failed
+    per-switch group for deploy so the module's failure-path finalizer ships them instead of stranding them
+    staged. Per-switch bulk groups are single-policy-type by construction in this module's initial scope
+    (each switch runs one network OS); the feature-gated follow-up branches (`endPointLocator`, `ipfmL3Port`,
     `dataBrokerL3Host`) must adopt per-(switch, policy_type) grouping when they land.
 
     ## Raises
@@ -312,19 +317,46 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
                 return False
         return True
 
+    def _named_interfaces(self) -> set[tuple[str, str]]:
+        """
+        # Summary
+
+        Return the `(switch_ip, interface_name)` pairs named in the task config, with interface names canonicalized by the
+        same normalizer the model uses so abbreviated or re-cased names match the wire form.
+
+        ## Raises
+
+        None
+        """
+        config = self.rest_send.params.get("config") if self.rest_send and self.rest_send.params else None
+        named: set[tuple[str, str]] = set()
+        for item in config or []:
+            if not isinstance(item, dict):
+                continue
+            switch_ip = item.get("switch_ip")
+            interface_name = item.get("interface_name")
+            if isinstance(switch_ip, str) and isinstance(interface_name, str):
+                named.add((switch_ip, normalize_ethernet_interface_name(interface_name)))
+        return named
+
     def query_all(self, model_instance: NDBaseModel | None = None, **kwargs) -> ResponseType:
         """
         # Summary
 
         Query all managed routed interfaces in the fabric via the base orchestrator, then apply two scope filters:
 
-        1. Drop interfaces matching an unconfigured fabric-default signature, keeping default-routed free ports
-           (borderGateway / core-router fabric defaults) out of `before[]` so `state: overridden` converges only
-           user-configured interfaces and idempotency holds across re-runs.
+        1. Drop interfaces matching an unconfigured fabric-default signature UNLESS the task names them, keeping
+           default-routed free ports (borderGateway / core-router fabric defaults) out of `before[]` so `state: overridden`
+           converges only user-configured interfaces and idempotency holds across re-runs. A named defaults-only interface
+           is retained so an explicit "routed with all defaults" intent converges (second run `changed: false`) and a
+           named defaults-only borderGateway port is matched rather than re-created (PR #550 review). The one exception is
+           a named defaults-only IOS-XE interface under `state: deleted`: the XE reset (`_xe_reset_payload`) lands exactly
+           on that signature, so the interface is already at its reset target and stays out of scope — otherwise every
+           `deleted` run would re-reset it and report a change. NX-OS keeps it in scope there because the NX reset target
+           is the `trunkHost` template, a real mode flip away from a defaults-only `routedHost`.
         2. Under `state: overridden`, drop IOS-XE interfaces that are not named in the task config (XE merge-only).
            This must happen at query scope — not merely at delete time — so the state machine never computes delete
-           intent for them and the module's changed/diff reporting stays truthful. Config names are canonicalized
-           with the same normalizer the model uses, so abbreviated or re-cased names match the wire form.
+           intent for them and the module's changed/diff reporting stays truthful.
 
         ## Raises
 
@@ -335,18 +367,30 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         result = super().query_all(model_instance=model_instance, **kwargs)
         if not isinstance(result, list):
             return result
-        result = [iface for iface in result if not self._is_unconfigured_default(iface)]
+        named = self._named_interfaces()
         state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
+
+        def in_scope(iface: dict) -> bool:
+            if not self._is_unconfigured_default(iface):
+                return True
+            if (iface.get("switchIp"), iface.get("interfaceName")) not in named:
+                return False
+            return not (state == "deleted" and self._is_ios_xe(iface))
+
+        result = [iface for iface in result if in_scope(iface)]
         if state == "overridden":
-            named = {
-                (item.get("switch_ip"), normalize_ethernet_interface_name(item.get("interface_name")))
-                for item in (self.rest_send.params.get("config") or [])
-                if isinstance(item, dict)
-            }
-            result = [
-                iface
-                for iface in result
-                if ((iface.get("configData") or {}).get("networkOS") or {}).get("networkOSType") != "ios-xe"
-                or (iface.get("switchIp"), iface.get("interfaceName")) in named
-            ]
+            result = [iface for iface in result if not self._is_ios_xe(iface) or (iface.get("switchIp"), iface.get("interfaceName")) in named]
         return result
+
+    @staticmethod
+    def _is_ios_xe(iface: dict) -> bool:
+        """
+        # Summary
+
+        Return `True` when the interface API response carries `configData.networkOS.networkOSType == "ios-xe"`.
+
+        ## Raises
+
+        None
+        """
+        return ((iface.get("configData") or {}).get("networkOS") or {}).get("networkOSType") == "ios-xe"

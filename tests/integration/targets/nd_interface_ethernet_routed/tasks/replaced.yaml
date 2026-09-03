@@ -6,7 +6,7 @@
 
 # Entry state (from merged.yaml): Ethernet1/31 carries routed_31_updated
 # (ip 10.99.31.5, routing_tag 54321); Ethernet1/32 and Ethernet1/33 carry
-# their base configs.
+# their base configs; Ethernet1/34 is a defaults-only routedHost.
 
 # --- REPLACED ---
 # routed_31 omits routing_tag, which routed_31_updated set - replacing with
@@ -91,3 +91,54 @@
     that:
       - cm_replaced_idem_31 is not changed
       - nm_replaced_idem_31 is not changed
+
+# --- REPLACED DEFAULTS-ONLY (two-run convergence, PR #550 review) ---
+# Ethernet1/34 enters as a defaults-only routedHost. Replacing it with a
+# configured policy is a change; replacing back to policy_type only must clear
+# the configured fields (a change) and then converge on the next run, which
+# only works if the named defaults-only interface stays in before[].
+
+- name: "REPLACED DEFAULTS-ONLY: Replace Ethernet1/34 with a configured policy"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ routed_34_configured }}"
+    state: replaced
+  register: nm_replaced_34_configured
+
+- name: "REPLACED DEFAULTS-ONLY: Replace Ethernet1/34 back to template defaults (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &replace_routed_34_defaults
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ routed_34_defaults_only }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_34_defaults
+
+- name: "REPLACED DEFAULTS-ONLY: Replace Ethernet1/34 back to template defaults (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_34_defaults
+  register: nm_replaced_34_defaults
+
+- name: "REPLACED DEFAULTS-ONLY: Verify both replacements were changes"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_34_configured is changed
+      - cm_replaced_34_defaults is changed
+      - nm_replaced_34_defaults is changed
+
+- name: "REPLACED DEFAULTS-ONLY IDEMPOTENT: Re-apply template defaults (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_34_defaults
+  check_mode: true
+  register: cm_replaced_34_defaults_idem
+
+- name: "REPLACED DEFAULTS-ONLY IDEMPOTENT: Re-apply template defaults (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_34_defaults
+  register: nm_replaced_34_defaults_idem
+
+- name: "REPLACED DEFAULTS-ONLY IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_34_defaults_idem is not changed
+      - nm_replaced_34_defaults_idem is not changed

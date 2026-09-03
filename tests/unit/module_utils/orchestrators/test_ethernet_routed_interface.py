@@ -29,7 +29,9 @@ from __future__ import annotations
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import (
+    EthernetRoutedConfigDataModel,
     EthernetRoutedInterfaceModel,
+    NexusEthernetRoutedNetworkOSModel,
     NexusEthernetRoutedPolicyModel,
     XeEthernetRoutedPolicyModel,
 )
@@ -576,3 +578,392 @@ def test_ethernet_routed_orchestrator_00210(policy_type, policy_cls, injected) -
     assert policy_cls.reverse_diff_defaults
     expected = {**policy_cls.reverse_diff_defaults, **injected}
     assert EthernetRoutedInterfaceOrchestrator._unconfigured_default_signature(policy_type) == expected
+
+
+# =============================================================================
+# Test: query_all — a named defaults-only interface is retained (PR #550 review)
+# =============================================================================
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+def test_ethernet_routed_orchestrator_00420(state) -> None:
+    """
+    # Summary
+
+    Verify `query_all` retains a defaults-only routed interface when the task names it, under every create/update state, while
+    still dropping unnamed defaults-only interfaces. Without this, an explicit "make Ethernet1/20 routed with all defaults"
+    task never converges: the second run filters the (now defaults-only) interface out of `before[]`, classifies it as a
+    create, and reports `changed: true` forever. The config names the interface in lowercase to prove canonicalization.
+
+    ## Test
+
+    - Switch FDO11111AAA returns Ethernet1/7 (configured routedHost), Ethernet1/20 and Ethernet1/21 (both defaults-only)
+    - Config names `ethernet1/20` only
+    - Result keeps Ethernet1/7 (configured) and Ethernet1/20 (named default); Ethernet1/21 (unnamed default) is dropped
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.query_all()
+    - EthernetRoutedInterfaceOrchestrator._named_interfaces()
+    - EthernetRoutedInterfaceOrchestrator._is_unconfigured_default()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_query_all_named_default_00420a")
+        yield responses_ethernet_routed("test_query_all_named_default_00420b")
+        yield responses_ethernet_routed("test_query_all_named_default_00420c")
+
+    gen_responses = ResponseGenerator(responses())
+    with does_not_raise():
+        orchestrator = _build_orchestrator(
+            gen_responses,
+            params={"state": state, "config": [{"switch_ip": "192.168.1.1", "interface_name": "ethernet1/20"}]},
+        )
+        result = orchestrator.query_all()
+    kept = {iface["interfaceName"] for iface in result}
+    assert kept == {"Ethernet1/7", "Ethernet1/20"}
+
+
+# =============================================================================
+# Test: port-channel member guard is state-aware under replaced/overridden (PR #550 review)
+# =============================================================================
+
+
+def _user_nx_model(policy_kwargs: dict, interface_name: str = "Ethernet1/7", switch_ip: str = "192.168.1.1") -> EthernetRoutedInterfaceModel:
+    """Build a user-side NX-OS routed model whose policy carries exactly `policy_kwargs` (omitted fields stay None)."""
+    return EthernetRoutedInterfaceModel(
+        switch_ip=switch_ip,
+        interface_name=interface_name,
+        config_data=EthernetRoutedConfigDataModel(
+            network_os=NexusEthernetRoutedNetworkOSModel(
+                network_os_type="nx-os",
+                policy=NexusEthernetRoutedPolicyModel(policy_type="routedHost", **policy_kwargs),
+            ),
+        ),
+    )
+
+
+def _pc_member_wire(policy: dict, interface_name: str = "Ethernet1/7", port_channel_id: int = 10) -> dict:
+    """Build the wire-state dict of a routed port-channel member carrying `policy` (policyType added)."""
+    return {
+        "interfaceName": interface_name,
+        "interfaceType": "ethernet",
+        "operData": {"portChannelId": port_channel_id},
+        "configData": {"mode": "routed", "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "routedHost", **policy}}},
+    }
+
+
+def test_ethernet_routed_orchestrator_00600() -> None:
+    """
+    # Summary
+
+    Verify `update` under `state: replaced` refuses a description-only replacement of a port-channel member that carries
+    `ip`, `prefix`, and a non-default `mtu`: the omitted fields are removals the PUT would apply, and none of them is in the
+    member allowlist. Before the state-aware guard, the `None` proposed values were skipped and the PUT cleared them.
+
+    ## Test
+
+    - state is `replaced`; existing wire state is a member of port-channel 10 with ip/prefix/mtu 9000/description
+    - Proposed model carries only a new description
+    - `update` raises `RuntimeError` naming the port-channel and the removed fields ip, mtu, prefix; no PUT, no deploy
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.update()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_update_pc_member_replaced_00600a")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "replaced"})
+    existing = _pc_member_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9000})
+    model = _user_nx_model({"description": "New description"})
+
+    with pytest.raises(RuntimeError, match=r"Update failed for.*member of port-channel 10.*\['ip', 'mtu', 'prefix'\]"):
+        orchestrator.update(model, existing_data=existing)
+    assert orchestrator._pending_deploys == []
+
+
+def test_ethernet_routed_orchestrator_00610() -> None:
+    """
+    # Summary
+
+    Verify `update` under `state: replaced` allows a replacement of a port-channel member when every omitted field already sits
+    at its template default (clearing a default is a no-op, mirroring the reverse-diff scrub in `get_diff`) and the carried
+    fields are unchanged or whitelisted.
+
+    ## Test
+
+    - state is `replaced`; existing member carries ip/prefix, default mtu 9216, and an old description
+    - Proposed model carries the same ip/prefix and a new description (mtu omitted)
+    - `update` does not raise; the PUT is issued and a deploy is queued
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.update()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_update_pc_member_replaced_00610a")
+        yield responses_ethernet_routed("test_update_pc_member_replaced_00610b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "replaced"})
+    existing = _pc_member_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9216})
+    model = _user_nx_model({"description": "New description", "ip": "10.10.10.1", "prefix": 30})
+
+    with does_not_raise():
+        orchestrator.update(model, existing_data=existing)
+    assert orchestrator.rest_send.verb == HttpVerbEnum.PUT.value
+    assert orchestrator._pending_deploys == [("Ethernet1/7", "FDO11111AAA")]
+
+
+def test_ethernet_routed_orchestrator_00620() -> None:
+    """
+    # Summary
+
+    Verify the removal-aware check does NOT apply under `state: merged`: an omitted field is not a removal there (the state
+    machine merges it from existing state), so a description-only merge on a member carrying ip/prefix/mtu is allowed.
+
+    ## Test
+
+    - state is `merged`; existing member carries ip/prefix/mtu 9000
+    - Proposed model carries only a new description
+    - `update` does not raise; the PUT is issued and a deploy is queued
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.update()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_update_pc_member_merged_00620a")
+        yield responses_ethernet_routed("test_update_pc_member_merged_00620b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    existing = _pc_member_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9000})
+    model = _user_nx_model({"description": "New description"})
+
+    with does_not_raise():
+        orchestrator.update(model, existing_data=existing)
+    assert orchestrator._pending_deploys == [("Ethernet1/7", "FDO11111AAA")]
+
+
+# =============================================================================
+# Test: preflight / preflight_delete validate in check mode too (PR #550 review)
+# =============================================================================
+
+
+def test_ethernet_routed_orchestrator_00700() -> None:
+    """
+    # Summary
+
+    Verify `preflight` resolves every target switch even though this orchestrator opts out of the capability preflight, so a
+    `--check` run fails on an unknown `switch_ip` exactly like a normal run would inside `create_bulk`.
+
+    ## Test
+
+    - Switch list contains only 192.168.1.1
+    - `preflight` receives a model targeting 10.1.1.99
+    - `RuntimeError` names the unresolvable IP; no capability GET is attempted (single fixture)
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator._require_resolvable_switches()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_preflight_00700a")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    model = _user_nx_model({"ip": "10.10.10.1", "prefix": 30}, switch_ip="10.1.1.99")
+
+    with pytest.raises(RuntimeError, match=r"Cannot resolve switch_ip to switchId in fabric 'fabric_1' for: 10\.1\.1\.99\."):
+        orchestrator.preflight([model])
+
+
+def test_ethernet_routed_orchestrator_00710() -> None:
+    """
+    # Summary
+
+    Verify `preflight` runs the port-channel member guard, so a `--check` run rejects a prohibited change to a member instead
+    of reporting a planned change that normal execution would refuse.
+
+    ## Test
+
+    - interfaceList reports Ethernet1/7 as a member of port-channel 10 with ip/prefix
+    - Proposed model changes `mtu` (not whitelisted) under `merged`
+    - `preflight` raises `RuntimeError` naming the port-channel and `mtu`
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.preflight()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_preflight_00710a")
+        yield responses_ethernet_routed("test_preflight_00710b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    model = _user_nx_model({"mtu": 9000})
+
+    with pytest.raises(RuntimeError, match=r"member of port-channel 10.*\['mtu'\]"):
+        orchestrator.preflight([model])
+
+
+def test_ethernet_routed_orchestrator_00720() -> None:
+    """
+    # Summary
+
+    Verify `preflight_delete` refuses an explicitly named port-channel member, so a `--check` `state: deleted` run fails the
+    same way the normal run's `delete_bulk` would.
+
+    ## Test
+
+    - interfaceList reports Ethernet1/7 as a member of port-channel 10
+    - `preflight_delete` receives the existing model for Ethernet1/7
+    - `RuntimeError` refuses to normalize the member
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.preflight_delete()
+    - EthernetBaseOrchestrator._check_port_channel_delete_restriction()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_preflight_delete_00720a")
+        yield responses_ethernet_routed("test_preflight_delete_00720b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+
+    with pytest.raises(RuntimeError, match=r"member of port-channel 10. Refusing to normalize a port-channel member"):
+        orchestrator.preflight_delete([_nx_model("Ethernet1/7")])
+
+
+def test_ethernet_routed_orchestrator_00730() -> None:
+    """
+    # Summary
+
+    Verify `preflight_delete` fails on an unresolvable `switch_ip` before touching any interface state.
+
+    ## Test
+
+    - Switch list contains only 192.168.1.1
+    - `preflight_delete` receives a model targeting 10.1.1.99
+    - `RuntimeError` names the unresolvable IP (single fixture: no interfaceList GET is attempted)
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.preflight_delete()
+    - NDBaseInterfaceOrchestrator._require_resolvable_switches()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_preflight_delete_00730a")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    model = _user_nx_model({}, switch_ip="10.1.1.99")
+
+    with pytest.raises(RuntimeError, match=r"Cannot resolve switch_ip to switchId in fabric 'fabric_1' for: 10\.1\.1\.99\."):
+        orchestrator.preflight_delete([model])
+
+
+# =============================================================================
+# Test: mixed 207 bulk response — accepted members are still deployed (PR #550 review)
+# =============================================================================
+
+
+def test_ethernet_routed_orchestrator_00800() -> None:
+    """
+    # Summary
+
+    Verify a per-switch bulk create that fails with a mixed HTTP 207 still queues the exact-success member for deploy, and the
+    failure-path finalizer then ships it. Without this, the accepted interface stays staged: a retry reads it as already
+    matching, never re-queues it, and can succeed while the switch running state stays divergent.
+
+    ## Test
+
+    - One switch; Ethernet1/7 and Ethernet1/8 are non-member trunk ports on the wire
+    - The bulk POST returns 207: Ethernet1/7 `success`, Ethernet1/8 `failed`
+    - `create_bulk` raises `RuntimeError` naming the accepted subset; `_pending_deploys` holds only Ethernet1/7
+    - `deploy_accepted_mutations` deploys exactly Ethernet1/7 and drains the queue
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.create_bulk()
+    - EthernetBaseOrchestrator._queue_accepted_bulk_items()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_create_bulk_207_00800a")
+        yield responses_ethernet_routed("test_create_bulk_207_00800b")
+        yield responses_ethernet_routed("test_create_bulk_207_00800c")
+        yield responses_ethernet_routed("test_create_bulk_207_00800d")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    orchestrator.deploy = True
+    models = [
+        _user_nx_model({"ip": "10.10.7.1", "prefix": 30}, interface_name="Ethernet1/7"),
+        _user_nx_model({"ip": "10.10.8.1", "prefix": 30}, interface_name="Ethernet1/8"),
+    ]
+
+    with pytest.raises(RuntimeError, match=r"Bulk create failed: .*The controller accepted \['Ethernet1/7'\] from the same request"):
+        orchestrator.create_bulk(models)
+    assert orchestrator._pending_deploys == [("Ethernet1/7", "FDO11111AAA")]
+
+    with does_not_raise():
+        deployed = orchestrator.deploy_accepted_mutations()
+    assert deployed == [("Ethernet1/7", "FDO11111AAA")]
+    assert orchestrator.rest_send.committed_payload == {"interfaces": [{"interfaceName": "Ethernet1/7", "switchId": "FDO11111AAA"}]}
+    assert orchestrator._pending_deploys == []
+
+
+def test_ethernet_routed_orchestrator_00430() -> None:
+    """
+    # Summary
+
+    Verify the `state: deleted` scope for named defaults-only interfaces is per-OS: a named defaults-only NX-OS `routedHost` stays
+    in scope (its reset target is the `trunkHost` template, a real mode flip), while a named defaults-only IOS-XE `iosXeRoutedHost`
+    is dropped because the XE reset lands exactly on that signature — keeping it would re-reset it and report a change on every
+    `deleted` run (found by the SITE1/ISN lab run of the XE delete-idempotency scenario).
+
+    ## Test
+
+    - state is `deleted`; config names Ethernet1/20 (NX, defaults-only) and GigabitEthernet4 (XE, defaults-only)
+    - Switch 1 (NX) returns configured Ethernet1/7 and defaults-only Ethernet1/20; switch 2 (XE) returns configured
+      GigabitEthernet3 and defaults-only GigabitEthernet4
+    - Result keeps Ethernet1/7, Ethernet1/20 and GigabitEthernet3; GigabitEthernet4 is dropped
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.query_all()
+    - EthernetRoutedInterfaceOrchestrator._is_ios_xe()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_query_all_deleted_default_00430a")
+        yield responses_ethernet_routed("test_query_all_deleted_default_00430b")
+        yield responses_ethernet_routed("test_query_all_deleted_default_00430c")
+        yield responses_ethernet_routed("test_query_all_deleted_default_00430d")
+
+    gen_responses = ResponseGenerator(responses())
+    with does_not_raise():
+        orchestrator = _build_orchestrator(
+            gen_responses,
+            params={
+                "state": "deleted",
+                "config": [
+                    {"switch_ip": "192.168.1.1", "interface_name": "Ethernet1/20"},
+                    {"switch_ip": "192.168.1.2", "interface_name": "GigabitEthernet4"},
+                ],
+            },
+        )
+        result = orchestrator.query_all()
+    kept = {iface["interfaceName"] for iface in result}
+    assert kept == {"Ethernet1/7", "Ethernet1/20", "GigabitEthernet3"}

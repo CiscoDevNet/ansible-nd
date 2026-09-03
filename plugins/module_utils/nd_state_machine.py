@@ -129,6 +129,7 @@ class NDStateMachine:
         elif self.state == "deleted":
             # Capability preflight intentionally NOT run for deletes: removing configuration does not
             # depend on a switch's capability to host the interface type (PR #275 scope decision).
+            # The delete-specific guards run via preflight_delete inside _manage_delete_state.
             self._manage_delete_state()
 
         else:
@@ -237,6 +238,15 @@ class NDStateMachine:
         items_to_delete = [
             existing_item for proposed_item in self.proposed if (existing_item := self.existing.get(proposed_item.get_identifier_value())) is not None
         ]
+        # Delete preflight (switch resolution, port-channel membership) runs here -- before _delete_items, whose
+        # mutation is skipped in check mode -- so a dry run rejects what a normal run would (PR #550 review).
+        # Same error normalization as the create/update preflights in manage_state.
+        try:
+            self.model_orchestrator.preflight_delete(items_to_delete)
+        except NDStateMachineError:
+            raise
+        except Exception as e:
+            raise NDStateMachineError(f"Preflight failed: {e}") from e
         self._delete_items(items_to_delete)
 
     def _delete_items(self, items: list[NDBaseModel]) -> None:

@@ -541,5 +541,549 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces/GigabitEthernet2",
         "MESSAGE": "OK",
         "DATA": {}
+    },
+    "test_query_all_named_default_00420a": {
+        "TEST_NOTES": [
+            "00420 (parametrized over merged/replaced/overridden; shared because the wire state is identical): fabric summary for validate_prerequisites"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_query_all_named_default_00420b": {
+        "TEST_NOTES": [
+            "00420: single NX-OS switch 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_query_all_named_default_00420c": {
+        "TEST_NOTES": [
+            "00420: Ethernet1/7 configured routedHost (always retained); Ethernet1/20 and Ethernet1/21 are defaults-only routedHost",
+            "(border-gateway fabric default incl. ND-injected ptp). The config names ethernet1/20 only, so Ethernet1/20 is retained",
+            "as explicit intent and Ethernet1/21 stays excluded (PR #550 review: named defaults must converge)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/7",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "adminState": true,
+                                "ip": "10.99.99.1",
+                                "prefix": 30,
+                                "description": "routed uplink"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/20",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "adminState": true,
+                                "fec": "auto",
+                                "ipRedirects": false,
+                                "mtu": 9216,
+                                "netflow": false,
+                                "pfc": false,
+                                "pimDrPriority": 1,
+                                "pimSparse": false,
+                                "ptp": false,
+                                "qos": false,
+                                "speed": "auto"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/21",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "adminState": true,
+                                "fec": "auto",
+                                "ipRedirects": false,
+                                "mtu": 9216,
+                                "netflow": false,
+                                "pfc": false,
+                                "pimDrPriority": 1,
+                                "pimSparse": false,
+                                "ptp": false,
+                                "qos": false,
+                                "speed": "auto"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_replaced_00600a": {
+        "TEST_NOTES": [
+            "00600: switch_map fetch; the PC-member guard raises before any PUT"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_replaced_00610a": {
+        "TEST_NOTES": [
+            "00610: switch_map fetch"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_replaced_00610b": {
+        "TEST_NOTES": [
+            "00610: PUT accepted (replaced on a member with only whitelisted/default-clearing changes)"
+        ],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F7",
+        "MESSAGE": "No Content",
+        "DATA": {}
+    },
+    "test_update_pc_member_merged_00620a": {
+        "TEST_NOTES": [
+            "00620: switch_map fetch"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_merged_00620b": {
+        "TEST_NOTES": [
+            "00620: PUT accepted (merged description-only change on a member)"
+        ],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F7",
+        "MESSAGE": "No Content",
+        "DATA": {}
+    },
+    "test_preflight_00700a": {
+        "TEST_NOTES": [
+            "00700: switch list resolves only 192.168.1.1; 10.1.1.99 is unresolvable"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_preflight_00710a": {
+        "TEST_NOTES": [
+            "00710: switch_map fetch"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_preflight_00710b": {
+        "TEST_NOTES": [
+            "00710: interfaceList -- Ethernet1/7 is a member of port-channel 10 (routedHost ip/prefix)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/7",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "adminState": true,
+                                "ip": "10.10.10.1",
+                                "prefix": 30
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_preflight_delete_00720a": {
+        "TEST_NOTES": [
+            "00720: switch_map fetch"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_preflight_delete_00720b": {
+        "TEST_NOTES": [
+            "00720: interfaceList -- Ethernet1/7 is a member of port-channel 10"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/7",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "adminState": true,
+                                "ip": "10.10.10.1",
+                                "prefix": 30
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_preflight_delete_00730a": {
+        "TEST_NOTES": [
+            "00730: switch list resolves only 192.168.1.1; 10.1.1.99 is unresolvable"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_create_bulk_207_00800a": {
+        "TEST_NOTES": [
+            "00800: switch_map fetch"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_create_bulk_207_00800b": {
+        "TEST_NOTES": [
+            "00800: interfaceList -- both targets are non-member trunk ports (PC guard passes)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/7",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/8",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_create_bulk_207_00800c": {
+        "TEST_NOTES": [
+            "00800: bulk POST returns HTTP 207 Multi-Status mixing an exact-success item (Ethernet1/7) and a failed item (Ethernet1/8).",
+            "Only the exact success is trusted (vault: multi-status-207-status-field-inconsistent); it must be queued for deploy",
+            "so the failure-path finalizer ships it (PR #550 review)."
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Ethernet1/7",
+                    "status": "success"
+                },
+                {
+                    "name": "Ethernet1/8",
+                    "status": "failed",
+                    "message": "Invalid interface Ethernet1/8"
+                }
+            ]
+        }
+    },
+    "test_create_bulk_207_00800d": {
+        "TEST_NOTES": [
+            "00800: failure-path deploy of the accepted subset (Ethernet1/7 only)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_query_all_deleted_default_00430a": {
+        "TEST_NOTES": [
+            "00430: fabric summary for validate_prerequisites"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_query_all_deleted_default_00430b": {
+        "TEST_NOTES": [
+            "00430: one NX-OS switch, one IOS-XE switch"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_query_all_deleted_default_00430c": {
+        "TEST_NOTES": [
+            "00430 (state: deleted): NX switch - configured Ethernet1/7 plus defaults-only Ethernet1/20 named in the config.",
+            "The NX defaults-only interface stays in scope: its reset target is trunkHost, a real mode flip."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/7",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "adminState": true,
+                                "ip": "10.99.99.1",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/20",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "adminState": true,
+                                "fec": "auto",
+                                "ipRedirects": false,
+                                "mtu": 9216,
+                                "netflow": false,
+                                "pfc": false,
+                                "pimDrPriority": 1,
+                                "pimSparse": false,
+                                "ptp": false,
+                                "qos": false,
+                                "speed": "auto"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_query_all_deleted_default_00430d": {
+        "TEST_NOTES": [
+            "00430 (state: deleted): XE switch - configured GigabitEthernet3 plus defaults-only GigabitEthernet4 named in the config.",
+            "The XE defaults-only interface is dropped: the XE reset PUT lands exactly on this signature, so it is already at its reset",
+            "target and keeping it would report a change on every deleted run (SITE1/ISN lab, XE delete idempotency)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet3",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeRoutedHost",
+                                "adminState": true,
+                                "ip": "10.10.1.1",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet4",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeRoutedHost",
+                                "adminState": true,
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
     }
 }

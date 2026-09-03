@@ -5,32 +5,37 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 # Entry state (from replaced.yaml): Ethernet1/31 carries routed_31;
-# Ethernet1/32 and Ethernet1/33 carry their base configs.
+# Ethernet1/32 and Ethernet1/33 carry their base configs; Ethernet1/34 is a
+# defaults-only routedHost.
 #
-# Overriding to {Ethernet1/31, Ethernet1/32} must reset Ethernet1/33 to the
-# fabric default, which takes it out of routed mode and out of this module's
-# managed scope. Fabric underlay interfaces (system routed policy types) are
-# never part of the managed scope, so this fabric-wide operation cannot
-# touch them - that safety property is pinned by the orchestrator unit tests.
+# Overriding to {Ethernet1/31, Ethernet1/32, Ethernet1/34 (defaults-only)}
+# must reset Ethernet1/33 to the fabric default, which takes it out of routed
+# mode and out of this module's managed scope, while retaining the NAMED
+# defaults-only Ethernet1/34 (PR #550 review: a named defaults-only interface
+# is explicit intent, not an unused port). Fabric underlay interfaces (system
+# routed policy types) are never part of the managed scope, so this
+# fabric-wide operation cannot touch them - that safety property is pinned by
+# the orchestrator unit tests.
 
 # --- OVERRIDDEN ---
 
-- name: "OVERRIDDEN: Converge to Ethernet1/31 and Ethernet1/32 only (check mode)"
-  cisco.nd.nd_interface_ethernet_routed: &override_31_32
+- name: "OVERRIDDEN: Converge to Ethernet1/31, Ethernet1/32 and defaults-only Ethernet1/34 (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &override_31_32_34
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
       - "{{ routed_31 }}"
       - "{{ routed_32 }}"
+      - "{{ routed_34_defaults_only }}"
     state: overridden
   check_mode: true
   register: cm_overridden
 
-- name: "OVERRIDDEN: Converge to Ethernet1/31 and Ethernet1/32 only (normal mode)"
-  cisco.nd.nd_interface_ethernet_routed: *override_31_32
+- name: "OVERRIDDEN: Converge to Ethernet1/31, Ethernet1/32 and defaults-only Ethernet1/34 (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *override_31_32_34
   register: nm_overridden
 
-- name: "OVERRIDDEN: Verify convergence removed Ethernet1/33 from managed scope"
+- name: "OVERRIDDEN: Verify convergence removed Ethernet1/33 and retained the named defaults-only Ethernet1/34"
   ansible.builtin.assert:
     that:
       - cm_overridden is changed
@@ -38,18 +43,21 @@
       - nm_overridden.after | selectattr('interface_name', 'equalto', 'Ethernet1/31') | list | length == 1
       - nm_overridden.after | selectattr('interface_name', 'equalto', 'Ethernet1/32') | list | length == 1
       - nm_overridden.after | selectattr('interface_name', 'equalto', 'Ethernet1/33') | list | length == 0
+      - nm_overridden.after | selectattr('interface_name', 'equalto', 'Ethernet1/34') | list | length == 1
 
 # --- OVERRIDDEN IDEMPOTENCY ---
 # Ethernet1/33 is now at the fabric default and therefore invisible to this
-# module's managed scope; a second overridden run must see nothing to change.
+# module's managed scope; Ethernet1/34 is a named defaults-only interface and
+# must match rather than be re-created. A second overridden run must see
+# nothing to change.
 
 - name: "OVERRIDDEN IDEMPOTENT: Re-apply convergence (check mode)"
-  cisco.nd.nd_interface_ethernet_routed: *override_31_32
+  cisco.nd.nd_interface_ethernet_routed: *override_31_32_34
   check_mode: true
   register: cm_overridden_idem
 
 - name: "OVERRIDDEN IDEMPOTENT: Re-apply convergence (normal mode)"
-  cisco.nd.nd_interface_ethernet_routed: *override_31_32
+  cisco.nd.nd_interface_ethernet_routed: *override_31_32_34
   register: nm_overridden_idem
 
 - name: "OVERRIDDEN IDEMPOTENT: Verify no change on second run"

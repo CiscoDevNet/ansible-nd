@@ -189,15 +189,24 @@ options:
                     - The routing tag associated with the interface IP address.
                     - Applies when policy_type is C(routedHost).
                     type: str
-  deploy:
+  config_actions:
     description:
-    - Whether to deploy interface changes after mutations are complete.
-    - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module execution
-      via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
-    - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
-    - Setting O(deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
-    type: bool
-    default: true
+    - Controls deploy behavior after interface mutations are complete.
+    type: dict
+    suboptions:
+      deploy:
+        description:
+        - Whether to deploy interface changes after mutations are complete.
+        - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module
+          execution via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
+        - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
+        - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
+          accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
+          changes staged but undeployed.
+        - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
+        - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
+        type: bool
+        default: false
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -248,6 +257,8 @@ EXAMPLES = r"""
               prefix: 30
               description: L3 uplink to WAN edge
               vrf: blue
+    config_actions:
+      deploy: true
     state: merged
   register: result
 
@@ -275,6 +286,8 @@ EXAMPLES = r"""
               policy_type: routedHost
               ip: 10.99.99.5
               prefix: 30
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Configure an IOS-XE routed interface
@@ -292,6 +305,8 @@ EXAMPLES = r"""
               ip: 10.200.3.1
               prefix: 30
               description: XE routed link
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Replace a routed interface configuration (full desired state)
@@ -309,6 +324,8 @@ EXAMPLES = r"""
               ip: 10.99.99.9
               prefix: 30
               description: Replaced routed uplink
+    config_actions:
+      deploy: true
     state: replaced
 
 - name: Override managed routed interfaces on a fabric (single source of truth)
@@ -336,6 +353,8 @@ EXAMPLES = r"""
               policy_type: iosXeRoutedHost
               ip: 10.200.3.1
               prefix: 30
+    config_actions:
+      deploy: true
     state: overridden
 
 - name: Reset routed interfaces to the fabric default configuration
@@ -344,6 +363,8 @@ EXAMPLES = r"""
     config:
       - switch_ip: 192.168.1.1
         interface_name: Ethernet1/7
+    config_actions:
+      deploy: true
     state: deleted
 
 - name: Configure a routed interface without deploying (for batching)
@@ -359,7 +380,8 @@ EXAMPLES = r"""
               policy_type: routedHost
               ip: 10.99.99.1
               prefix: 30
-    deploy: false
+    config_actions:
+      deploy: false
     state: merged
 """
 
@@ -375,9 +397,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import EthernetRoutedInterfaceModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator, finalize_accepted_intent
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import EthernetRoutedInterfaceOrchestrator
 
 
@@ -394,9 +416,7 @@ def main():
     """
     argument_spec = nd_argument_spec()
     argument_spec.update(EthernetRoutedInterfaceModel.get_argument_spec())
-    argument_spec.update(
-        deploy=dict(type="bool", default=True),
-    )
+    argument_spec.update(config_actions_spec(include=("deploy",)))
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -419,13 +439,15 @@ def main():
         # visible to Pylance and validated at runtime.
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
-        nd_state_machine.model_orchestrator.deploy = module.params["deploy"]
+        config_actions = module.params.get("config_actions") or {}
+        deploy = config_actions.get("deploy", False)
+        nd_state_machine.model_orchestrator.deploy = deploy
 
         module_log.debug(
             "manage_state begin state=%s check_mode=%s deploy=%s",
             module.params.get("state"),
             module.check_mode,
-            module.params["deploy"],
+            deploy,
         )
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
@@ -441,6 +463,7 @@ def main():
         module_log.exception("NDStateMachineError during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module execution failed: {str(e)}"
+        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
@@ -449,6 +472,7 @@ def main():
         module_log.exception("Unhandled exception during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module failed: {str(e)}"
+        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)

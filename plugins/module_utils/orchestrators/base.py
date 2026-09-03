@@ -154,6 +154,21 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         """
         return
 
+    def preflight_delete(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Pre-mutation hook invoked by `NDStateMachine` for `state: deleted` with the existing items about to be deleted —
+        before any delete API call, which is skipped in check mode — so subclasses can reject a delete during a dry-run
+        exactly as a normal run would (e.g. ethernet refuses to normalize a port-channel member). Not invoked for the
+        fabric-wide `overridden` delete set. Base implementation is a no-op.
+
+        ## Raises
+
+        None
+        """
+        return
+
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:

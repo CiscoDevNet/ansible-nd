@@ -1436,3 +1436,72 @@ def test_base_interface_00960() -> None:
 
     with pytest.raises(RuntimeError, match=r"without a policy"):
         instance.preflight_create([_iface_model("192.168.12.151", "loopback100", config_data=False)])
+
+
+# =============================================================================
+# Test: preflight resolves switches even when capability preflight is opted out (PR #550 review)
+# =============================================================================
+
+
+def test_base_interface_00970() -> None:
+    """
+    # Summary
+
+    Verify `preflight` resolves every target `switch_ip` even on an orchestrator that opts OUT of the capability preflight
+    (`interface_type == ""`), so a `--check` run fails on an unknown switch exactly like a normal run would inside a mutation.
+
+    ## Test
+
+    - `_StubInterfaceOrchestrator` leaves `interface_type` as `""`
+    - Switches inventory contains only `192.168.12.151`; `preflight` receives one known and one unknown IP
+    - `RuntimeError` names the unknown IP; no capability GET is attempted (single fixture)
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator._require_resolvable_switches()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    match = r"Cannot resolve switch_ip to switchId in fabric 'fabric_1' for: 10\.1\.1\.99\."
+    with pytest.raises(RuntimeError, match=match):
+        instance.preflight([SimpleNamespace(switch_ip="192.168.12.151"), SimpleNamespace(switch_ip="10.1.1.99")])
+
+
+def test_base_interface_00980() -> None:
+    """
+    # Summary
+
+    Verify `preflight` on an opted-out orchestrator passes when every `switch_ip` resolves, and still skips the capability
+    endpoint (the switches-list fetch is the only request).
+
+    ## Test
+
+    - `_StubInterfaceOrchestrator` leaves `interface_type` as `""`
+    - Switches inventory contains `192.168.12.151`; `preflight` receives that IP twice (deduplicated resolution)
+    - No exception; only the switches-list fixture is consumed
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator._require_resolvable_switches()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.preflight([SimpleNamespace(switch_ip="192.168.12.151"), SimpleNamespace(switch_ip="192.168.12.151")])
+    assert instance._require_resolvable_switches([SimpleNamespace(switch_ip="192.168.12.151")]) == {"FDO12345ABC"}

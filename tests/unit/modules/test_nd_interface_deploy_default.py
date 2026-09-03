@@ -21,6 +21,7 @@ import pytest
 import yaml
 
 INTERFACE_MODULES = (
+    "nd_interface_ethernet_routed",
     "nd_interface_ethernet_trunk_host",
     "nd_interface_port_channel_access",
     "nd_interface_port_channel_trunk_host",

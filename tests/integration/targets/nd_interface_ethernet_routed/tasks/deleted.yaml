@@ -5,15 +5,18 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 # Entry state (from overridden.yaml): Ethernet1/31 and Ethernet1/32 carry
-# routed configs; Ethernet1/33 is already at the fabric default.
+# routed configs; Ethernet1/33 is already at the fabric default; Ethernet1/34
+# is a defaults-only routedHost.
 #
 # state: deleted resets the interfaces to the fabric default configuration,
 # which takes them out of routed mode and out of this module's managed scope.
+# The named defaults-only Ethernet1/34 is in scope for the delete (PR #550
+# review) and leaves routed mode like the others.
 
 # --- DELETED ---
 
-- name: "DELETED: Reset Ethernet1/31 and Ethernet1/32 (check mode)"
-  cisco.nd.nd_interface_ethernet_routed: &delete_31_32
+- name: "DELETED: Reset Ethernet1/31, Ethernet1/32 and Ethernet1/34 (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &delete_31_32_34
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -21,31 +24,34 @@
         interface_name: Ethernet1/31
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: Ethernet1/32
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Ethernet1/34
     state: deleted
   check_mode: true
   register: cm_deleted
 
-- name: "DELETED: Reset Ethernet1/31 and Ethernet1/32 (normal mode)"
-  cisco.nd.nd_interface_ethernet_routed: *delete_31_32
+- name: "DELETED: Reset Ethernet1/31, Ethernet1/32 and Ethernet1/34 (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *delete_31_32_34
   register: nm_deleted
 
-- name: "DELETED: Verify Ethernet1/31 and Ethernet1/32 left managed scope"
+- name: "DELETED: Verify Ethernet1/31, Ethernet1/32 and Ethernet1/34 left managed scope"
   ansible.builtin.assert:
     that:
       - cm_deleted is changed
       - nm_deleted is changed
       - nm_deleted.after | selectattr('interface_name', 'equalto', 'Ethernet1/31') | list | length == 0
       - nm_deleted.after | selectattr('interface_name', 'equalto', 'Ethernet1/32') | list | length == 0
+      - nm_deleted.after | selectattr('interface_name', 'equalto', 'Ethernet1/34') | list | length == 0
 
 # --- DELETED IDEMPOTENCY ---
 
-- name: "DELETED IDEMPOTENT: Re-reset Ethernet1/31 and Ethernet1/32 (check mode)"
-  cisco.nd.nd_interface_ethernet_routed: *delete_31_32
+- name: "DELETED IDEMPOTENT: Re-reset Ethernet1/31, Ethernet1/32 and Ethernet1/34 (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: *delete_31_32_34
   check_mode: true
   register: cm_deleted_idem
 
-- name: "DELETED IDEMPOTENT: Re-reset Ethernet1/31 and Ethernet1/32 (normal mode)"
-  cisco.nd.nd_interface_ethernet_routed: *delete_31_32
+- name: "DELETED IDEMPOTENT: Re-reset Ethernet1/31, Ethernet1/32 and Ethernet1/34 (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *delete_31_32_34
   register: nm_deleted_idem
 
 - name: "DELETED IDEMPOTENT: Verify no change when already at fabric default"
