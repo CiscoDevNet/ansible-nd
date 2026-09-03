@@ -254,6 +254,13 @@ class ExtendedCommunityListModel(NDBaseModel):
         "associations",
     ]
 
+    # --- Gathered filtering Configuration ---
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "name",
+        "type",
+    )
+
     # --- Top-level fields ---
     name: str = Field(
         alias="name",
@@ -413,9 +420,9 @@ class ExtendedCommunityListModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
-                    name=dict(type="str", required=True),
+                    name=dict(type="str", required=False),
                     type=dict(
                         type="str",
                         choices=["standard", "expanded"],
@@ -474,6 +481,6 @@ class ExtendedCommunityListModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )
