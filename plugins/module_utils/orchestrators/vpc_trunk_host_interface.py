@@ -14,11 +14,10 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import TrunkVpcHostPolicyTypeEnum
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import (
-    TrunkVpcHostInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import TrunkVpcHostInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_interface_base import VpcInterfaceBaseOrchestrator
 
 
@@ -39,6 +38,16 @@ class TrunkVpcHostInterfaceOrchestrator(VpcInterfaceBaseOrchestrator):
     """
 
     model_class: ClassVar[type[NDBaseModel]] = TrunkVpcHostInterfaceModel
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(
+            ("interfaceType", "vpc"),
+            ("policyType", "trunkVpcHost"),
+        ),
+        field_map={
+            ("interface_name",): "interfaceName",
+        },
+    )
 
     def _managed_policy_types(self) -> set[str]:
         """
