@@ -418,9 +418,12 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         switch running state remain divergent (PR #403 review).
 
         A deploy is queued only after its mutation request succeeds, so every queued pair is controller-accepted intent — except
-        pairs queued by the delete path, which queues the deploy BEFORE `remove_pending` sends the removal. Pairs still present in
-        `_pending_removes` are excluded here: their removal intent never reached the controller, and deploying them would ship
-        whatever pending intent those interfaces happen to carry.
+        pairs queued by the delete paths, which queue the deploy BEFORE `remove_pending` sends the removal / normalize / reset.
+        Pairs still present in any deferred-delete queue (`_unsent_delete_pairs`: `_pending_removes` here, plus the normalize /
+        reset queues subclasses add) are excluded: their delete intent never reached the controller — the request failed or was
+        never attempted — and deploying them would ship whatever unrelated pending intent those interfaces happen to carry
+        (PR #550 review). Delete paths dequeue a pair as soon as its request succeeds, so a pair still queued after a failure is
+        exactly one that was not accepted.
 
         Returns the deployed `(interface_name, switch_id)` pairs so the caller can name them in the failure report. Returns an
         empty list without any API call when `deploy` is `False` (staged intent is the documented contract in that case) or when
@@ -434,15 +437,31 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         if not self.deploy:
             return []
-        accepted = [pair for pair in self._pending_deploys if pair not in self._pending_removes]
+        unsent = self._unsent_delete_pairs()
+        accepted = [pair for pair in self._pending_deploys if pair not in unsent]
         if not accepted:
             return []
         try:
             self._deploy_interfaces(accepted)
         except Exception as e:
             raise RuntimeError(f"Failure-path deploy failed for accepted interfaces {accepted}: {e}") from e
-        self._pending_deploys = [pair for pair in self._pending_deploys if pair in self._pending_removes]
+        self._pending_deploys = [pair for pair in self._pending_deploys if pair in unsent]
         return accepted
+
+    def _unsent_delete_pairs(self) -> set[tuple[str, str]]:
+        """
+        # Summary
+
+        Return the `(interface_name, switch_id)` pairs whose delete-side request has not (yet) been accepted by the controller: the
+        contents of every deferred-delete queue. The base class has one such queue (`_pending_removes`); subclasses with their own
+        deferred queues (ethernet's normalize / reset queues, routed's IOS-XE reset queue) extend the set. Consumed by
+        `deploy_accepted_mutations` so the failure-path finalizer never deploys an interface whose reset failed or was never sent.
+
+        ## Raises
+
+        None
+        """
+        return set(self._pending_removes)
 
     def _accepted_multistatus_names(self) -> set[str]:
         """

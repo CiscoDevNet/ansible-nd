@@ -121,8 +121,11 @@ options:
                       C(50Gb), C(100Gb), C(200Gb), C(400Gb), C(800Gb).
                     - For C(iosXeRoutedHost), one of C(auto), C(10Mb), C(100Mb), C(1Gb), C(2.5Gb), C(5Gb), C(10Gb), C(25Gb),
                       C(40Gb), C(100Gb), C(noNegotiate).
+                    - The choices below are the union of both sets; a value outside the selected policy_type's subset is rejected
+                      by the module.
                     - Applies to all policy_type values.
                     type: str
+                    choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb, noNegotiate ]
                   vrf:
                     description:
                     - The VRF to which the interface belongs.
@@ -134,6 +137,7 @@ options:
                     - The forward error correction (FEC) mode.
                     - Applies when policy_type is C(routedHost).
                     type: str
+                    choices: [ auto, fcFec, 'off', rsCons16, rsFec, rsIEEE ]
                   ip_redirects:
                     description:
                     - Whether to disable IPv4 and IPv6 redirects on the interface.
@@ -213,9 +217,11 @@ options:
     - Use O(state=merged) to create new resources and update existing ones as defined in your configuration.
       Resources on ND that are not specified in the configuration will be left unchanged.
     - Use O(state=replaced) to replace the resources specified in the configuration.
-    - Use O(state=overridden) to enforce the configuration as the single source of truth.
-      The resources on ND will be modified to exactly match the configuration.
-      Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
+    - Use O(state=overridden) to enforce the configuration as the single source of truth. Named interfaces are
+      modified to exactly match the configuration. For NX-OS, every C(routedHost) interface in the fabric that is not
+      present in the configuration is reset to its fabric default (fabric-wide remove-omitted semantics); use with
+      extra caution. IOS-XE interfaces are merge-only under this state, so named C(iosXeRoutedHost) interfaces converge
+      but omitted IOS-XE interfaces are left untouched and must be reset explicitly with O(state=deleted).
     - Use O(state=deleted) to reset the specified interfaces to their fabric default configuration. Physical
       ethernet interfaces cannot be truly deleted from a switch. NX-OS interfaces reset to the fabric default
       C(trunkHost) policy, taking them out of routed mode; IOS-XE interfaces reset to a default routed
@@ -329,9 +335,11 @@ EXAMPLES = r"""
     state: replaced
 
 - name: Override managed routed interfaces on a fabric (single source of truth)
-  # Any routed interface managed by this module that exists on the fabric but is
-  # NOT listed in `config` will be reset to the fabric default. System routed
-  # interfaces (fabric links, multi-site links) are never touched. Use with caution.
+  # Any NX-OS routedHost interface that exists on the fabric but is NOT listed in
+  # `config` will be reset to the fabric default. IOS-XE interfaces are merge-only:
+  # GigabitEthernet3 below converges, but an omitted IOS-XE interface is left as
+  # is (reset it explicitly with state: deleted). System routed interfaces (fabric
+  # links, multi-site links) are never touched. Use with caution.
   cisco.nd.nd_interface_ethernet_routed:
     fabric_name: my_fabric
     config:
@@ -386,6 +394,101 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed, or in check mode would change, the routed interface configuration.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
+  - An empty list when no matching routed interface configuration existed (for example, an interface still in trunk mode).
+  - Under O(state=overridden) it covers every managed NX-OS C(routedHost) interface in the fabric plus the IOS-XE interfaces named in O(config).
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: Ethernet1/7
+    interface_type: ethernet
+    config_data:
+      mode: routed
+      network_os:
+        network_os_type: nx-os
+        policy:
+          policy_type: routedHost
+          admin_state: true
+          ip: 10.99.99.1
+          prefix: 30
+          description: L3 uplink to WAN edge
+after:
+  description:
+  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
+  - In check mode, the configuration that would result had the module run outside of check mode.
+  - An interface reset to its fabric default by O(state=deleted) or O(state=overridden) leaves the managed scope and is absent from this list.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: Ethernet1/7
+    interface_type: ethernet
+    config_data:
+      mode: routed
+      network_os:
+        network_os_type: nx-os
+        policy:
+          policy_type: routedHost
+          admin_state: true
+          ip: 10.99.99.5
+          prefix: 30
+          description: L3 uplink to WAN edge
+diff:
+  description:
+  - Reserved for the per-interface difference between C(before) and C(after).
+  - Currently always an empty list for this module family; compare C(before) and C(after) directly.
+  returned: always
+  type: list
+  elements: dict
+  sample: []
+proposed:
+  description: The configuration the module proposed to apply, before reconciliation with the controller.
+  returned: when O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: Ethernet1/7
+    interface_type: ethernet
+    config_data:
+      mode: routed
+      network_os:
+        network_os_type: nx-os
+        policy:
+          policy_type: routedHost
+          ip: 10.99.99.5
+          prefix: 30
+logs:
+  description:
+  - Reserved for internal diagnostic log messages collected during the run.
+  - Currently always an empty list for this module family; use the C(ND_LOGGING_CONFIG) file-based logging described in the collection docs instead.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample: []
+msg:
+  description:
+  - A human-readable error message, present only when the module fails.
+  - When O(config_actions.deploy=true) and the controller accepted some changes before the failure, the message names the
+    interfaces whose accepted changes were deployed (or reports that deploying them also failed).
+  returned: on failure
+  type: str
+  sample: "Module execution failed: Preflight failed: Cannot resolve switch_ip to switchId in fabric 'my_fabric' for: 192.0.2.254."
 """
 # pylint: disable=wrong-import-position
 

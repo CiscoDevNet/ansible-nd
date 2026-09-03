@@ -455,14 +455,17 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         results: list[ResponseType] = []
         succeeded: list[str] = []
-        for index, (interface_name, switch_id) in enumerate(self._pending_resets):
+        # Iterate over a snapshot: each pair is dequeued as soon as its PUT succeeds, so after a failure the queue holds exactly
+        # the failed and not-attempted pairs and the failure-path finalizer (`_unsent_delete_pairs`) never deploys them.
+        pending = list(self._pending_resets)
+        for index, (interface_name, switch_id) in enumerate(pending):
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(interface_name)
             payload = InterfaceDefaultConfig.to_reset_payload(interface_name, switch_id)
             try:
                 results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
             except Exception as e:
-                not_attempted = [name for name, switch_id in self._pending_resets[index + 1 :]]
+                not_attempted = [name for name, switch_id in pending[index + 1 :]]
                 raise RuntimeError(
                     f"Reset failed at {interface_name} on {switch_id}: {e}. "
                     f"Successfully reset before failure: {succeeded or 'none'}. "
@@ -470,7 +473,22 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     f"Interfaces reset before the failure are now at fabric default and were not rolled back."
                 ) from e
             succeeded.append(interface_name)
+            self._pending_resets.remove((interface_name, switch_id))
         return results
+
+    def _unsent_delete_pairs(self) -> set[tuple[str, str]]:
+        """
+        # Summary
+
+        Extend the base set of not-yet-accepted delete pairs with ethernet's deferred queues: the bulk normalize queue (cleared
+        only when the single normalize POST succeeds) and the per-interface reset queue (dequeued pair by pair as each PUT
+        succeeds). See `NDBaseInterfaceOrchestrator._unsent_delete_pairs` / `deploy_accepted_mutations`.
+
+        ## Raises
+
+        None
+        """
+        return super()._unsent_delete_pairs() | set(self._pending_normalizes) | set(self._pending_resets)
 
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """

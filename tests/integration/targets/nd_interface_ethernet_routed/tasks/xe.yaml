@@ -145,6 +145,50 @@
       - cm_xe_overridden is not changed
       - nm_xe_overridden is not changed
 
+# --- XE OVERRIDDEN: OMITTED IOS-XE INTERFACE IS RETAINED (PR #550 review) ---
+# An IOS-XE interface absent from config is never reset by overridden. The
+# check-mode run with an empty config proves it at query scope (the XE test
+# interface is not even in before[]); the normal-mode run - gated on the
+# check-mode before[] being empty so no NX-OS routedHost intent in the XE
+# fabric is normalized as a side effect - proves it on the wire.
+
+- name: "XE OVERRIDDEN OMITTED: Override with an empty config (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &xe_override_empty
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config: []
+    state: overridden
+  check_mode: true
+  register: cm_xe_overridden_empty
+
+- name: "XE OVERRIDDEN OMITTED: Verify the omitted XE interface is out of scope"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_overridden_empty.before | selectattr('interface_name', 'equalto', xe_routed.interface_name) | list | length == 0
+
+- name: "XE OVERRIDDEN OMITTED: Override with an empty config (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *xe_override_empty
+  register: nm_xe_overridden_empty
+  when: cm_xe_overridden_empty.before | length == 0
+
+- name: "XE OVERRIDDEN OMITTED: Re-read the XE interface after the empty override"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_routed }}"
+    state: merged
+  check_mode: true
+  register: cm_xe_after_empty_override
+
+- name: "XE OVERRIDDEN OMITTED: Verify the omitted XE interface still carries its configuration"
+  vars:
+    xe_before: "{{ cm_xe_after_empty_override.before | selectattr('interface_name', 'equalto', xe_routed.interface_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_after_empty_override is not changed
+      - xe_before.config_data.network_os.policy.ip == "10.99.203.1"
+
 # --- XE DELETED ---
 # Explicitly named XE interfaces reset to the fabric default (defaults-only
 # routed policy), which takes them out of this module's managed scope.

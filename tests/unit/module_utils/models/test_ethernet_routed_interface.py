@@ -18,7 +18,10 @@ from typing import Any
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
     EthernetRoutedPolicyTypeEnum,
+    FecEnum,
+    SpeedEnum,
     XeEthernetRoutedPolicyTypeEnum,
+    XeEthernetSpeedEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import (
     EthernetRoutedInterfaceModel,
@@ -790,3 +793,31 @@ def test_ethernet_routed_interface_00200() -> None:
     )
     assert isinstance(existing.config_data.network_os.policy, policy_cls)
     assert existing.get_diff(proposed, exclude_unset=False) is True
+
+
+def test_ethernet_routed_interface_00210() -> None:
+    """
+    # Summary
+
+    Contract test: the public argspec `choices` for `fec` and `speed` stay synchronized with the runtime enums, so ansible-doc and
+    schema consumers see exactly the values the Pydantic branch models accept (PR #550 review). `speed` is the union of the NX-OS
+    and IOS-XE enums (the argspec cannot express the per-`policy_type` subset; the branch models still enforce it).
+
+    ## Test
+
+    - `fec` choices equal the `FecEnum` values
+    - `speed` choices equal the union of `SpeedEnum` and `XeEthernetSpeedEnum` values, with no duplicates
+    - An IOS-XE-only speed (`noNegotiate`) is still rejected by the NX-OS branch model
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceModel.get_argument_spec()
+    - NexusEthernetRoutedPolicyModel
+    """
+    policy_spec = EthernetRoutedInterfaceModel.get_argument_spec()["config"]["options"]["config_data"]["options"]["network_os"]["options"]["policy"]["options"]
+    assert set(policy_spec["fec"]["choices"]) == {e.value for e in FecEnum}
+    speed_choices = policy_spec["speed"]["choices"]
+    assert set(speed_choices) == {e.value for e in SpeedEnum} | {e.value for e in XeEthernetSpeedEnum}
+    assert len(speed_choices) == len(set(speed_choices))
+    with pytest.raises(ValidationError):
+        NexusEthernetRoutedPolicyModel(policy_type="routedHost", speed="noNegotiate")

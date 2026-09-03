@@ -967,3 +967,95 @@ def test_ethernet_routed_orchestrator_00430() -> None:
         result = orchestrator.query_all()
     kept = {iface["interfaceName"] for iface in result}
     assert kept == {"Ethernet1/7", "Ethernet1/20", "GigabitEthernet3"}
+
+
+# =============================================================================
+# Test: delete-path failure finalization deploys only controller-accepted resets (PR #550 review)
+# =============================================================================
+
+
+def test_ethernet_routed_orchestrator_00330() -> None:
+    """
+    # Summary
+
+    Verify the failure-path finalizer deploys ONLY the IOS-XE resets the controller accepted. Three XE interfaces are queued for
+    reset under `state: deleted`; the first PUT succeeds, the second fails, the third is never attempted. `remove_pending` raises
+    with that partial-state detail, and `deploy_accepted_mutations` must deploy exactly the first interface — the failed and
+    unattempted pairs stay in the XE reset queue (`_unsent_delete_pairs`) and are excluded, so an unrelated staged change on them
+    is never shipped.
+
+    ## Test
+
+    - `delete_bulk` queues GigabitEthernet3/4/5 for XE reset and deploy
+    - `remove_pending` raises `RuntimeError` naming Gi3 as reset, Gi4 as failed, Gi5 as not attempted; the queue holds Gi4 and Gi5
+    - `deploy_accepted_mutations` deploys `[GigabitEthernet3]` only; Gi4/Gi5 remain in `_pending_deploys`
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.remove_pending()
+    - EthernetRoutedInterfaceOrchestrator._unsent_delete_pairs()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_remove_pending_00330a")
+        yield responses_ethernet_routed("test_remove_pending_00330b")
+        yield responses_ethernet_routed("test_remove_pending_00330c")
+        yield responses_ethernet_routed("test_remove_pending_00330d")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    orchestrator.deploy = True
+    models = [_xe_model("GigabitEthernet3"), _xe_model("GigabitEthernet4"), _xe_model("GigabitEthernet5")]
+    with does_not_raise():
+        orchestrator.delete_bulk(models, existing_data={"interfaceName": "probe"})
+
+    match = r"IOS-XE reset failed at GigabitEthernet4 on FDO22222BBB: .*Successfully reset before failure: \['GigabitEthernet3'\]\. Not attempted: \['GigabitEthernet5'\]"
+    with pytest.raises(RuntimeError, match=match):
+        orchestrator.remove_pending()
+    assert orchestrator._pending_xe_resets == [("GigabitEthernet4", "FDO22222BBB"), ("GigabitEthernet5", "FDO22222BBB")]
+
+    with does_not_raise():
+        deployed = orchestrator.deploy_accepted_mutations()
+    assert deployed == [("GigabitEthernet3", "FDO22222BBB")]
+    assert orchestrator.rest_send.committed_payload == {"interfaces": [{"interfaceName": "GigabitEthernet3", "switchId": "FDO22222BBB"}]}
+    assert orchestrator._pending_deploys == [("GigabitEthernet4", "FDO22222BBB"), ("GigabitEthernet5", "FDO22222BBB")]
+
+
+def test_ethernet_routed_orchestrator_00340() -> None:
+    """
+    # Summary
+
+    Verify the failure-path finalizer deploys NOTHING when the NX-OS bulk normalize fails: the normalize is all-or-nothing, so
+    every queued pair stays in the normalize queue and is excluded by `_unsent_delete_pairs`. No deploy request is issued (the
+    response generator has no further fixture; any request would raise).
+
+    ## Test
+
+    - `delete_bulk` queues Ethernet1/31 and Ethernet1/32 for normalize and deploy
+    - The normalize POST returns 500; `remove_pending` raises `Bulk normalize failed`
+    - `deploy_accepted_mutations` returns `[]` and consumes no response
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.remove_pending()
+    - EthernetBaseOrchestrator._unsent_delete_pairs()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_remove_pending_00340a")
+        yield responses_ethernet_routed("test_remove_pending_00340b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    orchestrator.deploy = True
+    with does_not_raise():
+        orchestrator.delete_bulk([_nx_model("Ethernet1/31"), _nx_model("Ethernet1/32")], existing_data={"interfaceName": "probe"})
+
+    with pytest.raises(RuntimeError, match=r"Bulk normalize failed for \['Ethernet1/31', 'Ethernet1/32'\]"):
+        orchestrator.remove_pending()
+    assert orchestrator._pending_normalizes == [("Ethernet1/31", "FDO11111AAA"), ("Ethernet1/32", "FDO11111AAA")]
+
+    with does_not_raise():
+        deployed = orchestrator.deploy_accepted_mutations()
+    assert deployed == []
+    assert orchestrator._pending_deploys == [("Ethernet1/31", "FDO11111AAA"), ("Ethernet1/32", "FDO11111AAA")]

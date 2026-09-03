@@ -247,14 +247,17 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         """
         results: list = []
         succeeded: list[str] = []
-        for index, (interface_name, switch_id) in enumerate(self._pending_xe_resets):
+        # Iterate over a snapshot: each pair is dequeued as soon as its PUT succeeds, so after a failure the queue holds exactly
+        # the failed and not-attempted pairs and the failure-path finalizer (`_unsent_delete_pairs`) never deploys them.
+        pending = list(self._pending_xe_resets)
+        for index, (interface_name, switch_id) in enumerate(pending):
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(interface_name)
             payload = self._xe_reset_payload(interface_name, switch_id)
             try:
                 results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
             except Exception as e:
-                not_attempted = [name for name, _switch_id in self._pending_xe_resets[index + 1 :]]
+                not_attempted = [name for name, _switch_id in pending[index + 1 :]]
                 raise RuntimeError(
                     f"IOS-XE reset failed at {interface_name} on {switch_id}: {e}. "
                     f"Successfully reset before failure: {succeeded or 'none'}. "
@@ -262,11 +265,24 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
                     f"Interfaces reset before the failure are now at fabric default and were not rolled back."
                 ) from e
             succeeded.append(interface_name)
-        self._pending_xe_resets = []
+            self._pending_xe_resets.remove((interface_name, switch_id))
         base_results = super().remove_pending()
         if isinstance(base_results, list):
             results.extend(base_results)
         return results
+
+    def _unsent_delete_pairs(self) -> set[tuple[str, str]]:
+        """
+        # Summary
+
+        Extend the ethernet set of not-yet-accepted delete pairs with the IOS-XE reset queue (dequeued pair by pair as each reset
+        PUT succeeds), so the failure-path finalizer never deploys an XE interface whose reset failed or was never attempted.
+
+        ## Raises
+
+        None
+        """
+        return super()._unsent_delete_pairs() | set(self._pending_xe_resets)
 
     @staticmethod
     def _unconfigured_default_signature(policy_type: str) -> dict | None:

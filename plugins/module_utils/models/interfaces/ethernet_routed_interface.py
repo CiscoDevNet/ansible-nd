@@ -84,6 +84,13 @@ def normalize_ethernet_interface_name(value):
     return value
 
 
+# Public argspec `speed` choices: the union of the NX-OS and IOS-XE speed enums, in NX order with the XE-only extras appended.
+# The Ansible argspec cannot express the per-policy_type subset (that stays with the Pydantic branch models), but listing the
+# union lets ansible-doc / schema consumers discover every accepted spelling (PR #550 review).
+_NX_SPEED_CHOICES: list[str] = [e.value for e in SpeedEnum]
+_SPEED_ARGSPEC_CHOICES: list[str] = _NX_SPEED_CHOICES + [e.value for e in XeEthernetSpeedEnum if e.value not in _NX_SPEED_CHOICES]
+
+
 class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
     """
     # Summary
@@ -353,7 +360,7 @@ class EthernetRoutedInterfaceModel(NDBaseModel):
                                             admin_state=dict(type="bool"),
                                             description=dict(type="str"),
                                             extra_config=dict(type="str"),
-                                            fec=dict(type="str"),
+                                            fec=dict(type="str", choices=[e.value for e in FecEnum]),
                                             ip=dict(type="str"),
                                             ip_redirects=dict(type="bool"),
                                             mtu=dict(type="int"),
@@ -368,7 +375,7 @@ class EthernetRoutedInterfaceModel(NDBaseModel):
                                             qos_policy=dict(type="str"),
                                             queuing_policy=dict(type="str"),
                                             routing_tag=dict(type="str"),
-                                            speed=dict(type="str"),
+                                            speed=dict(type="str", choices=_SPEED_ARGSPEC_CHOICES),
                                             vrf=dict(type="str"),
                                         ),
                                     ),

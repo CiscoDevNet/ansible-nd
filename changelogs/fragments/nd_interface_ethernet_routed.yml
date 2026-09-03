@@ -12,3 +12,6 @@ bugfixes:
   - nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, nd_interface_ethernet_routed - when a per-switch bulk create fails
     with HTTP 207 Multi-Status, the interfaces the controller accepted are still queued for deploy so the failure path does not leave
     them staged.
+  - nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, nd_interface_ethernet_routed - the failure-path finalizer no
+    longer deploys an interface whose deferred normalize / reset request failed or was never attempted; only resets the controller
+    accepted are deployed.
