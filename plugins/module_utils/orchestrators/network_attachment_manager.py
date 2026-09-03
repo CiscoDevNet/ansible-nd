@@ -105,10 +105,10 @@ class NetworkAttachmentManager:
         if not config and state != "overridden":
             self._trace("network_attachment_phase_skip", phase=phase, reason="empty_config")
             return {}
-        if phase == "pre" and state not in ("deleted", "replaced", "overridden"):
+        if phase == "pre" and state not in ("deleted", "replaced", "overridden", "staged"):
             self._trace("network_attachment_phase_skip", phase=phase, reason="state_not_pre_detach")
             return {}
-        if phase == "post" and state not in ("merged", "replaced", "overridden"):
+        if phase == "post" and state not in ("merged", "replaced", "overridden", "staged"):
             self._trace("network_attachment_phase_skip", phase=phase, reason="state_not_post_attach")
             return {}
         if current_network_names == []:
@@ -454,7 +454,9 @@ class NetworkAttachmentManager:
         if state == "deleted":
             target_names = set(configured_network_names(config))
             detach_keys = {key for key in current if not target_names or key[0] in target_names}
-        elif state in ("replaced", "overridden"):
+        elif state in ("overridden", "staged"):
+            detach_keys = set(current.keys()).difference(desired.keys())
+        elif state == "replaced":
             target_names = set(configured_network_names(config))
             detach_keys = {key for key in current if key[0] in target_names and key not in desired}
         payloads = []
