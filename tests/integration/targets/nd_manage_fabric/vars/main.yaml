@@ -25,6 +25,16 @@ ai_ebgp_test_fabric_replaced: "ai_ebgp_test_fabric_replaced"
 ai_ebgp_test_fabric_deleted: "ai_ebgp_test_fabric_deleted"
 ai_ebgp_test_fabric_config_actions: "ai_ebgp_test_fabric_config_actions"
 
+routed_test_fabric_merged: "routed_test_fabric_merged"
+routed_test_fabric_replaced: "routed_test_fabric_replaced"
+routed_test_fabric_deleted: "routed_test_fabric_deleted"
+routed_test_fabric_config_actions: "routed_test_fabric_config_actions"
+
+ai_routed_test_fabric_merged: "ai_routed_test_fabric_merged"
+ai_routed_test_fabric_replaced: "ai_routed_test_fabric_replaced"
+ai_routed_test_fabric_deleted: "ai_routed_test_fabric_deleted"
+ai_routed_test_fabric_config_actions: "ai_routed_test_fabric_config_actions"
+
 # Common fabric configuration for all tests
 # common_fabric_config:
 fabric_config_ibgp:
@@ -522,6 +532,11 @@ fabric_config_ai_ibgp:
     dhcp_end_address: ""
     management_gateway: ""
     management_ipv4_prefix: 24
+
+# Routed fabrics share management properties with eBGP VXLAN fabrics; the module
+# injects the fabric type, so the eBGP configs are reused for the routed tests.
+fabric_config_routed: "{{ fabric_config_ebgp }}"
+fabric_config_ai_routed: "{{ fabric_config_ai_ebgp }}"
 
 # Common AI eBGP VXLAN fabric configuration for all AI eBGP tests
 # Uses aimlVxlanEbgp type which shares management properties with vxlanEbgp

@@ -1,0 +1,4 @@
+---
+minor_changes:
+  - Add ``nd_manage_fabric_routed`` module to manage Routed (``routed``) fabrics on Nexus Dashboard.
+  - Add ``nd_manage_fabric_ai_routed`` module to manage AI/ML Routed (``aimlRouted``) fabrics on Nexus Dashboard.
