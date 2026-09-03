@@ -28,7 +28,7 @@ def test_staged_query_module_args_maps_to_overridden_without_mutating_original()
 
     result = query_module_args(module_args)
 
-    assert result == {"state": "overridden", "config": [{"name": "BLUE"}]}
+    assert result == {"state": "overridden", "config": []}
     assert module_args["state"] == "staged"
 
 

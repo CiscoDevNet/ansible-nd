@@ -176,10 +176,19 @@ class NetworkStateMachine:
         desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
         desired_network_names = self.coordinator._configured_network_names(config)
 
-        sm, original_config, original_state = self.coordinator._new_state_machine(query_module_args(module_args), strategy)
+        current_network_names = []
+        if state == "staged":
+            query_sm, query_original_config, query_original_state = self.coordinator._new_state_machine(query_module_args(module_args), strategy)
+            try:
+                current_network_names = self._network_names_from_models(query_sm.existing)
+            finally:
+                self.coordinator._restore_state_machine_params(query_original_config, query_original_state)
+
+        sm, original_config, original_state = self.coordinator._new_state_machine(crud_module_args(module_args), strategy)
         try:
             prepare_crud_state(sm, state)
-            current_network_names = self._network_names_from_models(sm.existing)
+            if state != "staged":
+                current_network_names = self._network_names_from_models(sm.existing)
             current_network_name_set = set(current_network_names)
             desired_network_name_set = set(desired_network_names)
             current_desired_network_names = [network_name for network_name in desired_network_names if network_name in current_network_name_set]

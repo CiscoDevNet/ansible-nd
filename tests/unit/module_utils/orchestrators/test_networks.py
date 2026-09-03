@@ -253,7 +253,7 @@ class _StagedNetworkCoordinator:
 
     def _new_state_machine(self, module_args, _strategy):
         self.state_machine.state = module_args["state"]
-        self.calls.append(("new_state_machine", module_args["state"]))
+        self.calls.append(("new_state_machine", module_args["state"], list(module_args.get("config") or [])))
         return self.state_machine, "original-config", "original-state"
 
     def _current_attachment_details_ignore_missing(self, _module_args, _strategy, network_names):
@@ -418,13 +418,15 @@ def test_network_staged_detaches_omitted_networks_without_running_overridden_cru
     coordinator = _StagedNetworkCoordinator()
     state_machine = NetworkStateMachine(coordinator)
 
+    config = [{"network_name": "BLUE_NET", "attach": [{"switch_id": "SERIAL1"}]}]
+
     result = state_machine.run(
-        {"state": "staged", "config": [{"network_name": "BLUE_NET", "attach": [{"switch_id": "SERIAL1"}]}]},
-        StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}),
+        {"state": "staged", "config": config}, StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
     )
 
     assert result["changed"] is True
-    assert ("new_state_machine", "overridden") in coordinator.calls
+    assert ("new_state_machine", "overridden", []) in coordinator.calls
+    assert ("new_state_machine", "replaced", config) in coordinator.calls
     assert ("manage_state", "replaced") in coordinator.calls
     assert ("attachment_query", ["BLUE_NET", "OMIT_NET"]) in coordinator.calls
     assert (

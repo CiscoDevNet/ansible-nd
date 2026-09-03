@@ -44,14 +44,16 @@ def query_module_args(module_args: dict) -> dict:
 
     Return module arguments for the current-state query phase.
 
-    The staged workflow uses overridden query behavior so omitted resources can
-    be discovered for detach-only reconciliation.
+    The staged workflow uses overridden query behavior with an empty config so
+    omitted resources can be discovered without validating desired write data
+    under the overridden state context.
 
     Args:
         module_args: Original module arguments.
 
     Returns:
-        Original module arguments, or a shallow copy with staged mapped to overridden.
+        Original module arguments, or a shallow copy with staged mapped to overridden
+        and config cleared for query-only discovery.
 
     ## Raises
 
@@ -61,6 +63,7 @@ def query_module_args(module_args: dict) -> dict:
         return module_args
     query_args = dict(module_args)
     query_args["state"] = STAGED_QUERY_STATE
+    query_args["config"] = []
     return query_args
 
 
