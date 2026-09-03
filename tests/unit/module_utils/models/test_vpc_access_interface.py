@@ -601,7 +601,7 @@ def test_vpc_access_interface_00500_argument_spec_shape():
     spec = AccessVpcHostInterfaceModel.get_argument_spec()
     assert set(spec) == {"fabric_name", "config", "state"}
     assert spec["fabric_name"]["required"] is True
-    assert set(spec["state"]["choices"]) == {"merged", "replaced", "overridden", "deleted"}
+    assert set(spec["state"]["choices"]) == {"merged", "replaced", "overridden", "deleted", "gathered"}
 
     config_options = spec["config"]["options"]
     assert "switch_ip" in config_options
@@ -656,3 +656,195 @@ def test_vpc_access_interface_00600_nested_defaults():
     config = AccessVpcHostConfigDataModel(network_os=network_os)
     assert config.mode == "access"
     assert config.network_os.network_os_type == "nx-os"
+
+
+# =============================================================================
+# Gathered state and filtering tests
+# =============================================================================
+
+
+def test_vpc_access_interface_00700_gathered_state_in_choices():
+    """
+    # Summary
+
+    Verify state choices include ``gathered`` and default is ``merged``.
+
+    ## Test
+
+    - state choices: ["merged", "replaced", "overridden", "deleted", "gathered"]
+    - state default: "merged"
+
+    ## Classes and Methods
+
+    - AccessVpcHostInterfaceModel.get_argument_spec()
+    """
+    spec = AccessVpcHostInterfaceModel.get_argument_spec()
+    state_spec = spec["state"]
+    assert state_spec["choices"] == [
+        "merged",
+        "replaced",
+        "overridden",
+        "deleted",
+        "gathered",
+    ]
+    assert state_spec["default"] == "merged"
+
+
+def test_vpc_access_interface_00710_config_optional_for_gathered():
+    """
+    # Summary
+
+    Verify ``config`` is optional so ``state=gathered`` can run without input.
+
+    ## Test
+
+    - config required is False
+
+    ## Classes and Methods
+
+    - AccessVpcHostInterfaceModel.get_argument_spec()
+    """
+    spec = AccessVpcHostInterfaceModel.get_argument_spec()
+    assert spec["config"].get("required", False) is False
+
+
+def test_vpc_access_interface_00720_identifiers_optional_for_gathered():
+    """
+    # Summary
+
+    Verify gathered filters may omit both identifiers (``switch_ip``, ``interface_name``).
+
+    ## Test
+
+    - switch_ip required is False
+    - interface_name required is False
+
+    ## Classes and Methods
+
+    - AccessVpcHostInterfaceModel.get_argument_spec()
+    """
+    config_options = AccessVpcHostInterfaceModel.get_argument_spec()["config"]["options"]
+    assert config_options["switch_ip"].get("required", False) is False
+    assert config_options["interface_name"].get("required", False) is False
+
+
+def test_vpc_access_interface_00730_supports_gathered_filtering():
+    """
+    # Summary
+
+    Verify ``supports_gathered_filtering`` is ``True`` on ``AccessVpcHostInterfaceModel``
+    and ``False`` on the base ``NDBaseModel``.
+
+    ## Test
+
+    - NDBaseModel.supports_gathered_filtering is False
+    - AccessVpcHostInterfaceModel.supports_gathered_filtering is True
+
+    ## Classes and Methods
+
+    - NDBaseModel.supports_gathered_filtering
+    - AccessVpcHostInterfaceModel.supports_gathered_filtering
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+
+    assert NDBaseModel.supports_gathered_filtering is False
+    assert AccessVpcHostInterfaceModel.supports_gathered_filtering is True
+
+
+def test_vpc_access_interface_00740_gathered_filter_properties():
+    """
+    # Summary
+
+    Verify ``gathered_filter_properties`` contains the expected 6 properties.
+
+    ## Test
+
+    - gathered_filter_properties tuple has exactly 6 entries
+    - Each entry matches the expected dot-path
+
+    ## Classes and Methods
+
+    - AccessVpcHostInterfaceModel.gathered_filter_properties
+    """
+    assert AccessVpcHostInterfaceModel.gathered_filter_properties == (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.access_vlan",
+        "config_data.network_os.policy.peer1_port_channel_id",
+        "config_data.network_os.policy.peer2_port_channel_id",
+    )
+
+
+def test_vpc_access_interface_00750_normalize_gathered_filter_lowercase():
+    """
+    # Summary
+
+    Verify ``normalize_gathered_filter`` lowercases vPC interface names
+    (matching the Pydantic ``normalize_interface_name`` validator).
+
+    ## Test
+
+    - ``Vpc100`` normalizes to ``vpc100``
+    - ``VPC200`` normalizes to ``vpc200``
+    - ``vpc300`` is idempotent
+
+    ## Classes and Methods
+
+    - AccessVpcHostInterfaceModel.normalize_gathered_filter()
+    """
+    assert AccessVpcHostInterfaceModel.normalize_gathered_filter({"interface_name": "Vpc100"}) == {"interface_name": "vpc100"}
+
+    assert AccessVpcHostInterfaceModel.normalize_gathered_filter({"interface_name": "VPC200"}) == {"interface_name": "vpc200"}
+
+    assert AccessVpcHostInterfaceModel.normalize_gathered_filter({"interface_name": "vpc300"}) == {"interface_name": "vpc300"}
+
+
+def test_vpc_access_interface_00760_normalize_gathered_filter_passthrough():
+    """
+    # Summary
+
+    Verify ``normalize_gathered_filter`` passes through filters without ``interface_name``
+    unchanged.
+
+    ## Test
+
+    - Filter with only switch_ip is returned unchanged
+    - Filter with only policy fields is returned unchanged
+    - Empty filter is returned unchanged
+
+    ## Classes and Methods
+
+    - AccessVpcHostInterfaceModel.normalize_gathered_filter()
+    """
+    assert AccessVpcHostInterfaceModel.normalize_gathered_filter({"switch_ip": "10.1.1.1"}) == {"switch_ip": "10.1.1.1"}
+
+    assert AccessVpcHostInterfaceModel.normalize_gathered_filter({"config_data": {"network_os": {"policy": {"access_vlan": 100}}}}) == {
+        "config_data": {"network_os": {"policy": {"access_vlan": 100}}}
+    }
+
+    assert AccessVpcHostInterfaceModel.normalize_gathered_filter({}) == {}
+
+
+def test_vpc_access_interface_00770_normalize_gathered_filter_edge_cases():
+    """
+    # Summary
+
+    Verify ``normalize_gathered_filter`` handles edge cases for ``interface_name``:
+    ``None``, empty string, and non-string values.
+
+    ## Test
+
+    - interface_name=None is passed through
+    - interface_name="" is passed through
+    - interface_name=123 is passed through
+
+    ## Classes and Methods
+
+    - AccessVpcHostInterfaceModel.normalize_gathered_filter()
+    """
+    assert AccessVpcHostInterfaceModel.normalize_gathered_filter({"interface_name": None}) == {"interface_name": None}
+
+    assert AccessVpcHostInterfaceModel.normalize_gathered_filter({"interface_name": ""}) == {"interface_name": ""}
+
+    assert AccessVpcHostInterfaceModel.normalize_gathered_filter({"interface_name": 123}) == {"interface_name": 123}
