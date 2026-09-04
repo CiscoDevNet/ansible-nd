@@ -162,6 +162,7 @@ options:
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
+- cisco.nd.verification
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.1 or higher.
 - IPv4 and IPv6 prefix lists are created and deleted in bulk via separate API endpoints.
@@ -204,6 +205,10 @@ EXAMPLES = r"""
             action: deny
             prefix: ::/0
     state: merged
+    verify:
+      enabled: true
+      attempts: 5
+      interval: 1
 
 - name: Update an IPv4 prefix list
   cisco.nd.nd_manage_prefix_list:
@@ -334,6 +339,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_l
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.manage_prefix_list import PrefixListModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import verify_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_prefix_list import ManagePrefixListOrchestrator
 
@@ -355,6 +361,7 @@ def main():
     None (catches all exceptions and calls `module.fail_json`).
     """
     argument_spec = nd_argument_spec()
+    argument_spec.update(verify_spec())
     argument_spec.update(PrefixListModel.get_argument_spec())
 
     module = AnsibleModule(
@@ -375,6 +382,7 @@ def main():
         module_log.debug("manage_state begin state=%s check_mode=%s", module.params.get("state"), module.check_mode)
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
+        nd_state_machine.finalize_result()
 
         module.exit_json(**nd_state_machine.output.format())
 

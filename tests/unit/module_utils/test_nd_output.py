@@ -214,6 +214,36 @@ class TestNDOutputFormat:
         output.assign(before=before, after=after)
         assert output.format()["changed"] is True
 
+    def test_explicit_changed_false_suppresses_refreshed_collection_diff(self):
+        """A controller refresh must not claim the module changed unrelated concurrent state."""
+        from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
+            EthernetTrunkHostInterfaceModel,
+        )
+        from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+
+        def response(description):
+            return {
+                "switchIp": "192.0.2.10",
+                "interfaceName": "Ethernet1/1",
+                "description": description,
+                "configData": {"networkOS": {"policy": {"policyType": "trunkHost"}}},
+            }
+
+        before = NDConfigCollection(
+            model_class=EthernetTrunkHostInterfaceModel,
+            items=[EthernetTrunkHostInterfaceModel.from_response(response("before"))],
+        )
+        after = NDConfigCollection(
+            model_class=EthernetTrunkHostInterfaceModel,
+            items=[EthernetTrunkHostInterfaceModel.from_response(response("concurrent controller change"))],
+        )
+        output = NDOutput("normal")
+        output.assign(before=before, after=after)
+
+        output.set_changed(False)
+
+        assert output.format()["changed"] is False
+
 
 # =============================================================================
 # Test: NDOutput.assign

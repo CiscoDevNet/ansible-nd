@@ -15,12 +15,16 @@ import copy
 import inspect
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from time import sleep
 from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.rest.exceptions import RestTransportError
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_handler import ResponseHandlerProtocol
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.sender import SenderProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.rest.retry_policy import RestRetryPolicy
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
 
@@ -125,6 +129,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._response_handler: Optional[ResponseHandlerProtocol] = None
         self._result: list[dict] = []
         self._result_current: dict = {}
+        self._retry_policy_stack: list[RestRetryPolicy] = []
         self._send_interval: int = 5
         self._sender: Optional[SenderProtocol] = None
         self._timeout: int = 300
@@ -140,6 +145,24 @@ class RestSend:  # pylint: disable=too-many-public-methods
         msg = "ENTERED RestSend(): "
         msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
+
+    @contextmanager
+    def use_retry_policy(self, policy: RestRetryPolicy) -> Iterator["RestSend"]:
+        """Apply a request-attempt policy for the dynamic scope of this context."""
+        if not isinstance(policy, RestRetryPolicy):
+            raise TypeError(f"policy must be a RestRetryPolicy. Got {type(policy).__name__}.")
+        self._retry_policy_stack.append(policy)
+        try:
+            yield self
+        finally:
+            self._retry_policy_stack.pop()
+
+    @property
+    def retry_policy(self) -> RestRetryPolicy | None:
+        """Return the innermost active scoped retry policy, if any."""
+        if not self._retry_policy_stack:
+            return None
+        return self._retry_policy_stack[-1]
 
     def restore_settings(self) -> None:
         """
@@ -254,6 +277,8 @@ class RestSend:  # pylint: disable=too-many-public-methods
                 self._commit_check_mode()
             else:
                 self._commit_normal_mode()
+        except RestTransportError:
+            raise
         except (TypeError, ValueError) as error:
             msg = f"{self.class_name}.{method_name}: "
             msg += "Error during commit. "
@@ -327,6 +352,10 @@ class RestSend:  # pylint: disable=too-many-public-methods
             -   HandleResponse() raises `ValueError`
             -   Sender().commit() raises `ValueError`
             -   `verb` is not a valid verb (GET, POST, PUT, DELETE)"""
+        if self.retry_policy is not None:
+            self._commit_with_retry_policy(self.retry_policy)
+            return
+
         method_name = "_commit_normal_mode"
         timeout = copy.copy(self.timeout)
 
@@ -389,6 +418,49 @@ class RestSend:  # pylint: disable=too-many-public-methods
                 msg += f"Subtracted {self.send_interval} from timeout. "
                 msg += f"timeout: {timeout}."
                 self.log.debug(msg)
+
+        self._response.append(self.response_current)
+        self._result.append(self.result_current)
+        self._committed_payload = copy.deepcopy(self._payload)
+        self._payload = None
+
+    def _commit_with_retry_policy(self, policy: RestRetryPolicy) -> None:
+        """Commit with an exact attempt count supplied by a scoped policy."""
+        self.sender.path = self.path
+        self.sender.verb = self.verb
+        self.sender.payload = self.payload
+
+        for attempt in range(1, policy.attempts + 1):
+            try:
+                self.sender.commit()
+            except RestTransportError:
+                can_retry = self.verb is HttpVerbEnum.GET and policy.retry_transport_errors and attempt < policy.attempts
+                if not can_retry:
+                    raise
+                if policy.interval > 0 and self.unit_test is False:
+                    sleep(policy.interval)
+                continue
+            except ValueError as error:
+                raise ValueError(error) from error
+
+            self.response_current = self.sender.response
+            try:
+                self.response_handler.response = self.response_current
+                self.response_handler.verb = self.verb
+                self.response_handler.commit()
+                self.result_current = self.response_handler.result
+            except (TypeError, ValueError) as error:
+                msg = f"{self.class_name}._commit_with_retry_policy: "
+                msg += "Error building response/result. "
+                msg += f"Error detail: {error}"
+                raise ValueError(msg) from error
+
+            if self.result_current["success"]:
+                break
+            if self.result_current.get("retryable", True) is False:
+                break
+            if attempt < policy.attempts and policy.interval > 0 and self.unit_test is False:
+                sleep(policy.interval)
 
         self._response.append(self.response_current)
         self._result.append(self.result_current)

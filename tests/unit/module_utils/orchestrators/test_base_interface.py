@@ -37,7 +37,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import FinalizationContext
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.retry_policy import RestRetryPolicy
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
@@ -1436,3 +1438,25 @@ def test_base_interface_00960() -> None:
 
     with pytest.raises(RuntimeError, match=r"without a policy"):
         instance.preflight_create([_iface_model("192.168.12.151", "loopback100", config_data=False)])
+
+
+def test_base_interface_01000_query_final_state_invalidates_interface_cache(monkeypatch) -> None:
+    """Final-state readback must not reuse the initialization-time interface inventory."""
+
+    def responses():
+        yield {}
+
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    instance._switch_interfaces_cache = {"SERIAL1": {"ethernet1/1": {"description": "stale"}}}
+    cache_seen_by_query = []
+
+    def query_all(self, model_instance=None, **kwargs):
+        cache_seen_by_query.append(dict(self._switch_interfaces_cache))
+        return []
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "query_all", query_all)
+    context = FinalizationContext(state="merged")
+    policy = RestRetryPolicy(attempts=2, interval=0)
+
+    assert instance.query_final_state(context, policy) == []
+    assert cache_seen_by_query == [{}]

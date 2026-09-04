@@ -32,6 +32,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -483,7 +484,7 @@ class _ExistingConfiguredLoopbackSpy(_SpyLoopbackOrchestrator):
                     "networkOS": {
                         "networkOSType": "nx-os",
                         "policy": {"policyType": "loopback", "adminState": True, "description": "stale description"},
-                    }
+                    },
                 },
             }
         ]
@@ -594,3 +595,140 @@ def test_nd_state_machine_00210() -> None:
     assert "update" in names
     assert "delete" not in names
     assert "delete_bulk" not in names
+
+
+class _RefreshLoopbackSpy(_SpyLoopbackOrchestrator):
+    """Spy with programmable final-state readback results."""
+
+    def model_post_init(self, __context) -> None:
+        super().model_post_init(__context)
+        self._final_responses = []
+
+    def query_final_state(self, context, retry_policy):
+        self._calls.append(("query_final_state", (context, retry_policy)))
+        response = self._final_responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+_CONTROLLER_AFTER = [
+    {
+        "switchIp": "192.168.12.151",
+        "interfaceName": "loopback10",
+        "interfaceType": "loopback",
+        "configData": {
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {
+                    "policyType": "loopback",
+                    "description": "controller-normalized",
+                },
+            }
+        },
+    }
+]
+
+
+def _build_refresh_state_machine(*, state="merged", check_mode=False, verify=None):
+    spy = _RefreshLoopbackSpy(rest_send=_build_rest_send())
+    module = _build_module(state=state, check_mode=check_mode, config=_CONFIG)
+    if verify is not None:
+        module.params["verify"] = verify
+    return NDStateMachine(module=module, model_orchestrator=spy)
+
+
+def test_nd_state_machine_00300_finalize_result_refreshes_after_and_preserves_changed() -> None:
+    """Verified finalization replaces predicted output without clearing a successful change."""
+    instance = _build_refresh_state_machine(verify={"enabled": True, "attempts": 2, "interval": 0})
+    instance.model_orchestrator._final_responses = [_CONTROLLER_AFTER]
+
+    instance.manage_state()
+    instance.finalize_result()
+
+    output = instance.output.format()
+    assert output["changed"] is True
+    assert output["after"][0]["config_data"]["network_os"]["policy"]["description"] == "controller-normalized"
+    assert [name for name, _ in instance.model_orchestrator._calls].count("query_final_state") == 1
+    _, (context, policy) = instance.model_orchestrator._calls[-1]
+    assert context.state == "merged"
+    assert context.affected_identifiers == (("192.168.12.151", "loopback10"),)
+    assert policy.attempts == 2
+    assert policy.interval == 0
+    assert policy.retry_transport_errors is True
+
+
+@pytest.mark.parametrize(
+    ("check_mode", "verify"),
+    [
+        (False, None),
+        (False, {}),
+        (False, {"enabled": False}),
+        (True, {"enabled": True}),
+    ],
+)
+def test_nd_state_machine_00310_finalize_result_skips_default_disabled_and_check_mode(check_mode, verify) -> None:
+    """Omitted/disabled verification and check mode retain predictive output without a final query."""
+    instance = _build_refresh_state_machine(check_mode=check_mode, verify=verify)
+
+    instance.manage_state()
+    instance.finalize_result()
+
+    assert "query_final_state" not in [name for name, _ in instance.model_orchestrator._calls]
+    assert instance.output.format()["changed"] is True
+
+
+def test_nd_state_machine_00320_finalize_result_makes_one_logical_readback() -> None:
+    """Finalization delegates retry ownership and never repeats the orchestrator workflow."""
+    instance = _build_refresh_state_machine(verify={"enabled": True, "attempts": 3, "interval": 2})
+    instance.model_orchestrator._final_responses = [RuntimeError("readback failed")]
+
+    instance.manage_state()
+    predicted_after = instance.output.format()["after"]
+    with pytest.raises(NDStateMachineError, match=r"Failed to refresh final after-state.*readback failed"):
+        instance.finalize_result()
+
+    assert [name for name, _ in instance.model_orchestrator._calls].count("query_final_state") == 1
+    assert instance.output.format()["after"] == predicted_after
+    assert instance.output.format()["changed"] is True
+
+
+def test_nd_state_machine_00330_finalize_result_is_idempotent() -> None:
+    """A completed finalization cannot issue a second readback."""
+    instance = _build_refresh_state_machine(verify={"enabled": True})
+    instance.model_orchestrator._final_responses = [_CONTROLLER_AFTER]
+
+    instance.manage_state()
+    instance.finalize_result()
+    instance.finalize_result()
+
+    assert [name for name, _ in instance.model_orchestrator._calls].count("query_final_state") == 1
+    assert not hasattr(instance, "finalize")
+
+
+def test_nd_state_machine_00340_finalize_result_skips_no_op() -> None:
+    """Enabled verification does not add a GET when no write occurred."""
+    instance = _build_refresh_state_machine(verify={"enabled": True})
+    instance.proposed = instance.existing.copy()
+
+    instance.manage_state()
+    instance.finalize_result()
+
+    assert instance.output.format()["changed"] is False
+    assert "query_final_state" not in [name for name, _ in instance.model_orchestrator._calls]
+
+
+def test_nd_state_machine_00350_delete_context_includes_affected_identifier() -> None:
+    """Final readback context includes resources removed during this run."""
+    instance = _build_refresh_state_machine(state="deleted", verify={"enabled": True})
+    existing = NDConfigCollection.from_api_response(response_data=_CONTROLLER_AFTER, model_class=instance.model_class)
+    instance.before = existing.copy()
+    instance.existing = existing.copy()
+    instance.output.assign(before=instance.before, after=instance.existing)
+    instance.model_orchestrator._final_responses = [[]]
+
+    instance.manage_state()
+    instance.finalize_result()
+
+    _, (context, _) = instance.model_orchestrator._calls[-1]
+    assert context.affected_identifiers == (("192.168.12.151", "loopback10"),)

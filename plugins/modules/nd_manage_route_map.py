@@ -267,6 +267,7 @@ options:
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
+- cisco.nd.verification
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.1 or higher.
 - Route maps are created and deleted in bulk via the API.
@@ -388,7 +389,8 @@ before:
 after:
   description:
   - The route map configuration after the module ran, structured the same as the O(config) parameter.
-  - This reflects the module's predicted post-write state; it is not re-read from the controller after writes.
+  - By default, this reflects the predicted post-write state. When O(verify.enabled=true), it is
+    replaced by a controller readback after all write actions complete.
   - In check mode, this is the configuration that would result if the module ran outside check mode.
   returned: always
   type: list
@@ -453,6 +455,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_l
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_route_map.manage_route_map import RouteMapModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import verify_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_route_map import ManageRouteMapOrchestrator
 
@@ -470,6 +473,7 @@ def _validate_route_map_config(module: AnsibleModule) -> None:
 
 def main():
     argument_spec = nd_argument_spec()
+    argument_spec.update(verify_spec())
     argument_spec.update(RouteMapModel.get_argument_spec())
 
     module = AnsibleModule(
@@ -491,6 +495,7 @@ def main():
         module_log.debug("manage_state begin state=%s check_mode=%s", module.params.get("state"), module.check_mode)
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
+        nd_state_machine.finalize_result()
 
         module.exit_json(**nd_state_machine.output.format())
 

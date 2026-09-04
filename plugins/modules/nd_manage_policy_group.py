@@ -232,6 +232,7 @@ options:
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
+- cisco.nd.verification
 notes:
 - The module is validation-first but B(not) a rollback transaction. Input validation
   and duplicate checks run before write operations. After controller writes begin,
@@ -400,6 +401,7 @@ RETURN = r"""
 """
 
 import logging
+from typing import Any
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
@@ -434,6 +436,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.sw
     SwitchDataModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import verify_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
 )
@@ -1065,8 +1068,31 @@ def _resolve_switch_ips_in_config(module, log, config, fabric_name):
         entry["switch_ids"] = resolved_list
 
 
+def _needs_verification_only_state_machine(
+    state: str,
+    normal_config: list[dict],
+    module_params: dict[str, Any],
+    *,
+    check_mode: bool,
+) -> bool:
+    """Return whether bypass-only deletes need a pre-write finalizer."""
+    verify = module_params.get("verify")
+    return state == "deleted" and not normal_config and not check_mode and isinstance(verify, dict) and verify.get("enabled") is True
+
+
+def _state_machine_failure_result(nd_state_machine: NDStateMachine | None, result: dict[str, Any]) -> dict[str, Any]:
+    """Preserve predictive state and supplemental output on finalization failure."""
+    if nd_state_machine is None:
+        return dict(result)
+    supplemental_result = {key: result[key] for key in ("pending_deleted_cleanup", "force_created", "direct_actions") if key in result}
+    failure_result = nd_state_machine.output.format()
+    failure_result.update(supplemental_result)
+    return failure_result
+
+
 def main():
     argument_spec = nd_argument_spec()
+    argument_spec.update(verify_spec())
     argument_spec.update(PolicyGroupCreate.get_argument_spec())
 
     module = AnsibleModule(
@@ -1082,6 +1108,8 @@ def main():
     require_pydantic(module)
 
     # Initialize logging
+    nd_state_machine = None
+    result: dict[str, Any] = {}
     try:
         log_config = Log()
         log_config.commit()
@@ -1284,6 +1312,19 @@ def main():
             )
             module.params["config"] = normal_config
 
+        if _needs_verification_only_state_machine(
+            state,
+            normal_config,
+            module.params,
+            check_mode=module.check_mode,
+        ):
+            # Capture the pre-write collection before direct ID deletes or
+            # pending-delete cleanup bypass the normal state-machine path.
+            nd_state_machine = NDStateMachine(
+                module=module,
+                model_orchestrator=orchestrator,
+            )
+
         force_created = False
         force_created_models: list = []
         if force_create_items and not module.check_mode:
@@ -1332,7 +1373,6 @@ def main():
         # avoid a second broad query_all from NDStateMachine initialization and
         # let the policySummary pending-delete cleanup pass below decide whether
         # any hidden markDeleted switches should still be deployed.
-        nd_state_machine = None
         if state == "deleted" and not normal_config:
             log.info("Deleted state resolved to no active policy groups; skipping normal state-machine delete path.")
             result = {"changed": False}
@@ -1370,6 +1410,12 @@ def main():
             result["changed"] = True
             result["direct_actions"] = direct_actions_result
 
+        if nd_state_machine is not None:
+            supplemental_result = {key: result[key] for key in ("pending_deleted_cleanup", "force_created", "direct_actions") if key in result}
+            nd_state_machine.finalize_result(changed=bool(result.get("changed")))
+            result = nd_state_machine.output.format()
+            result.update(supplemental_result)
+
         if template_input_validation_failures:
             result["failed"] = True
             result["template_input_validation_failed"] = template_input_validation_failures
@@ -1397,7 +1443,9 @@ def main():
 
     except NDStateMachineError as e:
         log.error("State machine error: %s", str(e))
-        module.fail_json(msg=str(e))
+        failure_result = _state_machine_failure_result(nd_state_machine, result)
+        failure_result.pop("msg", None)
+        module.fail_json(msg=str(e), **failure_result)
 
     except Exception as e:
         import traceback

@@ -13,7 +13,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
 )
 
 DEFAULT_VERIFY_TIMEOUT = 10
-DEFAULT_VERIFY_RETRIES = 5
+DEFAULT_VERIFY_ATTEMPTS = 5
+DEFAULT_VERIFY_INTERVAL = 1
 DEFAULT_CONFIG_ACTION_TYPE = "switch"
 CONFIG_ACTION_TYPE_CHOICES = ("switch", "global")
 
@@ -126,6 +127,8 @@ def _normalize_timeout(value: Any | None, fallback: int) -> int:
     Returns:
         Positive integer timeout value.
     """
+    if isinstance(value, bool):
+        return fallback
     try:
         parsed = int(value)
         if parsed > 0:
@@ -149,9 +152,24 @@ def _normalize_iteration(value: Any | None, fallback: int) -> int:
     Returns:
         Positive integer iteration count.
     """
+    if isinstance(value, bool):
+        return fallback
     try:
         parsed = int(value)
         if parsed > 0:
+            return parsed
+    except (TypeError, ValueError):
+        pass
+    return fallback
+
+
+def _normalize_interval(value: Any | None, fallback: int) -> int:
+    """Return a non-negative retry interval with a defensive fallback."""
+    if isinstance(value, bool):
+        return fallback
+    try:
+        parsed = int(value)
+        if parsed >= 0:
             return parsed
     except (TypeError, ValueError):
         pass
@@ -172,21 +190,27 @@ def get_verify_settings(module: Any) -> dict[str, Any]:
     Schema:
       verify:
         enabled: bool
-        retries: int
+        attempts: int
+        interval: int
         timeout: int
     """
     raw_verify = module.params.get("verify")
     if isinstance(raw_verify, dict):
         enabled = raw_verify.get("enabled", True)
+        raw_attempts = raw_verify.get("attempts")
+        if raw_attempts is None:
+            raw_attempts = raw_verify.get("retries")
         return {
             "enabled": _require_bool("verify.enabled", enabled),
-            "retries": _normalize_iteration(raw_verify.get("retries"), DEFAULT_VERIFY_RETRIES),
+            "attempts": _normalize_iteration(raw_attempts, DEFAULT_VERIFY_ATTEMPTS),
+            "interval": _normalize_interval(raw_verify.get("interval"), DEFAULT_VERIFY_INTERVAL),
             "timeout": _normalize_timeout(raw_verify.get("timeout"), DEFAULT_VERIFY_TIMEOUT),
         }
 
     return {
         "enabled": True,
-        "retries": DEFAULT_VERIFY_RETRIES,
+        "attempts": DEFAULT_VERIFY_ATTEMPTS,
+        "interval": DEFAULT_VERIFY_INTERVAL,
         "timeout": DEFAULT_VERIFY_TIMEOUT,
     }
 
@@ -256,8 +280,4 @@ def get_verify_iterations(module: Any) -> int:
     Returns:
         Positive integer verification attempt count.
     """
-    raw_verify = module.params.get("verify")
-    if isinstance(raw_verify, dict) and "retries" in raw_verify:
-        return get_verify_settings(module).get("retries", DEFAULT_VERIFY_RETRIES)
-
-    return get_verify_settings(module).get("retries", DEFAULT_VERIFY_RETRIES)
+    return get_verify_settings(module).get("attempts", DEFAULT_VERIFY_ATTEMPTS)

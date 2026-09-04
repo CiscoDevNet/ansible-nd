@@ -1386,6 +1386,7 @@ options:
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
+- cisco.nd.verification
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only eBGP VXLAN fabric type (C(vxlanEbgp)) is supported by this module.
@@ -1721,6 +1722,7 @@ api_payload:
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import verify_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
@@ -1730,6 +1732,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 
 def main():
     argument_spec = nd_argument_spec()
+    argument_spec.update(verify_spec())
     argument_spec.update(FabricEbgpModel.get_argument_spec())
 
     module = AnsibleModule(
@@ -1779,6 +1782,7 @@ def main():
                     deploy_type=deploy_type,
                 )
 
+        nd_state_machine.finalize_result()
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
