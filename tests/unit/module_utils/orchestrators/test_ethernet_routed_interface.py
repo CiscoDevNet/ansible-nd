@@ -23,6 +23,7 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 # pylint: disable=line-too-long
 # pylint: disable=protected-access
 # pylint: disable=redefined-outer-name
+# pylint: disable=too-many-lines
 
 from __future__ import annotations
 
@@ -33,6 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     EthernetRoutedInterfaceModel,
     NexusEthernetRoutedNetworkOSModel,
     NexusEthernetRoutedPolicyModel,
+    XeEthernetRoutedNetworkOSModel,
     XeEthernetRoutedPolicyModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import (
@@ -281,11 +283,11 @@ def test_ethernet_routed_orchestrator_00200(policy_overrides, expected) -> None:
 # =============================================================================
 
 
-def _nx_model(interface_name: str = "Ethernet1/31") -> EthernetRoutedInterfaceModel:
+def _nx_model(interface_name: str = "Ethernet1/31", switch_ip: str = "192.168.1.1") -> EthernetRoutedInterfaceModel:
     """Build a configured NX-OS routed model as it would come from before[]."""
     return EthernetRoutedInterfaceModel.from_response(
         {
-            "switchIp": "192.168.1.1",
+            "switchIp": switch_ip,
             "interfaceName": interface_name,
             "interfaceType": "ethernet",
             "configData": {
@@ -1062,3 +1064,367 @@ def test_ethernet_routed_orchestrator_00340() -> None:
         deployed = orchestrator.deploy_accepted_mutations()
     assert deployed == []
     assert orchestrator._pending_deploys == [("Ethernet1/31", "FDO11111AAA"), ("Ethernet1/32", "FDO11111AAA")]
+
+
+def test_ethernet_routed_orchestrator_00350() -> None:
+    """
+    # Summary
+
+    Verify a bulk normalize that fails with a MIXED HTTP 207 dequeues the exact-success member so the failure-path finalizer deploys
+    it, while the rejected member stays queued as unsent. The normalize endpoint reports an independent status per interface, so the
+    accepted member's reset IS on the controller; leaving it queued would strand it staged, and a retry would filter it out (its
+    intent is already `trunkHost`) and never deploy it.
+
+    ## Test
+
+    - `delete_bulk` queues Ethernet1/31 and Ethernet1/32 for normalize and deploy
+    - The normalize POST returns 207: Ethernet1/31 `success`, Ethernet1/32 `failed`
+    - `remove_pending` raises naming Ethernet1/32 as failed and Ethernet1/31 as accepted; only Ethernet1/32 remains queued
+    - `deploy_accepted_mutations` deploys exactly Ethernet1/31; Ethernet1/32 stays in the deploy queue
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.remove_pending()
+    - EthernetBaseOrchestrator._normalize_interfaces()
+    - EthernetBaseOrchestrator._dequeue_accepted_normalizes()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_remove_pending_00350a")
+        yield responses_ethernet_routed("test_remove_pending_00350b")
+        yield responses_ethernet_routed("test_remove_pending_00350c")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    orchestrator.deploy = True
+    with does_not_raise():
+        orchestrator.delete_bulk([_nx_model("Ethernet1/31"), _nx_model("Ethernet1/32")], existing_data={"interfaceName": "probe"})
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Bulk normalize failed for \['Ethernet1/32'\]: .*The controller accepted \['Ethernet1/31'\] from the same request; their deploy stays queued\.$",
+    ):
+        orchestrator.remove_pending()
+    assert orchestrator._pending_normalizes == [("Ethernet1/32", "FDO11111AAA")]
+
+    with does_not_raise():
+        deployed = orchestrator.deploy_accepted_mutations()
+    assert deployed == [("Ethernet1/31", "FDO11111AAA")]
+    assert orchestrator.rest_send.committed_payload == {"interfaces": [{"interfaceName": "Ethernet1/31", "switchId": "FDO11111AAA"}]}
+    assert orchestrator._pending_deploys == [("Ethernet1/32", "FDO11111AAA")]
+
+
+def test_ethernet_routed_orchestrator_00360() -> None:
+    """
+    # Summary
+
+    Verify the normalize queue is split into per-switch requests when the same interface name is queued on more than one switch:
+    the 207 `results[]` identify interfaces by `name` only, so a single fabric-wide request could not correlate a mixed outcome back
+    to `(interface_name, switch_id)`. Groups are sent fail-fast in queue order; a group the controller accepted is dequeued before a
+    later group fails.
+
+    ## Test
+
+    - Ethernet1/31 is queued on FDO11111AAA and FDO22222BBB
+    - First normalize POST (FDO11111AAA only) succeeds; second (FDO22222BBB only) returns 500
+    - `remove_pending` raises naming the second switch's Ethernet1/31; only that pair remains queued
+    - `deploy_accepted_mutations` deploys exactly the first switch's Ethernet1/31
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._normalize_groups()
+    - EthernetBaseOrchestrator._normalize_interfaces()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_remove_pending_00360a")
+        yield responses_ethernet_routed("test_remove_pending_00360b")
+        yield responses_ethernet_routed("test_remove_pending_00360c")
+        yield responses_ethernet_routed("test_remove_pending_00360d")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    orchestrator.deploy = True
+    with does_not_raise():
+        orchestrator.delete_bulk(
+            [_nx_model("Ethernet1/31", switch_ip="192.168.1.1"), _nx_model("Ethernet1/31", switch_ip="192.168.1.2")],
+            existing_data={"interfaceName": "probe"},
+        )
+    assert orchestrator._normalize_groups() == [[("Ethernet1/31", "FDO11111AAA")], [("Ethernet1/31", "FDO22222BBB")]]
+
+    with pytest.raises(RuntimeError, match=r"Bulk normalize failed for \['Ethernet1/31'\]: .*None of these interfaces were reset\.$"):
+        orchestrator.remove_pending()
+    assert orchestrator.rest_send.committed_payload["switchInterfaces"] == [{"interfaceName": "Ethernet1/31", "switchId": "FDO22222BBB"}]
+    assert orchestrator._pending_normalizes == [("Ethernet1/31", "FDO22222BBB")]
+
+    with does_not_raise():
+        deployed = orchestrator.deploy_accepted_mutations()
+    assert deployed == [("Ethernet1/31", "FDO11111AAA")]
+    assert orchestrator._pending_deploys == [("Ethernet1/31", "FDO22222BBB")]
+
+
+# =============================================================================
+# Test: fabric-ownership guard — an explicitly named fabric link is refused before any write (PR #550 review)
+# =============================================================================
+
+
+def _wire(policy: dict, interface_name: str, os_type: str = "nx-os", mode: str = "routed") -> dict:
+    """Build the wire-state dict of a non-member interface carrying `policy` (policyType included by the caller)."""
+    return {
+        "interfaceName": interface_name,
+        "interfaceType": "ethernet",
+        "operData": {"portChannelId": -1},
+        "configData": {"mode": mode, "networkOS": {"networkOSType": os_type, "policy": policy}},
+    }
+
+
+def _user_xe_model(policy_kwargs: dict, interface_name: str = "GigabitEthernet3", switch_ip: str = "192.168.1.2") -> EthernetRoutedInterfaceModel:
+    """Build a user-side IOS-XE routed model whose policy carries exactly `policy_kwargs`."""
+    return EthernetRoutedInterfaceModel(
+        switch_ip=switch_ip,
+        interface_name=interface_name,
+        config_data=EthernetRoutedConfigDataModel(
+            network_os=XeEthernetRoutedNetworkOSModel(
+                network_os_type="ios-xe",
+                policy=XeEthernetRoutedPolicyModel(policy_type="iosXeRoutedHost", **policy_kwargs),
+            ),
+        ),
+    )
+
+
+def test_ethernet_routed_orchestrator_00900() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` refuses an explicitly named NX-OS interface whose current wire policy is the `numbered` fabric-link type.
+    The managed-set filter hides such an interface from `before[]`, so the state machine classifies a mistyped `interface_name` as a
+    create; without this guard the bulk POST would replace the leaf->spine underlay intent with `routedHost`.
+
+    ## Test
+
+    - Existing wire state for Ethernet1/1 carries `policyType: numbered` (leaf->spine link)
+    - `create_bulk` raises `RuntimeError` naming the system policy before any POST (single fixture: a POST would exhaust the generator)
+    - Nothing is queued for deploy
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.create_bulk()
+    - EthernetBaseOrchestrator._check_fabric_ownership()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_ownership_00900a")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    existing = _wire({"policyType": "numbered", "adminState": True, "ip": "10.4.0.1", "prefix": 30, "mtu": 9216}, "Ethernet1/1")
+    model = _user_nx_model({"ip": "192.0.2.1", "prefix": 30}, interface_name="Ethernet1/1")
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Bulk create failed: Interface Ethernet1/1 on switch 192\.168\.1\.1 is owned by the fabric \(system policy 'numbered'\)\. "
+        r"Refusing to overwrite it with policy 'routedHost'\.",
+    ):
+        orchestrator.create_bulk([model], existing_data=existing)
+    assert orchestrator._pending_deploys == []
+
+
+@pytest.mark.parametrize("system_policy", ["multiSiteLinkMember", "vrfLiteLinkMember", "vpcPeerKeepAlive", "mplsUplink", "unnumbered"])
+def test_ethernet_routed_orchestrator_00910(system_policy) -> None:
+    """
+    # Summary
+
+    Verify `update` refuses an explicitly named interface whose current wire policy is any other system routed type (multisite,
+    VRF-Lite, vPC keep-alive, MPLS uplink, unnumbered underlay) — the guard is an allowlist of user-convertible host policies, not a
+    denylist, so every fabric-provisioned type is refused.
+
+    ## Test
+
+    - Existing wire state carries the parametrized system policy type
+    - `update` raises `RuntimeError` naming it before any PUT; nothing is queued for deploy
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.update()
+    - EthernetBaseOrchestrator._check_fabric_ownership()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_ownership_00910a")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    existing = _wire({"policyType": system_policy, "adminState": True, "ip": "10.10.1.1", "prefix": 30}, "Ethernet1/3")
+    model = _user_nx_model({"description": "typo"}, interface_name="Ethernet1/3")
+
+    with pytest.raises(RuntimeError, match=rf"Update failed for .*owned by the fabric \(system policy '{system_policy}'\)"):
+        orchestrator.update(model, existing_data=existing)
+    assert orchestrator._pending_deploys == []
+
+
+def test_ethernet_routed_orchestrator_00920() -> None:
+    """
+    # Summary
+
+    Verify the guard preserves the normal host conversions: a free port carrying the fabric-default `trunkHost` converts to
+    `routedHost` and the bulk POST proceeds. Also pins that an NX-OS-only run never fetches the fabric links — no links fixture
+    precedes the POST, so a links GET would consume the POST response and the create would fail.
+
+    ## Test
+
+    - Existing wire state for Ethernet1/10 is a defaults-only `trunkHost`
+    - `create_bulk` posts and queues the deploy; exactly two fixtures are consumed (switches, POST)
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.create_bulk()
+    - EthernetBaseOrchestrator._check_fabric_ownership()
+    - EthernetRoutedInterfaceOrchestrator._check_fabric_ownership()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_ownership_00920a")
+        yield responses_ethernet_routed("test_ownership_00920b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    existing = _wire({"policyType": "trunkHost", "adminState": True, "allowedVlans": "none"}, "Ethernet1/10", mode="trunk")
+    model = _user_nx_model({"ip": "192.0.2.1", "prefix": 30}, interface_name="Ethernet1/10")
+
+    with does_not_raise():
+        orchestrator.create_bulk([model], existing_data=existing)
+    assert orchestrator._pending_deploys == [("Ethernet1/10", "FDO11111AAA")]
+    assert orchestrator._fabric_link_endpoints_cache is None
+
+
+def test_ethernet_routed_orchestrator_00930() -> None:
+    """
+    # Summary
+
+    Verify `preflight` runs the fabric-ownership guard against the per-switch inventory, so a `--check` run naming a fabric link
+    fails exactly like a normal run would inside `create_bulk` instead of reporting a planned change.
+
+    ## Test
+
+    - interfaceList reports Ethernet1/1 as a `numbered` leaf->spine link (lab-shaped record)
+    - `preflight` raises `RuntimeError` naming the system policy
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.preflight()
+    - EthernetBaseOrchestrator._check_fabric_ownership()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_ownership_00930a")
+        yield responses_ethernet_routed("test_ownership_00930b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    model = _user_nx_model({"ip": "192.0.2.1", "prefix": 30}, interface_name="Ethernet1/1")
+
+    with pytest.raises(RuntimeError, match=r"Interface Ethernet1/1 on switch 192\.168\.1\.1 is owned by the fabric \(system policy 'numbered'\)"):
+        orchestrator.preflight([model])
+
+
+def test_ethernet_routed_orchestrator_00940() -> None:
+    """
+    # Summary
+
+    Verify an IOS-XE target that is an endpoint of a fabric link carrying an ND link policy is refused even though its own wire record
+    is a plain defaults-only `iosXeRoutedHost` (the lab-observed C8000V shape: WAN1 GigabitEthernet3, endpoint of the ISN->SITE2
+    `ebgpVrfLite` link). Policy type alone cannot express IOS-XE ownership, so the fabric links are consulted.
+
+    ## Test
+
+    - Existing wire state for GigabitEthernet3 is a defaults-only `iosXeRoutedHost` (passes the policy-type guard)
+    - The links GET lists GigabitEthernet3 as the src endpoint of an `ebgpVrfLite` link
+    - `create_bulk` raises `RuntimeError` naming the link before any POST; nothing is queued for deploy
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator._check_fabric_ownership()
+    - EthernetRoutedInterfaceOrchestrator._fabric_link_endpoints()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_ownership_00940a")
+        yield responses_ethernet_routed("test_ownership_00940b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    existing = _wire({"policyType": "iosXeRoutedHost", "adminState": True, "mtu": 1500, "speed": "auto"}, "GigabitEthernet3", os_type="ios-xe")
+    model = _user_xe_model({"ip": "10.99.203.1", "prefix": 30})
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Bulk create failed: Interface GigabitEthernet3 on switch 192\.168\.1\.2 is an endpoint of fabric link LINK-UUID-1 "
+        r"\(ebgpVrfLite: WAN1 GigabitEthernet3 -> S2_BG1 Ethernet1/3\)\. Refusing to overwrite fabric-owned intent with policy 'iosXeRoutedHost'",
+    ):
+        orchestrator.create_bulk([model], existing_data=existing)
+    assert orchestrator._pending_deploys == []
+    assert set(orchestrator._fabric_link_endpoints()) == {("FDO22222BBB", "gigabitethernet3"), ("FDO33333CCC", "ethernet1/3")}
+
+
+def test_ethernet_routed_orchestrator_00950() -> None:
+    """
+    # Summary
+
+    Verify a discovered-only link (no `configData.policyType`) does not make an IOS-XE interface fabric-owned: ND has no intent on
+    such an adjacency (lab-verified 2026-09-03: leaf->ToR uplinks, vPC peer links), so the write proceeds. Also pins that the links are
+    fetched once per run: a second IOS-XE guard evaluation reuses the cache (no further links fixture is present).
+
+    ## Test
+
+    - The links GET lists GigabitEthernet4 only on a policy-less link (and GigabitEthernet3 on an `ebgpVrfLite` link)
+    - `create_bulk` for GigabitEthernet4 posts and queues the deploy
+    - A subsequent guard evaluation for another XE interface consumes no fixture
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator._check_fabric_ownership()
+    - EthernetRoutedInterfaceOrchestrator._fabric_link_endpoints()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_ownership_00950a")
+        yield responses_ethernet_routed("test_ownership_00950b")
+        yield responses_ethernet_routed("test_ownership_00950c")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    existing = _wire({"policyType": "iosXeRoutedHost", "adminState": True, "mtu": 1500, "speed": "auto"}, "GigabitEthernet4", os_type="ios-xe")
+    model = _user_xe_model({"ip": "10.99.204.1", "prefix": 30}, interface_name="GigabitEthernet4")
+
+    with does_not_raise():
+        orchestrator.create_bulk([model], existing_data=existing)
+    assert orchestrator._pending_deploys == [("GigabitEthernet4", "FDO22222BBB")]
+
+    with does_not_raise():
+        orchestrator._check_fabric_ownership(_user_xe_model({}, interface_name="GigabitEthernet5"), None)
+
+
+def test_ethernet_routed_orchestrator_00960() -> None:
+    """
+    # Summary
+
+    Verify the links listing is paginated via `meta.counts.remaining` / `offset`, so a fabric-owned endpoint on a later page is still
+    found.
+
+    ## Test
+
+    - Page 1 (remaining: 1) carries only the policy-less GigabitEthernet4 adjacency; page 2 (offset=1) carries the `ebgpVrfLite` link
+    - `create_bulk` for GigabitEthernet3 is refused; both pages were requested (the second with `offset=1`)
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator._fabric_link_endpoints()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_ownership_00960a")
+        yield responses_ethernet_routed("test_ownership_00960b")
+        yield responses_ethernet_routed("test_ownership_00960c")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    existing = _wire({"policyType": "iosXeRoutedHost", "adminState": True, "mtu": 1500, "speed": "auto"}, "GigabitEthernet3", os_type="ios-xe")
+    model = _user_xe_model({"ip": "10.99.203.1", "prefix": 30})
+
+    with pytest.raises(RuntimeError, match=r"is an endpoint of fabric link LINK-UUID-1"):
+        orchestrator.create_bulk([model], existing_data=existing)
+    assert orchestrator.rest_send.path == "/api/v1/manage/links?fabricName=fabric_1&offset=1"
+    assert orchestrator._pending_deploys == []

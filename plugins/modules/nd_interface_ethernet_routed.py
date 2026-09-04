@@ -239,6 +239,11 @@ notes:
 - This module manages the C(routedHost) (NX-OS) and C(iosXeRoutedHost) (IOS-XE) policy templates. System routed
   policy types (fabric links, multi-site link members, VRF-Lite link members, and similar) are never read or modified
   by this module, so O(state=overridden) cannot affect fabric underlay configuration.
+- An interface named in O(config) that is currently owned by the fabric is rejected before any change is written,
+  in check mode too. This covers an NX-OS interface carrying a system policy (fabric link, multi-site or VRF-Lite
+  link member, vPC keep-alive, MPLS uplink, and similar) and an IOS-XE interface that is an endpoint of a fabric
+  link, even when that interface reads as a plain C(iosXeRoutedHost). Converting a host-facing interface
+  (for example a C(trunkHost) or C(accessHost) port) to routed remains allowed.
 - Interfaces that are port-channel members have restricted mutability.
 - O(state=overridden) operates fabric-wide for NX-OS interfaces. An empty O(config) list resets every managed
   NX-OS routed interface in the fabric to its fabric default configuration.

@@ -15,3 +15,11 @@ bugfixes:
   - nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, nd_interface_ethernet_routed - the failure-path finalizer no
     longer deploys an interface whose deferred normalize / reset request failed or was never attempted; only resets the controller
     accepted are deployed.
+  - nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, nd_interface_ethernet_routed - an explicitly named interface whose
+    current policy is fabric-owned (``numbered``, ``multiSiteLinkMember``, ``vrfLiteLinkMember``, ``vpcPeerKeepAlive``, ``mplsUplink``,
+    and similar) is now rejected before any write, in check mode too, instead of having its fabric-link intent overwritten by the host
+    policy; ``nd_interface_ethernet_routed`` additionally refuses an IOS-XE interface that is an endpoint of a fabric link.
+  - nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, nd_interface_ethernet_routed - when a bulk normalize (the
+    ``deleted`` / ``overridden`` reset path) fails with a mixed HTTP 207 Multi-Status, the interfaces the controller did reset are still
+    deployed by the failure path instead of being left staged and undeployed; the normalize is split per switch when the same
+    interface name is queued on more than one switch so the per-interface results can be correlated.

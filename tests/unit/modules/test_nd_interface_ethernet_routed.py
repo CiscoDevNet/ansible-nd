@@ -643,3 +643,47 @@ def test_nd_interface_ethernet_routed_00210(monkeypatch: pytest.MonkeyPatch) -> 
     assert "NOTE:" not in msg
     assert orchestrator._pending_normalizes == [("Ethernet1/31", "FDO11111AAA"), ("Ethernet1/32", "FDO11111AAA")]
     assert orchestrator._pending_deploys == [("Ethernet1/31", "FDO11111AAA"), ("Ethernet1/32", "FDO11111AAA")]
+
+
+def test_nd_interface_ethernet_routed_00220(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    End-to-end: an NX-OS bulk normalize under `state: deleted` with `config_actions.deploy: true` that fails with a MIXED HTTP 207
+    (Ethernet1/31 accepted, Ethernet1/32 rejected). `main()`'s finalizer must deploy Ethernet1/31 and name it in the NOTE, while
+    Ethernet1/32 stays queued for normalize and deploy; a later run converges it.
+
+    ## Test
+
+    - Fixtures: switches list, normalize POST 207 mixed, deploy 200
+    - `fail_json` msg names Ethernet1/32 as failed and Ethernet1/31 as accepted, then a NOTE naming only Ethernet1/31
+    - The deploy payload contains only Ethernet1/31; Ethernet1/32 remains queued for normalize and deploy
+
+    ## Classes and Methods
+
+    - nd_interface_ethernet_routed.main()
+    - finalize_accepted_intent()
+    - EthernetBaseOrchestrator.remove_pending()
+    - EthernetBaseOrchestrator._dequeue_accepted_normalizes()
+    """
+    models = [
+        _existing_model("192.168.1.1", name, "nx-os", {"policyType": "routedHost", "ip": ip, "prefix": 30})
+        for name, ip in (("Ethernet1/31", "10.99.31.1"), ("Ethernet1/32", "10.99.32.1"))
+    ]
+    kwargs, orchestrator = _run_delete_main(
+        monkeypatch,
+        fixture_keys=["test_wrapper_nx_normalize_00220a", "test_wrapper_nx_normalize_00220b", "test_wrapper_nx_normalize_00220c"],
+        models=models,
+    )
+
+    msg = kwargs["msg"]
+    assert msg.startswith("Module failed: Bulk normalize failed for ['Ethernet1/32']: ")
+    assert "The controller accepted ['Ethernet1/31'] from the same request; their deploy stays queued." in msg
+    note = msg[msg.index(" NOTE:") :]
+    assert note == (
+        " NOTE: before the failure, the controller had already accepted changes for interface(s) "
+        "[Ethernet1/31 (switchId FDO11111AAA)]; those changes were deployed."
+    )
+    assert orchestrator.rest_send.committed_payload == {"interfaces": [{"interfaceName": "Ethernet1/31", "switchId": "FDO11111AAA"}]}
+    assert orchestrator._pending_normalizes == [("Ethernet1/32", "FDO11111AAA")]
+    assert orchestrator._pending_deploys == [("Ethernet1/32", "FDO11111AAA")]

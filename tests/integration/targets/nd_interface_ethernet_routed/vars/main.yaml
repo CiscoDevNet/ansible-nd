@@ -106,8 +106,10 @@ routed_34_configured:
 # Set nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name and
 # nd_test_xe_interface_name) in inventory/extra-vars to enable; xe.yaml is
 # skipped when nd_test_xe_switch_ip is unset. The XE interface must exist on
-# the device and must not carry fabric intent (e.g. not a multi-site link
-# member).
+# the device and must not be an endpoint of any ND fabric link (VRF-Lite,
+# multi-site underlay, ...): the module refuses to write a fabric-link member
+# even when its interface record reads as a plain iosXeRoutedHost, so pick a
+# free port (check GET /api/v1/manage/links?fabricName=<xe fabric>).
 test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
 test_xe_interface_name: "{{ nd_test_xe_interface_name | default('GigabitEthernet3') }}"
 

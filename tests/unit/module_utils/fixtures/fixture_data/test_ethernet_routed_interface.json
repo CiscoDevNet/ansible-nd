@@ -1245,5 +1245,543 @@
         "DATA": {
             "message": "internal error"
         }
+    },
+    "test_remove_pending_00350a": {
+        "TEST_NOTES": [
+            "00350 (orchestrator): switch list resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_remove_pending_00350b": {
+        "TEST_NOTES": [
+            "00350 (orchestrator): bulk normalize returns HTTP 207 mixing an exact-success item (Ethernet1/31) and a failed item (Ethernet1/32).",
+            "Per the manage OpenAPI contract each results[] item carries its own status; the accepted member's reset IS on the controller",
+            "and must be dequeued from _pending_normalizes so the failure-path finalizer deploys it (PR #550 review)."
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/normalize",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Ethernet1/31",
+                    "status": "success",
+                    "message": "Interface normalized successfully."
+                },
+                {
+                    "name": "Ethernet1/32",
+                    "status": "failed",
+                    "message": "Interface validation failed"
+                }
+            ]
+        }
+    },
+    "test_remove_pending_00350c": {
+        "TEST_NOTES": [
+            "00350 (orchestrator): failure-path deploy of the accepted member Ethernet1/31 only."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_remove_pending_00360a": {
+        "TEST_NOTES": [
+            "00360 (orchestrator): two switches, 192.168.1.1 -> FDO11111AAA and 192.168.1.2 -> FDO22222BBB"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_remove_pending_00360b": {
+        "TEST_NOTES": [
+            "00360 (orchestrator): first per-switch normalize group (FDO11111AAA, Ethernet1/31) succeeds. Ethernet1/31 is queued on BOTH switches,",
+            "and the 207 results[] carry only `name`, so the queue is split per switch to keep every response item unambiguous."
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/normalize",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Ethernet1/31",
+                    "status": "success",
+                    "message": "Interface normalized successfully."
+                }
+            ]
+        }
+    },
+    "test_remove_pending_00360c": {
+        "TEST_NOTES": [
+            "00360 (orchestrator): second per-switch normalize group (FDO22222BBB, Ethernet1/31) FAILS (500)."
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/normalize",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "message": "internal error"
+        }
+    },
+    "test_remove_pending_00360d": {
+        "TEST_NOTES": [
+            "00360 (orchestrator): failure-path deploy of the first group's accepted reset only."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_wrapper_nx_normalize_00220a": {
+        "TEST_NOTES": [
+            "00220 (wrapper end-to-end): switch list resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_wrapper_nx_normalize_00220b": {
+        "TEST_NOTES": [
+            "00220 (wrapper end-to-end): bulk normalize returns a mixed HTTP 207 - Ethernet1/31 accepted, Ethernet1/32 rejected.",
+            "main()'s finalizer must deploy Ethernet1/31 and name it in the NOTE; Ethernet1/32 stays queued (PR #550 review)."
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/normalize",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Ethernet1/31",
+                    "status": "success",
+                    "message": "Interface normalized successfully."
+                },
+                {
+                    "name": "Ethernet1/32",
+                    "status": "failed",
+                    "message": "Interface validation failed"
+                }
+            ]
+        }
+    },
+    "test_wrapper_nx_normalize_00220c": {
+        "TEST_NOTES": [
+            "00220 (wrapper end-to-end): failure-path deploy of Ethernet1/31 only."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_ownership_00900a": {
+        "TEST_NOTES": [
+            "00900 (orchestrator): switch list; the existing wire state (numbered fabric link) is injected via existing_data"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_ownership_00910a": {
+        "TEST_NOTES": [
+            "00910 (orchestrator): switch list; existing wire state (multiSiteLinkMember) injected via existing_data"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_ownership_00920a": {
+        "TEST_NOTES": [
+            "00920 (orchestrator): switch list; existing wire state (trunkHost free port) injected via existing_data"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_ownership_00920b": {
+        "TEST_NOTES": [
+            "00920 (orchestrator): trunkHost -> routedHost conversion is allowed and the bulk POST proceeds. No links fixture precedes this",
+            "on purpose: an NX-OS-only run must never fetch the fabric links (a links GET here would consume this response and fail)."
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Ethernet1/10",
+                    "status": "success",
+                    "message": "Interface added successfully"
+                }
+            ]
+        }
+    },
+    "test_ownership_00930a": {
+        "TEST_NOTES": [
+            "00930 (orchestrator): switch list for the check-mode preflight path"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_ownership_00930b": {
+        "TEST_NOTES": [
+            "00930 (orchestrator): interfaceList reports Ethernet1/1 as a `numbered` leaf->spine fabric link (shape mirrors the lab record captured",
+            "2026-09-03 on ND 4.2.1). preflight must refuse it before any write, so a --check run fails like a normal run."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "numbered",
+                                "adminState": true,
+                                "ip": "10.4.0.1",
+                                "prefix": 30,
+                                "mtu": 9216,
+                                "description": "connected-to-S1_SP1-Ethernet1/2"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1,
+                        "neighbors": [
+                            {
+                                "fabricName": "fabric_1",
+                                "interfaceName": "Ethernet1/2",
+                                "switchName": "S1_SP1"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    },
+    "test_ownership_00940a": {
+        "TEST_NOTES": [
+            "00940 (orchestrator): IOS-XE switch 192.168.1.2 -> FDO22222BBB"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_ownership_00940b": {
+        "TEST_NOTES": [
+            "00940 (orchestrator): fabric links. GigabitEthernet3 on FDO22222BBB is the src endpoint of an `ebgpVrfLite` link (fabric-owned)",
+            "while its own interface record reads as a defaults-only iosXeRoutedHost - the lab-observed C8000V shape (WAN1 Gi3, 2026-09-03).",
+            "GigabitEthernet4's link carries no policyType (discovered-only adjacency) and must NOT count as ownership."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet4",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S1_TOR1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "Ethernet1/1"
+                },
+                {
+                    "linkId": "LINK-UUID-1",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {
+                        "policyType": "ebgpVrfLite"
+                    },
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet3",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S2_BG1",
+                    "dstSwitchId": "FDO33333CCC",
+                    "dstInterfaceName": "Ethernet1/3"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 2,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_ownership_00950a": {
+        "TEST_NOTES": [
+            "00950 (orchestrator): IOS-XE switch 192.168.1.2 -> FDO22222BBB"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_ownership_00950b": {
+        "TEST_NOTES": [
+            "00950 (orchestrator): same links as 00940; the target GigabitEthernet4 only appears on a policy-less discovered link, so the write proceeds."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet4",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S1_TOR1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "Ethernet1/1"
+                },
+                {
+                    "linkId": "LINK-UUID-1",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {
+                        "policyType": "ebgpVrfLite"
+                    },
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet3",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S2_BG1",
+                    "dstSwitchId": "FDO33333CCC",
+                    "dstInterfaceName": "Ethernet1/3"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 2,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_ownership_00950c": {
+        "TEST_NOTES": [
+            "00950 (orchestrator): bulk POST for GigabitEthernet4 succeeds."
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "GigabitEthernet4",
+                    "status": "success",
+                    "message": "Interface added successfully"
+                }
+            ]
+        }
+    },
+    "test_ownership_00960a": {
+        "TEST_NOTES": [
+            "00960 (orchestrator): IOS-XE switch 192.168.1.2 -> FDO22222BBB"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_ownership_00960b": {
+        "TEST_NOTES": [
+            "00960 (orchestrator): links page 1 of 2 (remaining: 1) - only the policy-less GigabitEthernet4 adjacency."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet4",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S1_TOR1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "Ethernet1/1"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 2,
+                    "remaining": 1
+                }
+            }
+        }
+    },
+    "test_ownership_00960c": {
+        "TEST_NOTES": [
+            "00960 (orchestrator): links page 2 of 2 (offset=1) carrying the ebgpVrfLite link on GigabitEthernet3; pagination must reach it."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1&offset=1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-1",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {
+                        "policyType": "ebgpVrfLite"
+                    },
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet3",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S2_BG1",
+                    "dstSwitchId": "FDO33333CCC",
+                    "dstInterfaceName": "Ethernet1/3"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 2,
+                    "remaining": 0
+                }
+            }
+        }
     }
 }
