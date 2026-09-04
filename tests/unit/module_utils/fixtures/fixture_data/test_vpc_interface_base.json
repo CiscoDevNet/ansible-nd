@@ -940,5 +940,27 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO33333CCC/vpcPair",
         "MESSAGE": "OK",
         "DATA": {"switchId": "FDO33333CCC", "peerSwitchId": "FDO44444DDD"}
+    },
+    "test_vpc_interface_base_01120a": {
+        "TEST_NOTES": [
+            "Unique-name preflight (#356 / PR #550 review): switches list consumed by the shared switch resolution;",
+            "no vpcPair GET may follow."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
     }
 }

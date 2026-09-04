@@ -1,0 +1,25 @@
+---
+minor_changes:
+  - Add ``nd_interface_ethernet_routed`` module managing L3 routed ethernet interfaces through a ``network_os_type`` /
+    ``policy_type`` discriminated union - NX-OS ``routedHost`` (``intRoutedHostTemplate``) and IOS-XE ``iosXeRoutedHost``
+    (``iosXeIntRoutedHostTemplate``) - with merged, replaced, overridden, and deleted states.
+bugfixes:
+  - nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, nd_interface_ethernet_routed - the port-channel member guard is now
+    state-aware - under ``replaced`` / ``overridden`` an omitted field that would clear a configured value outside the member allowlist
+    is rejected instead of silently cleared.
+  - nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, nd_interface_ethernet_routed - check mode now resolves every
+    ``switch_ip`` and runs the port-channel member guards (update and explicit delete), so a dry run fails the same way a normal run would.
+  - nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, nd_interface_ethernet_routed - when a per-switch bulk create fails
+    with HTTP 207 Multi-Status, the interfaces the controller accepted are still queued for deploy so the failure path does not leave
+    them staged.
+  - nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, nd_interface_ethernet_routed - the failure-path finalizer no
+    longer deploys an interface whose deferred normalize / reset request failed or was never attempted; only resets the controller
+    accepted are deployed.
+  - nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, nd_interface_ethernet_routed - an explicitly named interface whose
+    current policy is fabric-owned (``numbered``, ``multiSiteLinkMember``, ``vrfLiteLinkMember``, ``vpcPeerKeepAlive``, ``mplsUplink``,
+    and similar) is now rejected before any write, in check mode too, instead of having its fabric-link intent overwritten by the host
+    policy; ``nd_interface_ethernet_routed`` additionally refuses an IOS-XE interface that is an endpoint of a fabric link.
+  - nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, nd_interface_ethernet_routed - when a bulk normalize (the
+    ``deleted`` / ``overridden`` reset path) fails with a mixed HTTP 207 Multi-Status, the interfaces the controller did reset are still
+    deployed by the failure path instead of being left staged and undeployed; the normalize is split per switch when the same
+    interface name is queued on more than one switch so the per-interface results can be correlated.
