@@ -116,12 +116,13 @@ class FakeTransition:
 class FakeModule:
     """Module shape needed by the coordinator."""
 
-    def __init__(self, *, check_mode, output_level="normal"):
+    def __init__(self, *, check_mode, output_level="normal", verify_enabled=False):
         self.check_mode = check_mode
         self.params = {
             "fabric_name": "FABRIC1",
             "resources": [],
             "config_actions": {"deploy": True},
+            "verify": {"enabled": verify_enabled},
             "output_level": output_level,
         }
 
@@ -179,7 +180,7 @@ class FakeExecutionItem:
 class FakeExecution:
     """InterfaceWorkflowExecution-compatible result for coordinator wiring tests."""
 
-    def __init__(self, workflow_plan, *, deploy, deployment_targets=(), failed=False):
+    def __init__(self, workflow_plan, *, deploy, verify, deployment_targets=(), failed=False):
         self.deployment_targets = tuple(deployment_targets)
         deployment_sent = deploy and bool(workflow_plan.changed or self.deployment_targets) and not failed
         self.changed = not failed and bool(workflow_plan.changed or deployment_sent)
@@ -188,7 +189,10 @@ class FakeExecution:
         self.mutation_requests = int(workflow_plan.changed)
         self.deploy_requests = int(deployment_sent)
         self.deploy = deploy
-        self.actual_after_by_resource = {item.resource_index: item.operations.after if not failed else item.before for item in workflow_plan.resources}
+        observed_after = verify or not workflow_plan.changed or failed
+        self.actual_after_by_resource = (
+            {item.resource_index: item.operations.after if not failed else item.before for item in workflow_plan.resources} if observed_after else {}
+        )
         status = "failed" if failed else "succeeded"
         items = []
         for resource_plan in workflow_plan.resources:
@@ -249,11 +253,18 @@ class FakeExecutor:
         self.calls = calls
         self.failed = failed
         self.deploy = kwargs["deploy"]
+        self.verify = kwargs["verify"]
         self.calls.append(("init", kwargs))
 
     def execute(self, workflow_plan, deployment_targets=()):
         self.calls.append(("execute", workflow_plan, tuple(deployment_targets)))
-        return FakeExecution(workflow_plan, deploy=self.deploy, deployment_targets=deployment_targets, failed=self.failed)
+        return FakeExecution(
+            workflow_plan,
+            deploy=self.deploy,
+            verify=self.verify,
+            deployment_targets=deployment_targets,
+            failed=self.failed,
+        )
 
 
 def test_check_mode_result_retains_repeated_groups_and_reports_planned_change():
@@ -357,6 +368,7 @@ def test_normal_no_change_run_succeeds_without_execution(monkeypatch):
     assert result["changed"] is False
     assert result["planned_changed"] is False
     assert result["execution"]["status"] == "no_change"
+    assert result["resources"][0]["after_verified"] is True
 
 
 def test_normal_no_change_defaults_deploy_to_false_when_omitted(monkeypatch):
@@ -371,10 +383,10 @@ def test_normal_no_change_defaults_deploy_to_false_when_omitted(monkeypatch):
     assert result["execution"]["deployment"]["requested"] is False
 
 
-def test_normal_changing_run_executes_and_reports_actual_state(monkeypatch):
+def test_normal_changing_run_with_verify_enabled_executes_and_reports_actual_state(monkeypatch):
     calls = []
     coordinator = InterfaceWorkflowCoordinator(
-        FakeModule(check_mode=False),
+        FakeModule(check_mode=False, verify_enabled=True),
         executor_factory=lambda **kwargs: FakeExecutor(calls, **kwargs),
     )
     coordinator._snapshot = SimpleNamespace(request_stats={"switches": 2, "interface_inventory_gets": 2})
@@ -385,6 +397,7 @@ def test_normal_changing_run_executes_and_reports_actual_state(monkeypatch):
 
     assert [call[0] for call in calls] == ["init", "execute"]
     assert calls[0][1]["deploy"] is True
+    assert calls[0][1]["verify"] is True
     assert result["changed"] is True
     assert result["execution"]["status"] == "completed"
     assert result["resources"][0]["after_verified"] is True
@@ -393,6 +406,35 @@ def test_normal_changing_run_executes_and_reports_actual_state(monkeypatch):
     assert result["execution"]["deployments_sent"] == 1
     assert "mutation_requests" not in result["request_stats"]
     assert "deploy_requests" not in result["request_stats"]
+
+
+def test_normal_changing_run_defaults_verify_to_false_and_reports_projected_after(monkeypatch):
+    calls = []
+    module = FakeModule(check_mode=False)
+    module.params.pop("verify")
+    coordinator = InterfaceWorkflowCoordinator(
+        module,
+        executor_factory=lambda **kwargs: FakeExecutor(calls, **kwargs),
+    )
+    coordinator._snapshot = SimpleNamespace(
+        request_stats={
+            "switches": 2,
+            "interface_inventory_gets": 2,
+            "interface_inventory_refreshes": 0,
+            "interface_inventory_dirty_refetches": 0,
+        }
+    )
+    workflow_plan = plan()
+    monkeypatch.setattr(coordinator, "_build_plan", lambda: workflow_plan)
+
+    result = coordinator.run()
+
+    assert calls[0][1]["verify"] is False
+    assert result["changed"] is True
+    assert result["resources"][0]["after_verified"] is False
+    assert result["resources"][0]["after"] == [{"switch_ip": "192.0.2.1", "interface_name": "Ethernet1/1", "value": "new"}]
+    assert result["request_stats"]["interface_inventory_refreshes"] == 0
+    assert result["request_stats"]["interface_inventory_dirty_refetches"] == 0
 
 
 def test_normal_changing_run_defaults_deploy_to_false_when_omitted(monkeypatch):
@@ -410,6 +452,7 @@ def test_normal_changing_run_defaults_deploy_to_false_when_omitted(monkeypatch):
     coordinator.run()
 
     assert calls[0][1]["deploy"] is False
+    assert calls[0][1]["verify"] is False
 
 
 def test_normal_execution_failure_preserves_structured_result(monkeypatch):
@@ -428,6 +471,7 @@ def test_normal_execution_failure_preserves_structured_result(monkeypatch):
     assert exc_info.value.result["execution"]["status"] == "failed"
     assert exc_info.value.result["execution"]["mutations_sent"] == 1
     assert exc_info.value.result["resources"][0]["operations"][0]["status"] == "failed"
+    assert exc_info.value.result["resources"][0]["after_verified"] is True
 
 
 class FakeFabricContext:
@@ -571,12 +615,14 @@ def test_normal_zero_mutation_pending_target_executes_one_deployment(monkeypatch
 
     result = coordinator.run()
 
+    assert calls[0][1]["verify"] is False
     assert calls[1][0] == "execute"
     assert calls[1][2] == (("Ethernet1/40", "SERIAL1"),)
     assert result["changed"] is True
     assert result["planned_changed"] is False
     assert result["mutation_count"] == 0
     assert result["resources"][0]["changed"] is False
+    assert result["resources"][0]["after_verified"] is True
     assert result["execution"]["status"] == "completed"
     assert result["execution"]["mutations_sent"] == 0
     assert result["execution"]["deployments_sent"] == 1

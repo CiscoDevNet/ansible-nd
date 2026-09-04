@@ -43,6 +43,10 @@ def test_argument_spec_uses_exact_registry_and_excludes_flow_rules():
         "required": True,
     }
     assert spec["config_actions"]["options"] == {"deploy": {"type": "bool", "default": False}}
+    assert spec["verify"] == {
+        "type": "dict",
+        "options": {"enabled": {"type": "bool", "default": False}},
+    }
 
 
 def test_documentation_links_every_standalone_module_and_not_flow_rules():
@@ -67,6 +71,8 @@ def test_documentation_links_every_standalone_module_and_not_flow_rules():
     assert "policy transition" in nd_interfaces_workflow.DOCUMENTATION
     assert "unconfigured default" in nd_interfaces_workflow.DOCUMENTATION
     assert "regardless of its current policy family" in nd_interfaces_workflow.DOCUMENTATION
+    assert "\n  verify:" in nd_interfaces_workflow.DOCUMENTATION
+    assert "after_verified" in nd_interfaces_workflow.DOCUMENTATION
     assert "from_policy_type" in nd_interfaces_workflow.RETURN
 
 

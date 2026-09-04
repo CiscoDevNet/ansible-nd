@@ -105,6 +105,8 @@
             config: "{{ nd_iw_current_case.override }}"
         config_actions:
           deploy: false
+        verify:
+          enabled: true
         output_level: info
       check_mode: "{{ nd_iw_module_check_mode }}"
       register: nd_iw_override_apply

@@ -952,6 +952,7 @@ class InterfaceWorkflowCoordinator:
         """Plan the complete workflow, then execute only after all validation succeeds."""
         plan = self._build_plan()
         deploy = bool((self.module.params.get("config_actions") or {}).get("deploy", False))
+        verify = bool((self.module.params.get("verify") or {}).get("enabled", False))
         pending_deployment_targets = self._pending_deployment_targets(plan) if deploy else ()
         if self.module.check_mode:
             preview_targets = tuple(dict.fromkeys((*self._operation_deployment_targets(plan), *pending_deployment_targets))) if deploy else ()
@@ -960,7 +961,7 @@ class InterfaceWorkflowCoordinator:
             return self._format_result(plan)
         if self._snapshot is None:
             raise RuntimeError("Interface workflow snapshot was not initialized.")
-        execution = self.executor_factory(snapshot=self._snapshot, deploy=deploy).execute(
+        execution = self.executor_factory(snapshot=self._snapshot, deploy=deploy, verify=verify).execute(
             plan,
             deployment_targets=pending_deployment_targets,
         )

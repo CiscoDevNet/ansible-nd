@@ -20,9 +20,10 @@ description:
   O(resources[].type).
 - Check mode returns the complete multi-family plan, aggregate diff, conflicts, prospective deployment-only targets, and request
   statistics without sending mutation or deployment requests.
-- Normal mode executes the complete validated plan in dependency-safe order, consolidates deferred remove and deploy actions, and
-  refetches switches affected by interface mutations to report actual controller state. It can also deploy previously staged intent for
-  explicitly requested interfaces when the current workflow has no interface mutations.
+- Normal mode executes the complete validated plan in dependency-safe order and consolidates deferred remove and deploy actions.
+  Successful mutations return projected intended state by default; O(verify.enabled=true) refetches affected switches to report observed
+  controller state. The module can also deploy previously staged intent for explicitly requested interfaces when the current workflow
+  has no interface mutations.
 author:
 - Mike Wiebe (@mikewiebe)
 options:
@@ -110,6 +111,21 @@ options:
         - Check mode reports a prospective deployment but sends no request.
         type: bool
         default: false
+  verify:
+    description:
+    - Controls post-mutation interface-inventory verification.
+    - Initial discovery and all planning and safety reads are always performed, regardless of this setting.
+    type: dict
+    suboptions:
+      enabled:
+        description:
+        - Whether a completely successful mutating workflow refetches affected switch inventories before returning.
+        - When V(false), successful writes return projected C(resources[].after) state with C(resources[].after_verified=false), avoiding
+          the post-write inventory GETs.
+        - No-op and deployment-only runs continue to return observed state from initial discovery. Partial or failed write execution
+          forces reconciliation even when this option is V(false).
+        type: bool
+        default: false
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -148,6 +164,11 @@ notes:
   per-interface transition, preserving the workflow's scale advantage.
 - Interface inventories and transition/delete safety data are shared for the complete workflow. They are not fetched once per resource
   group or once per interface; pagination may require more than one GET for a switch or fabric-level safety inventory.
+- O(verify.enabled) affects only the post-write refresh for a completely successful mutating workflow. Its default V(false) avoids those
+  additional inventory GETs and reports projected state with C(resources[].after_verified=false). Initial discovery, validation, and
+  safety reads are unchanged.
+- No-op and deployment-only workflows report observed initial state. Partial or failed writes force a post-write reconciliation attempt
+  even when O(verify.enabled=false), so mixed or uncertain outcomes are diagnosed against current controller state when possible.
 - Loopback creates sharing both switch and C(policy_type) remain bulked. Different loopback policy types require one POST per switch and
   policy-type combination because Nexus Dashboard rejects mixed-policy loopback bulk requests; this does not add inventory GETs.
 - Deployment-only candidate detection reuses the fabric switch records already fetched to resolve switch identities. It sends no
@@ -187,10 +208,11 @@ notes:
   and fabric type before production use. Architectural support is not a claim of live qualification.
 - In particular, NX-OS and IOS-XE loopback policy-to-policy PUT combinations have not yet been live-qualified through this workflow.
   IOS-XE loopback integration coverage requires an explicitly declared IOS-XE test switch and is not inferred from NX-OS inventory.
-- The executor stops after the first failed mutation phase, does not replay mixed-success requests, reports succeeded, failed, uncertain,
-  skipped, and not-attempted items, and refreshes affected switches after any mutation request. For HTTP 207 responses, only an exact
-  per-item V(success) is successful; missing, warning, notexecuted, unknown, and omitted-target outcomes fail closed while identifiable
-  successes remain reported separately.
+- The executor stops after the first failed mutation phase, does not replay mixed-success requests, and reports succeeded, failed,
+  uncertain, skipped, and not-attempted items. It refreshes affected switches after successful writes only when O(verify.enabled=true),
+  but always attempts reconciliation after partial or failed writes. For HTTP 207 responses, only an exact per-item V(success) is
+  successful; missing, warning, notexecuted, unknown, and omitted-target outcomes fail closed while identifiable successes remain
+  reported separately.
 """
 
 EXAMPLES = r"""
@@ -238,6 +260,8 @@ EXAMPLES = r"""
                   port_channel_mode: active
     config_actions:
       deploy: true
+    verify:
+      enabled: true
   register: interface_result
 
 - name: Preview a fabric-wide authoritative SVI group
@@ -273,6 +297,8 @@ EXAMPLES = r"""
                   access_vlan: 3900
     config_actions:
       deploy: false
+    verify:
+      enabled: false
 
 - name: Deploy the same explicitly requested interface after staging it in an earlier task
   cisco.nd.nd_interfaces_workflow:
@@ -310,7 +336,8 @@ RETURN = r"""
 changed:
   description:
   - In check mode, whether the plan contains a mutation or an explicitly requested deployment-only target.
-  - In normal mode, whether mutation responses, reconciled actual state, or a successful deployment request show a controller action.
+  - In normal mode, whether an exact successful mutation response, reconciled actual state, or a successful deployment request shows a
+    controller action. Successful mutations remain changed when O(verify.enabled=false) skips readback.
   returned: always
   type: bool
 planned_changed:
@@ -407,7 +434,8 @@ resources:
     changed:
       description:
       - Whether C(before) and the reported C(after) differ.
-      - In check mode this is prospective; in normal mode it is actual when reconciliation succeeds.
+      - In check mode this is prospective. In normal mode it compares observed state when C(after_verified=true) and projected state when
+        C(after_verified=false).
       - Remains V(false) when this resource is only a target of deployment for already-staged intent.
       type: bool
     planned_changed:
@@ -425,7 +453,11 @@ resources:
       elements: dict
     after:
       description:
-      - Target-scoped prospective configuration in check mode and reconciled observed configuration after normal-mode writes.
+      - Target-scoped prospective configuration in check mode.
+      - After a successful normal-mode mutation, this is reconciled observed state when O(verify.enabled=true) and projected intended
+        state when O(verify.enabled=false). Consult C(after_verified) before treating it as controller-observed state.
+      - No-op and deployment-only normal-mode runs return observed state from initial discovery. Partial or failed writes force a
+        reconciliation attempt even when verification is disabled.
       - Like C(before), each target reports C(policy_type) at top level; loopback input uses the nested policy discriminator.
       - A removed logical interface is absent. A reset physical Ethernet interface remains present with C(policy_type=trunkHost) and its
         normalized default configuration.
@@ -434,8 +466,10 @@ resources:
       elements: dict
     after_verified:
       description:
-      - Whether C(after) represents coherent observed controller state rather than an unverified plan after reconciliation failure.
-      - V(false) also covers reconciliation that cannot establish consistent vPC state because a peer record is missing or incoherent.
+      - Whether C(after) represents coherent observed controller state rather than projected or unverified state.
+      - V(false) follows a successful mutation when O(verify.enabled=false), a failed reconciliation, or reconciliation that cannot
+        establish consistent vPC state because a peer record is missing or incoherent.
+      - No-op and deployment-only normal-mode runs remain V(true) because C(after) comes from initial observed discovery.
       type: bool
     proposed:
       description: Normalized user configuration validated by the standalone model.
@@ -448,7 +482,9 @@ resources:
       type: list
       elements: dict
     family_after:
-      description: Complete unprojected prospective or reconciled selected-family configuration after execution for diagnostic use.
+      description:
+      - Complete unprojected prospective, projected, or reconciled selected-family configuration after execution for diagnostic use.
+      - C(after_verified) identifies whether the result was observed after execution.
       returned: when O(output_level) is V(debug)
       type: list
       elements: dict
@@ -473,6 +509,8 @@ request_stats:
     interface_inventory_refreshes:
       description:
       - Number of per-switch interface-inventory refresh attempts explicitly initiated during this execution.
+      - A completely successful mutation increments this only when O(verify.enabled=true). Partial or failed write execution can increment
+        it even when verification is disabled because reconciliation is forced.
       - A refresh invalidates the execution-scoped local snapshot before loading it again, so the same operation also increments
         C(interface_inventory_dirty_refetches).
       - This is a logical per-switch count. Paginated HTTP requests are counted separately by C(interface_inventory_gets).
@@ -518,7 +556,10 @@ execution:
       description: Number of consolidated deployment requests sent.
       type: int
     affected_switch_ids:
-      description: Switch serial numbers refreshed after mutation requests.
+      description:
+      - Switch serial numbers in the affected scope after mutation requests.
+      - They are refreshed after a successful mutation only when O(verify.enabled=true), and are also the forced reconciliation scope for
+        partial or failed writes.
       type: list
       elements: str
     deployment:
@@ -586,6 +627,12 @@ def interface_workflow_argument_spec():
                         "choices": sorted(SUPPORTED_STATES),
                     },
                     "config": {"type": "list", "elements": "dict", "required": True},
+                },
+            },
+            "verify": {
+                "type": "dict",
+                "options": {
+                    "enabled": {"type": "bool", "default": False},
                 },
             },
         }

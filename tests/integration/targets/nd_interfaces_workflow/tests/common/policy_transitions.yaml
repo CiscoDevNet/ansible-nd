@@ -154,6 +154,8 @@
                 config: "{{ nd_iw_transition_to_trunk }}"
             config_actions:
               deploy: false
+            verify:
+              enabled: true
             output_level: info
           register: nd_iw_transition_apply
           delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"

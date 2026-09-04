@@ -414,12 +414,28 @@ class FakeSnapshot:
 
     def __init__(self, events):
         self.events = events
+        self._refreshes = 0
+        self._dirty_refetches = 0
+        self._interface_inventory_gets = 0
 
     def mark_dirty(self, switch_ids):
         self.events.append(("dirty", tuple(switch_ids)))
 
     def refresh(self, switch_ids):
-        self.events.append(("refresh", tuple(switch_ids)))
+        switch_ids = tuple(dict.fromkeys(switch_ids))
+        self.events.append(("refresh", switch_ids))
+        self._refreshes += len(switch_ids)
+        self._dirty_refetches += len(switch_ids)
+        self._interface_inventory_gets += len(switch_ids)
+
+    @property
+    def request_stats(self):
+        """Return the refresh counters relevant to optional verification tests."""
+        return {
+            "interface_inventory_gets": self._interface_inventory_gets,
+            "interface_inventory_refreshes": self._refreshes,
+            "interface_inventory_dirty_refetches": self._dirty_refetches,
+        }
 
 
 def resource(index, orchestrator, *, deletes=(), transitions=(), updates=(), creates=(), actual=("after",)):
@@ -476,7 +492,8 @@ def test_executor_orders_phases_consolidates_remove_and_deploy_then_refreshes():
         ),
     )
 
-    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+    snapshot = FakeSnapshot(events)
+    result = InterfaceWorkflowExecutor(snapshot=snapshot, deploy=True, verify=True).execute(workflow_plan)
 
     phase_names = [event[0] for event in events]
     assert result.failed is False
@@ -501,7 +518,41 @@ def test_executor_orders_phases_consolidates_remove_and_deploy_then_refreshes():
         ("dirty", ("SERIAL1", "SERIAL2")),
         ("refresh", ("SERIAL1", "SERIAL2")),
     ]
+    assert snapshot.request_stats == {
+        "interface_inventory_gets": 2,
+        "interface_inventory_refreshes": 2,
+        "interface_inventory_dirty_refetches": 2,
+    }
+    assert set(result.actual_after_by_resource) == {0, 1}
     assert {item.status for item in result.items} == {"succeeded"}
+
+
+class SuccessfulChangedFalseFakeOrchestrator(FakeOrchestrator):
+    """Return exact mutation success while the generic result changed flag is false."""
+
+    def create_bulk(self, models):
+        super().create_bulk(models)
+        self.rest_send.results[-1]["changed"] = False
+
+
+def test_executor_defaults_to_no_verification_and_skips_post_mutation_inventory_gets():
+    events = []
+    orchestrator = SuccessfulChangedFalseFakeOrchestrator("only", events)
+    workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1")]))
+    snapshot = FakeSnapshot(events)
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.changed is True
+    assert result.status == "staged"
+    assert result.actual_after_by_resource == {}
+    assert not any(event[0] in {"dirty", "refresh"} for event in events)
+    assert snapshot.request_stats == {
+        "interface_inventory_gets": 0,
+        "interface_inventory_refreshes": 0,
+        "interface_inventory_dirty_refetches": 0,
+    }
 
 
 def test_executor_defaults_to_staging_changes_without_deployment():
@@ -518,6 +569,8 @@ def test_executor_defaults_to_staging_changes_without_deployment():
     assert result.deployment["requested"] is False
     assert result.deployment["status"] == "disabled"
     assert "deploy" not in [event[0] for event in events]
+    assert not any(event[0] in {"dirty", "refresh"} for event in events)
+    assert result.actual_after_by_resource == {}
 
 
 def test_deployment_only_execution_sends_one_exact_target_without_mutation_or_refresh():
@@ -537,6 +590,7 @@ def test_deployment_only_execution_sends_one_exact_target_without_mutation_or_re
     assert result.deploy_requests == 1
     assert result.affected_switch_ids == ()
     assert result.items == ()
+    assert result.actual_after_by_resource[0].values == ["before"]
     assert result.deployment == {
         "requested": True,
         "status": "succeeded",
@@ -679,6 +733,11 @@ def test_transition_failure_stops_updates_creates_and_deployment():
     }
     assert result.deployment["status"] == "not_attempted"
     assert not any(event[0] in {"update", "create", "deploy"} for event in events)
+    assert events[-2:] == [
+        ("dirty", ("SERIAL1", "SERIAL2")),
+        ("refresh", ("SERIAL1", "SERIAL2")),
+    ]
+    assert result.actual_after_by_resource[0].values == ["before"]
 
 
 def test_preflight_failure_sends_no_writes_and_leaves_every_item_not_attempted():

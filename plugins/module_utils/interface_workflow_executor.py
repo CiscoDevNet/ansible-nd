@@ -112,9 +112,16 @@ class InterfaceWorkflowExecution:
 class InterfaceWorkflowExecutor:
     """Execute one precomputed plan using the current develop orchestrators."""
 
-    def __init__(self, *, snapshot: InterfaceStateSnapshot, deploy: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        snapshot: InterfaceStateSnapshot,
+        deploy: bool = False,
+        verify: bool = False,
+    ) -> None:
         self.snapshot = snapshot
         self.deploy = deploy
+        self.verify = verify
         self._items: list[InterfaceExecutionItem] = []
         self._item_by_key: dict[tuple[int, str, Any], InterfaceExecutionItem] = {}
         self._errors: list[str] = []
@@ -606,8 +613,17 @@ class InterfaceWorkflowExecutor:
                     mutation_changed = mutation_changed or result.get("changed") is True
         return mutation_requests, deploy_requests, mutation_changed
 
-    def _reconcile(self, plan: InterfaceWorkflowPlan, *, wrote: bool) -> dict[int, NDConfigCollection]:
-        if wrote:
+    def _reconcile(
+        self,
+        plan: InterfaceWorkflowPlan,
+        *,
+        mutation_attempted: bool,
+        force_after_write: bool,
+    ) -> dict[int, NDConfigCollection]:
+        """Return observed state, skipping successful post-write refresh when verification is disabled."""
+        if mutation_attempted and not (self.verify or force_after_write):
+            return {}
+        if mutation_attempted:
             try:
                 self.snapshot.mark_dirty(plan.target_switch_ids)
                 self.snapshot.refresh(plan.target_switch_ids)
@@ -658,13 +674,20 @@ class InterfaceWorkflowExecutor:
             phases_ok = self._deploy_pending(plan, deployment_targets)
 
         mutation_requests, deploy_requests, mutation_changed = self._write_observations(plan)
-        actual = self._reconcile(plan, wrote=bool(mutation_requests))
+        execution_failed = not phases_ok or bool(self._errors)
+        mutation_attempted = bool(mutation_requests) or any(item.status in {"succeeded", "failed", "uncertain"} for item in self._items)
+        actual = self._reconcile(
+            plan,
+            mutation_attempted=mutation_attempted,
+            force_after_write=execution_failed,
+        )
         actual_changed = any(
             resource.before.get_diff_collection(actual[resource.resource_index]) for resource in plan.resources if resource.resource_index in actual
         )
         failed = not phases_ok or bool(self._errors)
         deployment_changed = any(target["status"] in {"succeeded", "uncertain"} for target in self._deployment["targets"])
-        changed = mutation_changed or actual_changed or deployment_changed
+        exact_mutation_success = any(item.status == "succeeded" for item in self._items)
+        changed = mutation_changed or exact_mutation_success or actual_changed or deployment_changed
         if failed:
             item_statuses = {item.status for item in self._items}
             status = "partial_failure" if changed or item_statuses & {"succeeded", "uncertain"} else "failed"
@@ -679,7 +702,7 @@ class InterfaceWorkflowExecutor:
             items=tuple(self._items),
             mutation_requests=mutation_requests,
             deploy_requests=deploy_requests,
-            affected_switch_ids=plan.target_switch_ids if mutation_requests else (),
+            affected_switch_ids=plan.target_switch_ids if mutation_attempted else (),
             deployment=self._deployment,
             errors=tuple(self._errors),
             actual_after_by_resource=actual,
