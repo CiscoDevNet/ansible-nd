@@ -1,0 +1,36 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Verify one workflow planned all ten interface families
+  vars:
+    nd_iw_expected_ten_families:
+      - ethernet_access
+      - ethernet_trunk_host
+      - loopback
+      - port_channel_access
+      - port_channel_trunk_host
+      - subinterface_managed
+      - subinterface_unmanaged
+      - svi
+      - vpc_access
+      - vpc_trunk_host
+    nd_iw_observed_mixed_families: "{{ nd_iw_batch_create_preview.resources | map(attribute='type') | list }}"
+  ansible.builtin.assert:
+    that:
+      - nd_iw_batch_create_preview.resources | length == 10
+      - nd_iw_observed_mixed_families | unique | length == 10
+      - nd_iw_observed_mixed_families | difference(nd_iw_expected_ten_families) | length == 0
+      - nd_iw_expected_ten_families | difference(nd_iw_observed_mixed_families) | length == 0
+      - nd_iw_batch_create_preview.resources | map(attribute='resource_index') | list == range(0, 10) | list
+      - nd_iw_batch_create_preview.execution.mutations_sent == 0
+      - nd_iw_batch_create_preview.execution.deployments_sent == 0
+  when: nd_iw_active_cases | length == 10
+
+- name: Record why ten-family coverage is unavailable on this fabric
+  ansible.builtin.debug:
+    msg: >-
+      {{ nd_iw_current_fabric.discriminator }} exposes {{ nd_iw_active_cases | length }} supported
+      interface families; the all-ten assertion is covered on a fabric where all ten are supported.
+  when: nd_iw_active_cases | length != 10

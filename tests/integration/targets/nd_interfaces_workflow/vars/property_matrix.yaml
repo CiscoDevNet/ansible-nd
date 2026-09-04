@@ -1,0 +1,2033 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Scenario payloads are complete config lists and can be assigned directly to
+# resources[].config. "maximal" combines every controller-object-independent
+# field that can coexist. Feature packs carry explicit live prerequisites.
+nd_iw_property_matrix:
+  ethernet_access:
+    module: cisco.nd.nd_interface_ethernet_access
+    ownership_domain: ethernet
+    identity_fields: [switch_ip, interface_names]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: [physical_interfaces]
+    unsupported_expected_error: {}
+    minimal: &nd_iw_ea_minimal
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access }}"
+              description: IW ethernet access minimal
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access }}"
+              bandwidth: 100000
+              bpdu_filter: enable
+              bpdu_guard: enable
+              cdp: true
+              debounce_timer: 100
+              debounce_linkup_timer: 1000
+              description: IW ethernet access maximal
+              duplex_mode: auto
+              error_detection_acl: true
+              extra_config: load-interval counter 1 30
+              fec: auto
+              inherit_bandwidth: 100000
+              link_type: auto
+              monitor: false
+              mtu: jumbo
+              negotiate_auto: true
+              netflow: false
+              orphan_port: false
+              pfc: false
+              port_type_edge_trunk: true
+              qos: false
+              speed: auto
+              storm_control: true
+              storm_control_action: trap
+              storm_control_broadcast_level: 10.5
+              storm_control_multicast_level: 20.5
+              storm_control_unicast_level: 30.5
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: false
+              access_vlan: "{{ nd_iw_active_resources.vlans.access_alternate }}"
+              bandwidth: 200000
+              bpdu_filter: disable
+              bpdu_guard: default
+              cdp: false
+              debounce_timer: 200
+              debounce_linkup_timer: 2000
+              description: IW ethernet access alternate
+              duplex_mode: full
+              error_detection_acl: false
+              extra_config: load-interval counter 1 60
+              fec: "off"
+              inherit_bandwidth: 200000
+              link_type: pointToPoint
+              monitor: true
+              mtu: default
+              negotiate_auto: false
+              netflow: false
+              orphan_port: true
+              pfc: true
+              port_type_edge_trunk: false
+              qos: false
+              speed: 1Gb
+              storm_control: true
+              storm_control_action: shutdown
+              storm_control_broadcast_level_pps: 1000
+              storm_control_multicast_level_pps: 2000
+              storm_control_unicast_level_pps: 3000
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access_alternate }}"
+              description: IW ethernet access replaced
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_access.secondary }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access }}"
+              description: IW ethernet access override victim
+    override: *nd_iw_ea_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_access.primary + nd_iw_active_resources.ethernet_access.secondary }}"
+    mutex_variants:
+      - name: percentage_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+            config_data:
+              network_os:
+                policy:
+                  storm_control_broadcast_level: 42.5
+                  storm_control_multicast_level: 43.5
+                  storm_control_unicast_level: 44.5
+      - name: pps_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+            config_data:
+              network_os:
+                policy:
+                  storm_control_broadcast_level_pps: 4200
+                  storm_control_multicast_level_pps: 4300
+                  storm_control_unicast_level_pps: 4400
+      - name: percentage_and_pps_rejected
+        valid: false
+        expected_error: storm-control percentage and pps levels are mutually exclusive
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+            config_data:
+              network_os:
+                policy:
+                  storm_control_broadcast_level: 42.5
+                  storm_control_broadcast_level_pps: 4200
+    optional_packs:
+      - name: referenced_netflow_qos_pfc
+        live_safe: false
+        requirements:
+          - l2_netflow_monitor_exists
+          - netflow_sampler_supported
+          - qos_policy_exists
+          - queuing_policy_exists
+          - pfc_supported
+        properties:
+          - config_data.network_os.policy.netflow
+          - config_data.network_os.policy.netflow_monitor
+          - config_data.network_os.policy.netflow_sampler
+          - config_data.network_os.policy.pfc
+          - config_data.network_os.policy.qos
+          - config_data.network_os.policy.qos_policy
+          - config_data.network_os.policy.queuing_policy
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+            config_data:
+              network_os:
+                policy:
+                  netflow: true
+                  netflow_monitor: "{{ nd_iw_active_resources.references.l2_netflow_monitor }}"
+                  netflow_sampler: "{{ nd_iw_active_resources.references.netflow_sampler }}"
+                  pfc: true
+                  qos: true
+                  qos_policy: "{{ nd_iw_active_resources.references.qos_policy }}"
+                  queuing_policy: "{{ nd_iw_active_resources.references.queuing_policy }}"
+    invalid:
+      - name: vlan_below_minimum
+        expected_error: greater than or equal to 1
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+            config_data: {network_os: {policy: {access_vlan: 0}}}
+      - name: bandwidth_above_maximum
+        expected_error: less than or equal to 100000000
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+            config_data: {network_os: {policy: {bandwidth: 100000001}}}
+      - name: non_ascii_description
+        expected_error: ASCII
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_access.primary }}"
+            config_data: {network_os: {policy: {description: "IW café"}}}
+    properties:
+      - switch_ip
+      - interface_names
+      - config_data.network_os.policy.admin_state
+      - config_data.network_os.policy.access_vlan
+      - config_data.network_os.policy.bandwidth
+      - config_data.network_os.policy.bpdu_filter
+      - config_data.network_os.policy.bpdu_guard
+      - config_data.network_os.policy.cdp
+      - config_data.network_os.policy.debounce_timer
+      - config_data.network_os.policy.debounce_linkup_timer
+      - config_data.network_os.policy.description
+      - config_data.network_os.policy.duplex_mode
+      - config_data.network_os.policy.error_detection_acl
+      - config_data.network_os.policy.extra_config
+      - config_data.network_os.policy.fec
+      - config_data.network_os.policy.inherit_bandwidth
+      - config_data.network_os.policy.link_type
+      - config_data.network_os.policy.monitor
+      - config_data.network_os.policy.mtu
+      - config_data.network_os.policy.negotiate_auto
+      - config_data.network_os.policy.netflow
+      - config_data.network_os.policy.netflow_monitor
+      - config_data.network_os.policy.netflow_sampler
+      - config_data.network_os.policy.orphan_port
+      - config_data.network_os.policy.pfc
+      - config_data.network_os.policy.port_type_edge_trunk
+      - config_data.network_os.policy.qos
+      - config_data.network_os.policy.qos_policy
+      - config_data.network_os.policy.queuing_policy
+      - config_data.network_os.policy.speed
+      - config_data.network_os.policy.storm_control
+      - config_data.network_os.policy.storm_control_action
+      - config_data.network_os.policy.storm_control_broadcast_level
+      - config_data.network_os.policy.storm_control_broadcast_level_pps
+      - config_data.network_os.policy.storm_control_multicast_level
+      - config_data.network_os.policy.storm_control_multicast_level_pps
+      - config_data.network_os.policy.storm_control_unicast_level
+      - config_data.network_os.policy.storm_control_unicast_level_pps
+
+  ethernet_trunk_host:
+    module: cisco.nd.nd_interface_ethernet_trunk_host
+    ownership_domain: ethernet
+    identity_fields: [switch_ip, interface_names]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: [physical_interfaces]
+    unsupported_expected_error: {}
+    minimal: &nd_iw_eth_minimal
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed }}"
+              native_vlan: "{{ nd_iw_active_resources.vlans.native }}"
+              description: IW ethernet trunk minimal
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed }}"
+              bandwidth: 100000
+              bpdu_filter: enable
+              bpdu_guard: enable
+              cdp: true
+              debounce_timer: 100
+              debounce_linkup_timer: 1000
+              description: IW ethernet trunk maximal
+              duplex_mode: auto
+              error_detection_acl: true
+              extra_config: load-interval counter 1 30
+              fec: auto
+              inherit_bandwidth: 100000
+              link_type: auto
+              monitor: false
+              mtu: jumbo
+              native_vlan: "{{ nd_iw_active_resources.vlans.native }}"
+              negotiate_auto: true
+              netflow: false
+              orphan_port: false
+              pfc: false
+              port_type_edge_trunk: true
+              qos: false
+              speed: auto
+              storm_control: true
+              storm_control_action: trap
+              storm_control_broadcast_level: 10.5
+              storm_control_multicast_level: 20.5
+              storm_control_unicast_level: 30.5
+              vlan_mapping: false
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: false
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed_alternate }}"
+              bandwidth: 200000
+              bpdu_filter: disable
+              bpdu_guard: default
+              cdp: false
+              debounce_timer: 200
+              debounce_linkup_timer: 2000
+              description: IW ethernet trunk alternate
+              duplex_mode: full
+              error_detection_acl: false
+              extra_config: load-interval counter 1 60
+              fec: "off"
+              inherit_bandwidth: 200000
+              link_type: pointToPoint
+              monitor: true
+              mtu: default
+              native_vlan: "{{ nd_iw_active_resources.vlans.native_alternate }}"
+              negotiate_auto: false
+              netflow: false
+              orphan_port: true
+              pfc: true
+              port_type_edge_trunk: false
+              qos: false
+              speed: 1Gb
+              storm_control: true
+              storm_control_action: shutdown
+              storm_control_broadcast_level_pps: 1000
+              storm_control_multicast_level_pps: 2000
+              storm_control_unicast_level_pps: 3000
+              vlan_mapping: false
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: all
+              native_vlan: "{{ nd_iw_active_resources.vlans.native_alternate }}"
+              description: IW ethernet trunk replaced
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.secondary }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed }}"
+              native_vlan: "{{ nd_iw_active_resources.vlans.native }}"
+              description: IW ethernet trunk override victim
+    override: *nd_iw_eth_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary + nd_iw_active_resources.ethernet_trunk_host.secondary }}"
+    mutex_variants:
+      - name: percentage_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+            config_data: {network_os: {policy: {storm_control_broadcast_level: 42.5}}}
+      - name: pps_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+            config_data: {network_os: {policy: {storm_control_broadcast_level_pps: 4200}}}
+      - name: percentage_and_pps_rejected
+        valid: false
+        expected_error: storm-control percentage and pps levels are mutually exclusive
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+            config_data:
+              network_os:
+                policy:
+                  storm_control_broadcast_level: 42.5
+                  storm_control_broadcast_level_pps: 4200
+    optional_packs:
+      - name: referenced_netflow_qos_pfc
+        live_safe: false
+        requirements: [l2_netflow_monitor_exists, netflow_sampler_supported, qos_policy_exists, queuing_policy_exists, pfc_supported]
+        properties:
+          - config_data.network_os.policy.netflow
+          - config_data.network_os.policy.netflow_monitor
+          - config_data.network_os.policy.netflow_sampler
+          - config_data.network_os.policy.pfc
+          - config_data.network_os.policy.qos
+          - config_data.network_os.policy.qos_policy
+          - config_data.network_os.policy.queuing_policy
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+            config_data:
+              network_os:
+                policy:
+                  netflow: true
+                  netflow_monitor: "{{ nd_iw_active_resources.references.l2_netflow_monitor }}"
+                  netflow_sampler: "{{ nd_iw_active_resources.references.netflow_sampler }}"
+                  pfc: true
+                  qos: true
+                  qos_policy: "{{ nd_iw_active_resources.references.qos_policy }}"
+                  queuing_policy: "{{ nd_iw_active_resources.references.queuing_policy }}"
+      - name: vlan_mapping
+        live_safe: false
+        requirements: [vlan_mapping_supported]
+        properties:
+          - config_data.network_os.policy.vlan_mapping
+          - config_data.network_os.policy.vlan_mapping_entries[].customer_inner_vlan_id
+          - config_data.network_os.policy.vlan_mapping_entries[].customer_vlan_id
+          - config_data.network_os.policy.vlan_mapping_entries[].dot1q_tunnel
+          - config_data.network_os.policy.vlan_mapping_entries[].provider_vlan_id
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+            config_data:
+              network_os:
+                policy:
+                  vlan_mapping: true
+                  vlan_mapping_entries: >-
+                    {{
+                      [{
+                        'customer_inner_vlan_id': nd_iw_active_resources.vlans.customer_inner | int,
+                        'customer_vlan_id': nd_iw_active_resources.vlans.customer,
+                        'dot1q_tunnel': true,
+                        'provider_vlan_id': nd_iw_active_resources.vlans.provider | int
+                      }]
+                    }}
+    invalid:
+      - name: malformed_allowed_vlans
+        expected_error: allowed_vlans must be
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+            config_data: {network_os: {policy: {allowed_vlans: "10-bad"}}}
+      - name: reversed_vlan_range
+        expected_error: start greater than end
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+            config_data: {network_os: {policy: {allowed_vlans: "200-100"}}}
+      - name: mapping_without_entries
+        expected_error: vlan_mapping_entries must be provided
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names: "{{ nd_iw_active_resources.ethernet_trunk_host.primary }}"
+            config_data: {network_os: {policy: {vlan_mapping: true}}}
+    properties:
+      - switch_ip
+      - interface_names
+      - config_data.network_os.policy.admin_state
+      - config_data.network_os.policy.allowed_vlans
+      - config_data.network_os.policy.bandwidth
+      - config_data.network_os.policy.bpdu_filter
+      - config_data.network_os.policy.bpdu_guard
+      - config_data.network_os.policy.cdp
+      - config_data.network_os.policy.debounce_timer
+      - config_data.network_os.policy.debounce_linkup_timer
+      - config_data.network_os.policy.description
+      - config_data.network_os.policy.duplex_mode
+      - config_data.network_os.policy.error_detection_acl
+      - config_data.network_os.policy.extra_config
+      - config_data.network_os.policy.fec
+      - config_data.network_os.policy.inherit_bandwidth
+      - config_data.network_os.policy.link_type
+      - config_data.network_os.policy.monitor
+      - config_data.network_os.policy.mtu
+      - config_data.network_os.policy.native_vlan
+      - config_data.network_os.policy.negotiate_auto
+      - config_data.network_os.policy.netflow
+      - config_data.network_os.policy.netflow_monitor
+      - config_data.network_os.policy.netflow_sampler
+      - config_data.network_os.policy.orphan_port
+      - config_data.network_os.policy.pfc
+      - config_data.network_os.policy.port_type_edge_trunk
+      - config_data.network_os.policy.qos
+      - config_data.network_os.policy.qos_policy
+      - config_data.network_os.policy.queuing_policy
+      - config_data.network_os.policy.speed
+      - config_data.network_os.policy.storm_control
+      - config_data.network_os.policy.storm_control_action
+      - config_data.network_os.policy.storm_control_broadcast_level
+      - config_data.network_os.policy.storm_control_broadcast_level_pps
+      - config_data.network_os.policy.storm_control_multicast_level
+      - config_data.network_os.policy.storm_control_multicast_level_pps
+      - config_data.network_os.policy.storm_control_unicast_level
+      - config_data.network_os.policy.storm_control_unicast_level_pps
+      - config_data.network_os.policy.vlan_mapping
+      - config_data.network_os.policy.vlan_mapping_entries[].customer_inner_vlan_id
+      - config_data.network_os.policy.vlan_mapping_entries[].customer_vlan_id
+      - config_data.network_os.policy.vlan_mapping_entries[].dot1q_tunnel
+      - config_data.network_os.policy.vlan_mapping_entries[].provider_vlan_id
+
+  loopback:
+    module: cisco.nd.nd_interface_loopback
+    ownership_domain: loopback
+    identity_fields: [switch_ip, interface_name]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: []
+    unsupported_expected_error: {}
+    minimal: &nd_iw_loopback_minimal
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: loopback
+              admin_state: true
+              ip: "{{ nd_iw_active_resources.loopback.primary_ipv4 }}"
+              description: IW loopback minimal
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: loopback
+              admin_state: true
+              ip: "{{ nd_iw_active_resources.loopback.primary_ipv4 }}"
+              ipv6: "{{ nd_iw_active_resources.loopback.primary_ipv6 }}"
+              vrf: "{{ nd_iw_active_resources.references.vrf }}"
+              route_map_tag: "{{ nd_iw_active_resources.references.route_map_tag }}"
+              description: IW loopback maximal
+              extra_config: no ip redirects
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: loopback
+              admin_state: false
+              ip: "{{ nd_iw_active_resources.loopback.alternate_ipv4 }}"
+              ipv6: "{{ nd_iw_active_resources.loopback.alternate_ipv6 }}"
+              vrf: "{{ nd_iw_active_resources.references.vrf }}"
+              route_map_tag: "902"
+              description: IW loopback alternate
+              extra_config: no ipv6 redirects
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: loopback
+              admin_state: true
+              ip: "{{ nd_iw_active_resources.loopback.alternate_ipv4 }}"
+              description: IW loopback replaced
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.loopback.secondary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: loopback
+              admin_state: true
+              ip: 198.18.90.3
+              description: IW loopback override victim
+    override: *nd_iw_loopback_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.loopback.secondary_name }}"
+    mutex_variants: []
+    optional_packs: []
+    invalid:
+      - name: non_ascii_description
+        expected_error: ASCII
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  policy_type: loopback
+                  description: "IW café"
+      - name: empty_vrf
+        expected_error: at least 1 character
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  policy_type: loopback
+                  vrf: ""
+      - name: missing_network_os_type
+        expected_error: network_os_type
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  policy_type: loopback
+                  ip: "{{ nd_iw_active_resources.loopback.primary_ipv4 }}"
+      - name: missing_policy_type
+        expected_error: policy_type
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  ip: "{{ nd_iw_active_resources.loopback.primary_ipv4 }}"
+    properties:
+      - switch_ip
+      - interface_name
+      - config_data.network_os.network_os_type
+      - policy_type
+      - config_data.network_os.policy.admin_state
+      - config_data.network_os.policy.ip
+      - config_data.network_os.policy.ipv6
+      - config_data.network_os.policy.vrf
+      - config_data.network_os.policy.route_map_tag
+      - config_data.network_os.policy.description
+      - config_data.network_os.policy.extra_config
+
+  port_channel_access:
+    module: cisco.nd.nd_interface_port_channel_access
+    ownership_domain: port_channel
+    identity_fields: [switch_ip, interface_name]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: [physical_member_interfaces]
+    unsupported_expected_error: {}
+    minimal: &nd_iw_pca_minimal
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access }}"
+              ports: "{{ nd_iw_active_resources.port_channel_access.primary_ports }}"
+              port_channel_mode: active
+              description: IW port-channel access minimal
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access }}"
+              bpdu_filter: enable
+              bpdu_guard: enable
+              cdp: true
+              copy_description: true
+              description: IW port-channel access maximal
+              duplex_mode: auto
+              extra_config: load-interval counter 1 30
+              lacp_port_priority: 32768
+              lacp_rate: fast
+              lacp_suspend: true
+              monitor: false
+              mtu: jumbo
+              netflow: false
+              port_channel_mode: active
+              ports: "{{ nd_iw_active_resources.port_channel_access.primary_ports }}"
+              qos: false
+              speed: auto
+              storm_control: true
+              storm_control_action: trap
+              storm_control_broadcast_level: 10.5
+              storm_control_multicast_level: 20.5
+              storm_control_unicast_level: 30.5
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: false
+              access_vlan: "{{ nd_iw_active_resources.vlans.access_alternate }}"
+              bpdu_filter: disable
+              bpdu_guard: default
+              cdp: false
+              copy_description: false
+              description: IW port-channel access alternate
+              duplex_mode: full
+              extra_config: load-interval counter 1 60
+              lacp_port_priority: 4096
+              lacp_rate: normal
+              lacp_suspend: false
+              monitor: true
+              mtu: default
+              netflow: false
+              port_channel_mode: passive
+              ports: "{{ nd_iw_active_resources.port_channel_access.alternate_ports }}"
+              qos: false
+              speed: 1Gb
+              storm_control: true
+              storm_control_action: shutdown
+              storm_control_broadcast_level_pps: 1000
+              storm_control_multicast_level_pps: 2000
+              storm_control_unicast_level_pps: 3000
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access_alternate }}"
+              ports: "{{ nd_iw_active_resources.port_channel_access.alternate_ports }}"
+              port_channel_mode: active
+              description: IW port-channel access replaced
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_access.secondary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access }}"
+              ports: "{{ nd_iw_active_resources.port_channel_access.secondary_ports }}"
+              port_channel_mode: active
+              description: IW port-channel access override victim
+    override: *nd_iw_pca_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_access.secondary_name }}"
+    mutex_variants:
+      - name: percentage_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+            config_data: {network_os: {policy: {storm_control_broadcast_level: 42.5}}}
+      - name: pps_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+            config_data: {network_os: {policy: {storm_control_broadcast_level_pps: 4200}}}
+      - name: percentage_and_pps_rejected
+        valid: false
+        expected_error: storm-control percentage and pps levels are mutually exclusive
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  storm_control_broadcast_level: 42.5
+                  storm_control_broadcast_level_pps: 4200
+    optional_packs:
+      - name: referenced_netflow_qos
+        live_safe: false
+        requirements: [l2_netflow_monitor_exists, netflow_sampler_supported, qos_policy_exists, queuing_policy_exists]
+        properties:
+          - config_data.network_os.policy.netflow
+          - config_data.network_os.policy.netflow_monitor
+          - config_data.network_os.policy.netflow_sampler
+          - config_data.network_os.policy.qos
+          - config_data.network_os.policy.qos_policy
+          - config_data.network_os.policy.queuing_policy
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  netflow: true
+                  netflow_monitor: "{{ nd_iw_active_resources.references.l2_netflow_monitor }}"
+                  netflow_sampler: "{{ nd_iw_active_resources.references.netflow_sampler }}"
+                  qos: true
+                  qos_policy: "{{ nd_iw_active_resources.references.qos_policy }}"
+                  queuing_policy: "{{ nd_iw_active_resources.references.queuing_policy }}"
+    invalid:
+      - name: netflow_without_monitor
+        expected_error: netflow_monitor must be provided
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+            config_data: {network_os: {policy: {netflow: true}}}
+      - name: lacp_priority_below_minimum
+        expected_error: greater than or equal to 1
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
+            config_data: {network_os: {policy: {lacp_port_priority: 0}}}
+    properties:
+      - switch_ip
+      - interface_name
+      - config_data.network_os.policy.admin_state
+      - config_data.network_os.policy.access_vlan
+      - config_data.network_os.policy.bpdu_filter
+      - config_data.network_os.policy.bpdu_guard
+      - config_data.network_os.policy.cdp
+      - config_data.network_os.policy.copy_description
+      - config_data.network_os.policy.description
+      - config_data.network_os.policy.duplex_mode
+      - config_data.network_os.policy.extra_config
+      - config_data.network_os.policy.lacp_port_priority
+      - config_data.network_os.policy.lacp_rate
+      - config_data.network_os.policy.lacp_suspend
+      - config_data.network_os.policy.monitor
+      - config_data.network_os.policy.mtu
+      - config_data.network_os.policy.netflow
+      - config_data.network_os.policy.netflow_monitor
+      - config_data.network_os.policy.netflow_sampler
+      - config_data.network_os.policy.port_channel_mode
+      - config_data.network_os.policy.ports
+      - config_data.network_os.policy.qos
+      - config_data.network_os.policy.qos_policy
+      - config_data.network_os.policy.queuing_policy
+      - config_data.network_os.policy.speed
+      - config_data.network_os.policy.storm_control
+      - config_data.network_os.policy.storm_control_action
+      - config_data.network_os.policy.storm_control_broadcast_level
+      - config_data.network_os.policy.storm_control_broadcast_level_pps
+      - config_data.network_os.policy.storm_control_multicast_level
+      - config_data.network_os.policy.storm_control_multicast_level_pps
+      - config_data.network_os.policy.storm_control_unicast_level
+      - config_data.network_os.policy.storm_control_unicast_level_pps
+
+  port_channel_trunk_host:
+    module: cisco.nd.nd_interface_port_channel_trunk_host
+    ownership_domain: port_channel
+    identity_fields: [switch_ip, interface_name]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: [physical_member_interfaces]
+    unsupported_expected_error: {}
+    minimal: &nd_iw_pcth_minimal
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed }}"
+              native_vlan: "{{ nd_iw_active_resources.vlans.native }}"
+              ports: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_ports }}"
+              port_channel_mode: active
+              description: IW port-channel trunk minimal
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed }}"
+              bandwidth: 100000
+              bpdu_filter: enable
+              bpdu_guard: enable
+              cdp: true
+              copy_description: true
+              description: IW port-channel trunk maximal
+              duplex_mode: auto
+              extra_config: load-interval counter 1 30
+              inherit_bandwidth: 100000
+              lacp_port_priority: 32768
+              lacp_rate: fast
+              lacp_suspend: true
+              link_type: auto
+              monitor: false
+              mtu: jumbo
+              native_vlan: "{{ nd_iw_active_resources.vlans.native }}"
+              negotiate_auto: true
+              netflow: false
+              orphan_port: false
+              pfc: false
+              port_channel_mode: active
+              port_type_edge_trunk: true
+              ports: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_ports }}"
+              qos: false
+              speed: auto
+              storm_control: true
+              storm_control_action: trap
+              storm_control_broadcast_level: 10.5
+              storm_control_multicast_level: 20.5
+              storm_control_unicast_level: 30.5
+              vlan_mapping: false
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: false
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed_alternate }}"
+              native_vlan: "{{ nd_iw_active_resources.vlans.native_alternate }}"
+              ports: "{{ nd_iw_active_resources.port_channel_trunk_host.alternate_ports }}"
+              port_channel_mode: passive
+              lacp_rate: normal
+              description: IW port-channel trunk alternate
+              storm_control_broadcast_level_pps: 1000
+              storm_control_multicast_level_pps: 2000
+              storm_control_unicast_level_pps: 3000
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: all
+              native_vlan: "{{ nd_iw_active_resources.vlans.native_alternate }}"
+              ports: "{{ nd_iw_active_resources.port_channel_trunk_host.alternate_ports }}"
+              port_channel_mode: active
+              description: IW port-channel trunk replaced
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.secondary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed }}"
+              native_vlan: "{{ nd_iw_active_resources.vlans.native }}"
+              ports: "{{ nd_iw_active_resources.port_channel_trunk_host.secondary_ports }}"
+              port_channel_mode: active
+              description: IW port-channel trunk override victim
+    override: *nd_iw_pcth_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.secondary_name }}"
+    mutex_variants:
+      - name: percentage_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+            config_data: {network_os: {policy: {storm_control_broadcast_level: 42.5}}}
+      - name: pps_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+            config_data: {network_os: {policy: {storm_control_broadcast_level_pps: 4200}}}
+      - name: percentage_and_pps_rejected
+        valid: false
+        expected_error: storm-control percentage and pps levels are mutually exclusive
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  storm_control_broadcast_level: 42.5
+                  storm_control_broadcast_level_pps: 4200
+    optional_packs:
+      - name: referenced_netflow_qos_pfc
+        live_safe: false
+        requirements: [l2_netflow_monitor_exists, netflow_sampler_supported, qos_policy_exists, queuing_policy_exists, pfc_supported]
+        properties:
+          - config_data.network_os.policy.netflow
+          - config_data.network_os.policy.netflow_monitor
+          - config_data.network_os.policy.netflow_sampler
+          - config_data.network_os.policy.pfc
+          - config_data.network_os.policy.qos
+          - config_data.network_os.policy.qos_policy
+          - config_data.network_os.policy.queuing_policy
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  netflow: true
+                  netflow_monitor: "{{ nd_iw_active_resources.references.l2_netflow_monitor }}"
+                  netflow_sampler: "{{ nd_iw_active_resources.references.netflow_sampler }}"
+                  pfc: true
+                  qos: true
+                  qos_policy: "{{ nd_iw_active_resources.references.qos_policy }}"
+                  queuing_policy: "{{ nd_iw_active_resources.references.queuing_policy }}"
+      - name: vlan_mapping
+        live_safe: false
+        requirements: [vlan_mapping_supported]
+        properties:
+          - config_data.network_os.policy.vlan_mapping
+          - config_data.network_os.policy.vlan_mapping_entries[].customer_inner_vlan_id
+          - config_data.network_os.policy.vlan_mapping_entries[].customer_vlan_id
+          - config_data.network_os.policy.vlan_mapping_entries[].dot1q_tunnel
+          - config_data.network_os.policy.vlan_mapping_entries[].provider_vlan_id
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  vlan_mapping: true
+                  vlan_mapping_entries: >-
+                    {{
+                      [{
+                        'customer_inner_vlan_id': nd_iw_active_resources.vlans.customer_inner | int,
+                        'customer_vlan_id': nd_iw_active_resources.vlans.customer,
+                        'dot1q_tunnel': true,
+                        'provider_vlan_id': nd_iw_active_resources.vlans.provider | int
+                      }]
+                    }}
+    invalid:
+      - name: netflow_without_monitor
+        expected_error: netflow_monitor must be provided
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+            config_data: {network_os: {policy: {netflow: true}}}
+      - name: malformed_allowed_vlans
+        expected_error: allowed_vlans must be
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
+            config_data: {network_os: {policy: {allowed_vlans: bad}}}
+    properties:
+      - switch_ip
+      - interface_name
+      - config_data.network_os.policy.admin_state
+      - config_data.network_os.policy.allowed_vlans
+      - config_data.network_os.policy.bandwidth
+      - config_data.network_os.policy.bpdu_filter
+      - config_data.network_os.policy.bpdu_guard
+      - config_data.network_os.policy.cdp
+      - config_data.network_os.policy.copy_description
+      - config_data.network_os.policy.description
+      - config_data.network_os.policy.duplex_mode
+      - config_data.network_os.policy.extra_config
+      - config_data.network_os.policy.inherit_bandwidth
+      - config_data.network_os.policy.lacp_port_priority
+      - config_data.network_os.policy.lacp_rate
+      - config_data.network_os.policy.lacp_suspend
+      - config_data.network_os.policy.link_type
+      - config_data.network_os.policy.monitor
+      - config_data.network_os.policy.mtu
+      - config_data.network_os.policy.native_vlan
+      - config_data.network_os.policy.negotiate_auto
+      - config_data.network_os.policy.netflow
+      - config_data.network_os.policy.netflow_monitor
+      - config_data.network_os.policy.netflow_sampler
+      - config_data.network_os.policy.orphan_port
+      - config_data.network_os.policy.pfc
+      - config_data.network_os.policy.port_channel_mode
+      - config_data.network_os.policy.port_type_edge_trunk
+      - config_data.network_os.policy.ports
+      - config_data.network_os.policy.qos
+      - config_data.network_os.policy.qos_policy
+      - config_data.network_os.policy.queuing_policy
+      - config_data.network_os.policy.speed
+      - config_data.network_os.policy.storm_control
+      - config_data.network_os.policy.storm_control_action
+      - config_data.network_os.policy.storm_control_broadcast_level
+      - config_data.network_os.policy.storm_control_broadcast_level_pps
+      - config_data.network_os.policy.storm_control_multicast_level
+      - config_data.network_os.policy.storm_control_multicast_level_pps
+      - config_data.network_os.policy.storm_control_unicast_level
+      - config_data.network_os.policy.storm_control_unicast_level_pps
+      - config_data.network_os.policy.vlan_mapping
+      - config_data.network_os.policy.vlan_mapping_entries[].customer_inner_vlan_id
+      - config_data.network_os.policy.vlan_mapping_entries[].customer_vlan_id
+      - config_data.network_os.policy.vlan_mapping_entries[].dot1q_tunnel
+      - config_data.network_os.policy.vlan_mapping_entries[].provider_vlan_id
+
+  vpc_access:
+    module: cisco.nd.nd_interface_vpc_access
+    ownership_domain: vpc
+    identity_fields: [interface_name]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: [vpc_pair, paired_switches, per_peer_member_interfaces]
+    unsupported_expected_error:
+      default: switch is not part of an authoritative vPC pair
+    minimal: &nd_iw_vpca_minimal
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access }}"
+              peer1_port_channel_id: "{{ nd_iw_active_resources.vpc_access.primary_port_channel_id }}"
+              peer1_member_ports: "{{ nd_iw_active_resources.vpc_access.peer1_primary_ports }}"
+              peer2_port_channel_id: "{{ nd_iw_active_resources.vpc_access.primary_port_channel_id }}"
+              peer2_member_ports: "{{ nd_iw_active_resources.vpc_access.peer2_primary_ports }}"
+              port_channel_mode: active
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access }}"
+              bandwidth: 100000
+              bpdu_filter: enable
+              bpdu_guard: enable
+              cdp: true
+              copy_description: true
+              duplex_mode: auto
+              inherit_bandwidth: 100000
+              lacp_port_priority: 32768
+              lacp_rate: fast
+              lacp_suspend: true
+              lacp_vpc_convergence: true
+              link_type: auto
+              mirror_config: true
+              mtu: jumbo
+              negotiate_auto: true
+              netflow: false
+              peer1_member_ports: "{{ nd_iw_active_resources.vpc_access.peer1_primary_ports }}"
+              peer1_port_channel_configuration: load-interval counter 1 30
+              peer1_port_channel_description: IW vPC access peer1
+              peer1_port_channel_id: "{{ nd_iw_active_resources.vpc_access.primary_port_channel_id }}"
+              # With mirror_config true, ND requires Peer-2 config/description to be
+              # present and identical to Peer-1. The alternate fixture covers asymmetry.
+              peer2_member_ports: "{{ nd_iw_active_resources.vpc_access.peer2_primary_ports }}"
+              peer2_port_channel_configuration: load-interval counter 1 30
+              peer2_port_channel_description: IW vPC access peer1
+              peer2_port_channel_id: "{{ nd_iw_active_resources.vpc_access.primary_port_channel_id }}"
+              pfc: false
+              port_channel_mode: active
+              port_type_edge_trunk: true
+              qos: false
+              speed: auto
+              storm_control: true
+              storm_control_action: trap
+              storm_control_broadcast_level: 10.5
+              storm_control_multicast_level: 20.5
+              storm_control_unicast_level: 30.5
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: false
+              access_vlan: "{{ nd_iw_active_resources.vlans.access_alternate }}"
+              bpdu_filter: disable
+              bpdu_guard: default
+              cdp: false
+              copy_description: false
+              lacp_rate: normal
+              lacp_suspend: false
+              lacp_vpc_convergence: false
+              mirror_config: false
+              mtu: default
+              negotiate_auto: false
+              peer1_member_ports: "{{ nd_iw_active_resources.vpc_access.peer1_primary_ports }}"
+              peer1_port_channel_description: IW vPC access peer1 alternate
+              peer1_port_channel_id: "{{ nd_iw_active_resources.vpc_access.primary_port_channel_id }}"
+              peer2_member_ports: "{{ nd_iw_active_resources.vpc_access.peer2_primary_ports }}"
+              peer2_port_channel_description: IW vPC access peer2 alternate
+              peer2_port_channel_id: "{{ nd_iw_active_resources.vpc_access.primary_port_channel_id }}"
+              port_channel_mode: passive
+              speed: 1Gb
+              storm_control_broadcast_level_pps: 1000
+              storm_control_multicast_level_pps: 2000
+              storm_control_unicast_level_pps: 3000
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access_alternate }}"
+              peer1_port_channel_id: "{{ nd_iw_active_resources.vpc_access.primary_port_channel_id }}"
+              peer1_member_ports: "{{ nd_iw_active_resources.vpc_access.peer1_primary_ports }}"
+              peer2_port_channel_id: "{{ nd_iw_active_resources.vpc_access.primary_port_channel_id }}"
+              peer2_member_ports: "{{ nd_iw_active_resources.vpc_access.peer2_primary_ports }}"
+              port_channel_mode: active
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_access.secondary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: "{{ nd_iw_active_resources.vlans.access }}"
+              peer1_port_channel_id: "{{ nd_iw_active_resources.vpc_access.secondary_port_channel_id }}"
+              peer1_member_ports: "{{ nd_iw_active_resources.vpc_access.peer1_secondary_ports }}"
+              peer2_port_channel_id: "{{ nd_iw_active_resources.vpc_access.secondary_port_channel_id }}"
+              peer2_member_ports: "{{ nd_iw_active_resources.vpc_access.peer2_secondary_ports }}"
+              port_channel_mode: active
+    override: *nd_iw_vpca_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_access.secondary_name }}"
+    mutex_variants:
+      - name: percentage_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+            config_data: {network_os: {policy: {storm_control_broadcast_level: 42.5}}}
+      - name: pps_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+            config_data: {network_os: {policy: {storm_control_broadcast_level_pps: 4200}}}
+      - name: percentage_and_pps_rejected
+        valid: false
+        expected_error: storm-control percentage and pps levels are mutually exclusive
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  storm_control_broadcast_level: 42.5
+                  storm_control_broadcast_level_pps: 4200
+    optional_packs:
+      - name: referenced_netflow_qos_pfc
+        live_safe: false
+        requirements: [l2_netflow_monitor_exists, netflow_sampler_supported, qos_policy_exists, queuing_policy_exists, pfc_supported]
+        properties:
+          - config_data.network_os.policy.netflow
+          - config_data.network_os.policy.netflow_monitor
+          - config_data.network_os.policy.netflow_sampler
+          - config_data.network_os.policy.pfc
+          - config_data.network_os.policy.qos
+          - config_data.network_os.policy.qos_policy
+          - config_data.network_os.policy.queuing_policy
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  netflow: true
+                  netflow_monitor: "{{ nd_iw_active_resources.references.l2_netflow_monitor }}"
+                  netflow_sampler: "{{ nd_iw_active_resources.references.netflow_sampler }}"
+                  pfc: true
+                  qos: true
+                  qos_policy: "{{ nd_iw_active_resources.references.qos_policy }}"
+                  queuing_policy: "{{ nd_iw_active_resources.references.queuing_policy }}"
+    invalid:
+      - name: peer_port_channel_id_below_minimum
+        expected_error: greater than or equal to 1
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+            config_data: {network_os: {policy: {peer1_port_channel_id: 0}}}
+      - name: non_ascii_peer_description
+        expected_error: ASCII
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
+            config_data: {network_os: {policy: {peer1_port_channel_description: "IW café"}}}
+    properties:
+      - switch_ip
+      - interface_name
+      - config_data.network_os.policy.admin_state
+      - config_data.network_os.policy.bandwidth
+      - config_data.network_os.policy.bpdu_filter
+      - config_data.network_os.policy.bpdu_guard
+      - config_data.network_os.policy.cdp
+      - config_data.network_os.policy.copy_description
+      - config_data.network_os.policy.duplex_mode
+      - config_data.network_os.policy.inherit_bandwidth
+      - config_data.network_os.policy.lacp_port_priority
+      - config_data.network_os.policy.lacp_rate
+      - config_data.network_os.policy.lacp_suspend
+      - config_data.network_os.policy.lacp_vpc_convergence
+      - config_data.network_os.policy.link_type
+      - config_data.network_os.policy.mirror_config
+      - config_data.network_os.policy.mtu
+      - config_data.network_os.policy.negotiate_auto
+      - config_data.network_os.policy.netflow
+      - config_data.network_os.policy.netflow_monitor
+      - config_data.network_os.policy.netflow_sampler
+      - config_data.network_os.policy.access_vlan
+      - config_data.network_os.policy.peer1_member_ports
+      - config_data.network_os.policy.peer1_port_channel_configuration
+      - config_data.network_os.policy.peer1_port_channel_description
+      - config_data.network_os.policy.peer1_port_channel_id
+      - config_data.network_os.policy.peer2_member_ports
+      - config_data.network_os.policy.peer2_port_channel_configuration
+      - config_data.network_os.policy.peer2_port_channel_description
+      - config_data.network_os.policy.peer2_port_channel_id
+      - config_data.network_os.policy.pfc
+      - config_data.network_os.policy.port_channel_mode
+      - config_data.network_os.policy.port_type_edge_trunk
+      - config_data.network_os.policy.qos
+      - config_data.network_os.policy.qos_policy
+      - config_data.network_os.policy.queuing_policy
+      - config_data.network_os.policy.speed
+      - config_data.network_os.policy.storm_control
+      - config_data.network_os.policy.storm_control_action
+      - config_data.network_os.policy.storm_control_broadcast_level
+      - config_data.network_os.policy.storm_control_broadcast_level_pps
+      - config_data.network_os.policy.storm_control_multicast_level
+      - config_data.network_os.policy.storm_control_multicast_level_pps
+      - config_data.network_os.policy.storm_control_unicast_level
+      - config_data.network_os.policy.storm_control_unicast_level_pps
+
+  vpc_trunk_host:
+    module: cisco.nd.nd_interface_vpc_trunk_host
+    ownership_domain: vpc
+    identity_fields: [interface_name]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: [vpc_pair, paired_switches, per_peer_member_interfaces]
+    unsupported_expected_error:
+      default: switch is not part of an authoritative vPC pair
+    minimal: &nd_iw_vpcth_minimal
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed }}"
+              native_vlan: "{{ nd_iw_active_resources.vlans.native }}"
+              peer1_port_channel_id: "{{ nd_iw_active_resources.vpc_trunk_host.primary_port_channel_id }}"
+              peer1_member_ports: "{{ nd_iw_active_resources.vpc_trunk_host.peer1_primary_ports }}"
+              peer2_port_channel_id: "{{ nd_iw_active_resources.vpc_trunk_host.primary_port_channel_id }}"
+              peer2_member_ports: "{{ nd_iw_active_resources.vpc_trunk_host.peer2_primary_ports }}"
+              port_channel_mode: active
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed }}"
+              bandwidth: 100000
+              bpdu_filter: enable
+              bpdu_guard: enable
+              cdp: true
+              copy_description: true
+              duplex_mode: auto
+              inherit_bandwidth: 100000
+              lacp_port_priority: 32768
+              lacp_rate: fast
+              lacp_suspend: true
+              lacp_vpc_convergence: true
+              link_type: auto
+              mirror_config: true
+              mtu: jumbo
+              native_vlan: "{{ nd_iw_active_resources.vlans.native }}"
+              negotiate_auto: true
+              netflow: false
+              peer1_member_ports: "{{ nd_iw_active_resources.vpc_trunk_host.peer1_primary_ports }}"
+              peer1_port_channel_configuration: load-interval counter 1 30
+              peer1_port_channel_description: IW vPC trunk peer1
+              peer1_port_channel_id: "{{ nd_iw_active_resources.vpc_trunk_host.primary_port_channel_id }}"
+              # With mirror_config true, ND requires Peer-2 config/description to be
+              # present and identical to Peer-1. The alternate fixture covers asymmetry.
+              peer2_member_ports: "{{ nd_iw_active_resources.vpc_trunk_host.peer2_primary_ports }}"
+              peer2_port_channel_configuration: load-interval counter 1 30
+              peer2_port_channel_description: IW vPC trunk peer1
+              peer2_port_channel_id: "{{ nd_iw_active_resources.vpc_trunk_host.primary_port_channel_id }}"
+              pfc: false
+              port_channel_mode: active
+              port_type_edge_trunk: true
+              qos: false
+              speed: auto
+              storm_control: true
+              storm_control_action: trap
+              storm_control_broadcast_level: 10.5
+              storm_control_multicast_level: 20.5
+              storm_control_unicast_level: 30.5
+              vlan_mapping: false
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: false
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed_alternate }}"
+              native_vlan: "{{ nd_iw_active_resources.vlans.native_alternate }}"
+              lacp_rate: normal
+              lacp_suspend: false
+              lacp_vpc_convergence: false
+              mirror_config: false
+              mtu: default
+              negotiate_auto: false
+              peer1_member_ports: "{{ nd_iw_active_resources.vpc_trunk_host.peer1_primary_ports }}"
+              peer1_port_channel_description: IW vPC trunk peer1 alternate
+              peer1_port_channel_id: "{{ nd_iw_active_resources.vpc_trunk_host.primary_port_channel_id }}"
+              peer2_member_ports: "{{ nd_iw_active_resources.vpc_trunk_host.peer2_primary_ports }}"
+              peer2_port_channel_description: IW vPC trunk peer2 alternate
+              peer2_port_channel_id: "{{ nd_iw_active_resources.vpc_trunk_host.primary_port_channel_id }}"
+              port_channel_mode: passive
+              speed: 1Gb
+              storm_control_broadcast_level_pps: 1000
+              storm_control_multicast_level_pps: 2000
+              storm_control_unicast_level_pps: 3000
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: all
+              native_vlan: "{{ nd_iw_active_resources.vlans.native_alternate }}"
+              peer1_port_channel_id: "{{ nd_iw_active_resources.vpc_trunk_host.primary_port_channel_id }}"
+              peer1_member_ports: "{{ nd_iw_active_resources.vpc_trunk_host.peer1_primary_ports }}"
+              peer2_port_channel_id: "{{ nd_iw_active_resources.vpc_trunk_host.primary_port_channel_id }}"
+              peer2_member_ports: "{{ nd_iw_active_resources.vpc_trunk_host.peer2_primary_ports }}"
+              port_channel_mode: active
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.secondary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed }}"
+              native_vlan: "{{ nd_iw_active_resources.vlans.native }}"
+              peer1_port_channel_id: "{{ nd_iw_active_resources.vpc_trunk_host.secondary_port_channel_id }}"
+              peer1_member_ports: "{{ nd_iw_active_resources.vpc_trunk_host.peer1_secondary_ports }}"
+              peer2_port_channel_id: "{{ nd_iw_active_resources.vpc_trunk_host.secondary_port_channel_id }}"
+              peer2_member_ports: "{{ nd_iw_active_resources.vpc_trunk_host.peer2_secondary_ports }}"
+              port_channel_mode: active
+    override: *nd_iw_vpcth_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.secondary_name }}"
+    mutex_variants:
+      - name: percentage_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+            config_data: {network_os: {policy: {storm_control_broadcast_level: 42.5}}}
+      - name: pps_levels
+        valid: true
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+            config_data: {network_os: {policy: {storm_control_broadcast_level_pps: 4200}}}
+      - name: percentage_and_pps_rejected
+        valid: false
+        expected_error: storm-control percentage and pps levels are mutually exclusive
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  storm_control_broadcast_level: 42.5
+                  storm_control_broadcast_level_pps: 4200
+    optional_packs:
+      - name: referenced_netflow_qos_pfc
+        live_safe: false
+        requirements: [l2_netflow_monitor_exists, netflow_sampler_supported, qos_policy_exists, queuing_policy_exists, pfc_supported]
+        properties:
+          - config_data.network_os.policy.netflow
+          - config_data.network_os.policy.netflow_monitor
+          - config_data.network_os.policy.netflow_sampler
+          - config_data.network_os.policy.pfc
+          - config_data.network_os.policy.qos
+          - config_data.network_os.policy.qos_policy
+          - config_data.network_os.policy.queuing_policy
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  netflow: true
+                  netflow_monitor: "{{ nd_iw_active_resources.references.l2_netflow_monitor }}"
+                  netflow_sampler: "{{ nd_iw_active_resources.references.netflow_sampler }}"
+                  pfc: true
+                  qos: true
+                  qos_policy: "{{ nd_iw_active_resources.references.qos_policy }}"
+                  queuing_policy: "{{ nd_iw_active_resources.references.queuing_policy }}"
+      - name: vlan_mapping
+        live_safe: false
+        requirements: [vlan_mapping_supported]
+        properties:
+          - config_data.network_os.policy.vlan_mapping
+          - config_data.network_os.policy.vlan_mapping_entries[].customer_inner_vlan_id
+          - config_data.network_os.policy.vlan_mapping_entries[].customer_vlan_id
+          - config_data.network_os.policy.vlan_mapping_entries[].dot1q_tunnel
+          - config_data.network_os.policy.vlan_mapping_entries[].provider_vlan_id
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  vlan_mapping: true
+                  vlan_mapping_entries: >-
+                    {{
+                      [{
+                        'customer_inner_vlan_id': nd_iw_active_resources.vlans.customer_inner | int,
+                        'customer_vlan_id': nd_iw_active_resources.vlans.customer,
+                        'dot1q_tunnel': true,
+                        'provider_vlan_id': nd_iw_active_resources.vlans.provider | int
+                      }]
+                    }}
+    invalid:
+      - name: malformed_allowed_vlans
+        expected_error: allowed_vlans must be
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+            config_data: {network_os: {policy: {allowed_vlans: bad}}}
+      - name: peer_port_channel_id_above_maximum
+        expected_error: less than or equal to 4096
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+            interface_name: "{{ nd_iw_active_resources.vpc_trunk_host.primary_name }}"
+            config_data: {network_os: {policy: {peer2_port_channel_id: 4097}}}
+    properties:
+      - switch_ip
+      - interface_name
+      - config_data.network_os.policy.admin_state
+      - config_data.network_os.policy.allowed_vlans
+      - config_data.network_os.policy.bandwidth
+      - config_data.network_os.policy.bpdu_filter
+      - config_data.network_os.policy.bpdu_guard
+      - config_data.network_os.policy.cdp
+      - config_data.network_os.policy.copy_description
+      - config_data.network_os.policy.duplex_mode
+      - config_data.network_os.policy.inherit_bandwidth
+      - config_data.network_os.policy.lacp_port_priority
+      - config_data.network_os.policy.lacp_rate
+      - config_data.network_os.policy.lacp_suspend
+      - config_data.network_os.policy.lacp_vpc_convergence
+      - config_data.network_os.policy.link_type
+      - config_data.network_os.policy.mirror_config
+      - config_data.network_os.policy.mtu
+      - config_data.network_os.policy.native_vlan
+      - config_data.network_os.policy.negotiate_auto
+      - config_data.network_os.policy.netflow
+      - config_data.network_os.policy.netflow_monitor
+      - config_data.network_os.policy.netflow_sampler
+      - config_data.network_os.policy.peer1_member_ports
+      - config_data.network_os.policy.peer1_port_channel_configuration
+      - config_data.network_os.policy.peer1_port_channel_description
+      - config_data.network_os.policy.peer1_port_channel_id
+      - config_data.network_os.policy.peer2_member_ports
+      - config_data.network_os.policy.peer2_port_channel_configuration
+      - config_data.network_os.policy.peer2_port_channel_description
+      - config_data.network_os.policy.peer2_port_channel_id
+      - config_data.network_os.policy.pfc
+      - config_data.network_os.policy.port_channel_mode
+      - config_data.network_os.policy.port_type_edge_trunk
+      - config_data.network_os.policy.qos
+      - config_data.network_os.policy.qos_policy
+      - config_data.network_os.policy.queuing_policy
+      - config_data.network_os.policy.speed
+      - config_data.network_os.policy.storm_control
+      - config_data.network_os.policy.storm_control_action
+      - config_data.network_os.policy.storm_control_broadcast_level
+      - config_data.network_os.policy.storm_control_broadcast_level_pps
+      - config_data.network_os.policy.storm_control_multicast_level
+      - config_data.network_os.policy.storm_control_multicast_level_pps
+      - config_data.network_os.policy.storm_control_unicast_level
+      - config_data.network_os.policy.storm_control_unicast_level_pps
+      - config_data.network_os.policy.vlan_mapping
+      - config_data.network_os.policy.vlan_mapping_entries[].customer_inner_vlan_id
+      - config_data.network_os.policy.vlan_mapping_entries[].customer_vlan_id
+      - config_data.network_os.policy.vlan_mapping_entries[].dot1q_tunnel
+      - config_data.network_os.policy.vlan_mapping_entries[].provider_vlan_id
+  subinterface_managed:
+    module: cisco.nd.nd_interface_subinterface_managed
+    ownership_domain: subinterface
+    identity_fields: [switch_ip, interface_name]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: [routed_parent_interfaces]
+    unsupported_expected_error: {}
+    minimal: &nd_iw_sub_managed_minimal
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              vlan_id: "{{ nd_iw_active_resources.subinterface.managed_primary_id | int }}"
+              ip: "{{ nd_iw_active_resources.subinterface.primary_ipv4 }}"
+              prefix: 24
+              description: IW managed subinterface minimal
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              description: IW managed subinterface maximal
+              extra_config: no ip redirects
+              mtu: 9216
+              vlan_id: "{{ nd_iw_active_resources.subinterface.managed_primary_id | int }}"
+              vrf_interface: "{{ nd_iw_active_resources.references.vrf }}"
+              ip: "{{ nd_iw_active_resources.subinterface.primary_ipv4 }}"
+              prefix: 24
+              ipv6: "{{ nd_iw_active_resources.subinterface.primary_ipv6 | regex_replace('/.*$', '') }}"
+              ipv6_prefix: 64
+              routing_tag: "{{ nd_iw_active_resources.references.routing_tag }}"
+              ip_redirects: true
+              pim_sparse: true
+              pim_dr_priority: 901
+              netflow: false
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: false
+              description: IW managed subinterface alternate
+              extra_config: no ipv6 redirects
+              mtu: 1500
+              vlan_id: "{{ nd_iw_active_resources.subinterface.managed_primary_id | int }}"
+              vrf_interface: "{{ nd_iw_active_resources.references.vrf }}"
+              ip: "{{ nd_iw_active_resources.subinterface.alternate_ipv4 }}"
+              prefix: 25
+              ipv6: "{{ nd_iw_active_resources.subinterface.alternate_ipv6 | regex_replace('/.*$', '') }}"
+              ipv6_prefix: 96
+              routing_tag: "902"
+              ip_redirects: false
+              pim_sparse: false
+              pim_dr_priority: 902
+              netflow: false
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              vlan_id: "{{ nd_iw_active_resources.subinterface.managed_primary_id | int }}"
+              ip: "{{ nd_iw_active_resources.subinterface.alternate_ipv4 }}"
+              prefix: 24
+              description: IW managed subinterface replaced
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_secondary_id }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              vlan_id: "{{ nd_iw_active_resources.subinterface.managed_secondary_id }}"
+              ip: 198.18.91.3
+              prefix: 24
+              description: IW managed subinterface override victim
+    override: *nd_iw_sub_managed_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_secondary_id }}"
+    mutex_variants: []
+    optional_packs:
+      - name: referenced_netflow
+        live_safe: false
+        requirements:
+          - l3_netflow_monitor_exists
+          - netflow_sampler_supported
+        properties:
+          - config_data.network_os.policy.netflow
+          - config_data.network_os.policy.netflow_monitor
+          - config_data.network_os.policy.netflow_sampler
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+            config_data:
+              network_os:
+                policy: >-
+                  {{
+                    {
+                      'admin_state': true,
+                      'vlan_id': nd_iw_active_resources.subinterface.managed_primary_id | int,
+                      'ip': nd_iw_active_resources.subinterface.primary_ipv4,
+                      'prefix': 24,
+                      'netflow': true,
+                      'netflow_monitor': nd_iw_active_resources.references.l3_netflow_monitor,
+                      'netflow_sampler': nd_iw_active_resources.references.netflow_sampler
+                    }
+                  }}
+    invalid:
+      - name: vlan_below_minimum
+        expected_error: greater than or equal to 2
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+            config_data: {network_os: {policy: {vlan_id: 1}}}
+      - name: mtu_below_minimum
+        expected_error: greater than or equal to 576
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+            config_data: {network_os: {policy: {mtu: 575}}}
+      - name: ipv4_without_prefix
+        expected_error: ip and prefix are required together
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+            config_data: {network_os: {policy: {ip: 198.18.91.4}}}
+      - name: ipv6_without_prefix
+        expected_error: ipv6 and ipv6_prefix are required together
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+            config_data: {network_os: {policy: {ipv6: "2001:db8:91::4"}}}
+      - name: netflow_without_monitor
+        expected_error: netflow_monitor must be provided
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+            config_data: {network_os: {policy: {netflow: true}}}
+      - name: non_ascii_description
+        expected_error: ASCII
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.managed_primary_id }}"
+            config_data: {network_os: {policy: {description: "IW café"}}}
+    properties:
+      - switch_ip
+      - interface_name
+      - config_data.network_os.policy.admin_state
+      - config_data.network_os.policy.description
+      - config_data.network_os.policy.extra_config
+      - config_data.network_os.policy.mtu
+      - config_data.network_os.policy.vlan_id
+      - config_data.network_os.policy.vrf_interface
+      - config_data.network_os.policy.ip
+      - config_data.network_os.policy.prefix
+      - config_data.network_os.policy.ipv6
+      - config_data.network_os.policy.ipv6_prefix
+      - config_data.network_os.policy.routing_tag
+      - config_data.network_os.policy.ip_redirects
+      - config_data.network_os.policy.pim_sparse
+      - config_data.network_os.policy.pim_dr_priority
+      - config_data.network_os.policy.netflow
+      - config_data.network_os.policy.netflow_monitor
+      - config_data.network_os.policy.netflow_sampler
+
+  subinterface_unmanaged:
+    module: cisco.nd.nd_interface_subinterface_unmanaged
+    ownership_domain: subinterface
+    identity_fields: [switch_ip, interface_name]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: [routed_parent_interfaces]
+    unsupported_expected_error: {}
+    minimal: &nd_iw_sub_unmanaged_minimal
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.unmanaged_primary_id }}"
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.unmanaged_primary_id }}"
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.unmanaged_primary_id }}"
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.unmanaged_primary_id }}"
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.unmanaged_secondary_id }}"
+    override: *nd_iw_sub_unmanaged_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.unmanaged_primary_id }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.unmanaged_primary_id }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.{{ nd_iw_active_resources.subinterface.unmanaged_secondary_id }}"
+    mutex_variants: []
+    optional_packs: []
+    invalid:
+      - name: missing_subinterface_id
+        expected_error: dot-separated subinterface id
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}"
+      - name: non_numeric_subinterface_id
+        expected_error: must be a number
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.subinterface.ethernet_parent }}.abc"
+    properties:
+      - switch_ip
+      - interface_name
+
+  svi:
+    module: cisco.nd.nd_interface_svi
+    ownership_domain: svi
+    identity_fields: [switch_ip, interface_name]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: []
+    unsupported_expected_error: {}
+    minimal: &nd_iw_svi_minimal
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: "{{ nd_iw_active_resources.svi.primary_ipv4 }}"
+              prefix: 24
+              description: IW SVI minimal
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              description: IW SVI maximal
+              extra_config: no ip redirects
+              mtu: 9216
+              ip: "{{ nd_iw_active_resources.svi.primary_ipv4 }}"
+              prefix: 24
+              ipv6: "{{ nd_iw_active_resources.svi.primary_ipv6 | regex_replace('/.*$', '') }}"
+              prefixv6: 64
+              ip_redirects: true
+              vrf_interface: "{{ nd_iw_active_resources.references.vrf }}"
+              routing_tag: "{{ nd_iw_active_resources.references.routing_tag }}"
+              pim_sparse: true
+              pim_dr_priority: 901
+              hsrp: true
+              hsrp_vip: "{{ nd_iw_active_resources.svi.hsrp_vip }}"
+              hsrp_vipv6: "{{ nd_iw_active_resources.svi.hsrp_vipv6 }}"
+              hsrp_group: 901
+              hsrp_groupv6: 1901
+              hsrp_version: 2
+              hsrp_priority: 110
+              preempt: true
+              mac: "0000.0c07.ac05"
+              dhcp_server_address1: "{{ nd_iw_active_resources.references.dhcp_servers[0] }}"
+              dhcp_server_address2: "{{ nd_iw_active_resources.references.dhcp_servers[1] }}"
+              dhcp_server_address3: "{{ nd_iw_active_resources.references.dhcp_servers[2] }}"
+              vrf_dhcp1: "{{ nd_iw_active_resources.references.vrf }}"
+              vrf_dhcp2: "{{ nd_iw_active_resources.references.vrf }}"
+              vrf_dhcp3: "{{ nd_iw_active_resources.references.vrf }}"
+              advertise_subnet_in_underlay: true
+              netflow: false
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: false
+              description: IW SVI alternate
+              extra_config: no ipv6 redirects
+              mtu: 1500
+              ip: "{{ nd_iw_active_resources.svi.alternate_ipv4 }}"
+              prefix: 25
+              ipv6: "{{ nd_iw_active_resources.svi.alternate_ipv6 | regex_replace('/.*$', '') }}"
+              prefixv6: 96
+              ip_redirects: false
+              vrf_interface: "{{ nd_iw_active_resources.references.vrf }}"
+              routing_tag: "902"
+              pim_sparse: false
+              pim_dr_priority: 902
+              hsrp: true
+              hsrp_vip: "{{ nd_iw_active_resources.svi.alternate_hsrp_vip }}"
+              hsrp_vipv6: "{{ nd_iw_active_resources.svi.hsrp_vipv6 }}"
+              hsrp_group: 902
+              hsrp_groupv6: 1902
+              hsrp_version: 2
+              hsrp_priority: 120
+              preempt: false
+              mac: "0000.0c07.ac06"
+              dhcp_server_address1: "{{ nd_iw_active_resources.references.dhcp_servers[2] }}"
+              dhcp_server_address2: "{{ nd_iw_active_resources.references.dhcp_servers[1] }}"
+              dhcp_server_address3: "{{ nd_iw_active_resources.references.dhcp_servers[0] }}"
+              vrf_dhcp1: "{{ nd_iw_active_resources.references.vrf }}"
+              vrf_dhcp2: "{{ nd_iw_active_resources.references.vrf }}"
+              vrf_dhcp3: "{{ nd_iw_active_resources.references.vrf }}"
+              advertise_subnet_in_underlay: false
+              netflow: false
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: "{{ nd_iw_active_resources.svi.alternate_ipv4 }}"
+              prefix: 24
+              description: IW SVI replaced
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.svi.secondary_name }}"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: 198.18.92.3
+              prefix: 24
+              description: IW SVI override victim
+    override: *nd_iw_svi_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.svi.secondary_name }}"
+    mutex_variants: []
+    optional_packs:
+      - name: referenced_netflow
+        live_safe: false
+        requirements:
+          - l3_netflow_monitor_exists
+          - netflow_sampler_supported
+        properties:
+          - config_data.network_os.policy.netflow
+          - config_data.network_os.policy.netflow_monitor
+          - config_data.network_os.policy.netflow_sampler
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  ip: "{{ nd_iw_active_resources.svi.primary_ipv4 }}"
+                  prefix: 24
+                  netflow: true
+                  netflow_monitor: "{{ nd_iw_active_resources.references.l3_netflow_monitor }}"
+                  netflow_sampler: "{{ nd_iw_active_resources.references.netflow_sampler }}"
+    invalid:
+      - name: vlan_above_maximum
+        expected_error: range 1-4094
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: vlan4095
+      - name: mtu_below_minimum
+        expected_error: greater than or equal to 68
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+            config_data: {network_os: {policy: {mtu: 67}}}
+      - name: ipv4_without_prefix
+        expected_error: ip and prefix are required together
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+            config_data: {network_os: {policy: {ip: 198.18.92.4}}}
+      - name: ipv6_without_prefix
+        expected_error: ipv6 and prefixv6 are required together
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+            config_data: {network_os: {policy: {ipv6: "2001:db8:92::4"}}}
+      - name: invalid_hsrp_version
+        expected_error: Input should be 1 or 2
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+            config_data: {network_os: {policy: {hsrp_version: 3}}}
+      - name: netflow_without_monitor
+        expected_error: netflow_monitor must be provided
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+            config_data: {network_os: {policy: {netflow: true}}}
+      - name: non_ascii_description
+        expected_error: ASCII
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.svi.primary_name }}"
+            config_data: {network_os: {policy: {description: "IW café"}}}
+    properties:
+      - switch_ip
+      - interface_name
+      - config_data.network_os.policy.admin_state
+      - config_data.network_os.policy.description
+      - config_data.network_os.policy.extra_config
+      - config_data.network_os.policy.mtu
+      - config_data.network_os.policy.ip
+      - config_data.network_os.policy.prefix
+      - config_data.network_os.policy.ipv6
+      - config_data.network_os.policy.prefixv6
+      - config_data.network_os.policy.ip_redirects
+      - config_data.network_os.policy.vrf_interface
+      - config_data.network_os.policy.routing_tag
+      - config_data.network_os.policy.pim_sparse
+      - config_data.network_os.policy.pim_dr_priority
+      - config_data.network_os.policy.hsrp
+      - config_data.network_os.policy.hsrp_vip
+      - config_data.network_os.policy.hsrp_vipv6
+      - config_data.network_os.policy.hsrp_group
+      - config_data.network_os.policy.hsrp_groupv6
+      - config_data.network_os.policy.hsrp_version
+      - config_data.network_os.policy.hsrp_priority
+      - config_data.network_os.policy.preempt
+      - config_data.network_os.policy.mac
+      - config_data.network_os.policy.dhcp_server_address1
+      - config_data.network_os.policy.dhcp_server_address2
+      - config_data.network_os.policy.dhcp_server_address3
+      - config_data.network_os.policy.vrf_dhcp1
+      - config_data.network_os.policy.vrf_dhcp2
+      - config_data.network_os.policy.vrf_dhcp3
+      - config_data.network_os.policy.advertise_subnet_in_underlay
+      - config_data.network_os.policy.netflow
+      - config_data.network_os.policy.netflow_monitor
+      - config_data.network_os.policy.netflow_sampler

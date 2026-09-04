@@ -1,0 +1,244 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Reset independent controller inventory evidence
+  ansible.builtin.set_fact:
+    nd_iw_raw_expected_policy_keys: []
+    nd_iw_raw_expected_fingerprint_keys: []
+    nd_iw_raw_switch_id_by_ip: {}
+    nd_iw_raw_interfaces: []
+    nd_iw_raw_observed_policy_keys: []
+    nd_iw_raw_observed_fingerprint_keys: []
+    nd_iw_raw_policy_type_by_family:
+      ethernet_access: accessHost
+      ethernet_trunk_host: trunkHost
+      loopback: loopback
+      port_channel_access: accessPoHost
+      port_channel_trunk_host: trunkPoHost
+      subinterface_managed: subinterface
+      subinterface_unmanaged: monitorSubinterface
+      svi: svi
+      vpc_access: accessVpcHost
+      vpc_trunk_host: trunkVpcHost
+
+- name: Read authoritative fabric switch identities
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ nd_iw_current_fabric.fabric_name | urlencode }}/switches?max=500&offset=0
+    method: get
+  register: nd_iw_raw_switch_inventory
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+- name: Verify authoritative fabric switch inventory response
+  ansible.builtin.assert:
+    that:
+      - nd_iw_raw_switch_inventory.status | int == 200
+      - nd_iw_raw_switch_inventory.current.switches is sequence
+    fail_msg: >-
+      Independent raw verification could not read the fabric switch identity map.
+
+- name: Build authoritative management-IP-to-serial map
+  ansible.builtin.set_fact:
+    nd_iw_raw_switch_id_by_ip: >-
+      {{ nd_iw_raw_switch_id_by_ip
+         | combine({item.fabricManagementIp: item.switchId
+                    | default(item.serialNumber | default(''), true)}) }}
+  loop: "{{ nd_iw_raw_switch_inventory.current.switches }}"
+  loop_control:
+    label: "{{ item.fabricManagementIp | default('unaddressed') }}"
+  when:
+    - item.fabricManagementIp | default('') | length > 0
+    - item.switchId | default(item.serialNumber | default(''), true) | length > 0
+
+- name: Verify workflow target serials belong to the mapped fabric
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd_iw_raw_workflow_result.target_switch_ids
+        | difference(nd_iw_raw_switch_id_by_ip.values() | list)
+        | length == 0
+    fail_msg: >-
+      Workflow target serials were absent from the independent fabric switch inventory.
+
+- name: Build expected raw policy identities
+  vars:
+    nd_iw_raw_expected_names: >-
+      {{
+        [item.1.interface_name]
+        if item.1.interface_name is defined
+        else item.1.interface_names
+      }}
+    nd_iw_raw_expected_switch_ips: >-
+      {{ [nd_iw_active_switches.vpc_peer1, nd_iw_active_switches.vpc_peer2]
+         if item.0.type in ['vpc_access', 'vpc_trunk_host']
+         else [item.1.switch_ip] }}
+    nd_iw_raw_expected_switch_ids: >-
+      {{ nd_iw_raw_expected_switch_ips
+         | map('extract', nd_iw_raw_switch_id_by_ip)
+         | unique
+         | list }}
+    nd_iw_raw_expected_policy: >-
+      {{
+        item.1.get('config_data', {}).get('network_os', {}).get('policy', {}).get(
+          'policy_type', nd_iw_raw_policy_type_by_family[item.0.type]
+        )
+      }}
+
+  ansible.builtin.set_fact:
+    nd_iw_raw_expected_policy_keys: >-
+      {{
+        nd_iw_raw_expected_policy_keys
+        + (
+          nd_iw_raw_expected_switch_ids
+          | product(nd_iw_raw_expected_names | map('lower') | list)
+          | map('join', '|')
+          | product([nd_iw_raw_expected_policy])
+          | map('join', '|')
+          | list
+        )
+      }}
+  loop: "{{ nd_iw_raw_identity_resources | subelements('config') }}"
+  loop_control:
+    label: "{{ item.0.type }}"
+
+- name: Build expected raw description fingerprints
+  vars:
+    nd_iw_raw_expected_names: >-
+      {{
+        [item.1.interface_name]
+        if item.1.interface_name is defined
+        else item.1.interface_names
+      }}
+    nd_iw_raw_expected_switch_ips: >-
+      {{ [nd_iw_active_switches.vpc_peer1, nd_iw_active_switches.vpc_peer2]
+         if item.0.type in ['vpc_access', 'vpc_trunk_host']
+         else [item.1.switch_ip] }}
+    nd_iw_raw_expected_switch_ids: >-
+      {{ nd_iw_raw_expected_switch_ips
+         | map('extract', nd_iw_raw_switch_id_by_ip)
+         | unique
+         | list }}
+    nd_iw_raw_expected_policy: >-
+      {{
+        item.1.get('config_data', {}).get('network_os', {}).get('policy', {}).get(
+          'policy_type', nd_iw_raw_policy_type_by_family[item.0.type]
+        )
+      }}
+
+    nd_iw_raw_expected_description: "{{ item.1.config_data.network_os.policy.description }}"
+  ansible.builtin.set_fact:
+    nd_iw_raw_expected_fingerprint_keys: >-
+      {{
+        nd_iw_raw_expected_fingerprint_keys
+        + (
+          nd_iw_raw_expected_switch_ids
+          | product(nd_iw_raw_expected_names | map('lower') | list)
+          | map('join', '|')
+          | product([nd_iw_raw_expected_policy])
+          | map('join', '|')
+          | product([nd_iw_raw_expected_description])
+          | map('join', '|')
+          | list
+        )
+      }}
+  loop: "{{ nd_iw_raw_fingerprint_resources | subelements('config') }}"
+  loop_control:
+    label: "{{ item.0.type }}"
+  when: item.1.config_data.network_os.policy.description is defined
+
+- name: Read raw interface inventory once per targeted switch
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ nd_iw_current_fabric.fabric_name | urlencode
+      }}/switches/{{ item | urlencode }}/interfaces?max=500&offset=0
+    method: get
+  register: nd_iw_raw_inventory
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  loop: "{{ nd_iw_raw_workflow_result.target_switch_ids }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Verify every raw interface inventory response
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - item.current.interfaces is sequence
+    fail_msg: >-
+      Independent raw verification could not read interface inventory for switch {{ item.item }}.
+  loop: "{{ nd_iw_raw_inventory.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Combine raw controller interface records
+  ansible.builtin.set_fact:
+    nd_iw_raw_interfaces: >-
+      {{ nd_iw_raw_interfaces
+         + (item.current.interfaces
+            | default([])
+            | map('combine', {'nd_iw_raw_switch_id': item.item})
+            | list) }}
+  loop: "{{ nd_iw_raw_inventory.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Build independently observed policy and description signatures
+  vars:
+    nd_iw_raw_observed_name: "{{ item.interfaceName | default('') | lower }}"
+    nd_iw_raw_observed_policy: >-
+      {{ item.get('configData', {}).get('networkOS', {}).get('policy', {}).get('policyType', '') }}
+    nd_iw_raw_observed_description: >-
+      {{ item.get('configData', {}).get('networkOS', {}).get('policy', {}).get('description', '') }}
+  ansible.builtin.set_fact:
+    nd_iw_raw_observed_policy_keys: >-
+      {{
+        nd_iw_raw_observed_policy_keys
+        + [item.nd_iw_raw_switch_id ~ '|' ~ nd_iw_raw_observed_name
+           ~ '|' ~ nd_iw_raw_observed_policy]
+      }}
+    nd_iw_raw_observed_fingerprint_keys: >-
+      {{
+        nd_iw_raw_observed_fingerprint_keys
+        + [
+          item.nd_iw_raw_switch_id
+          ~ '|' ~ nd_iw_raw_observed_name
+          ~ '|' ~ nd_iw_raw_observed_policy
+          ~ '|' ~ nd_iw_raw_observed_description
+        ]
+      }}
+  loop: "{{ nd_iw_raw_interfaces }}"
+  loop_control:
+    label: >-
+      {{ item.nd_iw_raw_switch_id ~ ':' ~ (item.interfaceName | default('unnamed')) }}
+
+- name: Verify raw controller inventory contains created managed intent
+  ansible.builtin.assert:
+    that:
+      - nd_iw_raw_expected_policy_keys | difference(nd_iw_raw_observed_policy_keys) | length == 0
+      - nd_iw_raw_expected_fingerprint_keys | difference(nd_iw_raw_observed_fingerprint_keys) | length == 0
+    fail_msg: >-
+      Independent ND inventory did not contain all created interface policy signatures.
+      Missing policies={{ nd_iw_raw_expected_policy_keys | difference(nd_iw_raw_observed_policy_keys) }};
+      missing fingerprints={{
+        nd_iw_raw_expected_fingerprint_keys | difference(nd_iw_raw_observed_fingerprint_keys)
+      }}.
+  when: nd_iw_raw_verify_mode == 'present'
+
+- name: Verify raw controller inventory no longer contains deleted managed intent
+  vars:
+    # Physical trunk interfaces remain in inventory as normalized trunkHost
+    # records. Their test description fingerprint must disappear instead.
+    nd_iw_raw_absence_policy_keys: >-
+      {{ nd_iw_raw_expected_policy_keys | reject('search', '\\|trunkHost$') | list }}
+  ansible.builtin.assert:
+    that:
+      - nd_iw_raw_absence_policy_keys | intersect(nd_iw_raw_observed_policy_keys) | length == 0
+      - nd_iw_raw_expected_fingerprint_keys | intersect(nd_iw_raw_observed_fingerprint_keys) | length == 0
+    fail_msg: >-
+      Independent ND inventory still contains deleted test intent.
+      Policy matches={{ nd_iw_raw_absence_policy_keys | intersect(nd_iw_raw_observed_policy_keys) }};
+      fingerprint matches={{
+        nd_iw_raw_expected_fingerprint_keys | intersect(nd_iw_raw_observed_fingerprint_keys)
+      }}.
+  when: nd_iw_raw_verify_mode == 'absent'

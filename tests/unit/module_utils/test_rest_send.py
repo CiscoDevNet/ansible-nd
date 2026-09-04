@@ -900,20 +900,20 @@ def test_rest_send_00510():
     ## Test
 
     - Failed POST request returns 400 response
-    - Loop retries until timeout is exhausted
+    - The deterministic 400 is terminal and is submitted exactly once
+    - A following sentinel 200 response is not consumed
 
     ## Classes and Methods
 
     - RestSend.commit()
     - RestSend._commit_normal_mode()
+    - ResponseHandler._is_terminal_client_error()
     """
     method_name = inspect.stack()[0][3]
-    key = f"{method_name}a"
 
     def responses():
-        # Provide responses for multiple retry attempts (60 retries * 5 second interval = 300 seconds)
-        for _ in range(60):
-            yield responses_rest_send(key)
+        yield responses_rest_send(f"{method_name}a")
+        yield responses_rest_send(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
 
@@ -940,9 +940,10 @@ def test_rest_send_00510():
         instance.payload = {"invalid": "data"}
         instance.commit()
 
-    # Verify error response
+    # One submission: the terminal 400 is final; the sentinel 200 was never consumed.
     assert instance.response_current["RETURN_CODE"] == 400
     assert instance.result_current["success"] is False
+    assert instance.result_current["retryable"] is False
 
 
 def test_rest_send_00520():

@@ -1,0 +1,188 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Require explicit isolation approval for {{ nd_iw_current_case.family }} override
+  ansible.builtin.assert:
+    that:
+      - nd_iw_enable_destructive | bool
+      - nd_iw_run_destructive | bool
+      - nd_iw_current_fabric.isolated_resource_owner | default(false) | bool
+      - nd_iw_current_fabric.fabric_name in (nd_iw_destructive_fabrics | default([]))
+      - nd_iw_override_scope_confirmed | default(false) | bool
+      - nd_iw_current_case.secondary is defined
+      - nd_iw_current_case.override is defined
+      - nd_iw_current_case.delete_all is defined
+    fail_msg: >-
+      Authoritative override is intentionally blocked. Mark this exact fabric as an isolated
+      resource owner, add its name to nd_iw_destructive_fabrics, and set
+      nd_iw_override_scope_confirmed=true only after verifying no non-test interface intent exists.
+
+- name: Build guarded override seed for {{ nd_iw_current_case.family }}
+  ansible.builtin.set_fact:
+    nd_iw_override_seed_config: "{{ nd_iw_current_case.create_config + nd_iw_current_case.secondary }}"
+
+- name: Exercise authoritative override for {{ nd_iw_current_case.family }}
+  block:
+    - name: Remove only the reserved override identities before setup
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_current_case.family }}"
+            state: deleted
+            config: "{{ nd_iw_current_case.delete_all }}"
+        config_actions:
+          deploy: false
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_override_precleanup
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Seed two reserved identities for authoritative deletion coverage
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_current_case.family }}"
+            state: merged
+            config: "{{ nd_iw_override_seed_config }}"
+        config_actions:
+          deploy: false
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_override_seed
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Preview authoritative retention of only the primary identity
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_current_case.family }}"
+            state: overridden
+            config: "{{ nd_iw_current_case.override }}"
+        config_actions:
+          deploy: true
+        output_level: info
+      check_mode: true
+      register: nd_iw_override_preview
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+    - name: Verify override preview expands scope without writing
+      ansible.builtin.assert:
+        that:
+          - nd_iw_override_preview.execution.status == 'check_mode'
+          - nd_iw_override_preview.resources[0].state == 'overridden'
+          - nd_iw_override_preview.target_switch_ids | length >= nd_iw_active_switches.values() | reject('equalto', '') | unique | list | length
+          - nd_iw_override_preview.execution.mutations_sent == 0
+          - nd_iw_override_preview.execution.deployments_sent == 0
+
+    - name: Verify override preview plans removal of the secondary identity
+      vars:
+        nd_iw_override_removal_action: >-
+          {{
+            "reset"
+            if nd_iw_current_case.family in ["ethernet_access", "ethernet_trunk_host"]
+            else "delete"
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd_iw_override_preview is changed
+          - >-
+            nd_iw_override_preview.resources[0].operations
+            | selectattr("action", "equalto", nd_iw_override_removal_action)
+            | list
+            | length > 0
+      when: not nd_iw_module_check_mode
+
+    - name: Apply authoritative retention of only the primary identity
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_current_case.family }}"
+            state: overridden
+            config: "{{ nd_iw_current_case.override }}"
+        config_actions:
+          deploy: false
+        verify:
+          enabled: true
+        output_level: info
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_override_apply
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Verify overridden state retained primary and removed secondary intent
+      vars:
+        nd_iw_override_removal_action: >-
+          {{
+            "reset"
+            if nd_iw_current_case.family in ["ethernet_access", "ethernet_trunk_host"]
+            else "delete"
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd_iw_override_apply is changed
+          - nd_iw_override_apply.resources[0].state == 'overridden'
+          - nd_iw_override_apply.resources[0].after_verified
+          - >-
+            nd_iw_override_apply.resources[0].operations
+            | selectattr("action", "equalto", nd_iw_override_removal_action)
+            | list
+            | length > 0
+      when: not nd_iw_module_check_mode
+
+    - name: Verify secondary override identities are absent
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_absent_config_item.yaml"
+      vars:
+        nd_iw_assert_resource_result: "{{ nd_iw_override_apply.resources[0] }}"
+      loop: "{{ nd_iw_current_case.secondary }}"
+      loop_control:
+        loop_var: nd_iw_absent_config_item
+        label: >-
+          {{
+            nd_iw_absent_config_item.interface_name
+            | default(nd_iw_absent_config_item.interface_names | default(['unknown']) | first)
+          }}
+      when: not nd_iw_module_check_mode
+
+    - name: Reapply authoritative state for idempotency
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_current_case.family }}"
+            state: overridden
+            config: "{{ nd_iw_current_case.override }}"
+        config_actions:
+          deploy: "{{ nd_iw_enable_deploy | bool }}"
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_override_idempotent
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Verify overridden idempotency sends no write or deployment
+      ansible.builtin.assert:
+        that:
+          - nd_iw_override_idempotent is not changed
+          - nd_iw_override_idempotent.execution.status == 'no_change'
+          - nd_iw_override_idempotent.execution.mutations_sent == 0
+          - nd_iw_override_idempotent.execution.deployments_sent == 0
+      when: not nd_iw_module_check_mode
+
+  always:
+    - name: Remove only reserved {{ nd_iw_current_case.family }} override identities
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources:
+          - type: "{{ nd_iw_current_case.family }}"
+            state: deleted
+            config: "{{ nd_iw_current_case.delete_all }}"
+        config_actions:
+          deploy: false
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_override_cleanup
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode

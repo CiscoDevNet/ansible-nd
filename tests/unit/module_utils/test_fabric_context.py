@@ -430,6 +430,58 @@ def test_fabric_context_00210() -> None:
         instance.get_switch_ip("FDO99999XYZ")
 
 
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    (
+        ("inSync", True),
+        ("In-Sync", True),
+        ("SYNCHRONIZED", True),
+        ("outOfSync", False),
+        ("Out-of-Sync", False),
+        ("not_synchronized", False),
+        ("pending", False),
+        ("Pending", False),
+        ("NA", None),
+        (None, None),
+    ),
+)
+def test_fabric_context_00211(status, expected) -> None:
+    """Verify in-sync, deploy-needed, and unknown controller synchronization spellings normalize safely."""
+    assert FabricContext._normalize_config_sync_status(status) is expected
+
+
+def test_fabric_context_00212() -> None:
+    """Verify nested and top-level switch status reuse the switch-list cache without another GET."""
+    method_name = "test_fabric_context_00200"
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+
+    assert instance.switch_map["192.168.12.151"] == "FDO12345ABC"
+    assert instance.switch_config_in_sync("FDO12345ABC") is None
+
+    instance._switch_records_by_id = {
+        "FDO12345ABC": {"switchId": "FDO12345ABC", "additionalData": {"configSyncStatus": "Out-of-Sync"}},
+        "FDO12345ABD": {"switchId": "FDO12345ABD", "configSyncStatus": "In_Sync"},
+        "FDO12345ABE": {
+            "switchId": "FDO12345ABE",
+            "additionalData": {"configSyncStatus": "NA"},
+            "configSyncStatus": "outOfSync",
+        },
+        "FDO12345ABF": {"switchId": "FDO12345ABF", "additionalData": {"configSyncStatus": "Pending"}},
+    }
+
+    assert instance.switch_config_in_sync("FDO12345ABC") is False
+    assert instance.switch_config_in_sync("FDO12345ABD") is True
+    assert instance.switch_config_in_sync("FDO12345ABE") is False
+    assert instance.switch_config_in_sync("FDO12345ABF") is False
+    assert instance.switch_config_in_sync("UNKNOWN") is None
+
+
 def test_fabric_context_00220() -> None:
     """
     # Summary
