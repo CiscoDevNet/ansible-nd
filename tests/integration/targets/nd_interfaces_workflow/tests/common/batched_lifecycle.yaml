@@ -82,6 +82,8 @@
         resources: "{{ nd_iw_batch_cleanup_resources }}"
         config_actions:
           deploy: false
+        verify:
+          enabled: true
         output_level: normal
       check_mode: "{{ nd_iw_module_check_mode }}"
       register: nd_iw_batch_precleanup
@@ -124,7 +126,7 @@
             nd_iw_batch_create_preview.request_stats.vpc_pair_gets
             == (1 if (nd_iw_batch_create_resources | selectattr('type', 'in', ['vpc_access', 'vpc_trunk_host']) | list | length > 0) else 0)
 
-    - name: Apply the batched merged create
+    - name: Apply the batched merged create with verification disabled by default
       cisco.nd.nd_interfaces_workflow:
         fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
         resources: "{{ nd_iw_batch_create_resources }}"
@@ -145,7 +147,9 @@
           - nd_iw_batch_create.execution.mutations_sent > 0
           - nd_iw_batch_create.execution.deployments_sent == 0
           - nd_iw_batch_create.resources | length == nd_iw_active_cases | length
-          - nd_iw_batch_create.resources | selectattr('after_verified', 'equalto', true) | list | length == nd_iw_active_cases | length
+          - nd_iw_batch_create.resources | selectattr('after_verified', 'equalto', false) | list | length == nd_iw_active_cases | length
+          - nd_iw_batch_create.request_stats.interface_inventory_refreshes == 0
+          - nd_iw_batch_create.request_stats.interface_inventory_dirty_refetches == 0
       when: not nd_iw_module_check_mode
 
     - name: Verify every created family and configured property
@@ -159,6 +163,7 @@
           }}
         nd_iw_assert_resource_result: "{{ nd_iw_batch_create.resources[nd_iw_assert_case_index] }}"
         nd_iw_assert_state: merged
+        nd_iw_assert_after_verified: false
       loop: "{{ nd_iw_active_cases }}"
       loop_control:
         loop_var: nd_iw_assert_case_item
@@ -222,10 +227,20 @@
         resources: "{{ nd_iw_batch_update_resources }}"
         config_actions:
           deploy: false
+        verify:
+          enabled: true
         output_level: info
       check_mode: "{{ nd_iw_module_check_mode }}"
       register: nd_iw_batch_update
       delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Verify explicit post-mutation readback refreshed affected inventories
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_update.request_stats.interface_inventory_refreshes > 0
+          - nd_iw_batch_update.request_stats.interface_inventory_dirty_refetches > 0
+          - nd_iw_batch_update.resources | selectattr('after_verified', 'equalto', true) | list | length == nd_iw_active_cases | length
       when: not nd_iw_module_check_mode
 
     - name: Verify every updated family and configured property
@@ -292,6 +307,8 @@
         resources: "{{ nd_iw_batch_replace_resources }}"
         config_actions:
           deploy: false
+        verify:
+          enabled: true
         output_level: info
       check_mode: "{{ nd_iw_module_check_mode }}"
       register: nd_iw_batch_replace
@@ -368,6 +385,8 @@
         resources: "{{ nd_iw_batch_delete_resources }}"
         config_actions:
           deploy: false
+        verify:
+          enabled: true
         output_level: normal
       check_mode: "{{ nd_iw_module_check_mode }}"
       register: nd_iw_batch_delete
@@ -426,6 +445,8 @@
         resources: "{{ nd_iw_batch_cleanup_resources }}"
         config_actions:
           deploy: false
+        verify:
+          enabled: true
         output_level: normal
       check_mode: "{{ nd_iw_module_check_mode }}"
       register: nd_iw_batch_cleanup

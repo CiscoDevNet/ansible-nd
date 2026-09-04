@@ -78,6 +78,12 @@ inputs or snapshots:
 - `request_stats` contains only read, cache, refresh, overlay, and vPC metrics. `execution.mutations_sent` and
   `execution.deployments_sent` are the sole write-request counters.
 
+Post-mutation verification is optional and disabled by default. A successful mutating task without a `verify` mapping, or with
+`verify.enabled: false`, skips the second interface-inventory read. Its resource groups return projected intended `after` state with
+`after_verified: false`, while `interface_inventory_refreshes` and `interface_inventory_dirty_refetches` remain zero. Setting
+`verify.enabled: true` preserves explicit controller readback and returns observed `after` state with `after_verified: true`. Initial
+discovery and safety reads are never skipped, and partial or failed write execution forces reconciliation for diagnostics.
+
 Resource snapshot scope remains state-aware:
 
 - `merged`, `replaced`, and `deleted` report only identities explicitly listed in the corresponding resource group under `before`
