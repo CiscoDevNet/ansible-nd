@@ -38,7 +38,8 @@ routed_32:
     network_os:
       network_os_type: nx-os
       policy:
-        policy_type: routedHost
+        # policy_type intentionally omitted: it is derived from network_os_type
+        # (routedHost); merged.yaml asserts the echo carries it.
         admin_state: true
         ip: "10.99.32.1"
         prefix: 30
@@ -120,7 +121,8 @@ xe_routed:
     network_os:
       network_os_type: ios-xe
       policy:
-        policy_type: iosXeRoutedHost
+        # policy_type intentionally omitted: derived from network_os_type
+        # (iosXeRoutedHost); xe.yaml asserts the echo carries it.
         admin_state: true
         ip: "10.99.203.1"
         prefix: 30

@@ -75,10 +75,11 @@ options:
                     description:
                     - The routed ethernet policy template to apply. This is a discriminator that determines which of the
                       remaining C(policy) suboptions are applicable.
+                    - Optional. When omitted it is derived from O(config[].config_data.network_os.network_os_type),
+                      V(routedHost) for C(nx-os) and V(iosXeRoutedHost) for C(ios-xe).
                     - Use V(routedHost) for an NX-OS routed host interface.
                     - Use V(iosXeRoutedHost) for an IOS-XE routed host interface.
                     type: str
-                    required: true
                     choices: [ routedHost, iosXeRoutedHost ]
                   admin_state:
                     description:
@@ -262,7 +263,7 @@ EXAMPLES = r"""
           network_os:
             network_os_type: nx-os
             policy:
-              policy_type: routedHost
+              policy_type: routedHost  # optional; derived from network_os_type when omitted
               admin_state: true
               ip: 10.99.99.1
               prefix: 30
@@ -283,7 +284,6 @@ EXAMPLES = r"""
           network_os:
             network_os_type: nx-os
             policy:
-              policy_type: routedHost
               ip: 10.99.99.1
               prefix: 30
               pim_sparse: true
@@ -294,7 +294,6 @@ EXAMPLES = r"""
           network_os:
             network_os_type: nx-os
             policy:
-              policy_type: routedHost
               ip: 10.99.99.5
               prefix: 30
     config_actions:
@@ -311,7 +310,6 @@ EXAMPLES = r"""
           network_os:
             network_os_type: ios-xe
             policy:
-              policy_type: iosXeRoutedHost
               admin_state: true
               ip: 10.200.3.1
               prefix: 30
@@ -330,7 +328,6 @@ EXAMPLES = r"""
           network_os:
             network_os_type: nx-os
             policy:
-              policy_type: routedHost
               admin_state: true
               ip: 10.99.99.9
               prefix: 30
@@ -354,7 +351,6 @@ EXAMPLES = r"""
           network_os:
             network_os_type: nx-os
             policy:
-              policy_type: routedHost
               ip: 10.99.99.1
               prefix: 30
       - switch_ip: 192.168.2.1
@@ -363,7 +359,6 @@ EXAMPLES = r"""
           network_os:
             network_os_type: ios-xe
             policy:
-              policy_type: iosXeRoutedHost
               ip: 10.200.3.1
               prefix: 30
     config_actions:
@@ -390,7 +385,6 @@ EXAMPLES = r"""
           network_os:
             network_os_type: nx-os
             policy:
-              policy_type: routedHost
               ip: 10.99.99.1
               prefix: 30
     config_actions:

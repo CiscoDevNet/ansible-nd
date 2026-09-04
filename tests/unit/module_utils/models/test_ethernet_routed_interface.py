@@ -120,13 +120,13 @@ def test_ethernet_routed_interface_00020():
     """
     # Summary
 
-    Verify field defaults: user-facing fields default to None; `policy_type` is required and must be passed explicitly.
+    Verify field defaults: user-facing fields default to None; an explicit `policy_type` is accepted verbatim.
 
     ## Test
 
     - Instantiate with only `policy_type`
     - User-facing fields are None
-    - `policy_type` is "routedHost" (required, no default)
+    - `policy_type` is "routedHost"
 
     ## Classes and Methods
 
@@ -161,19 +161,53 @@ def test_ethernet_routed_interface_00030():
     """
     # Summary
 
-    Verify a missing `policy_type` discriminator raises.
+    Verify an omitted `policy_type` discriminator is injected as `routedHost` — the only NX-OS routed policy type the module manages,
+    so the user need not repeat what `network_os_type` already implies (PR #550 review) — and that the injected value is SET, so it
+    reaches the wire payload and the merge/diff paths exactly like an explicit value.
 
     ## Test
 
-    - Instantiate with no `policy_type`
-    - `ValidationError` is raised, reporting the missing discriminator by its wire alias `policyType`
+    - Instantiate with no `policy_type`, with `policy_type=None` (how the argspec passes an omitted suboption), and from a wire dict
+      lacking `policyType`
+    - `policy_type` is "routedHost" in every case and is reported by `model_fields_set`
+    - `to_payload()` carries `policyType: routedHost`
 
     ## Classes and Methods
 
-    - NexusEthernetRoutedPolicyModel.__init__()
+    - NexusEthernetRoutedPolicyModel.default_policy_type()
+    - _default_policy_type()
     """
-    with pytest.raises(ValidationError, match="policyType"):
-        result = NexusEthernetRoutedPolicyModel()
+    with does_not_raise():
+        omitted = NexusEthernetRoutedPolicyModel()
+        none_valued = NexusEthernetRoutedPolicyModel(policy_type=None, ip="10.1.1.1")
+        wire = NexusEthernetRoutedPolicyModel.model_validate({"ip": "10.1.1.1", "prefix": 30})
+    for instance in (omitted, none_valued, wire):
+        assert instance.policy_type == "routedHost"
+        assert "policy_type" in instance.model_fields_set
+        assert instance.to_payload()["policyType"] == "routedHost"
+    assert wire.ip == "10.1.1.1"
+
+
+def test_ethernet_routed_interface_00031():
+    """
+    # Summary
+
+    Verify an explicit `policy_type` is never overridden by the injection, and a wrong explicit value is still rejected.
+
+    ## Test
+
+    - `policy_type="routedHost"` stays "routedHost"
+    - `policy_type="iosXeRoutedHost"` on the NX-OS model raises `ValidationError`
+
+    ## Classes and Methods
+
+    - NexusEthernetRoutedPolicyModel.default_policy_type()
+    """
+    with does_not_raise():
+        instance = NexusEthernetRoutedPolicyModel(policy_type="routedHost")
+    assert instance.policy_type == "routedHost"
+    with pytest.raises(ValidationError, match=r"policy_type\n  Input should be 'routedHost'"):
+        result = NexusEthernetRoutedPolicyModel(policy_type="iosXeRoutedHost")
 
 
 def test_ethernet_routed_interface_00040():
@@ -291,13 +325,13 @@ def test_ethernet_routed_interface_00080():
     """
     # Summary
 
-    Verify field defaults: user-facing fields default to None; `policy_type` is required and must be passed explicitly.
+    Verify field defaults: user-facing fields default to None; an explicit `policy_type` is accepted verbatim.
 
     ## Test
 
     - Instantiate with only `policy_type`
     - User-facing fields are None
-    - `policy_type` is "iosXeRoutedHost" (required, no default)
+    - `policy_type` is "iosXeRoutedHost"
 
     ## Classes and Methods
 
@@ -314,6 +348,34 @@ def test_ethernet_routed_interface_00080():
     assert instance.speed is None
     assert instance.vrf is None
     assert instance.policy_type == "iosXeRoutedHost"
+
+
+def test_ethernet_routed_interface_00081():
+    """
+    # Summary
+
+    Verify an omitted `policy_type` on the IOS-XE model is injected as `iosXeRoutedHost` and reaches the wire payload.
+
+    ## Test
+
+    - Instantiate with no `policy_type`, with `policy_type=None`, and from a wire dict lacking `policyType`
+    - `policy_type` is "iosXeRoutedHost" in every case and `to_payload()` carries it
+    - An explicit NX-OS value on the XE model raises `ValidationError`
+
+    ## Classes and Methods
+
+    - XeEthernetRoutedPolicyModel.default_policy_type()
+    - _default_policy_type()
+    """
+    with does_not_raise():
+        omitted = XeEthernetRoutedPolicyModel()
+        none_valued = XeEthernetRoutedPolicyModel(policy_type=None, ip="10.1.1.1")
+        wire = XeEthernetRoutedPolicyModel.model_validate({"ip": "10.1.1.1", "prefix": 30})
+    for instance in (omitted, none_valued, wire):
+        assert instance.policy_type == "iosXeRoutedHost"
+        assert instance.to_payload()["policyType"] == "iosXeRoutedHost"
+    with pytest.raises(ValidationError, match=r"policy_type\n  Input should be 'iosXeRoutedHost'"):
+        result = XeEthernetRoutedPolicyModel(policy_type="routedHost")
 
 
 def test_ethernet_routed_interface_00090():
@@ -628,6 +690,52 @@ def test_ethernet_routed_interface_00160():
         result = NexusEthernetRoutedNetworkOSModel.model_validate({"networkOSType": "nx-os", "policy": {"policyType": "iosXeRoutedHost", "ip": "10.1.1.1"}})
 
 
+def test_ethernet_routed_interface_00165():
+    """
+    # Summary
+
+    Verify the full interface model derives `policy_type` from `network_os_type` end to end: a user config that omits `policy_type`
+    (argspec shape, with the omitted suboption present as `None`) selects the right network-OS branch, injects the matching
+    discriminator, and produces a wire payload / config view identical to the explicit form. Covers Mike's PR #550 example
+    (IOS-XE `GigabitEthernet3` without `policy_type`).
+
+    ## Test
+
+    - NX-OS config without `policy_type` -> `policy_type == "routedHost"`, `to_payload()` carries `policyType: routedHost`
+    - IOS-XE config without `policy_type` -> `policy_type == "iosXeRoutedHost"`, `to_payload()` carries `policyType: iosXeRoutedHost`
+    - The omitted form is equal to the explicit form (same `to_payload()` and `to_config()`)
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceModel.model_validate()
+    - NexusEthernetRoutedPolicyModel.default_policy_type()
+    - XeEthernetRoutedPolicyModel.default_policy_type()
+    """
+    cases = (
+        ("nx-os", "routedHost", {"ip": "10.99.99.1", "prefix": 30, "description": "L3 uplink"}),
+        ("ios-xe", "iosXeRoutedHost", {"admin_state": True, "ip": "10.200.3.1", "prefix": 30, "description": "XE routed link"}),
+    )
+    for os_type, expected, policy in cases:
+        omitted = EthernetRoutedInterfaceModel.model_validate(
+            {
+                "switch_ip": "192.168.2.1",
+                "interface_name": "GigabitEthernet3",
+                "config_data": {"network_os": {"network_os_type": os_type, "policy": {"policy_type": None, **policy}}},
+            }
+        )
+        explicit = EthernetRoutedInterfaceModel.model_validate(
+            {
+                "switch_ip": "192.168.2.1",
+                "interface_name": "GigabitEthernet3",
+                "config_data": {"network_os": {"network_os_type": os_type, "policy": {"policy_type": expected, **policy}}},
+            }
+        )
+        assert omitted.policy_type == expected
+        assert omitted.to_payload()["configData"]["networkOS"]["policy"]["policyType"] == expected
+        assert omitted.to_payload() == explicit.to_payload()
+        assert omitted.to_config() == explicit.to_config()
+
+
 def test_ethernet_routed_interface_00170():
     """
     # Summary
@@ -637,7 +745,7 @@ def test_ethernet_routed_interface_00170():
     ## Test
 
     - `network_os_type` required with choices ["nx-os", "ios-xe"]
-    - `policy_type` required with choices ["routedHost", "iosXeRoutedHost"]
+    - `policy_type` OPTIONAL (derived from `network_os_type` when omitted) with choices ["routedHost", "iosXeRoutedHost"]
     - NX-only options (e.g. `fec`, `pim_sparse`) and shared options (`ip`, `prefix`, `vrf`) present
 
     ## Classes and Methods
@@ -649,7 +757,7 @@ def test_ethernet_routed_interface_00170():
     assert network_os["network_os_type"]["required"] is True
     assert network_os["network_os_type"]["choices"] == ["nx-os", "ios-xe"]
     policy = network_os["policy"]["options"]
-    assert policy["policy_type"]["required"] is True
+    assert policy["policy_type"].get("required") is not True
     assert policy["policy_type"]["choices"] == ["routedHost", "iosXeRoutedHost"]
     for option in ("ip", "prefix", "vrf", "fec", "pim_sparse", "speed", "mtu"):
         assert option in policy

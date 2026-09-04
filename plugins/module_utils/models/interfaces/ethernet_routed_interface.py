@@ -22,10 +22,14 @@ both the per-interface PUT and the bulk POST accept `routedHost` on a VXLAN leaf
         - `mode` (hardcoded: "routed")
         - `network_os` -> `NexusEthernetRoutedNetworkOSModel | XeEthernetRoutedNetworkOSModel` (outer discriminated union on `network_os_type`)
             - `NexusEthernetRoutedNetworkOSModel` (`network_os_type: "nx-os"`)
-                - `policy` -> `NexusEthernetRoutedPolicyModel` (`policy_type: "routedHost"`; becomes a `policy_type` discriminated union
-                  when the feature-gated follow-up branches — `endPointLocator`, `ipfmL3Port`, `dataBrokerL3Host` — are modeled)
+                - `policy` -> `NexusEthernetRoutedPolicyModel` (`policy_type: "routedHost"`, injected when omitted; becomes a
+                  `policy_type` discriminated union when the feature-gated follow-up branches — `endPointLocator`, `ipfmL3Port`,
+                  `dataBrokerL3Host` — are modeled)
             - `XeEthernetRoutedNetworkOSModel` (`network_os_type: "ios-xe"`)
-                - `policy` -> `XeEthernetRoutedPolicyModel` (`policy_type: "iosXeRoutedHost"`)
+                - `policy` -> `XeEthernetRoutedPolicyModel` (`policy_type: "iosXeRoutedHost"`, injected when omitted)
+
+`policy_type` is optional on input: each network OS has exactly one managed routed policy type today, so it is derived from
+`network_os_type` (`_default_policy_type`). An explicit value is still accepted and validated.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ from typing import Any, ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -91,6 +96,29 @@ _NX_SPEED_CHOICES: list[str] = [e.value for e in SpeedEnum]
 _SPEED_ARGSPEC_CHOICES: list[str] = _NX_SPEED_CHOICES + [e.value for e in XeEthernetSpeedEnum if e.value not in _NX_SPEED_CHOICES]
 
 
+def _default_policy_type(data: Any, policy_type: str) -> Any:
+    """
+    # Summary
+
+    Inject the `policyType` discriminator into a policy input dict when the caller did not supply it (key absent, or present with
+    `None`, which is how the Ansible argspec passes an omitted suboption). The module manages exactly one routed policy type per
+    network OS today, so `policy_type` is fully determined by `network_os_type` and the user need not repeat it (PR #550 review).
+    An explicit value is left untouched, which keeps the input forward-compatible with the feature-gated follow-up branches
+    (`endPointLocator`, `ipfmL3Port`, `dataBrokerL3Host`): when the NX branch becomes a `policy_type` discriminated union, this
+    same injection supplies the discriminator Pydantic needs for an omitted value. Injecting on the input (rather than a field
+    default) makes the field explicitly SET, so `merge()` / `get_diff(exclude_unset=True)` treat it exactly like a typed value.
+
+    ## Raises
+
+    None
+    """
+    if not isinstance(data, dict):
+        return data
+    if data.get("policyType") is not None or data.get("policy_type") is not None:
+        return data
+    return {**{key: value for key, value in data.items() if key not in ("policyType", "policy_type")}, "policyType": policy_type}
+
+
 class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
     """
     # Summary
@@ -124,7 +152,24 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
         "speed": "auto",
     }
 
-    policy_type: Literal["routedHost"] = Field(alias="policyType", description="Routed-host policy template discriminator")
+    policy_type: Literal["routedHost"] = Field(
+        alias="policyType", description="Routed-host policy template discriminator; injected as `routedHost` when omitted (see `_default_policy_type`)"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_policy_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `policyType: routedHost` when the input omits the discriminator (`_default_policy_type`).
+
+        ## Raises
+
+        None
+        """
+        return _default_policy_type(data, "routedHost")
+
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
     fec: FecEnum | None = Field(default=None, alias="fec", description="Forward error correction mode")
@@ -187,7 +232,25 @@ class XeEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
         "speed": "auto",
     }
 
-    policy_type: Literal["iosXeRoutedHost"] = Field(alias="policyType", description="IOS-XE routed-host policy template discriminator")
+    policy_type: Literal["iosXeRoutedHost"] = Field(
+        alias="policyType",
+        description="IOS-XE routed-host policy template discriminator; injected as `iosXeRoutedHost` when omitted (see `_default_policy_type`)",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_policy_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `policyType: iosXeRoutedHost` when the input omits the discriminator (`_default_policy_type`).
+
+        ## Raises
+
+        None
+        """
+        return _default_policy_type(data, "iosXeRoutedHost")
+
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
     ip: IPv4Host = Field(default=None, alias="ip", description="Interface IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
@@ -351,7 +414,6 @@ class EthernetRoutedInterfaceModel(NDBaseModel):
                                         options=dict(
                                             policy_type=dict(
                                                 type="str",
-                                                required=True,
                                                 choices=[
                                                     "routedHost",
                                                     "iosXeRoutedHost",
