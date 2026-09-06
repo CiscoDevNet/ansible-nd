@@ -1,0 +1,303 @@
+---
+- name: Run nd_interface_vpc_access multi-pair harness tests
+  block:
+    - name: "MULTI-PAIR SETUP: Reset and verify the primary vPC pair"
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_pair_setup.yaml
+        apply:
+          tags:
+            - always
+      tags:
+        - always
+
+    - name: "MULTI-PAIR PREFLIGHT: Resolve second pair peer switch IDs"
+      ansible.builtin.set_fact:
+        nd4x_pair2_peer1_matches: >-
+          {{
+            nd4x_switch_inventory.current.switches | default([])
+            | selectattr('fabricManagementIp', 'equalto', test_switch_ip_pair2_peer1)
+            | list
+          }}
+        nd4x_pair2_peer2_matches: >-
+          {{
+            nd4x_switch_inventory.current.switches | default([])
+            | selectattr('fabricManagementIp', 'equalto', test_switch_ip_pair2_peer2)
+            | list
+          }}
+
+    - name: "MULTI-PAIR PREFLIGHT: Require exactly two distinct second-pair peers"
+      ansible.builtin.assert:
+        that:
+          - nd4x_pair2_peer1_matches | length == 1
+          - nd4x_pair2_peer2_matches | length == 1
+          - nd4x_pair2_peer1_matches[0].switchId != nd4x_pair2_peer2_matches[0].switchId
+        fail_msg: >-
+          Expected exactly one switch for second-pair peers
+          {{ test_switch_ip_pair2_peer1 }} and {{ test_switch_ip_pair2_peer2 }}.
+          The multi-pair scenario cannot safely continue.
+
+    - name: "MULTI-PAIR PREFLIGHT: Record second-pair switch IDs"
+      ansible.builtin.set_fact:
+        test_switch_id_pair2_peer1: "{{ nd4x_pair2_peer1_matches[0].switchId }}"
+        test_switch_id_pair2_peer2: "{{ nd4x_pair2_peer2_matches[0].switchId }}"
+
+    - name: "MULTI-PAIR PRECONDITION: Gather second vPC pair state"
+      cisco.nd.nd_manage_vpc_pair:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - peer1_switch_id: "{{ test_switch_ip_pair2_peer1 }}"
+            peer2_switch_id: "{{ test_switch_ip_pair2_peer2 }}"
+        state: gathered
+      register: nd4x_pair2_query
+      failed_when: false
+
+    - name: "MULTI-PAIR PRECONDITION: Require the second vPC pair"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_pair2_query.failed | default(false) | bool
+          - nd4x_pair2_query.gathered is defined
+          - nd4x_pair2_query.gathered.vpc_pairs | default([]) | length > 0
+        fail_msg: >-
+          The multi-pair scenario requires an existing second vPC pair between
+          {{ test_switch_ip_pair2_peer1 }} and {{ test_switch_ip_pair2_peer2 }}.
+
+    - name: "MULTI-PAIR MERGED: Create vpc211 on both pairs"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_multi_pair_pair1 }}"
+          - "{{ vpc_multi_pair_pair2 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate vpc211 on primary peer 1
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer1 }}/interfaces/vpc211
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: vpc211
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 10
+              - jsonpath: "$.current.configData.networkOS.policy.peer1PortChannelId"
+                equals: 211
+              - jsonpath: "$.current.configData.networkOS.policy.peer2PortChannelId"
+                equals: 211
+          - name: Validate vpc211 on primary peer 2
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer2 }}/interfaces/vpc211
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: vpc211
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 10
+          - name: Validate vpc211 on second pair peer 1
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_pair2_peer1 }}/interfaces/vpc211
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: vpc211
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 10
+              - jsonpath: "$.current.configData.networkOS.policy.peer1PortChannelId"
+                equals: 211
+              - jsonpath: "$.current.configData.networkOS.policy.peer2PortChannelId"
+                equals: 211
+          - name: Validate vpc211 on second pair peer 2
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_pair2_peer2 }}/interfaces/vpc211
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: vpc211
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 10
+      register: nd4x_multi_pair_merged
+
+    - name: "MULTI-PAIR MERGED: Verify both pair configurations and idempotency"
+      ansible.builtin.assert:
+        that:
+          - nd4x_multi_pair_merged.check_mode_result.changed | bool
+          - nd4x_multi_pair_merged.first_run_result.changed | bool
+          - nd4x_multi_pair_merged.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vpc211')
+            | list
+            | length == 2
+          - nd4x_multi_pair_merged.idempotency_attempts == 1
+          - not nd4x_multi_pair_merged.second_run_result.changed | bool
+          - nd4x_multi_pair_merged.nd_query_results | length == 4
+
+    - name: "MULTI-PAIR GUARD: Reject the same vPC name under both peers of one pair"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_multi_pair_pair1 }}"
+          - "{{ vpc_multi_pair_pair1 | combine({'switch_ip': test_switch_ip_peer2}) }}"
+        state: merged
+      register: nd4x_multi_pair_guard
+      failed_when: false
+
+    - name: "MULTI-PAIR GUARD: Verify the pair-scoped validation error"
+      ansible.builtin.assert:
+        that:
+          - nd4x_multi_pair_guard.failed | bool
+          - nd4x_multi_pair_guard.msg is search('same vPC pair')
+
+    - name: "MULTI-PAIR OVERRIDDEN: Keep vpc211 only on the primary pair"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: overridden
+        check_mode: false
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_multi_pair_pair1 }}"
+        expected:
+          apply:
+            changed: true
+            failed: false
+        nd_queries:
+          - name: Validate primary-pair vpc211 remains
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer1 }}/interfaces/vpc211
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: vpc211
+          - name: Validate second-pair vpc211 was removed
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_pair2_peer1 }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'vpc211' &
+                  @.interfaceType == 'vpc' &
+                  @.configData.networkOS.policy.policyType == 'accessVpcHost'
+                  )]
+                exists: false
+      register: nd4x_multi_pair_overridden
+
+    - name: "MULTI-PAIR OVERRIDDEN: Verify second-pair copy was removed"
+      ansible.builtin.assert:
+        that:
+          - nd4x_multi_pair_overridden.first_run_result.changed | bool
+          - nd4x_multi_pair_overridden.nd_query_results | length == 2
+
+    - name: "MULTI-PAIR OVERRIDDEN IDEMPOTENT: Reapply primary-pair configuration"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: overridden
+        check_mode: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_multi_pair_pair1 }}"
+        expected:
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        nd_queries:
+          - name: Validate primary-pair vpc211 after idempotent override
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer1 }}/interfaces/vpc211
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: vpc211
+          - name: Validate second-pair vpc211 remains absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_pair2_peer1 }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'vpc211' &
+                  @.interfaceType == 'vpc' &
+                  @.configData.networkOS.policy.policyType == 'accessVpcHost'
+                  )]
+                exists: false
+      register: nd4x_multi_pair_overridden_idempotent
+
+    - name: "MULTI-PAIR OVERRIDDEN IDEMPOTENT: Verify no change"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_multi_pair_overridden_idempotent.first_run_result.changed | bool
+          - not nd4x_multi_pair_overridden_idempotent.second_run_result.changed | bool
+
+  always:
+    - name: "MULTI-PAIR CLEANUP: Remove vpc211 from the primary pair"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: "{{ vpc_multi_pair_name }}"
+        state: deleted
+      failed_when: false
+      tags:
+        - always
+
+    - name: "MULTI-PAIR CLEANUP: Remove vpc211 from the second pair"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip_pair2_peer1 }}"
+            interface_name: "{{ vpc_multi_pair_name }}"
+        state: deleted
+      failed_when: false
+      tags:
+        - always
+
+    - name: "MULTI-PAIR CLEANUP: Remove the managed primary vPC pair"
+      cisco.nd.nd_manage_vpc_pair:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
+            peer2_switch_id: "{{ test_switch_ip_peer2 }}"
+        state: deleted
+      ignore_errors: true
+      when: test_manage_vpc_pairs | bool
+      tags:
+        - always

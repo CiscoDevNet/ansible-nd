@@ -27,6 +27,18 @@ records the runs made against the current test fabric.
 | `deleted` | Check and normal mode remove `vpc101` | `DELETED SINGLE` |
 | `deleted` | After 30 seconds, normal mode reports no change | `DELETED IDEMPOTENT` |
 
+### Multi-pair same-vPC-id behavior
+
+| Original behavior | Harness coverage |
+|---|---|
+| Require and discover the second vPC pair | `MULTI-PAIR PREFLIGHT` |
+| Create the same `vpc211` name and ID on both pairs | `MULTI-PAIR MERGED` |
+| Reapply both pair configurations idempotently | Harness idempotency phase in `MULTI-PAIR MERGED` |
+| Reject the same vPC name under both peers of one pair | `MULTI-PAIR GUARD` |
+| Override to retain only pair 1's copy | `MULTI-PAIR OVERRIDDEN` |
+| Reapply the multi-pair override idempotently | `MULTI-PAIR OVERRIDDEN IDEMPOTENT` |
+| Clean up both pair copies | `MULTI-PAIR CLEANUP` |
+
 The harness reconstructs the required state locally because each state can be
 run on its own. It also adds checks that the original suite did not have:
 
@@ -34,7 +46,7 @@ run on its own. It also adds checks that the original suite did not have:
 - Fabric-wide snapshots for `state: overridden`.
 - REST validation of the resulting configuration on both peers.
 - Exact validation of the missing-`interface_name` error.
-- Resource confirmation, pair-reset opt-in, and destructive-test opt-in.
+- Resource confirmation, conditional pair-reset opt-in, and destructive-test opt-in.
 - Scope checks before the fabric-wide overridden test.
 
 ## Testbed values
@@ -143,13 +155,15 @@ of every configured field, the harness can still be tightened by:
 - Extending the overridden pre-state assertion to cover both port-channel IDs,
   port-channel mode, and LACP rate.
 - Extending the deleted pre-state assertion to cover admin state and
-  port-channel mode.
+  port-channel mode. These assertions are now included in the harness.
 
 ## Latest develop follow-up
 
 Commit `5927ac35` added the original `multi_pair.yaml` workflow after the
-recorded parity runs. It is not yet represented in the ND 4.x harness and
-requires a second vPC pair.
+recorded parity runs. The workflow is now represented by
+`nd4x_demo_multi_pair.yaml` and requires the second vPC pair configured in the
+inventory.
 
-The original suite remains enabled. The harness is not a complete replacement
-until the multi-pair workflow is migrated, executed, and recorded here.
+The original suite remains enabled. The harness is not final parity evidence
+until all workflows, including multi-pair and both pair-management modes, are
+executed against the current PR HEAD and recorded here.

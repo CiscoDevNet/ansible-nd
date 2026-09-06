@@ -50,6 +50,7 @@
           - nd4x_merged_create.check_mode_result.changed | bool
           - nd4x_merged_create.first_run_result.changed | bool
           - vpc100_after.config_data.network_os.policy.access_vlan == 10
+          - vpc100_after.config_data.network_os.policy.admin_state == true
           - >-
             vpc100_after.config_data.network_os.policy.peer1_port_channel_id
             == 100
@@ -110,6 +111,9 @@
                   $.current.configData.networkOS.policy.accessVlan
                 equals: 10
               - jsonpath: >-
+                  $.current.configData.networkOS.policy.adminState
+                equals: true
+              - jsonpath: >-
                   $.current.configData.networkOS.policy.peer1PortChannelId
                 equals: 100
               - jsonpath: >-
@@ -146,6 +150,9 @@
               - jsonpath: >-
                   $.current.configData.networkOS.policy.accessVlan
                 equals: 10
+              - jsonpath: >-
+                  $.current.configData.networkOS.policy.adminState
+                equals: true
               - jsonpath: >-
                   $.current.configData.networkOS.policy.peer1PortChannelId
                 equals: 100
@@ -197,5 +204,6 @@
             peer2_switch_id: "{{ test_switch_ip_peer2 }}"
         state: deleted
       ignore_errors: true
+      when: test_manage_vpc_pairs | bool
       tags:
         - always

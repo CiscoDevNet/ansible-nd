@@ -14,7 +14,6 @@
       /api/v1/manage/fabrics/{{ test_fabric_name
       }}/switches/{{ item.switchId }}/interfaces
     method: get
-    timeout: 300
   loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
   loop_control:
     label: >-
@@ -105,7 +104,6 @@
     - name: "OVERRIDDEN SETUP: Remove loopback100 through loopback102"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -119,7 +117,6 @@
     - name: "OVERRIDDEN SETUP: Recreate post-merged state"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ loopback_100_updated }}"
@@ -130,7 +127,6 @@
     - name: "OVERRIDDEN SETUP: Recreate single replaced state"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -145,7 +141,6 @@
     - name: "OVERRIDDEN SETUP: Recreate multi-replaced state"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -210,7 +205,6 @@
         state: overridden
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -295,7 +289,6 @@
         state: overridden
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -349,7 +342,6 @@
         state: overridden
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ loopback_101 }}"
@@ -420,7 +412,6 @@
     - name: "OVERRIDDEN CLEANUP: Remove loopback100 through loopback102"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"

@@ -6,6 +6,7 @@
     fail_msg: >-
       This workflow deletes and recreates the selected vPC pair. Set
       nd_vpc_access_pair_reset_enabled=true only on the dedicated test fabric.
+  when: test_manage_vpc_pairs | bool
 
 - name: "PAIR SETUP: Remove current vPC pair"
   cisco.nd.nd_manage_vpc_pair:
@@ -16,10 +17,12 @@
         peer2_switch_id: "{{ test_switch_ip_peer2 }}"
     state: deleted
   ignore_errors: true
+  when: test_manage_vpc_pairs | bool
 
 - name: "PAIR SETUP: Wait for unpair convergence"
   ansible.builtin.pause:
     seconds: 30
+  when: test_manage_vpc_pairs | bool
 
 - name: "PAIR SETUP: Create configured test vPC pair"
   cisco.nd.nd_manage_vpc_pair:
@@ -33,10 +36,12 @@
       - "{{ vpc_pair_setup }}"
     state: merged
   register: nd4x_pair_setup_result
+  when: test_manage_vpc_pairs | bool
 
 - name: "PAIR SETUP: Wait for pair discovery"
   ansible.builtin.pause:
     seconds: 30
+  when: test_manage_vpc_pairs | bool
 
 - name: "PAIR SETUP: Query peer-1 pair record"
   cisco.nd.nd_rest:

@@ -41,6 +41,7 @@
       ansible.builtin.assert:
         that:
           - nd4x_replaced_baseline.changed | bool
+          - vpc100_before.config_data.network_os.policy.admin_state == true
           - vpc100_before.config_data.network_os.policy.access_vlan == 10
           - >-
             vpc100_before.config_data.network_os.policy.peer1_member_ports
@@ -48,6 +49,15 @@
           - >-
             vpc100_before.config_data.network_os.policy.peer2_member_ports
             == ['Ethernet1/5']
+          - vpc100_before.config_data.network_os.policy.peer1_port_channel_id == 100
+          - vpc100_before.config_data.network_os.policy.peer2_port_channel_id == 100
+          - vpc100_before.config_data.network_os.policy.port_channel_mode == 'active'
+          - vpc100_before.config_data.network_os.policy.lacp_rate == 'fast'
+          - >-
+            nd4x_replaced_baseline.after
+            | selectattr('interface_name', 'equalto', 'vpc101')
+            | list
+            | length == 0
 
     - name: "REPLACED UPDATE: Replace vpc100 policy"
       cisco.nd.nd4x_module_test:
@@ -81,6 +91,7 @@
         that:
           - nd4x_replaced_update.check_mode_result.changed | bool
           - nd4x_replaced_update.first_run_result.changed | bool
+          - vpc100_after.config_data.network_os.policy.admin_state == true
           - vpc100_after.config_data.network_os.policy.access_vlan == 20
           - >-
             vpc100_after.config_data.network_os.policy.peer1_port_channel_id
@@ -214,5 +225,6 @@
             peer2_switch_id: "{{ test_switch_ip_peer2 }}"
         state: deleted
       ignore_errors: true
+      when: test_manage_vpc_pairs | bool
       tags:
         - always

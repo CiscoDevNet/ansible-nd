@@ -4,7 +4,6 @@
     - name: "REPLACED SETUP: Remove loopback100 through loopback102"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -18,7 +17,6 @@
     - name: "REPLACED SETUP: Recreate post-merged loopback state"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ loopback_100_updated }}"
@@ -32,7 +30,6 @@
         state: replaced
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -100,7 +97,6 @@
         state: replaced
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -186,7 +182,6 @@
     - name: "REPLACED CLEANUP: Remove loopback100 through loopback102"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"

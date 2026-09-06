@@ -1,17 +1,13 @@
 ---
 - name: Run nd_interface_ethernet_access replaced harness tests
   block:
-    - name: "REPLACED SETUP: Normalize Ethernet1/41 through Ethernet1/44"
+    - name: "REPLACED SETUP: Normalize all reserved Ethernet ports"
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
-            interface_names:
-              - Ethernet1/41
-              - Ethernet1/42
-              - Ethernet1/43
-              - Ethernet1/44
+            interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
         state: deleted
 
     - name: "REPLACED SETUP: Recreate post-merged state"
@@ -22,6 +18,9 @@
           - "{{ ethernet_41_updated }}"
           - "{{ ethernet_42_43_updated }}"
           - "{{ ethernet_44 }}"
+          - "{{ ethernet_45_46_47 }}"
+          - "{{ ethernet_split_49 }}"
+          - "{{ ethernet_split_50 }}"
         state: merged
       register: replaced_setup
 
@@ -45,8 +44,39 @@
             | selectattr('interface_name', 'equalto', 'Ethernet1/44')
             | first
           }}
+        ethernet_45_before: >-
+          {{
+            replaced_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/45')
+            | first
+          }}
+        ethernet_46_before: >-
+          {{
+            replaced_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/46')
+            | first
+          }}
+        ethernet_47_before: >-
+          {{
+            replaced_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/47')
+            | first
+          }}
+        ethernet_49_before: >-
+          {{
+            replaced_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/49')
+            | first
+          }}
+        ethernet_50_before: >-
+          {{
+            replaced_setup.after
+            | selectattr('interface_name', 'equalto', 'Ethernet1/50')
+            | first
+          }}
       ansible.builtin.assert:
         that:
+          - replaced_setup.after | length == 9
           - ethernet_41_before.config_data.network_os.policy.access_vlan == 150
           - ethernet_41_before.config_data.network_os.policy.bpdu_guard
             == "disable"
@@ -54,6 +84,18 @@
           - ethernet_42_before.config_data.network_os.policy.access_vlan == 250
           - ethernet_42_before.config_data.network_os.policy.admin_state == false
           - ethernet_44_before.config_data.network_os.policy.access_vlan == 300
+          - ethernet_45_before.config_data.network_os.policy.access_vlan == 400
+          - ethernet_45_before.config_data.network_os.policy.mtu == "jumbo"
+          - ethernet_46_before.config_data.network_os.policy.access_vlan == 400
+          - ethernet_46_before.config_data.network_os.policy.mtu == "jumbo"
+          - ethernet_47_before.config_data.network_os.policy.access_vlan == 400
+          - ethernet_47_before.config_data.network_os.policy.mtu == "jumbo"
+          - ethernet_49_before.config_data.network_os.policy.access_vlan == 500
+          - ethernet_49_before.config_data.network_os.policy.description
+            == "Split config item A"
+          - ethernet_50_before.config_data.network_os.policy.access_vlan == 600
+          - ethernet_50_before.config_data.network_os.policy.description
+            == "Split config item B"
 
     - name: "REPLACED SINGLE: Replace Ethernet1/41 with partial payload"
       cisco.nd.nd4x_module_test:
@@ -257,15 +299,11 @@
           - not replaced_multi.second_run_result.changed | bool
 
   always:
-    - name: "REPLACED CLEANUP: Normalize Ethernet1/41 through Ethernet1/44"
+    - name: "REPLACED CLEANUP: Normalize all reserved Ethernet ports"
       cisco.nd.nd_interface_ethernet_access:
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
-            interface_names:
-              - Ethernet1/41
-              - Ethernet1/42
-              - Ethernet1/43
-              - Ethernet1/44
+            interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
         state: deleted

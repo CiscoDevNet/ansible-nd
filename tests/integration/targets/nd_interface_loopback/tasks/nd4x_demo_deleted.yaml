@@ -4,7 +4,6 @@
     - name: "DELETED SETUP: Remove reserved deletion-test loopbacks"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -20,7 +19,6 @@
     - name: "DELETED SETUP: Create loopback101 and loopback102"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ loopback_101 }}"
@@ -33,7 +31,6 @@
         state: deleted
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -86,7 +83,6 @@
     - name: "DELETED MULTI SETUP: Recreate loopback100 and loopback101"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ loopback_100 }}"
@@ -99,7 +95,6 @@
         state: deleted
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -178,7 +173,6 @@
         state: deleted
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -229,7 +223,6 @@
     - name: "DELETED CLEANUP: Remove reserved deletion-test loopbacks"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"

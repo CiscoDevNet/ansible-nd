@@ -41,6 +41,7 @@
       ansible.builtin.assert:
         that:
           - nd4x_deleted_setup.changed | bool
+          - vpc101_before.config_data.network_os.policy.admin_state == true
           - vpc101_before.config_data.network_os.policy.access_vlan == 30
           - >-
             vpc101_before.config_data.network_os.policy.peer1_port_channel_id
@@ -54,6 +55,7 @@
           - >-
             vpc101_before.config_data.network_os.policy.peer2_member_ports
             == ['Ethernet1/7']
+          - vpc101_before.config_data.network_os.policy.port_channel_mode == 'active'
           - >-
             nd4x_deleted_setup.after
             | selectattr('interface_name', 'equalto', 'vpc100')
@@ -174,5 +176,6 @@
             peer2_switch_id: "{{ test_switch_ip_peer2 }}"
         state: deleted
       ignore_errors: true
+      when: test_manage_vpc_pairs | bool
       tags:
         - always

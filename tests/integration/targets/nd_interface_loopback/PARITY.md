@@ -18,6 +18,7 @@ below have been recorded.
 | Update loopback100 IP, description, and route-map tag | `tasks/merged.yaml` | `MERGED UPDATE: Update loopback100` | Live run passed |
 | Re-apply merged update idempotently | `tasks/merged.yaml` | Harness idempotency phase in `MERGED UPDATE: Update loopback100` | Live run passed |
 | Stage loopback103 with `deploy: false` | `tasks/merged.yaml` | `MERGED NO-DEPLOY: Stage loopback103 without deployment` | Live run passed |
+| Create loopback104 with `10.100.104.1/32`, verify bare-address normalization, and reapply idempotently | `tasks/merged.yaml` | `MERGED CIDR: Create loopback104 with a CIDR-format ip` | Current safe harness run passed on 2026-09-03 |
 | Replace loopback100 with the original partial payload | `tasks/replaced.yaml` | `REPLACED: Replace loopback100 with the original test payload` | Live run passed |
 | Re-apply single replacement idempotently | `tasks/replaced.yaml` | Harness idempotency phase in the single replacement | Live run passed |
 | Replace loopback100 and loopback101 together | `tasks/replaced.yaml` | `REPLACED MULTI: Replace loopback100 and loopback101` | Live run passed |
@@ -129,7 +130,7 @@ destructive run completed on 2026-08-09 with `failed=0`.
 | Earlier overridden replacement recap (`failed=0`) | Passed before the 2026-08-09 update |
 | Updated overridden replacement command and date | `nd4x_demo_overridden`; 2026-08-09 |
 | Updated overridden replacement recap | Passed; `failed=0` |
-| Unmapped or weakened scenarios | None identified; all mapped scenarios passed in live runs |
+| Unmapped or weakened scenarios | None identified in the current safe harness run; destructive rerun pending against current PR HEAD |
 
 ## Retirement decision
 

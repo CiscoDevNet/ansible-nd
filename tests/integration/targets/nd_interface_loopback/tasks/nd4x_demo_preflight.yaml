@@ -2,7 +2,6 @@
 - name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
   cisco.nd.nd_version:
     output_level: "{{ nd_info.output_level }}"
-    timeout: 300
   register: nd4x_version
 
 - name: "ND4X PREFLIGHT: Record ND 4.x support"
@@ -24,7 +23,6 @@
   cisco.nd.nd_rest:
     path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
     method: get
-    timeout: 300
   register: nd4x_switch_inventory
   changed_when: false
   when: nd4x_supported | bool

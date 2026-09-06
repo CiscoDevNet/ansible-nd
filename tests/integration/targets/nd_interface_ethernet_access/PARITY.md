@@ -4,10 +4,11 @@ This document maps every scenario in the original
 `nd_interface_ethernet_access` integration suite to its ND 4.x harness-based
 replacement.
 
-All original scenarios now have implemented replacements. The complete safe,
-destructive, and original suites passed live validation on 2026-08-31 against
-the same controller, fabric, switch, and collection worktree based on commit
-`a682edd30efde3484d29e579535ad0b4366621ab`.
+All original scenarios now have implemented replacements. The recorded
+destructive and original runs below were completed before the current PR HEAD;
+the current safe harness run passed on 2026-09-03 against `Astha_Fabric`.
+Destructive and original suites still need to be rerun against this branch
+before this document is used as final parity evidence.
 
 ## Status definitions
 
@@ -175,7 +176,7 @@ ND 4.2.1 environment on 2026-08-31 using collection commit
 | Destructive-run JUnit artifact | `tests/output/junit/nd_interface_ethernet_access-b9j5k705-1788159564.175429.xml` |
 | Original suite run at this commit/environment | Passed on 2026-08-31; 95 tests, 0 failures, 0 errors, 1 skipped; `ok=89 changed=30 unreachable=0 failed=0 skipped=1 rescued=0 ignored=0` |
 | Original-run JUnit artifact | `tests/output/junit/nd_interface_ethernet_access-23wmhdy4-1788161053.3463218.xml` |
-| Unmapped implementation scenarios | None |
+| Unmapped implementation scenarios | None after the complete replaced-state prerequisite was added; current safe validation passed |
 
 The safe replacement run used the `nd4x_demo` tag. The destructive replacement
 run used the `nd4x_demo_overridden` tag with explicit destructive-test opt-in.

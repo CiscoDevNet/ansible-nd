@@ -85,6 +85,7 @@
             - nd4x_demo_deleted
             - nd4x_demo_negative
             - nd4x_demo_overridden
+            - nd4x_demo_multi_pair
             - nd4x_demo_destructive
       tags:
         - never
@@ -94,6 +95,7 @@
         - nd4x_demo_deleted
         - nd4x_demo_negative
         - nd4x_demo_overridden
+        - nd4x_demo_multi_pair
         - nd4x_demo_destructive
 
     - name: Run merged state tests using the ND 4.x harness
@@ -150,6 +152,20 @@
         - never
         - nd4x_demo
         - nd4x_demo_negative
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run multi-pair state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_multi_pair.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_multi_pair
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_multi_pair
       when: nd4x_supported | default(false) | bool
 
     - name: Run overridden state tests using the ND 4.x harness

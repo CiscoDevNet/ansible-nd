@@ -263,7 +263,8 @@ Example:
 
 ```yaml
 module_args:
-  deploy: false
+  config_actions:
+    deploy: false
 ```
 
 Argument precedence is:

@@ -1,10 +1,9 @@
 ---
 - name: Run nd_interface_loopback merged harness tests
   block:
-    - name: "MERGED SETUP: Remove loopback100 through loopback103"
+    - name: "MERGED SETUP: Remove loopback100 through loopback104"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -15,6 +14,8 @@
             interface_name: loopback102
           - switch_ip: "{{ test_switch_ip }}"
             interface_name: loopback103
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback104
         state: deleted
 
     - name: "MERGED CREATE: Create loopback100 using the ND 4.x harness"
@@ -23,7 +24,6 @@
         state: merged
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ loopback_100 }}"
@@ -78,7 +78,6 @@
         state: merged
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ loopback_101 }}"
@@ -146,7 +145,6 @@
         state: merged
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ loopback_100 }}"
@@ -194,7 +192,6 @@
         state: merged
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ loopback_100_updated }}"
@@ -257,10 +254,10 @@
         state: merged
         common_args:
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
           fabric_name: "{{ test_fabric_name }}"
         module_args:
-          deploy: false
+          config_actions:
+            deploy: false
         config:
           - switch_ip: "{{ test_switch_ip }}"
             interface_name: loopback103
@@ -312,11 +309,77 @@
             | list
             | length == 1
 
+    - name: "MERGED CIDR: Create loopback104 with a CIDR-format ip"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback104
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  ip: "10.100.104.1/32"
+                  description: "CIDR normalization test loopback104"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries:
+          - name: Snapshot all managed interfaces on test switch
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            expected_status: 200
+            unordered: true
+            ignore_keys:
+              - operData
+        nd_queries:
+          - name: Validate normalized loopback104 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/loopback104
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: loopback104
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.100.104.1"
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: CIDR normalization test loopback104
+      register: merged_cidr_104
+
+    - name: "MERGED CIDR: Verify normalization and idempotency"
+      vars:
+        loopback104_after: >-
+          {{
+            merged_cidr_104.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback104')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - merged_cidr_104.check_mode_result.changed | bool
+          - merged_cidr_104.first_run_result.changed | bool
+          - loopback104_after.config_data.network_os.policy.ip == "10.100.104.1"
+          - merged_cidr_104.idempotency_attempts == 1
+          - not merged_cidr_104.second_run_result.changed | bool
+
   always:
-    - name: "MERGED CLEANUP: Remove loopback100 through loopback103"
+    - name: "MERGED CLEANUP: Remove loopback100 through loopback104"
       cisco.nd.nd_interface_loopback:
         output_level: "{{ nd_info.output_level }}"
-        timeout: 300
         fabric_name: "{{ test_fabric_name }}"
         config:
           - switch_ip: "{{ test_switch_ip }}"
@@ -327,4 +390,6 @@
             interface_name: loopback102
           - switch_ip: "{{ test_switch_ip }}"
             interface_name: loopback103
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback104
         state: deleted
