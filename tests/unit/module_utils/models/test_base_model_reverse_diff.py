@@ -20,14 +20,25 @@ The `merged` path (`exclude_unset=True`) is unaffected: omitted fields mean "lea
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, get_args
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostPolicyModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel, LoopbackPolicyModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    Csr1kvLoopbackPolicyModel,
+    CsrLoopbackPolicyModel,
+    IpfmLoopbackPolicyModel,
+    LoopbackInterfaceModel,
+    MplsLoopbackPolicyModel,
+    NexusLoopbackPolicyModel,
+    XeInternalLoopbackPolicyModel,
+    XeLoopbackPolicyModel,
+    XeLoopbackShutNoshutPolicyModel,
+    XeUnderlayLoopbackPolicyModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_access_interface import PortChannelAccessPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_trunk_host_interface import PortChannelTrunkHostPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.subinterface_managed_interface import SubinterfaceManagedPolicyModel
@@ -46,12 +57,13 @@ def nd_loopback_response(policy_fields: dict) -> dict:
     """Build an ND-shaped loopback GET response dict carrying the given aliased policy fields."""
     policy = {"policyType": "loopback"}
     policy.update(policy_fields)
-    return {"switchIp": SWITCH_IP, "interfaceName": INTERFACE_NAME, "configData": {"networkOS": {"policy": policy}}}
+    return {"switchIp": SWITCH_IP, "interfaceName": INTERFACE_NAME, "configData": {"networkOS": {"networkOSType": "nx-os", "policy": policy}}}
 
 
 def loopback_config(policy_fields: dict) -> dict:
     """Build an Ansible-shaped proposed loopback config dict carrying the given snake_case policy fields."""
-    return {"switch_ip": SWITCH_IP, "interface_name": INTERFACE_NAME, "config_data": {"network_os": {"policy": policy_fields}}}
+    policy = {"policy_type": "loopback", **policy_fields}
+    return {"switch_ip": SWITCH_IP, "interface_name": INTERFACE_NAME, "config_data": {"network_os": {"network_os_type": "nx-os", "policy": policy}}}
 
 
 def test_base_model_reverse_diff_00100() -> None:
@@ -399,7 +411,7 @@ def test_base_model_reverse_diff_00420() -> None:
 
     ## Test
 
-    - An existing `LoopbackPolicyModel` built from the lab-observed echo (adminState/description/ip/routeMapTag).
+    - An existing `NexusLoopbackPolicyModel` built from the lab-observed echo (adminState/description/ip/routeMapTag).
     - Proposed config re-stating admin_state/description/ip but omitting `route_map_tag`: `no_diff`.
     - The same echo with `routeMapTag: 54321`: difference detected.
 
@@ -409,12 +421,12 @@ def test_base_model_reverse_diff_00420() -> None:
     - NDBaseModel.to_reverse_diff_dict()
     """
     echo = {"adminState": True, "description": "issue-410 probe", "ip": "10.99.205.1", "policyType": "loopback", "routeMapTag": 12345}
-    proposed = LoopbackPolicyModel.from_config({"admin_state": True, "description": "issue-410 probe", "ip": "10.99.205.1"})
-    existing = LoopbackPolicyModel.from_response(echo)
+    proposed = NexusLoopbackPolicyModel.from_config({"policy_type": "loopback", "admin_state": True, "description": "issue-410 probe", "ip": "10.99.205.1"})
+    existing = NexusLoopbackPolicyModel.from_response(echo)
     assert existing.get_diff(proposed, exclude_unset=False) is True
 
     echo["routeMapTag"] = 54321
-    existing = LoopbackPolicyModel.from_response(echo)
+    existing = NexusLoopbackPolicyModel.from_response(echo)
     assert existing.get_diff(proposed, exclude_unset=False) is False
 
 
@@ -422,7 +434,15 @@ def test_base_model_reverse_diff_00420() -> None:
 # derived from the model's own table (the invariant under test: echo == declared defaults -> normalized), with the
 # non-empty assertion preventing a trivially passing empty table.
 POLICY_MODELS_WITH_DEFAULTS = [
-    LoopbackPolicyModel,
+    NexusLoopbackPolicyModel,
+    IpfmLoopbackPolicyModel,
+    MplsLoopbackPolicyModel,
+    XeLoopbackPolicyModel,
+    XeLoopbackShutNoshutPolicyModel,
+    XeUnderlayLoopbackPolicyModel,
+    XeInternalLoopbackPolicyModel,
+    CsrLoopbackPolicyModel,
+    Csr1kvLoopbackPolicyModel,
     EthernetAccessPolicyModel,
     EthernetTrunkHostPolicyModel,
     PortChannelAccessPolicyModel,
@@ -432,6 +452,14 @@ POLICY_MODELS_WITH_DEFAULTS = [
     SviPolicyModel,
     SubinterfaceManagedPolicyModel,
 ]
+
+
+def policy_type_of(policy_cls) -> str:
+    """Wire `policyType` of a policy model: the field default, or the sole `Literal` member when the discriminator is required (loopback union)."""
+    field = policy_cls.model_fields["policy_type"]
+    if field.is_required():
+        return get_args(field.annotation)[0]
+    return getattr(field.default, "value", field.default)
 
 
 @pytest.mark.parametrize("policy_cls", POLICY_MODELS_WITH_DEFAULTS)
@@ -455,10 +483,10 @@ def test_base_model_reverse_diff_00430(policy_cls) -> None:
     - NDBaseModel.to_reverse_diff_dict()
     """
     assert policy_cls.reverse_diff_defaults, f"{policy_cls.__name__} must declare a schema-sourced reverse_diff_defaults table"
-    policy_type = policy_cls.model_fields["policy_type"].default
-    echo = {"policyType": getattr(policy_type, "value", policy_type), **policy_cls.reverse_diff_defaults}
+    policy_type = policy_type_of(policy_cls)
+    echo = {"policyType": policy_type, **policy_cls.reverse_diff_defaults}
     existing = policy_cls.from_response(echo)
-    proposed = policy_cls.from_config({"admin_state": True})
+    proposed = policy_cls.from_config({"policy_type": policy_type, "admin_state": True})
     assert existing.get_diff(proposed, exclude_unset=False) is True
 
 
@@ -889,7 +917,7 @@ def test_base_model_reverse_diff_00620(exclude_unset: bool) -> None:
 
     - NDBaseModel.get_diff()
     """
-    existing = LoopbackPolicyModel(description="kept")
-    with pytest.raises(TypeError, match=r"Cannot diff SviPolicyModel against LoopbackPolicyModel"):
+    existing = NexusLoopbackPolicyModel(policy_type="loopback", description="kept")
+    with pytest.raises(TypeError, match=r"Cannot diff SviPolicyModel against NexusLoopbackPolicyModel"):
         existing.get_diff(SviPolicyModel(), exclude_unset=exclude_unset)
-    assert existing.get_diff(LoopbackPolicyModel(description="kept"), exclude_unset=exclude_unset) is True
+    assert existing.get_diff(NexusLoopbackPolicyModel(policy_type="loopback", description="kept"), exclude_unset=exclude_unset) is True

@@ -49,6 +49,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `deploy_pending` if the bulk deploy API request fails.
+    - Via `deploy_accepted_mutations` if the failure-path deploy API request fails.
     - Via `remove_pending` if the bulk remove API request fails.
     """
 
@@ -376,17 +377,53 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if not self.deploy or not self._pending_deploys:
             return None
         try:
-            result = self._deploy_interfaces()
+            result = self._deploy_interfaces(self._pending_deploys)
             self._pending_deploys = []
             return result
         except Exception as e:
             raise RuntimeError(f"Bulk deploy failed for interfaces {self._pending_deploys}: {e}") from e
 
-    def _deploy_interfaces(self) -> ResponseType:
+    def deploy_accepted_mutations(self) -> list[tuple[str, str]]:
         """
         # Summary
 
-        Deploy queued interfaces via `interfaceActions/deploy`. Sends the explicit list of `{interfaceName, switchId}` pairs.
+        Failure-path finalizer: deploy the queued interfaces whose create/update the controller has already accepted, so a mid-run
+        failure does not leave an earlier successful mutation staged-but-undeployed. Without this, a retry classifies the accepted
+        interfaces as unchanged (`no_diff`), never re-queues their deploy, and can finish successfully while controller intent and
+        switch running state remain divergent (PR #403 review).
+
+        A deploy is queued only after its mutation request succeeds, so every queued pair is controller-accepted intent — except
+        pairs queued by the delete path, which queues the deploy BEFORE `remove_pending` sends the removal. Pairs still present in
+        `_pending_removes` are excluded here: their removal intent never reached the controller, and deploying them would ship
+        whatever pending intent those interfaces happen to carry.
+
+        Returns the deployed `(interface_name, switch_id)` pairs so the caller can name them in the failure report. Returns an
+        empty list without any API call when `deploy` is `False` (staged intent is the documented contract in that case) or when
+        no accepted-mutation pairs are queued.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the failure-path deploy API request fails. The accepted pairs remain queued in that case.
+        """
+        if not self.deploy:
+            return []
+        accepted = [pair for pair in self._pending_deploys if pair not in self._pending_removes]
+        if not accepted:
+            return []
+        try:
+            self._deploy_interfaces(accepted)
+        except Exception as e:
+            raise RuntimeError(f"Failure-path deploy failed for accepted interfaces {accepted}: {e}") from e
+        self._pending_deploys = [pair for pair in self._pending_deploys if pair in self._pending_removes]
+        return accepted
+
+    def _deploy_interfaces(self, pairs: list[tuple[str, str]]) -> ResponseType:
+        """
+        # Summary
+
+        Deploy the given interfaces via `interfaceActions/deploy`. Sends the explicit list of `{interfaceName, switchId}` pairs.
 
         ## Raises
 
@@ -396,7 +433,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         api_endpoint = EpManageInterfacesDeploy()
         api_endpoint.fabric_name = self.fabric_name
-        payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in self._pending_deploys]}
+        payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in pairs]}
         return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
 
     def remove_pending(self) -> ResponseType | None:

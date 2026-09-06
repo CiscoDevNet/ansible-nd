@@ -14,6 +14,18 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback200
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback201
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback202
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback203
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback204
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback299
+      - switch_ip: "{{ test_switch_ip }}"
         interface_name: loopback100
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: loopback101

@@ -479,7 +479,12 @@ class _ExistingConfiguredLoopbackSpy(_SpyLoopbackOrchestrator):
                 "switchIp": "192.168.12.151",
                 "interfaceName": "loopback10",
                 "interfaceType": "loopback",
-                "configData": {"networkOS": {"policy": {"policyType": "loopback", "adminState": True, "description": "stale description"}}},
+                "configData": {
+                    "networkOS": {
+                        "networkOSType": "nx-os",
+                        "policy": {"policyType": "loopback", "adminState": True, "description": "stale description"},
+                    }
+                },
             }
         ]
 
@@ -488,7 +493,7 @@ _REMOVAL_CONFIG = [
     {
         "switch_ip": "192.168.12.151",
         "interface_name": "loopback10",
-        "config_data": {"network_os": {"policy": {"admin_state": True}}},
+        "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"policy_type": "loopback", "admin_state": True}}},
     }
 ]
 
