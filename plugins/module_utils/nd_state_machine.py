@@ -121,6 +121,23 @@ class NDStateMachine:
             except Exception as e:
                 raise NDStateMachineError(f"Preflight failed: {e}") from e
 
+            # Some resources require an ordered prerequisite mutation after
+            # every validation has passed but before their final updates.
+            # The default hook is a no-op. Interface Groups use it to remove
+            # a member from its current group before adding it to another.
+            # Keep this outside the preflight exception wrapper because an
+            # implementation can issue a real controller mutation here.
+            try:
+                self.model_orchestrator.prepare_mutations(
+                    existing=self.existing,
+                    proposed=self.proposed,
+                    check_mode=self.check_mode,
+                )
+            except NDStateMachineError:
+                raise
+            except Exception as e:
+                raise NDStateMachineError(f"Failed to prepare mutations: {e}") from e
+
             self._manage_create_update_state()
 
             if self.state == "overridden":

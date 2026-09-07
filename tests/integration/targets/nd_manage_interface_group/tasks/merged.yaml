@@ -1,0 +1,188 @@
+---
+- name: Add a deployed network and member with resource deployment
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - "{{ interface_group_pc_one_member }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch resource-deployed port-channel Interface Group
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.port_channel }}
+        method: get
+        expected_status: 200
+  register: interface_group_merged_first
+
+- name: Validate the first additive single-group result
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_merged_first.nd_query_results[0].result }}"
+    test_data:
+      - "{{ interface_group_pc_one_member }}"
+    mode: exact
+    invariants:
+      total_count: 1
+      unique_members: true
+  when: not ansible_check_mode
+
+- name: Confirm resource deployment left the first port-channel clean
+  ansible.builtin.include_tasks: preview.yaml
+  vars:
+    preview_name: "MERGED RESOURCE DEPLOY"
+    preview_request_interfaces:
+      - switchId: "{{ test_switch_id }}"
+        interfaceName: "{{ test_port_channel_1 }}"
+    preview_test_data:
+      - switch_id: "{{ test_switch_id }}"
+        interface_name: "{{ test_port_channel_1 }}"
+        pending: clean
+
+- name: Add a second network and member in one request
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.port_channel }}"
+        networks:
+          - "{{ test_network_2 }}"
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_port_channel_2 }}"
+        deploy: false
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch additively updated port-channel Interface Group
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.port_channel }}
+        method: get
+        expected_status: 200
+  register: interface_group_merged_second
+
+- name: Validate merged union preserves old and new associations
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_merged_second.nd_query_results[0].result }}"
+    test_data:
+      - interface_group_name: "{{ interface_group_names.port_channel }}"
+        type: portChannel
+        networks:
+          - "{{ test_network_1 }}"
+          - "{{ test_network_2 }}"
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_port_channel_1 }}"
+              - "{{ test_port_channel_2 }}"
+    mode: exact
+    invariants:
+      total_count: 1
+      unique_members: true
+  when: not ansible_check_mode
+
+- name: Verify explicit empty collections are additive no-ops
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: switch
+    config:
+      - interface_group_name: "{{ interface_group_names.port_channel }}"
+        networks: []
+        switch_interfaces: []
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch Interface Group after empty merged input
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.port_channel }}
+        method: get
+        expected_status: 200
+  register: interface_group_merged_empty
+
+- name: Confirm empty merged input removed nothing
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_merged_empty.nd_query_results[0].result }}"
+    test_data:
+      - "{{ interface_group_pc_two_members }}"
+    mode: exact
+  when: not ansible_check_mode
+
+- name: Verify omitted collections are also additive no-ops
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.port_channel }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch Interface Group after omitted merged collections
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.port_channel }}
+        method: get
+        expected_status: 200
+  register: interface_group_merged_omitted
+
+- name: Confirm omitted merged collections preserved all associations
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_merged_omitted.nd_query_results[0].result }}"
+    test_data:
+      - "{{ interface_group_pc_two_members }}"
+    mode: exact
+  when: not ansible_check_mode

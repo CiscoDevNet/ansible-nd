@@ -1,0 +1,289 @@
+---
+- name: Delete a network-associated port-channel group with resource deployment
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: deleted
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.port_channel_target }}"
+    idempotency: false
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+    nd_queries:
+      - name: Confirm deleted port-channel group returns 404
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.port_channel_target }}
+        method: get
+        expected_status: 404
+        expected_failed: true
+      - name: Fetch remaining Interface Groups
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
+  register: interface_group_deleted_network_group
+
+- name: Confirm deleted network group is absent and source group remains
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: >-
+      {{ interface_group_deleted_network_group.nd_query_results[1].result }}
+    test_data:
+      - "{{ interface_group_pc_one_member }}"
+    absent:
+      - "{{ interface_group_names.port_channel_target }}"
+    mode: exact
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    invariants:
+      unique_group_names: true
+      unique_members: true
+  when: not ansible_check_mode
+
+- name: Delete a custom-policy Ethernet group with resource deployment
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: deleted
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+    nd_queries:
+      - name: Confirm deleted custom Ethernet group returns 404
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.ethernet_custom }}
+        method: get
+        expected_status: 404
+        expected_failed: true
+  register: interface_group_deleted_custom
+  when: test_ethernet_custom_flow_enabled | bool
+
+- name: Confirm deleted groups cleaned their former members
+  ansible.builtin.include_tasks: preview.yaml
+  vars:
+    preview_name: "DELETED GROUPS"
+    preview_request_interfaces: >-
+      {{
+        [
+          {
+            'switchId': test_switch_id,
+            'interfaceName': test_port_channel_2
+          }
+        ]
+        + (
+          [
+            {
+              'switchId': test_switch_id,
+              'interfaceName': test_ethernet_custom
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+      }}
+    preview_test_data: >-
+      {{
+        [
+          {
+            'switch_id': test_switch_id,
+            'interface_name': test_port_channel_2,
+            'pending': 'clean'
+          }
+        ]
+        + (
+          [
+            {
+              'switch_id': test_switch_id,
+              'interface_name': test_ethernet_custom,
+              'pending': 'clean'
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+      }}
+
+- name: Create empty groups for mixed bulk-delete coverage
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: false
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.delete_empty_1 }}"
+        type: any
+      - interface_group_name: "{{ interface_group_names.delete_empty_2 }}"
+        type: portChannel
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+
+- name: Bulk-delete associated and already-empty groups
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: deleted
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config: >-
+      {{
+        (
+          [
+            {'interface_group_name': interface_group_names.vpc}
+          ]
+          if test_vpc_flow_enabled
+          else []
+        )
+        + [
+          {
+            'interface_group_name':
+              interface_group_names.ethernet_without_policy
+          },
+          {
+            'interface_group_name':
+              interface_group_names.delete_empty_1
+          },
+          {
+            'interface_group_name':
+              interface_group_names.delete_empty_2
+          }
+        ]
+      }}
+    idempotency: false
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+    nd_queries:
+      - name: Fetch remaining groups after bulk deletion
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
+  register: interface_group_deleted_bulk
+
+- name: Confirm both groups were removed in the bulk operation
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_deleted_bulk.nd_query_results[0].result }}"
+    absent: >-
+      {{
+        (
+          [interface_group_names.vpc]
+          if test_vpc_flow_enabled
+          else []
+        )
+        + [
+          interface_group_names.ethernet_without_policy,
+          interface_group_names.delete_empty_1,
+          interface_group_names.delete_empty_2
+        ]
+      }}
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    invariants:
+      unique_group_names: true
+      unique_members: true
+  when: not ansible_check_mode
+
+- name: Re-delete all absent groups as one idempotent request
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: deleted
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config: >-
+      {{
+        [
+          {
+            'interface_group_name':
+              interface_group_names.port_channel_target
+          }
+        ]
+        + (
+          [
+            {
+              'interface_group_name':
+                interface_group_names.ethernet_custom
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+        + (
+          [
+            {'interface_group_name': interface_group_names.vpc}
+          ]
+          if test_vpc_flow_enabled
+          else []
+        )
+        + [
+          {
+            'interface_group_name':
+              interface_group_names.ethernet_without_policy
+          },
+          {
+            'interface_group_name':
+              interface_group_names.delete_empty_1
+          },
+          {
+            'interface_group_name':
+              interface_group_names.delete_empty_2
+          }
+        ]
+      }}
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch state after idempotent bulk re-delete
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
