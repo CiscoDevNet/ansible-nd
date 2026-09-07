@@ -1,7 +1,10 @@
 # `nd_interface_vpc_access` harness parity
 
-This file maps the original integration tests to the ND 4.x harness tests and
-records the runs made against the current test fabric.
+This file maps the original integration tests to the ND 4.x harness tests.
+The execution records below include historical evidence and the current
+working-tree verification recorded in the current-HEAD section. The current
+vPC run used ND 4.2.1 and `Astha_Fabric`; the primary pair was `.71/.63` and
+the requested second-pair peers were `.56/.55`.
 
 ## Scenario mapping
 
@@ -56,12 +59,16 @@ The original and harness suites were run with the same inventory overrides:
 | Value | Current testbed |
 |---|---|
 | Nexus Dashboard version | `4.2.1` |
-| Fabric | `VXLAN_Fabric` |
+| Fabric | `Astha_Fabric` |
 | Peer 1 | `10.122.84.71` / `9WME34GIAPX` |
 | Peer 2 | `10.122.84.63` / `9AH5QNPD6XG` |
 | Reserved vPC interfaces | `vpc100`, `vpc101` |
 | Peer-1 member ports | `Ethernet1/5`, `Ethernet1/7`, `Ethernet1/8` |
 | Peer-2 member ports | `Ethernet1/5`, `Ethernet1/7` |
+
+The current testbed has four switches in `Astha_Fabric`, but the second pair
+`.56/.55` is not configured as a vPC pair. The multi-pair harness therefore
+stops at its explicit precondition rather than modifying an unapproved pair.
 
 Two fixture values differ from the historical lab:
 
@@ -72,6 +79,14 @@ Two fixture values differ from the historical lab:
 
 Pair creation uses `config_actions.type: switch`. Pair deletion retains the
 module's switch-scoped default.
+
+## Deployment scope
+
+Live switch/controller integration is **IN SCOPE**. Current harness runs
+performed real vPC interface configuration and cleanup on `Astha_Fabric`.
+Managed pair creation/reset was attempted, but the controller operation did
+not return within roughly five minutes and was interrupted. The second pair
+was not created because its explicit precondition was absent.
 
 ## Running the harness
 
@@ -87,7 +102,7 @@ The safe aggregate excludes `state: overridden`:
 ```bash
 ansible-test network-integration nd_interface_vpc_access \
   --inventory /absolute/path/to/inventory.networking \
-  --tags nd4x_demo \
+  --tags never,nd4x_demo,nd4x_demo_preflight \
   -vv
 ```
 
@@ -100,18 +115,18 @@ nd_vpc_access_destructive_tests_enabled=true
 ```bash
 ansible-test network-integration nd_interface_vpc_access \
   --inventory /absolute/path/to/inventory.networking \
-  --tags nd4x_demo_overridden \
+  --tags never,nd4x_demo_overridden,nd4x_demo_preflight \
   -vv
 ```
 
 ## Execution record
 
-The collection baseline was
+The historical collection baseline was
 `5c1e7ec2eb19154b44ad42cb0925fa87fb3f7188`. The harness was tested as
 uncommitted working-tree content. The recorded runtime YAML manifest is
 SHA-256 `57fcf0b992eab6e312d354a92cf17b8aa5ca4e87040ad51dfbf67db20ad1bd6b`.
 
-All commands below used:
+The historical commands below used:
 
 ```text
 --inventory /Users/astawast/ansible_collections/cisco/nd/tests/integration/inventory.LOCAL.networking -vv
@@ -165,5 +180,21 @@ recorded parity runs. The workflow is now represented by
 inventory.
 
 The original suite remains enabled. The harness is not final parity evidence
-until all workflows, including multi-pair and both pair-management modes, are
-executed against the current PR HEAD and recorded here.
+for the complete vPC target until managed pair creation/reset and the
+multi-pair workflow are executed on a testbed that provides both pairs.
+
+### Current working-tree verification (2026-09-06)
+
+The current code is based on PR base HEAD
+`f19ece994ca7e3b9e1502c7d6a02c19a4998fc81` plus uncommitted changes. The local
+develop reference was `576a681dd9c52b56640d7d27c8c5b6924735ed4a`.
+
+| Run | Result |
+|---|---|
+| Harness merged, pair management disabled | Passed; `ok=35 changed=2 failed=0 skipped=8`; primary pair `.71/.63` discovered, vpc100 created/idempotently reapplied/cleaned |
+| Harness overridden, pair management disabled | Passed; `ok=47 changed=4 failed=0 skipped=9`; vpc100/vpc101 override, idempotency, API validation, and cleanup passed |
+| Harness pair management enabled | Incomplete; controller pair-create/reset did not return within roughly five minutes and was interrupted |
+| Harness multi-pair precondition | Correctly failed; second pair `.56/.55` had no vPC pair record; cleanup completed |
+| Legacy suite | Primary-pair workflows passed; multi-pair scenario stopped at the explicit missing-second-pair precondition; `ok=33 changed=8 unreachable=0 failed=1 skipped=6 rescued=0 ignored=0` |
+| Final primary-pair state | Read-only query returned HTTP 200; reciprocal pair `.71/.63` was restored asynchronously by the controller after the interrupted request |
+| Legacy suites | Remain enabled in `tasks/main.yaml` |

@@ -8,8 +8,8 @@ test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
 
 # Loopback interface configs used across tests.
-# Loopback IDs 100-109 are reserved for the ND4x harness. Loopback IDs
-# 200-209 (and 299 as the never-exists probe) are reserved for the legacy
+# Loopback IDs 100-103 and 204 are reserved for the ND4x harness. Loopback
+# IDs 200-209 (and 299 as the never-exists probe) are reserved for the legacy
 # integration tests.
 nd4x_loopback_destructive_tests_enabled: >-
   {{
@@ -23,12 +23,7 @@ nd4x_loopback_reserved_interfaces:
   - loopback101
   - loopback102
   - loopback103
-  - loopback104
-  - loopback105
-  - loopback106
-  - loopback107
-  - loopback108
-  - loopback109
+  - loopback204
 
 nd4x_loopback_overridden_allowed_interfaces:
   - loopback100
@@ -145,7 +140,9 @@ loopback_100:
   interface_name: loopback100
   config_data:
     network_os:
+      network_os_type: nx-os
       policy:
+        policy_type: loopback
         admin_state: true
         ip: "10.100.100.1"
         description: "Ansible integration test loopback100"
@@ -157,7 +154,9 @@ loopback_101:
   interface_name: loopback101
   config_data:
     network_os:
+      network_os_type: nx-os
       policy:
+        policy_type: loopback
         admin_state: true
         ip: "10.100.101.1"
         description: "Ansible integration test loopback101"
@@ -167,7 +166,9 @@ loopback_102:
   interface_name: loopback102
   config_data:
     network_os:
+      network_os_type: nx-os
       policy:
+        policy_type: loopback
         admin_state: true
         ip: "10.100.102.1"
         description: "Ansible integration test loopback102"
@@ -177,7 +178,9 @@ loopback_100_updated:
   interface_name: loopback100
   config_data:
     network_os:
+      network_os_type: nx-os
       policy:
+        policy_type: loopback
         admin_state: true
         ip: "10.100.100.2"
         description: "Updated loopback100 description"
@@ -189,7 +192,9 @@ loopback_101_updated:
   interface_name: loopback101
   config_data:
     network_os:
+      network_os_type: nx-os
       policy:
+        policy_type: loopback
         admin_state: false
         ip: "10.100.101.2"
         description: "Updated loopback101 description"

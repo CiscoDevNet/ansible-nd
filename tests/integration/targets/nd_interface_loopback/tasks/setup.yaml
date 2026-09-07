@@ -34,8 +34,6 @@
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: loopback103
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback104
-      - switch_ip: "{{ test_switch_ip }}"
         interface_name: loopback199
     state: deleted
   tags: always

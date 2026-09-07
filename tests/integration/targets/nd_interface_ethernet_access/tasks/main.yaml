@@ -70,25 +70,11 @@
           tags:
             - never
             - nd4x_demo
-            - nd4x_demo_merged
-            - nd4x_demo_merged_fanout
-            - nd4x_demo_merged_split
-            - nd4x_demo_replaced
-            - nd4x_demo_deleted
-            - nd4x_demo_negative
-            - nd4x_demo_overridden
-            - nd4x_demo_destructive
+            - nd4x_demo_preflight
       tags:
         - never
         - nd4x_demo
-        - nd4x_demo_merged
-        - nd4x_demo_merged_fanout
-        - nd4x_demo_merged_split
-        - nd4x_demo_replaced
-        - nd4x_demo_deleted
-        - nd4x_demo_negative
-        - nd4x_demo_overridden
-        - nd4x_demo_destructive
+        - nd4x_demo_preflight
 
     - name: Run merged state test using ND 4.x demo harness
       ansible.builtin.include_tasks:

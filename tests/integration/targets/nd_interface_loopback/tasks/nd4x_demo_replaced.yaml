@@ -36,7 +36,9 @@
             interface_name: loopback100
             config_data:
               network_os:
+                network_os_type: nx-os
                 policy:
+                  policy_type: loopback
                   admin_state: true
                   ip: "10.100.100.3"
                   description: Replaced loopback100
@@ -103,7 +105,9 @@
             interface_name: loopback100
             config_data:
               network_os:
+                network_os_type: nx-os
                 policy:
+                  policy_type: loopback
                   admin_state: true
                   ip: "10.100.100.4"
                   description: Replaced again loopback100

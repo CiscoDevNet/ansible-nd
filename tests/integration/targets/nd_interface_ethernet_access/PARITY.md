@@ -4,11 +4,10 @@ This document maps every scenario in the original
 `nd_interface_ethernet_access` integration suite to its ND 4.x harness-based
 replacement.
 
-All original scenarios now have implemented replacements. The recorded
-destructive and original runs below were completed before the current PR HEAD;
-the current safe harness run passed on 2026-09-03 against `Astha_Fabric`.
-Destructive and original suites still need to be rerun against this branch
-before this document is used as final parity evidence.
+All original scenarios have implemented replacements. The historical runs
+remain listed below for context; current working-tree harness and legacy
+results were also collected on 2026-09-06 against ND 4.2.1 and
+`Astha_Fabric`.
 
 ## Status definitions
 
@@ -138,7 +137,7 @@ Run the complete safe replacement suite with:
 ```bash
 ansible-test network-integration nd_interface_ethernet_access \
   --inventory /absolute/path/to/inventory.networking \
-  --tags nd4x_demo \
+  --tags never,nd4x_demo,nd4x_demo_preflight \
   -vv
 ```
 
@@ -154,13 +153,21 @@ Run it separately on a dedicated fabric:
 ```bash
 ansible-test network-integration nd_interface_ethernet_access \
   --inventory /absolute/path/to/inventory.networking \
-  --tags nd4x_demo_overridden \
+  --tags nd4x_demo_overridden,nd4x_demo_preflight \
+  --allow-destructive \
   -vv
 ```
 
+## Deployment scope
+
+Live switch/controller integration is **IN SCOPE**. Current safe and
+destructive harness runs performed real configuration and cleanup on
+`Astha_Fabric`. The legacy suite remains enabled and also completed on the
+same testbed.
+
 ## Same-environment execution record
 
-The complete safe and destructive replacement suites passed against the same
+The historical safe and destructive replacement suites passed against the same
 ND 4.2.1 environment on 2026-08-31 using collection commit
 `a682edd30efde3484d29e579535ad0b4366621ab`.
 
@@ -176,7 +183,13 @@ ND 4.2.1 environment on 2026-08-31 using collection commit
 | Destructive-run JUnit artifact | `tests/output/junit/nd_interface_ethernet_access-b9j5k705-1788159564.175429.xml` |
 | Original suite run at this commit/environment | Passed on 2026-08-31; 95 tests, 0 failures, 0 errors, 1 skipped; `ok=89 changed=30 unreachable=0 failed=0 skipped=1 rescued=0 ignored=0` |
 | Original-run JUnit artifact | `tests/output/junit/nd_interface_ethernet_access-23wmhdy4-1788161053.3463218.xml` |
-| Unmapped implementation scenarios | None after the complete replaced-state prerequisite was added; current safe validation passed |
+| Current harness safe run | 2026-09-06; `ok=74 changed=21 failed=0 skipped=2` |
+| Current harness destructive/overridden run | 2026-09-06; `ok=47 changed=9 failed=0 skipped=2` |
+| Current legacy run | Passed; `ok=89 changed=30 unreachable=0 failed=0 skipped=1 rescued=0 ignored=0` |
+| Current testbed | ND `4.2.1`; `Astha_Fabric`; selected switch `10.122.84.71` |
+| Current PR base HEAD | `f19ece994ca7e3b9e1502c7d6a02c19a4998fc81` plus uncommitted changes |
+| Current local develop reference | `576a681dd9c52b56640d7d27c8c5b6924735ed4a` |
+| Static scenario mapping | Complete for the current Ethernet access scenario set |
 
 The safe replacement run used the `nd4x_demo` tag. The destructive replacement
 run used the `nd4x_demo_overridden` tag with explicit destructive-test opt-in.
@@ -189,9 +202,8 @@ recorded above.
 
 ## Retirement decision
 
-All original scenarios now have live-passed replacements, and the original
-suite has passed against the same environment. The original suite should
-remain until:
+The original suite should remain enabled until current-HEAD validation is
+complete and reviewers approve retirement. Required validation is:
 
 1. The complete safe and destructive replacement suites continue to pass live
    validation.
