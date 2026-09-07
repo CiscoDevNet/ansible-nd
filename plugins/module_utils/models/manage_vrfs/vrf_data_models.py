@@ -464,6 +464,8 @@ class VrfDataModel(NDBaseModel):
 
     identifiers: ClassVar[list[str]] = ["vrf_name", "fabric_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
+    exclude_from_diff: ClassVar[set[str]] = {"vrf_status"}
+    payload_exclude_fields: ClassVar[set[str]] = {"vrf_status"}
 
     # vrfCommon required fields
     fabric_name: str = Field(

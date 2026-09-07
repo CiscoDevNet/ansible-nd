@@ -213,6 +213,25 @@ def _orchestrator():
     )
 
 
+def test_network_payload_model_defaults_exposed_false_flags_for_standalone_vxlan():
+    orchestrator = _orchestrator()
+
+    payload_data = orchestrator._transform_config_to_payload_model_data(
+        {
+            "network_name": "BLUE_NET",
+            "network_id": 30001,
+            "vlan_id": 2301,
+            "vrf_name": "BLUE_VRF",
+        },
+        "fab1",
+    )
+
+    assert payload_data["l2_data"]["xConnect"] is False
+    assert payload_data["l3_data"]["fabricData"]["gatewayOnBorder"] is False
+    assert payload_data["l3_data"]["fabricData"]["ipv4Trm"] is False
+    assert payload_data["l3_data"]["fabricData"]["ipv6Trm"] is False
+
+
 def test_network_replaced_first_create_with_attachment_skips_missing_pre_query():
     """
     # Summary
@@ -1986,7 +2005,7 @@ def test_mcfg_parent_network_update_uses_l2_onemanage_manage_schema_payload():
     assert payload["networkMode"] == "layer2"
     assert payload["vrfName"] == "NA"
     assert "vlanId" not in payload
-    assert payload["l2Data"] == {"vlanName": "", "fabricData": {}}
+    assert payload["l2Data"] == {"vlanName": "", "fabricData": {}, "xConnect": False}
     assert payload["l3Data"] == {
         "gatewayIpv4Address": "",
         "gatewayIpv6Address": "",
@@ -3358,7 +3377,7 @@ def test_transform_l3_network_payload_uses_l3_data_fabric_data():
     assert payload["l3_data"]["fabricData"]["netflowSampler"] == "NF_SAMPLER"
 
 
-def test_transform_l3_network_payload_omits_trm_flags_when_unset():
+def test_transform_l3_network_payload_defaults_trm_flags_when_unset():
     payload = _orchestrator().prepare_config_data(
         [
             {
@@ -3371,5 +3390,6 @@ def test_transform_l3_network_payload_omits_trm_flags_when_unset():
 
     assert payload["l3_data"]["mtu"] == 9216
     assert payload["l3_data"]["fabricData"]["netflow"] is False
-    assert "ipv4Trm" not in payload["l3_data"]["fabricData"]
-    assert "ipv6Trm" not in payload["l3_data"]["fabricData"]
+    assert payload["l3_data"]["fabricData"]["gatewayOnBorder"] is False
+    assert payload["l3_data"]["fabricData"]["ipv4Trm"] is False
+    assert payload["l3_data"]["fabricData"]["ipv6Trm"] is False

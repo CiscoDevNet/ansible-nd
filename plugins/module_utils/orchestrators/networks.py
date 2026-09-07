@@ -251,9 +251,25 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             l2_netflow_monitor=self._value(config, "l2_netflow_monitor", "l2NetflowMonitor"),
             l3_netflow_monitor=self._value(config, "l3_netflow_monitor", "l3NetflowMonitor"),
             netflow_sampler=self._value(config, "netflow_sampler", "netflowSampler"),
-            gateway_on_border=self._value(config, "gateway_on_border", "gatewayOnBorder"),
-            ipv4_trm=self._value(config, "trm_enable", "trmEnable", "ipv4Trm"),
-            ipv6_trm=self._value(config, "ipv6_trm", "ipv6Trm"),
+            gateway_on_border=self._value(
+                config,
+                "gateway_on_border",
+                "gatewayOnBorder",
+                default=None if self.strategy and self.strategy.is_child else False,
+            ),
+            ipv4_trm=self._value(
+                config,
+                "trm_enable",
+                "trmEnable",
+                "ipv4Trm",
+                default=None if self.strategy and self.strategy.is_child else False,
+            ),
+            ipv6_trm=self._value(
+                config,
+                "ipv6_trm",
+                "ipv6Trm",
+                default=None if self.strategy and self.strategy.is_child else False,
+            ),
         )
         model = DefaultL3DataModel(
             **{k: v for k, v in common.items() if v is not None},

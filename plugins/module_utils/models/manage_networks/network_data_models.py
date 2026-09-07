@@ -123,9 +123,10 @@ class DefaultL2DataModel(NDNestedModel):
     """Default L2 network data."""
 
     identifiers: ClassVar[list[str]] = []
+
     vlan_name: str | None = Field(default=None, alias="vlanName", description="VLAN name")
     rt_auto: bool | None = Field(default=None, alias="rtAuto", description="Enable L2VNI route-target both")
-    x_connect: bool | None = Field(default=None, alias="xConnect", description="Enable xConnect")
+    x_connect: bool | None = Field(default=False, alias="xConnect", description="Enable xConnect")
     fabric_data: DefaultL2FabricDataModel | dict[str, Any] | None = Field(default=None, alias="fabricData")
 
 
@@ -133,6 +134,7 @@ class VxlanL3FabricDataModel(NDNestedModel):
     """VXLAN L3 fabric-specific data."""
 
     identifiers: ClassVar[list[str]] = []
+
     dhcp_servers: list[DhcpServerModel | dict[str, Any]] | None = Field(default=None, alias="dhcpServers")
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion", ge=1, le=3)
@@ -140,9 +142,9 @@ class VxlanL3FabricDataModel(NDNestedModel):
     l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
     l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
-    gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
-    ipv4_trm: bool | None = Field(default=None, alias="ipv4Trm")
-    ipv6_trm: bool | None = Field(default=None, alias="ipv6Trm")
+    gateway_on_border: bool | None = Field(default=False, alias="gatewayOnBorder")
+    ipv4_trm: bool | None = Field(default=False, alias="ipv4Trm")
+    ipv6_trm: bool | None = Field(default=False, alias="ipv6Trm")
 
     @field_validator("igmp_version", mode="before")
     @classmethod
@@ -161,7 +163,7 @@ class DefaultL3FabricDataModel(NDNestedModel):
     l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
     l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
-    gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
+    gateway_on_border: bool | None = Field(default=False, alias="gatewayOnBorder")
 
     @field_validator("igmp_version", mode="before")
     @classmethod
@@ -323,6 +325,7 @@ class NetworkCommonModel(NDBaseModel):
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
     exclude_from_diff: ClassVar[set[str]] = {"network_status"}
     payload_exclude_fields: ClassVar[set[str]] = {"network_status"}
+    reverse_diff_exclude: ClassVar[set[str]] = {"displayName"}
 
     fabric_name: str | None = Field(default=None, alias="fabricName")
     network_name: str = Field(default=..., alias="networkName", max_length=128)
