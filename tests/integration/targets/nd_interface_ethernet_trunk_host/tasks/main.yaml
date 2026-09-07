@@ -7,7 +7,7 @@
 # --- Usage ---
 #
 # Run the test suite with ansible-test:
-#   ansible-test integration nd_interface_ethernet_trunk_host
+#   ansible-test network-integration nd_interface_ethernet_trunk_host
 #
 # --- Optional test variables ---
 #
@@ -16,7 +16,8 @@
 # TODO: Modify the above (and below) if the team decides to use tests/integration/integration_config.yml instead.
 #
 # supports_vlan_mapping (bool, default: false)
-#   Enables the VLAN-mapping / dot1q-tunnel test block in merged.yaml. Skipped by
+#   Enables the VLAN-mapping / dot1q-tunnel test workflow in
+#   nd4x_demo_vlan_mapping.yaml. Skipped by
 #   default because Nexus 9000v virtual switches reject
 #   `switchport vlan mapping ... dot1q-tunnel ...` (ND returns HTTP 400).
 #   On a hardware-backed testbed, add to inventory.networking [nd:vars]:
@@ -36,13 +37,19 @@
   ansible.builtin.fail:
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
   when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+  tags:
+    - always
 
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
+  tags:
+    - always
 
 - name: Run nd_interface_ethernet_trunk_host state tests with optional logging env
+  vars:
+    ansible_command_timeout: 300
   block:
     - name: Pre-test cleanup
       ansible.builtin.include_tasks: setup.yaml
@@ -58,5 +65,90 @@
 
     - name: Run nd_interface_ethernet_trunk_host deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run ND 4.x trunk-host harness preflight
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_preflight.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_merged
+            - nd4x_demo_replaced
+            - nd4x_demo_deleted
+            - nd4x_demo_overridden
+            - nd4x_demo_destructive
+            - nd4x_demo_negative
+            - nd4x_demo_vlan_mapping
+            - nd4x_demo_storm_control
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+        - nd4x_demo_replaced
+        - nd4x_demo_deleted
+        - nd4x_demo_overridden
+        - nd4x_demo_destructive
+        - nd4x_demo_negative
+        - nd4x_demo_vlan_mapping
+        - nd4x_demo_storm_control
+
+    - name: Run trunk-host merged harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged.yaml
+        apply:
+          tags: [never, nd4x_demo, nd4x_demo_merged]
+      tags: [never, nd4x_demo, nd4x_demo_merged]
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run trunk-host replaced harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_replaced.yaml
+        apply:
+          tags: [never, nd4x_demo, nd4x_demo_replaced]
+      tags: [never, nd4x_demo, nd4x_demo_replaced]
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run trunk-host deleted harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_deleted.yaml
+        apply:
+          tags: [never, nd4x_demo, nd4x_demo_deleted]
+      tags: [never, nd4x_demo, nd4x_demo_deleted]
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run trunk-host negative harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_negative.yaml
+        apply:
+          tags: [never, nd4x_demo, nd4x_demo_negative]
+      tags: [never, nd4x_demo, nd4x_demo_negative]
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run trunk-host VLAN-mapping harness scenario
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_vlan_mapping.yaml
+        apply:
+          tags: [never, nd4x_demo, nd4x_demo_vlan_mapping]
+      tags: [never, nd4x_demo, nd4x_demo_vlan_mapping]
+      when:
+        - nd4x_supported | default(false) | bool
+        - supports_vlan_mapping | default(false) | bool
+
+    - name: Run trunk-host storm-control harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_storm_control.yaml
+        apply:
+          tags: [never, nd4x_demo, nd4x_demo_storm_control]
+      tags: [never, nd4x_demo, nd4x_demo_storm_control]
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run trunk-host overridden harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_overridden.yaml
+        apply:
+          tags: [never, nd4x_demo_overridden, nd4x_demo_destructive]
+      tags: [never, nd4x_demo_overridden, nd4x_demo_destructive]
+      when: nd4x_supported | default(false) | bool
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
