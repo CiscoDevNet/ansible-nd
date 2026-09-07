@@ -52,6 +52,10 @@
 
     - name: Run nd_interface_loopback deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run IOS-XE loopback tests (requires nd_test_xe_switch_ip)
+      ansible.builtin.include_tasks: xe.yaml
+      when: nd_test_xe_switch_ip is defined and nd_test_xe_switch_ip | length > 0
   vars:
     ansible_command_timeout: 300
   environment:

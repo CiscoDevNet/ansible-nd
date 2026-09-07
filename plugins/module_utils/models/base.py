@@ -8,7 +8,7 @@ from abc import ABC
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
-from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
+from ansible_collections.cisco.nd.plugins.module_utils.utils import has_removals, issubset
 
 
 def _strip_none_values(data):
@@ -71,6 +71,23 @@ class NDBaseModel(BaseModel, ABC):
     # Fields to explicitly exclude per mode
     payload_exclude_fields: ClassVar[Set[str]] = set()
     config_exclude_fields: ClassVar[Set[str]] = set()
+
+    # ND template defaults for the reverse pass of `get_diff` (issue #410), keyed by field ALIAS (wire key).
+    # ND echoes the schema-declared template default for every field the user never set, so an existing-side
+    # value equal to its declared default is normalized to absent during removal detection -- omitting it from
+    # proposed config is not a pending reset. Source the values from the ND OpenAPI template schema for the
+    # model's policyType (see the `nd-openapi` MCP); a wrong value here breaks replaced/overridden idempotency.
+    # Values MUST be in the model's DUMPED form, not the schema-declared form: when a validator coerces a field
+    # on read (e.g. loopback `routeMapTag` schema integer 12345 stored as string "12345"), the table must hold
+    # the coerced value or the default never matches and the field silently reopens issue #410 for that model.
+    reverse_diff_defaults: ClassVar[Dict[str, Any]] = {}
+
+    # Keys (field ALIASES / wire keys) stripped from this model's level of the reverse-pass dump regardless of
+    # value. For server-populated fields the proposed config can never express (e.g. the orchestrator-injected
+    # `peerSwitchId` on vPC policy models): their presence on the existing side is not a pending reset, and
+    # unlike `reverse_diff_defaults` they have no single constant value to match against. Applies at the
+    # declaring model's own nesting level, so nested models scope their own exclusions.
+    reverse_diff_exclude: ClassVar[Set[str]] = set()
 
     # --- Subclass Validation ---
 
@@ -221,6 +238,78 @@ class NDBaseModel(BaseModel, ABC):
             **kwargs,
         )
 
+    def to_reverse_diff_dict(self, **kwargs) -> Dict[str, Any]:
+        """
+        # Summary
+
+        Export for the reverse pass of `get_diff` (issue #410), scoped to payload shape: fields in `exclude_from_diff` or
+        `payload_exclude_fields` are excluded, so only fields the PUT body can express participate in removal detection.
+        The dump is then scrubbed recursively, each nested model applying its own declarations: values equal to their
+        `reverse_diff_defaults` entry are stripped (ND echoes template defaults for unset fields), keys in
+        `reverse_diff_exclude` are stripped unconditionally (server-populated fields the proposed config can never
+        express), and keys retained by `extra="allow"` are stripped (undeclared server keys are not expressible in
+        config and must not count as removals). Like `to_diff_dict`, the top-level exclusion sets apply at the top
+        level only; nested exclusions are declared on the nested model via `reverse_diff_exclude`.
+
+        Derived from `to_diff_dict` (one dump, then in-place scoping) rather than a second `model_dump`, so subclass
+        `to_diff_dict` overrides scope the reverse pass too, and `get_diff` can reuse its forward dumps instead of
+        re-dumping both models.
+
+        ## Raises
+
+        None
+        """
+        data = self.to_diff_dict(**kwargs)
+        self._apply_reverse_diff_scope(data)
+        return data
+
+    def _apply_reverse_diff_scope(self, data: Dict[str, Any]) -> None:
+        """
+        # Summary
+
+        Convert a `to_diff_dict` export into the reverse-pass shape, in place: pop the aliases of top-level
+        `payload_exclude_fields` (already absent when a field is also in `exclude_from_diff`), then run
+        `_scrub_reverse_diff_dict` so each nested model applies its own exclusions/extras/defaults declarations.
+
+        ## Raises
+
+        None
+        """
+        for field_name in self.payload_exclude_fields:
+            field_info = type(self).model_fields.get(field_name)
+            data.pop(field_info.alias if field_info is not None and field_info.alias else field_name, None)
+        self._scrub_reverse_diff_dict(data)
+
+    def _scrub_reverse_diff_dict(self, data: Dict[str, Any]) -> None:
+        """
+        # Summary
+
+        Scrub `data` (an aliased dump of `self`) for removal detection: drop keys listed in `reverse_diff_exclude`, keys
+        retained only via `extra="allow"` (undeclared server keys), and keys whose value equals the model's declared
+        `reverse_diff_defaults` entry, then recurse into nested `NDBaseModel` fields so each nested model applies its own
+        declarations.
+
+        ## Raises
+
+        None
+        """
+        for alias in self.reverse_diff_exclude:
+            data.pop(alias, None)
+        # `model_extra` keys are stored under their wire spelling, matching the aliased dump.
+        for extra_key in getattr(self, "model_extra", None) or {}:
+            data.pop(extra_key, None)
+        for alias, default in self.reverse_diff_defaults.items():
+            if alias in data and data[alias] == default:
+                del data[alias]
+        for field_name, field_info in type(self).model_fields.items():
+            value = getattr(self, field_name, None)
+            if isinstance(value, NDBaseModel):
+                alias = field_info.alias or field_name
+                nested = data.get(alias)
+                if isinstance(nested, dict):
+                    # Same-class recursion; pylint cannot infer `value` is an NDBaseModel from getattr.
+                    value._scrub_reverse_diff_dict(nested)  # pylint: disable=protected-access
+
     def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
         """Diff comparison.
 
@@ -234,12 +323,38 @@ class NDBaseModel(BaseModel, ABC):
                 to catch merge side effects the one-way subset test cannot see
                 (e.g. mutually exclusive counterpart fields that the merge
                 would clear).
+
+                When False (the ``replaced``/``overridden`` path), a subset
+                match is additionally cross-checked with ``has_removals`` over
+                the payload-scoped dumps (issue #410): a field present on
+                ``self`` (device) but absent from ``other`` (proposed) means
+                the full-payload PUT would reset it, so it must classify as a
+                difference. Empty existing values (``""``, ``[]``, ``{}``) are
+                normalized to absent so ND-echoed empty markers keep runs
+                idempotent.
+
+        Raises:
+            TypeError: If ``other`` is not an instance of this model's type
+                (same contract as ``merge``). The reverse pass applies
+                ``other``'s own ``reverse_diff_*`` declarations, so a
+                cross-type comparison is a programming error, not a diff.
         """
+        if not isinstance(other, type(self)):
+            raise TypeError(f"Cannot diff {type(other).__name__} against {type(self).__name__}. Both must be the same type.")
+
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
         is_subset = issubset(other_data, self_data)
         if is_subset and exclude_unset and self.merge_would_change(other):
             return False
+        if is_subset and not exclude_unset:
+            # Reuse the forward dumps for the reverse pass (they are not read again): scoping them in place
+            # avoids a second full model_dump per side (PR #422 review, efficiency finding).
+            self._apply_reverse_diff_scope(self_data)
+            # Same-class access; pylint cannot infer `other` shares this NDBaseModel API.
+            other._apply_reverse_diff_scope(other_data)  # pylint: disable=protected-access
+            if has_removals(self_data, other_data):
+                return False
         return is_subset
 
     def merge_would_change(self, other: "NDBaseModel") -> bool:
@@ -268,12 +383,21 @@ class NDBaseModel(BaseModel, ABC):
 
     def merge(self, other: "NDBaseModel") -> "NDBaseModel":
         """
-        Merge another model's explicitly set, non-None values into this instance.
-        Recursively merges nested NDBaseModel fields.
-        Only fields present in ``other.model_fields_set`` are applied so that
-        Pydantic default values do not overwrite existing configuration.
+        # Summary
 
-        Returns self for chaining.
+        Merge another model's explicitly set, non-None values into this instance. Recursively merges nested `NDBaseModel` fields. Only fields present in
+        `other.model_fields_set` are applied so that Pydantic default values do not overwrite existing configuration. Returns `self` for chaining.
+
+        ## Raises
+
+        ### TypeError
+
+        - If `other` is not an instance of `type(self)`
+
+        ### ValueError
+
+        - If merging would change the discriminator value of a nested discriminated-union field (e.g. `policy_type`). Two union branches have disjoint
+          field sets, so a field-by-field merge across them is undefined; the transition is rejected with a message pointing at `state: replaced`
         """
         if not isinstance(other, type(self)):
             raise TypeError(f"Cannot merge {type(other).__name__} into {type(self).__name__}. " f"Both must be the same type.")
@@ -288,6 +412,13 @@ class NDBaseModel(BaseModel, ABC):
 
             current = getattr(self, field_name)
             if isinstance(current, NDBaseModel) and isinstance(value, NDBaseModel):
+                if type(current) is not type(value):
+                    discriminator = type(self).model_fields[field_name].discriminator
+                    if isinstance(discriminator, str):
+                        raise ValueError(
+                            f"Cannot change {discriminator} from '{getattr(current, discriminator)}' to '{getattr(value, discriminator)}' "
+                            f"with state: merged. Use state: replaced (or delete and re-create the resource) to change {discriminator}."
+                        )
                 current.merge(value)
             else:
                 setattr(self, field_name, value)

@@ -933,7 +933,7 @@ def test_manage_interface_group_00122(helper, operation: str) -> None:
 
 
 def test_manage_interface_group_00124() -> None:
-    """Reject malformed or non-success results that escape central handling."""
+    """Reject malformed or non-success Interface Group results locally."""
     with pytest.raises(RuntimeError, match="non-success.*member conflict"):
         ManageInterfaceGroupOrchestrator._validate_create_response_contract(
             {
@@ -972,7 +972,7 @@ def test_manage_interface_group_00124() -> None:
 
 
 def test_manage_interface_group_00126() -> None:
-    """Central handling stops a mixed IFG create before local state is advanced."""
+    """Local response validation stops a mixed create before cached state advances."""
     rest_send = _rest_send_with_responses(
         [
             _response_207(
@@ -1007,17 +1007,12 @@ def test_manage_interface_group_00126() -> None:
             ]
         )
 
-    assert rest_send.result_current == {
-        "success": False,
-        "changed": True,
-        "retryable": False,
-    }
     assert orchestrator._existing_groups == {}
     assert orchestrator._pending_switches == set()
 
 
 def test_manage_interface_group_00128() -> None:
-    """Central handling stops an IFG remove before cached groups are discarded."""
+    """Local response validation stops a failed remove before cached state advances."""
     rest_send = _rest_send_with_responses(
         [
             _response_207(
@@ -1044,11 +1039,6 @@ def test_manage_interface_group_00128() -> None:
     with pytest.raises(Exception, match="group-a.*still associated"):
         orchestrator.delete_bulk([existing])
 
-    assert rest_send.result_current == {
-        "success": False,
-        "changed": False,
-        "retryable": False,
-    }
     assert orchestrator._existing_groups == {"group-a": existing}
 
 

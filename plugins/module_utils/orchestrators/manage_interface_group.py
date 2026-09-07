@@ -549,9 +549,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     def _validate_create_response_contract(response: Any, expected_count: int | None = None) -> None:
         """Validate the successful bulk-create response shape.
 
-        Explicit failed/error items are rejected centrally by ``NdV1Strategy``
-        before ``_request`` returns. This local guard remains responsible for
-        the Interface Groups-specific response contract: a non-empty
+        This Interface Groups-specific guard validates a non-empty
         ``interfaceGroups`` array, one result per requested group, and a known
         successful status on every item.
         """
@@ -566,15 +564,15 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             raise RuntimeError(f"Interface Group create returned invalid per-item results: {exc}") from exc
         if parsed.failures:
             messages = [item.message or f"type={item.type or '?'}" for item in parsed.failures]
-            raise RuntimeError("Interface Group create returned a non-success per-item status after " f"central response handling: {'; '.join(messages)}")
+            raise RuntimeError(f"Interface Group create returned a non-success per-item status: {'; '.join(messages)}")
 
     @staticmethod
     def _validate_delete_response_contract(response: Any, expected_count: int | None = None) -> None:
         """Validate the successful bulk-remove response shape.
 
-        ``NdV1Strategy`` handles explicit per-item failures. This guard keeps
-        the endpoint-specific completeness and schema checks that the generic
-        response layer cannot infer from the request payload.
+        This Interface Groups-specific guard validates per-item status,
+        completeness, and schema details that the generic response layer
+        cannot infer from the request payload.
         """
         items = response.get("interfaceGroups") if isinstance(response, dict) else None
         if not isinstance(items, list) or not items:
@@ -587,7 +585,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             raise RuntimeError(f"Interface Group delete returned invalid per-item results: {exc}") from exc
         if parsed.failures:
             messages = [f"{item.interface_group_name or '?'}: {item.message or 'unknown error'}" for item in parsed.failures]
-            raise RuntimeError("Interface Group delete returned a non-success per-item status after " f"central response handling: {'; '.join(messages)}")
+            raise RuntimeError(f"Interface Group delete returned a non-success per-item status: {'; '.join(messages)}")
 
     def create_bulk(self, model_instances: list[InterfaceGroupConfigModel], **kwargs) -> ResponseType:
         """Create Interface Groups and populate ``any`` membership in batches.

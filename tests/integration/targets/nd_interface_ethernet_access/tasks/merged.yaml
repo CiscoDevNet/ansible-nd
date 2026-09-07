@@ -189,7 +189,8 @@
               admin_state: true
               access_vlan: 999
               description: "No-deploy test Ethernet1/48"
-    deploy: false
+    config_actions:
+      deploy: false
     state: merged
   register: nm_merged_no_deploy
 

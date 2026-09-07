@@ -356,5 +356,473 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
         "MESSAGE": "Not Found",
         "DATA": {}
+    },
+    "test_overridden_mixed_case_00440a": {
+        "TEST_NOTES": [
+            "Overridden mixed-case idempotency (normal mode, #411 review): fabric summary (fabric exists)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_overridden_mixed_case_00440b": {
+        "TEST_NOTES": [
+            "Overridden mixed-case idempotency (normal mode, #411 review): switch list, two switches in one vPC pair."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDOAAAAAAAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDOBBBBBBBB"
+                }
+            ]
+        }
+    },
+    "test_overridden_mixed_case_00440c": {
+        "TEST_NOTES": [
+            "Overridden mixed-case idempotency (normal mode, #411 review): S1 echoes canonical lowercase vpc500 (peerSwitchId=FDOBBBBBBBB); deduped away in favor of the configured peer S2."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc500",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkVpcHost",
+                                "peerSwitchId": "FDOBBBBBBBB",
+                                "allowedVlans": "100-200",
+                                "nativeVlan": 99,
+                                "peer1PortChannelId": 500,
+                                "peer1MemberPorts": [
+                                    "Ethernet1/1"
+                                ],
+                                "peer2PortChannelId": 500,
+                                "peer2MemberPorts": [
+                                    "Ethernet1/1"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_overridden_mixed_case_00440d": {
+        "TEST_NOTES": [
+            "Overridden mixed-case idempotency (normal mode, #411 review): S2 echoes canonical lowercase vpc500 (peerSwitchId=FDOAAAAAAAA); the user configured it as VPC500 on S2, so this copy is kept."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc500",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkVpcHost",
+                                "peerSwitchId": "FDOAAAAAAAA",
+                                "allowedVlans": "100-200",
+                                "nativeVlan": 99,
+                                "peer1PortChannelId": 500,
+                                "peer1MemberPorts": [
+                                    "Ethernet1/1"
+                                ],
+                                "peer2PortChannelId": 500,
+                                "peer2MemberPorts": [
+                                    "Ethernet1/1"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_overridden_mixed_case_00445a": {
+        "TEST_NOTES": [
+            "Overridden mixed-case idempotency (check mode, #411 review): fabric summary (fabric exists)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_overridden_mixed_case_00445b": {
+        "TEST_NOTES": [
+            "Overridden mixed-case idempotency (check mode, #411 review): switch list, two switches in one vPC pair."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDOAAAAAAAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDOBBBBBBBB"
+                }
+            ]
+        }
+    },
+    "test_overridden_mixed_case_00445c": {
+        "TEST_NOTES": [
+            "Overridden mixed-case idempotency (check mode, #411 review): S1 echoes canonical lowercase vpc500 (peerSwitchId=FDOBBBBBBBB); deduped away in favor of the configured peer S2."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc500",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkVpcHost",
+                                "peerSwitchId": "FDOBBBBBBBB",
+                                "allowedVlans": "100-200",
+                                "nativeVlan": 99,
+                                "peer1PortChannelId": 500,
+                                "peer1MemberPorts": [
+                                    "Ethernet1/1"
+                                ],
+                                "peer2PortChannelId": 500,
+                                "peer2MemberPorts": [
+                                    "Ethernet1/1"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_overridden_mixed_case_00445d": {
+        "TEST_NOTES": [
+            "Overridden mixed-case idempotency (check mode, #411 review): S2 echoes canonical lowercase vpc500 (peerSwitchId=FDOAAAAAAAA); the user configured it as VPC500 on S2, so this copy is kept."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc500",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkVpcHost",
+                                "peerSwitchId": "FDOAAAAAAAA",
+                                "allowedVlans": "100-200",
+                                "nativeVlan": 99,
+                                "peer1PortChannelId": 500,
+                                "peer1MemberPorts": [
+                                    "Ethernet1/1"
+                                ],
+                                "peer2PortChannelId": 500,
+                                "peer2MemberPorts": [
+                                    "Ethernet1/1"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_overridden_one_peer_missing_00450a": {
+        "TEST_NOTES": [
+            "Overridden, one peer echo omits peerSwitchId (#411 review): fabric summary (fabric exists)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_overridden_one_peer_missing_00450b": {
+        "TEST_NOTES": [
+            "Overridden, one peer echo omits peerSwitchId (#411 review): switch list, two switches in one vPC pair."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDOAAAAAAAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDOBBBBBBBB"
+                }
+            ]
+        }
+    },
+    "test_overridden_one_peer_missing_00450c": {
+        "TEST_NOTES": [
+            "Overridden, one peer echo omits peerSwitchId (#411 review): S1 echoes vpc500 WITH peerSwitchId=FDOBBBBBBBB."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc500",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkVpcHost",
+                                "peerSwitchId": "FDOBBBBBBBB",
+                                "allowedVlans": "100-200",
+                                "nativeVlan": 99,
+                                "peer1PortChannelId": 500,
+                                "peer1MemberPorts": [
+                                    "Ethernet1/1"
+                                ],
+                                "peer2PortChannelId": 500,
+                                "peer2MemberPorts": [
+                                    "Ethernet1/1"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_overridden_one_peer_missing_00450d": {
+        "TEST_NOTES": [
+            "Overridden, one peer echo omits peerSwitchId (#411 review): S2 echoes vpc500 WITHOUT peerSwitchId; must collapse into S1's entry, never become an override-delete candidate. S2 is queried second so positional replay feeds both echoes to pre-fix code too, which then plans the destructive delete."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc500",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkVpcHost",
+                                "allowedVlans": "100-200",
+                                "nativeVlan": 99,
+                                "peer1PortChannelId": 500,
+                                "peer1MemberPorts": [
+                                    "Ethernet1/1"
+                                ],
+                                "peer2PortChannelId": 500,
+                                "peer2MemberPorts": [
+                                    "Ethernet1/1"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_overridden_one_peer_missing_00450e": {
+        "TEST_NOTES": [
+            "Overridden, one peer echo omits peerSwitchId (#411 review): vpcPair for FDOBBBBBBBB — peer is FDOAAAAAAAA."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switchId": "FDOBBBBBBBB",
+            "peerSwitchId": "FDOAAAAAAAA"
+        }
+    },
+    "test_overridden_both_peers_missing_00455a": {
+        "TEST_NOTES": [
+            "Overridden, both peer echoes omit peerSwitchId (#411 review): fabric summary (fabric exists)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_overridden_both_peers_missing_00455b": {
+        "TEST_NOTES": [
+            "Overridden, both peer echoes omit peerSwitchId (#411 review): switch list, two switches in one vPC pair."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDOAAAAAAAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDOBBBBBBBB"
+                }
+            ]
+        }
+    },
+    "test_overridden_both_peers_missing_00455c": {
+        "TEST_NOTES": [
+            "Overridden, both peer echoes omit peerSwitchId (#411 review): S1 echoes vpc500 WITHOUT peerSwitchId."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc500",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkVpcHost",
+                                "allowedVlans": "100-200",
+                                "nativeVlan": 99,
+                                "peer1PortChannelId": 500,
+                                "peer1MemberPorts": [
+                                    "Ethernet1/1"
+                                ],
+                                "peer2PortChannelId": 500,
+                                "peer2MemberPorts": [
+                                    "Ethernet1/1"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_overridden_both_peers_missing_00455d": {
+        "TEST_NOTES": [
+            "Overridden, both peer echoes omit peerSwitchId (#411 review): vpcPair for FDOAAAAAAAA — peer is FDOBBBBBBBB."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switchId": "FDOAAAAAAAA",
+            "peerSwitchId": "FDOBBBBBBBB"
+        }
+    },
+    "test_overridden_both_peers_missing_00455e": {
+        "TEST_NOTES": [
+            "Overridden, both peer echoes omit peerSwitchId (#411 review): S2 echoes vpc500 WITHOUT peerSwitchId."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc500",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkVpcHost",
+                                "allowedVlans": "100-200",
+                                "nativeVlan": 99,
+                                "peer1PortChannelId": 500,
+                                "peer1MemberPorts": [
+                                    "Ethernet1/1"
+                                ],
+                                "peer2PortChannelId": 500,
+                                "peer2MemberPorts": [
+                                    "Ethernet1/1"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_overridden_both_peers_missing_00455f": {
+        "TEST_NOTES": [
+            "Overridden, both peer echoes omit peerSwitchId (#411 review): vpcPair for FDOBBBBBBBB — peer is FDOAAAAAAAA."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switchId": "FDOBBBBBBBB",
+            "peerSwitchId": "FDOAAAAAAAA"
+        }
     }
 }
