@@ -32,6 +32,8 @@ Or use the convenience method to process a batch::
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.backend import ConfigActionsBackend
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.controller import ConfigActionsController
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
@@ -73,8 +75,8 @@ class ConfigActionsMixin:
           ``{"switchIds": [...]}``.
     """
 
-    config_actions_policy: ConfigActionsPolicy = FABRIC_CONFIG_ACTIONS
-    config_actions_backend_class: type[ConfigActionsBackend] | None = None
+    config_actions_policy: ClassVar[ConfigActionsPolicy] = FABRIC_CONFIG_ACTIONS
+    config_actions_backend_class: ClassVar[type[ConfigActionsBackend] | None] = None
 
     def execute_config_actions_plan(
         self,

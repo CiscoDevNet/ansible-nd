@@ -28,6 +28,7 @@ from typing import ClassVar, Literal, Optional
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.backend import ConfigActionsBackend
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import SWITCH_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionStepResult, ConfigActionsContext, ConfigActionsResult
@@ -135,7 +136,8 @@ class ConfigActionsOrchestrator(ConfigActionsMixin, NDBaseOrchestrator):
 class FacadeBackend:
     """Backend test double for the controller facade path."""
 
-    def __init__(self) -> None:
+    def __init__(self, owner=None) -> None:
+        self.owner = owner
         self.calls = []
 
     def save(self, context, fabric_name):
@@ -153,6 +155,22 @@ class FacadeBackend:
     def deploy_resources(self, context, fabric_name, resources):
         self.calls.append(("deploy_resources", fabric_name, resources))
         return {"resources": list(resources)}
+
+
+class ConfiguredBackend(FacadeBackend):
+    """Backend test double constructed from the mixin's class-level hook."""
+
+    instances: ClassVar[list["ConfiguredBackend"]] = []
+
+    def __init__(self, owner) -> None:
+        super().__init__(owner)
+        self.instances.append(self)
+
+
+class ConfiguredBackendOrchestrator(ConfigActionsOrchestrator):
+    """Concrete orchestrator that configures the backend hook at class level."""
+
+    config_actions_backend_class: ClassVar[type[ConfigActionsBackend]] = ConfiguredBackend
 
 
 # =============================================================================
@@ -933,6 +951,41 @@ class TestValidateConfigActions:
 
 class TestConfigActionsControllerFacade:
     """Tests for ConfigActionsMixin.execute_config_actions_plan()."""
+
+    def test_facade_uses_configured_classvar_backend(self):
+        """
+        # Summary
+
+        Verify a Pydantic-backed orchestrator can configure the backend hook at class level.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        ConfiguredBackend.instances = []
+        orch = ConfiguredBackendOrchestrator(
+            create_endpoint=StubPostEndpoint,
+            update_endpoint=StubPutEndpoint,
+            delete_endpoint=StubDeleteEndpoint,
+            query_one_endpoint=StubGetEndpoint,
+            query_all_endpoint=StubGetEndpoint,
+            rest_send=_make_rest_send([]),
+        )
+        actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+        context = ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=("SER1",))
+
+        result = orch.execute_config_actions_plan(actions=actions, context=context)
+
+        assert "config_actions_policy" not in ConfiguredBackendOrchestrator.model_fields
+        assert "config_actions_backend_class" not in ConfiguredBackendOrchestrator.model_fields
+        assert len(ConfiguredBackend.instances) == 1
+        assert ConfiguredBackend.instances[0].owner is orch
+        assert ConfiguredBackend.instances[0].calls == [
+            ("save", "FAB1", "merged"),
+            ("deploy_switches", "FAB1", ("SER1",)),
+        ]
+        assert result.status == "completed"
+        assert result.reason == "actions_executed"
 
     def test_facade_uses_supplied_backend_and_shared_controller(self):
         """
