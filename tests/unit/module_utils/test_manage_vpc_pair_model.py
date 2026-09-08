@@ -233,6 +233,7 @@ def test_manage_vpc_pair_model_00110() -> None:
 
     spec = VpcPairPlaybookConfigModel.get_argument_spec()
     assert spec["config_actions"]["options"]["type"]["choices"] == ["switch", "global"]
+    assert "default" not in spec["config_actions"]["options"]["type"]
 
 
 def test_manage_vpc_pair_model_00120() -> None:
@@ -248,19 +249,20 @@ def test_manage_vpc_pair_model_00120() -> None:
 
 
 def test_manage_vpc_pair_model_00130() -> None:
-    """Verify config_actions.deploy defaults to False (opt-in deployment)."""
+    """Verify deploy defaults to False while type has no model default."""
     with does_not_raise():
         model = VpcPairPlaybookConfigModel.model_validate(
             {
                 "state": "merged",
                 "fabric_name": "fab1",
-                "config_actions": {"save": True, "type": "switch"},
+                "config_actions": {"save": True},
             }
         )
 
     assert model.config_actions is not None
     assert model.config_actions.save is True
     assert model.config_actions.deploy is False
+    assert model.config_actions.type is None
 
     spec = VpcPairPlaybookConfigModel.get_argument_spec()
     assert spec["config_actions"]["options"]["deploy"]["default"] is False

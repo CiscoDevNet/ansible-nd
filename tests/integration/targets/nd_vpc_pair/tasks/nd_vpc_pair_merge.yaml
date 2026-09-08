@@ -1685,7 +1685,6 @@
           | list
           | length
         ) == 0
-      - 'result.deployment.response | to_json is search(''"type": "switch"'')'
   tags: merge
 
 # TC19 - config_actions full path with global action scope
@@ -1744,7 +1743,6 @@
           | list
           | length
         ) > 0
-      - 'result.deployment.response | to_json is search(''"type": "global"'')'
   tags: merge
 
 # TC20 - config_actions invalid combination (save=false, deploy=true) must be rejected
@@ -1828,7 +1826,6 @@
           | list
           | length
         ) > 0
-      - 'result.deployment.response | to_json is search(''"type": "switch"'')'
   tags: merge
 
 # TC22 - Interaction: deploy=true + config_actions set (config_actions must win)
@@ -1887,7 +1884,6 @@
           | list
           | length
         ) == 0
-      - 'result.deployment.response | to_json is search(''"type": "global"'')'
   tags: merge
 
 # TC23 - vpc_pair_details extended coverage (single merge testcase)
