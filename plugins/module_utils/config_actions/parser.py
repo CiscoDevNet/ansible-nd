@@ -11,6 +11,7 @@ Parser for converting module parameters into normalized config action intent.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActions, ConfigActionsPolicy
@@ -158,17 +159,7 @@ def parse_config_actions(
         resource_deploy_overrides=resource_overrides,
     )
 
-    if state in policy.read_only_states and not provided:
-        actions = ConfigActions(
-            save=False,
-            deploy=False,
-            type=actions.type,
-            provided=actions.provided,
-            explicit_options=actions.explicit_options,
-            resource_deploy_provided=actions.resource_deploy_provided,
-            resource_deploy_indexes=actions.resource_deploy_indexes,
-            resource_deploy_overrides=actions.resource_deploy_overrides,
-        )
-
     validate_config_actions(actions, policy, state=state)
+    if state in policy.read_only_states:
+        actions = replace(actions, save=False, deploy=False)
     return actions

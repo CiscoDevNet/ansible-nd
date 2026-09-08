@@ -47,6 +47,8 @@ def validate_config_actions(actions: ConfigActions, policy: ConfigActionsPolicy,
         explicit_write = actions.explicit_options & {"save", "deploy"}
         if explicit_write and (actions.save or actions.deploy):
             raise ValueError(f"config_actions.save/config_actions.deploy are not allowed for state='{state}'.")
+        if actions.resource_deploy_provided:
+            raise ValueError(f"{policy.config_key}[].{policy.resource_deploy_key} is not allowed for state='{state}'.")
 
     if actions.resource_deploy_provided:
         if policy.resource_interaction != "type_resource_gated":
