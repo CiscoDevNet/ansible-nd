@@ -1,0 +1,31 @@
+---
+# Replaced state tests for nd_manage_extended_community_list.
+
+- name: "REPLACED UPDATE: Replace standard extended community list entries (check mode)"
+  cisco.nd.nd_manage_extended_community_list: &replace_standard
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ extended_community_list_standard_updated }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_standard
+
+- name: "REPLACED UPDATE: Replace standard extended community list entries (normal mode)"
+  cisco.nd.nd_manage_extended_community_list: *replace_standard
+  register: nm_replaced_standard
+
+- name: "REPLACED UPDATE: Verify replaced state changed"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_standard is changed
+      - nm_replaced_standard is changed
+
+- name: "REPLACED IDEMPOTENT: Re-apply replaced config"
+  cisco.nd.nd_manage_extended_community_list: *replace_standard
+  register: nm_replaced_idem
+
+- name: "REPLACED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_idem is not changed

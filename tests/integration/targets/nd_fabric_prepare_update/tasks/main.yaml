@@ -1,0 +1,49 @@
+---
+# Test code for the nd_fabric_prepare_update module
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+#
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
+# --- Usage ---
+#
+# Run the test suite with ansible-test:
+#
+#   ansible-test integration nd_fabric_prepare_update
+#
+# NOTE: the prepare (stage) step runs against real switches and can take 10 or more minutes.
+#
+# Override test variables in tests/integration/inventory.networking [nd:vars]:
+#   nd_test_fabric_name           - fabric to use (default: SITE1)
+#   nd_test_prepare_leaf_switch_1 - IP or serial of a leaf switch
+#   nd_test_prepare_leaf_switch_2 - IP or serial of a second leaf switch
+#   nd_test_prepare_spine_switch  - IP or serial of a spine switch (mixed-role test)
+#   nd_test_nos_image_name        - NXOS image filename in the ND software repository
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("debug") }}'
+
+- name: Run nd_fabric_prepare_update tests
+  block:
+    - name: Pre-test setup
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: Run prepare (stage) tests
+      ansible.builtin.include_tasks: prepare.yaml
+  always:
+    - name: Post-test cleanup
+      ansible.builtin.include_tasks: cleanup.yaml
+  module_defaults:
+    # nd_fabric_prepare_update holds the httpapi connection for the whole staging wait. The ND
+    # httpapi plugin maps `timeout` to persistent_command_timeout, so it must exceed the module's
+    # total run time (>= wait_timeout) or the persistent connection is torn down mid-wait.
+    cisco.nd.nd_fabric_prepare_update:
+      timeout: 3600
+    cisco.nd.nd_fabric_update_group:
+      timeout: 300

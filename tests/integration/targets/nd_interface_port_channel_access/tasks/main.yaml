@@ -41,15 +41,11 @@
       output_level: '{{ api_key_output_level | default("debug") }}'
 
 - name: Run nd_interface_port_channel_access state tests with optional logging env
-  # The `timeout` module arg propagates via sender_nd.set_params() into the
-  # httpapi plugin, which calls connection.set_option("persistent_command_timeout", ...).
   # 300s gives the switch enough time to build the PC bundle, pull members,
   # and apply LACP on slow testbeds (e.g. 9000v) where the default 30s is too
-  # short. Scoped to this test target via module_defaults so we don't modify
-  # shared argspec defaults.
-  module_defaults:
-    cisco.nd.nd_interface_port_channel_access:
-      timeout: 300
+  # short. The native Ansible connection variable is scoped to this block.
+  vars:
+    ansible_command_timeout: 300
   block:
     - name: Pre-test cleanup
       ansible.builtin.include_tasks: setup.yaml

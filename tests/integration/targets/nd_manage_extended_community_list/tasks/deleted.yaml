@@ -1,0 +1,32 @@
+---
+# Deleted state tests for nd_manage_extended_community_list.
+
+- name: "DELETED: Delete extended community lists with name-only config (check mode)"
+  cisco.nd.nd_manage_extended_community_list: &delete_lists
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ extended_community_list_standard.name }}"
+      - name: "{{ extended_community_list_expanded.name }}"
+    state: deleted
+  check_mode: true
+  register: cm_deleted_lists
+
+- name: "DELETED: Delete extended community lists with name-only config (normal mode)"
+  cisco.nd.nd_manage_extended_community_list: *delete_lists
+  register: nm_deleted_lists
+
+- name: "DELETED: Verify delete changed"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_lists is changed
+      - nm_deleted_lists is changed
+
+- name: "DELETED IDEMPOTENT: Re-apply delete"
+  cisco.nd.nd_manage_extended_community_list: *delete_lists
+  register: nm_deleted_idem
+
+- name: "DELETED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_idem is not changed

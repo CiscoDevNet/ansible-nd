@@ -10,8 +10,8 @@ from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_route_maps import (
-    EpManageRouteMapsDelete,
     EpManageRouteMapsBulkDelete,
+    EpManageRouteMapsDelete,
     EpManageRouteMapsGet,
     EpManageRouteMapsListGet,
     EpManageRouteMapsPost,
@@ -23,11 +23,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_route_map.manage_route_map import RouteMapModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-
-# Per-item ``status`` values in a 207 Multi-Status body that count as a failure. Anything else --
-# ``success``, missing, empty, or future progress tokens -- is tolerated so informational rows do
-# not surface as spurious errors. Mirrors the ACL orchestrator's denylist approach.
-_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 
 # camelCase wrapper key used in route-map list responses and bulk-create request bodies.
 _LIST_KEY = "routeMaps"
@@ -98,28 +93,6 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
         """Validate that the target fabric can be mutated before writes."""
         if model_instances:
             self.fabric_context.validate_for_mutation()
-
-    @staticmethod
-    def _raise_on_bulk_errors(result: ResponseType, action: str) -> None:
-        """Raise when a 207 bulk response contains failed per-item results."""
-        if not isinstance(result, dict):
-            return
-        failures = []
-        for item in result.get("results", []):
-            if not isinstance(item, dict):
-                continue
-            status = str(item.get("status") or "").lower()
-            if status in _FAILURE_STATUSES:
-                failures.append(item)
-        if not failures:
-            return
-        details = []
-        for item in failures:
-            name = item.get("name") or "<unknown>"
-            status = item.get("status") or "<unknown>"
-            message = item.get("message") or "no message"
-            details.append(f"{name}: {status}: {message}")
-        raise RuntimeError(f"Route map bulk {action} failed for {', '.join(details)}")
 
     # -------------------------------------------------------------------------
     # Query helpers
@@ -226,9 +199,7 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
         try:
             api_endpoint = self._configure_endpoint(self.create_bulk_endpoint())
             payload = {_LIST_KEY: [item.to_payload() for item in model_instances]}
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.CREATE)
-            self._raise_on_bulk_errors(result, "create")
-            return result
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.CREATE)
         except Exception as e:
             raise Exception(f"Bulk create failed: {e}") from e
 
@@ -243,8 +214,6 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
             api_endpoint = self._configure_endpoint(self.delete_bulk_endpoint())
             route_map_names = [item.get_identifier_value() for item in model_instances]
             payload = {"routeMapNames": route_map_names}
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.DELETE)
-            self._raise_on_bulk_errors(result, "delete")
-            return result
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=OperationType.DELETE)
         except Exception as e:
             raise Exception(f"Bulk delete failed: {e}") from e

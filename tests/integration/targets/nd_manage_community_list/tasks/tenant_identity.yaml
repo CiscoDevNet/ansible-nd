@@ -1,0 +1,41 @@
+---
+# Optional tenant-scoped identity coverage for nd_manage_community_list.
+
+- name: "TENANT IDENTITY: Create same-name community lists in two tenants"
+  cisco.nd.nd_manage_community_list: &tenant_identity
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ community_list_tenant_identity_name }}"
+        tenant_name: "{{ nd_test_tenant_name_a }}"
+        type: standard
+        entries:
+          - sequence_number: 10
+            action: permit
+            community_numbers:
+              - "65000:101"
+      - name: "{{ community_list_tenant_identity_name }}"
+        tenant_name: "{{ nd_test_tenant_name_b }}"
+        type: standard
+        entries:
+          - sequence_number: 10
+            action: permit
+            community_numbers:
+              - "65000:102"
+    state: merged
+  register: nm_tenant_identity_create
+
+- name: "TENANT IDENTITY: Re-apply same-name community lists"
+  cisco.nd.nd_manage_community_list: *tenant_identity
+  register: nm_tenant_identity_idempotent
+
+- name: "TENANT IDENTITY: Verify distinct tenant objects and idempotency"
+  ansible.builtin.assert:
+    that:
+      - nm_tenant_identity_create is changed
+      - nm_tenant_identity_idempotent is not changed
+      - >-
+        nm_tenant_identity_idempotent.after
+        | selectattr('name', 'equalto', community_list_tenant_identity_name)
+        | selectattr('tenant_name', 'in', [nd_test_tenant_name_a, nd_test_tenant_name_b])
+        | list | length == 2

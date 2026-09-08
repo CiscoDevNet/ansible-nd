@@ -18,10 +18,9 @@
       use_ssl: '{{ ansible_httpapi_use_ssl | default(true) }}'
       use_proxy: '{{ ansible_httpapi_use_proxy | default(true) }}'
       output_level: '{{ mso_output_level | default("info") }}'
-      timeout: 90
 
 - name: Error when required parameter is missing
-  cisco.nd.nd_rest: 
+  cisco.nd.nd_rest:
     <<: *nd_info
     method: post
     content:
@@ -40,13 +39,13 @@
     - error_missing_path.msg == "missing required arguments: path"
 
 - name: Error when required attribute is missing
-  cisco.nd.nd_rest: 
+  cisco.nd.nd_rest:
     <<: *nd_info
     path: /api/config/v2/addsite/
     method: post
     content:
       {
-        "name": "ansible_error_site", 
+        "name": "ansible_error_site",
         "siteType": "ACI",
         "verifySecure": false,
         "useProxy": false,
@@ -67,7 +66,7 @@
     - error_missing_site_address.status == 400
 
 - name: Error when input does not validate
-  cisco.nd.nd_rest: 
+  cisco.nd.nd_rest:
     <<: *nd_info
     path: /nexus/infra/api/aaa/v4/securitydomains
     method: post
@@ -89,7 +88,7 @@
     - error_invalid_name.status == 500
 
 - name: Error on name resolution
-  cisco.nd.nd_rest: 
+  cisco.nd.nd_rest:
     <<: *nd_info
     host: foo.bar.cisco.com
     path: /nexus/infra/api/aaa/v4/securitydomains

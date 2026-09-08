@@ -5,12 +5,6 @@
       - peer1_switch_id: "{{ ansible_sno_1 }}"
         peer2_switch_id: "{{ ansible_sno_2 }}"
         use_virtual_peer_link: false
-        vpc_pair_details:
-          type: default
-          domain_id: 20
-          switch_keep_alive_local_ip: "192.0.2.21"
-          peer_switch_keep_alive_local_ip: "192.0.2.22"
-          keep_alive_vrf: management
 
 - name: Gather vPC pairs once before resource manager tests
   cisco.nd.nd_manage_vpc_pair:

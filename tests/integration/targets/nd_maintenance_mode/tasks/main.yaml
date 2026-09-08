@@ -46,8 +46,7 @@
   always:
     - name: Teardown (restore initial modes)
       ansible.builtin.include_tasks: teardown.yaml
-  module_defaults:
-    cisco.nd.nd_maintenance_mode:
-      timeout: 300
+  vars:
+    ansible_command_timeout: 300
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"

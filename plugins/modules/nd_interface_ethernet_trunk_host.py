@@ -286,8 +286,9 @@ options:
           execution via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
+        - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
-        default: true
+        default: false
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -339,6 +340,8 @@ EXAMPLES = r"""
               cdp: true
               description: Trunk Host Interface
               speed: auto
+    config_actions:
+      deploy: true
     state: merged
   register: result
 
@@ -370,6 +373,8 @@ EXAMPLES = r"""
               allowed_vlans: all
               native_vlan: 200
               description: Server trunk ports switch 2
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Configure VLAN mapping on a trunkHost interface
@@ -392,6 +397,8 @@ EXAMPLES = r"""
                 - customer_vlan_id: ["30-40"]
                   dot1q_tunnel: true
                   provider_vlan_id: 200
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Replace the configuration of specific trunkHost interfaces
@@ -408,6 +415,8 @@ EXAMPLES = r"""
               allowed_vlans: "300-400"
               native_vlan: 300
               description: Reprovisioned trunk port
+    config_actions:
+      deploy: true
     state: replaced
 
 # state=overridden is fabric-wide: every trunkHost interface in the fabric that is NOT listed
@@ -428,6 +437,8 @@ EXAMPLES = r"""
               allowed_vlans: "100-200"
               native_vlan: 1
               description: Trunk ports to keep; all other trunkHost interfaces reset
+    config_actions:
+      deploy: true
     state: overridden
 
 - name: Delete trunkHost interface configurations
@@ -438,6 +449,8 @@ EXAMPLES = r"""
         interface_names:
           - Ethernet1/1
           - Ethernet1/2
+    config_actions:
+      deploy: true
     state: deleted
 
 - name: Create trunkHost interfaces without deploying (for batching)
@@ -699,7 +712,7 @@ def main() -> None:
         config_actions={
             "type": "dict",
             "options": {
-                "deploy": {"type": "bool", "default": True},
+                "deploy": {"type": "bool", "default": False},
             },
         },
     )
@@ -737,7 +750,7 @@ def main() -> None:
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
         config_actions = module.params.get("config_actions") or {}
-        deploy = config_actions.get("deploy", True)
+        deploy = config_actions.get("deploy", False)
         nd_state_machine.model_orchestrator.deploy = deploy
 
         module_log.debug(

@@ -10,7 +10,6 @@
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
-      timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
   tags: gather
 
 ##############################################

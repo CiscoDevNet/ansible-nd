@@ -142,74 +142,6 @@ def test_subinterface_managed_orchestrator_00020() -> None:
 
 
 # =============================================================================
-# Test: _raise_on_multi_status_failures — 207 Multi-Status handling
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "response",
-    [
-        None,
-        "not a dict",
-        {},
-        {"results": []},
-        {"results": [{"name": "Ethernet1/3.2", "status": "success"}]},
-    ],
-    ids=["none", "non_dict", "empty_dict", "empty_results", "all_success"],
-)
-def test_subinterface_managed_orchestrator_00100(response) -> None:
-    """
-    # Summary
-
-    Verify `_raise_on_multi_status_failures` does NOT raise for non-dict bodies, missing/empty results, or
-    all-success results.
-
-    ## Test
-
-    - None / non-dict / empty results / all-success bodies do not raise
-
-    ## Classes and Methods
-
-    - SubinterfaceManagedInterfaceOrchestrator._raise_on_multi_status_failures()
-    """
-    with does_not_raise():
-        SubinterfaceManagedInterfaceOrchestrator._raise_on_multi_status_failures(response)
-
-
-@pytest.mark.parametrize(
-    "status",
-    ["failed", "error"],
-    ids=["failed", "error"],
-)
-def test_subinterface_managed_orchestrator_00110(status) -> None:
-    """
-    # Summary
-
-    Verify `_raise_on_multi_status_failures` raises `RuntimeError` when any result item carries
-    `status: "failed"` or `status: "error"`, surfacing the per-item name and message.
-
-    ND returns HTTP 207 Multi-Status on subinterface POST with per-item failures (e.g. parent not in routed mode)
-    that the RestSend layer treats as success; this guard converts those into a hard failure.
-
-    ## Test
-
-    - A results body with one failed item raises RuntimeError mentioning the count and message
-
-    ## Classes and Methods
-
-    - SubinterfaceManagedInterfaceOrchestrator._raise_on_multi_status_failures()
-    """
-    response = {
-        "results": [
-            {"name": "Ethernet1/3.2", "status": "success"},
-            {"name": "Ethernet1/3.3", "status": status, "message": "parent not in routed mode"},
-        ]
-    }
-    with pytest.raises(RuntimeError, match=r"ND rejected 1 interface\(s\).*parent not in routed mode"):
-        SubinterfaceManagedInterfaceOrchestrator._raise_on_multi_status_failures(response)
-
-
-# =============================================================================
 # Test: query_all — happy path with filtering
 # =============================================================================
 
@@ -424,7 +356,7 @@ def test_subinterface_managed_orchestrator_00610() -> None:
     ## Classes and Methods
 
     - SubinterfaceManagedInterfaceOrchestrator.create()
-    - SubinterfaceManagedInterfaceOrchestrator._raise_on_multi_status_failures()
+    - NdV1Strategy.is_success()
     """
 
     def responses():
@@ -552,7 +484,7 @@ def test_subinterface_managed_orchestrator_00820() -> None:
 
     ## Test
 
-    - Queue one interface manually
+    - Enable `deploy` (it defaults to False) and queue one interface manually
     - Call deploy_pending
     - Queue is empty after success
 
@@ -566,6 +498,7 @@ def test_subinterface_managed_orchestrator_00820() -> None:
 
     gen_responses = ResponseGenerator(responses())
     orchestrator = _build_orchestrator(gen_responses)
+    orchestrator.deploy = True
     orchestrator._queue_deploy("Ethernet1/3.2", "FDO11111AAA")
 
     with does_not_raise():

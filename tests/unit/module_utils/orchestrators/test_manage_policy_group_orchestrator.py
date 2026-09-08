@@ -1967,12 +1967,15 @@ def test_manage_policy_group_orchestrator_00820() -> None:
     """
     # Summary
 
-    Any per-switch ``failed`` status escalates to an ``Exception`` enumerating
-    the failed switches and their messages.
+    Any per-switch ``failed`` status escalates to an ``Exception`` surfacing the
+    failed switch and its message. For the dict/``switchIds`` body shape this is now
+    caught by the centralized ``NdV1Strategy`` 207/multi-status handling in RestSend
+    (the bare-list shape is still handled by ``_switch_deploy`` -- see 00830).
 
     ## Classes and Methods
 
     - PolicyGroupOrchestrator._switch_deploy
+    - NdV1Strategy.is_success
     """
     body = {
         "switchIds": [
@@ -1985,7 +1988,7 @@ def test_manage_policy_group_orchestrator_00820() -> None:
 
     with pytest.raises(
         Exception,
-        match="switchActions/deploy reported 1 failed switch.*SN2.*deploy timeout",
+        match="SN2.*deploy timeout",
     ):
         instance._switch_deploy(["SN1", "SN2"])
 

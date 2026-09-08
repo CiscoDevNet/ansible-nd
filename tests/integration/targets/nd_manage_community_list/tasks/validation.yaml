@@ -1,0 +1,25 @@
+---
+# Validation tests for nd_manage_community_list.
+
+- name: "VALIDATION: Reject a flagless standard community-list entry in check mode"
+  cisco.nd.nd_manage_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: ANSIBLE_CL_INVALID_FLAGLESS
+        type: standard
+        entries:
+          - sequence_number: 10
+            action: permit
+    state: merged
+  check_mode: true
+  register: cm_invalid_flagless_standard
+  ignore_errors: true
+
+- name: "VALIDATION: Verify flagless standard entry was rejected locally"
+  ansible.builtin.assert:
+    that:
+      - cm_invalid_flagless_standard is failed
+      - >-
+        'must set at least one community number or enable at least one
+        well-known community flag' in cm_invalid_flagless_standard.msg

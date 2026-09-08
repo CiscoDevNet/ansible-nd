@@ -295,12 +295,15 @@ def test_manage_route_map_orchestrator_00215() -> None:
     """
     # Summary
 
-    Verify create_bulk tolerates non-failure per-item 207 statuses.
+    Verify create_bulk raises on a 207 whose per-item statuses are not exact `success`. This test originally pinned the
+    denylist behavior (soft/empty/omitted statuses tolerated); inverted for the 207 exact-success allowlist (issue #397,
+    PR #403 review): on a 207 only an exact `success` is trusted, so `accepted`, empty, and omitted statuses all classify
+    as failure and the error names every non-success item.
 
     ## Classes and Methods
 
     - ManageRouteMapOrchestrator.create_bulk()
-    - ManageRouteMapOrchestrator._raise_on_bulk_errors()
+    - NdV1Strategy.is_success()
     """
     model = _route_map_model("RM_CREATE_ONE")
 
@@ -320,7 +323,8 @@ def test_manage_route_map_orchestrator_00215() -> None:
     rest_send = _build_rest_send(ResponseGenerator(responses()))
     instance = ManageRouteMapOrchestrator(rest_send=rest_send)
 
-    with does_not_raise():
+    match = r"Bulk create failed.*RM_CREATE_ONE: queued.*RM_CREATE_TWO: no status.*RM_CREATE_THREE: status omitted"
+    with pytest.raises(Exception, match=match):
         instance.create_bulk([model])
 
 
@@ -333,7 +337,7 @@ def test_manage_route_map_orchestrator_00220() -> None:
     ## Classes and Methods
 
     - ManageRouteMapOrchestrator.create_bulk()
-    - ManageRouteMapOrchestrator._raise_on_bulk_errors()
+    - NdV1Strategy.is_success()
     """
     model = _route_map_model("RM_EXISTS")
 
@@ -345,7 +349,7 @@ def test_manage_route_map_orchestrator_00220() -> None:
     rest_send = _build_rest_send(ResponseGenerator(responses()))
     instance = ManageRouteMapOrchestrator(rest_send=rest_send)
 
-    with pytest.raises(Exception, match=r"Bulk create failed: Route map bulk create failed for RM_EXISTS: failed: Route map already exists\."):
+    with pytest.raises(Exception, match=r"Bulk create failed.*ND Error: RM_EXISTS: Route map already exists\."):
         instance.create_bulk([model])
 
 
@@ -488,7 +492,7 @@ def test_manage_route_map_orchestrator_00420() -> None:
     ## Classes and Methods
 
     - ManageRouteMapOrchestrator.delete_bulk()
-    - ManageRouteMapOrchestrator._raise_on_bulk_errors()
+    - NdV1Strategy.is_success()
     """
     model = RouteMapModel.from_config({"name": "RM_MISSING"})
 
@@ -498,7 +502,7 @@ def test_manage_route_map_orchestrator_00420() -> None:
     rest_send = _build_rest_send(ResponseGenerator(responses()))
     instance = ManageRouteMapOrchestrator(rest_send=rest_send)
 
-    with pytest.raises(Exception, match=r"Bulk delete failed: Route map bulk delete failed for RM_MISSING: failed: Route map not found\."):
+    with pytest.raises(Exception, match=r"Bulk delete failed.*ND Error: RM_MISSING: Route map not found\."):
         instance.delete_bulk([model])
 
 

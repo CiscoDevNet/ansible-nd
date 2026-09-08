@@ -148,6 +148,16 @@ class PreProvisionSwitchModel(NDBaseModel):
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
     def validate_gateway(cls, v: str) -> str:
+        """
+        # Summary
+
+        Validate the pre-provision gateway CIDR value.
+
+        ## Raises
+
+        - `ValueError`: Raised when the gateway value is missing a subnet mask or
+            otherwise cannot be parsed as CIDR.
+        """
         result = validate_cidr(v)
         if result is None:
             raise ValueError("gatewayIpMask must include subnet mask (e.g., 10.23.244.1/24)")

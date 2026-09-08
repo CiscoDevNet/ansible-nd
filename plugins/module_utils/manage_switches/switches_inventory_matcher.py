@@ -53,7 +53,16 @@ class SwitchInventoryMatcher(BaseModel):
     @field_validator("config_data", mode="before")
     @classmethod
     def parse_config_data(cls, value: Any) -> list[SwitchConfigModel] | None:
-        """Coerce raw dicts into SwitchConfigModel instances."""
+        """
+        # Summary
+
+        Coerce raw config dictionaries into ``SwitchConfigModel`` instances.
+
+        ## Raises
+
+        - `ValueError`: Raised when the config payload is not a dict, list of
+            dicts, or ``None``, or when nested model validation fails.
+        """
         if value is None:
             return None
         if isinstance(value, dict):
@@ -68,7 +77,17 @@ class SwitchInventoryMatcher(BaseModel):
     @field_validator("nd_data", mode="before")
     @classmethod
     def parse_nd_data(cls, value: Any) -> list[SwitchDataModel] | None:
-        """Coerce raw ND API switch dicts into SwitchDataModel instances."""
+        """
+        # Summary
+
+        Coerce raw ND API switch dictionaries into ``SwitchDataModel``
+        instances.
+
+        ## Raises
+
+        - `ValueError`: Raised when the ND payload is not a list of dictionaries or
+            nested model validation fails.
+        """
         if value is None:
             return None
         if isinstance(value, list):

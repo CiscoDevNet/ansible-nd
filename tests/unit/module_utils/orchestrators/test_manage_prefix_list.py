@@ -23,7 +23,7 @@ from __future__ import annotations
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.manage_prefix_list import PrefixListModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_prefix_list import ManagePrefixListOrchestrator, _SCOPED_QUERY_MAX_IDENTIFIERS
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_prefix_list import _SCOPED_QUERY_MAX_IDENTIFIERS, ManagePrefixListOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -833,7 +833,7 @@ def test_manage_prefix_list_00160() -> None:
     ## Classes and Methods
 
     - ManagePrefixListOrchestrator.create_bulk
-    - ManagePrefixListOrchestrator._raise_on_207_failures
+    - NdV1Strategy.is_success
     """
 
     def responses():
@@ -845,7 +845,7 @@ def test_manage_prefix_list_00160() -> None:
     instance = ManagePrefixListOrchestrator(rest_send=rest_send)
     model = PrefixListModel.from_config(config)
 
-    with pytest.raises(Exception, match="per-item failures.*PL-IPV4-BAD"):
+    with pytest.raises(Exception, match="Bulk create failed.*ND Error: PL-IPV4-BAD"):
         instance.create_bulk([model])
 
 
@@ -1019,7 +1019,7 @@ def test_manage_prefix_list_00200() -> None:
     ## Classes and Methods
 
     - ManagePrefixListOrchestrator.delete_bulk
-    - ManagePrefixListOrchestrator._raise_on_207_failures
+    - NdV1Strategy.is_success
     """
 
     def responses():
@@ -1031,7 +1031,7 @@ def test_manage_prefix_list_00200() -> None:
     instance = ManagePrefixListOrchestrator(rest_send=rest_send)
     model = PrefixListModel.from_config(config)
 
-    with pytest.raises(Exception, match="per-item failures.*PL-IPV4-BAD"):
+    with pytest.raises(Exception, match="Bulk delete failed.*ND Error: PL-IPV4-BAD"):
         instance.delete_bulk([model])
 
 

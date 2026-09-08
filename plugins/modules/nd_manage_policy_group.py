@@ -25,6 +25,7 @@ options:
     - Whether to deploy changes after create/update/delete operations.
     - When V(false), changes are staged on the controller but running config is
       not deployed to the switches until a later deploy.
+    - Deployment is opt-in. Set O(deploy=true) explicitly to push changes to switches.
     - Policy groups have no per-policy deploy path. The ND
       C(policyActions/pushConfig) operation is B(not) honoured for policy groups,
       so every O(deploy=true) path uses switch-level deploy.
@@ -67,7 +68,7 @@ options:
       a per-task or staged-only variant of switch-level deploy. Use O(deploy=false)
       to stage policy-group changes without triggering switch-level deploy.
     type: bool
-    default: true
+    default: false
   config:
     description:
     - List of policy group configurations.
@@ -264,6 +265,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: merged
+    deploy: true
     config:
       - name: feature_enable
         description: "Enable LACP on leaf switches"
@@ -277,6 +279,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: merged
+    deploy: true
     config:
       - name: feature_enable
         description: "Enable LACP"
@@ -293,6 +296,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: merged
+    deploy: true
     config:
       - name: switch_freeform
         create_additional_policy: true
@@ -304,6 +308,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: deleted
+    deploy: true
     config:
       - name: feature_enable
         description: "Enable LACP"
@@ -312,6 +317,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: deleted
+    deploy: true
     config:
       - name: feature_enable
 
@@ -319,6 +325,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: deleted
+    deploy: true
     config:
       - name: POLICY-GROUP-123456
       - name: POLICY-GROUP-789012
@@ -327,6 +334,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: merged
+    deploy: true
     config:
       - name: POLICY-GROUP-123456
         switch_ids:
@@ -377,12 +385,14 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy_group:
     fabric_name: "{{ target_fabric }}"
     state: merged
+    deploy: true
     config: "{{ all_policy_groups.gathered }}"
 
 - name: Use gathered output to delete those exact policy groups
   cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: deleted
+    deploy: true
     config: "{{ all_policy_groups.gathered }}"
 """
 

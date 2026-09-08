@@ -47,12 +47,6 @@ options:
     type: str
     choices: [ debug, info, normal ]
     default: normal
-  timeout:
-    description:
-    - The socket level timeout in seconds.
-    - If the value is not specified in the task, the value of environment variable C(ND_TIMEOUT) will be used instead.
-    type: int
-    default: 30
   use_proxy:
     description:
     - If C(no), it will not use a proxy, even if one is defined in an environment variable on the target hosts.

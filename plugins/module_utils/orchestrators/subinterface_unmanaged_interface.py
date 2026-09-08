@@ -60,35 +60,6 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
 
-    # TODO(4.2.1) multi-status-207-status-field-inconsistent
-    # ND returns HTTP 207 Multi-Status on subinterface POST with per-item `status: "failed"` when the parent
-    # interface is not in routed mode (or other policy validation fails). Our RestSend response_handler treats 207 as
-    # success and returns the body without raising, so without this check the orchestrator would silently report
-    # "changed" when nothing was actually created. Remove this workaround once CiscoDevNet/ansible-nd#295 lands the
-    # 207-aware response handling at the RestSend layer.
-    @staticmethod
-    def _raise_on_multi_status_failures(response: ResponseType) -> None:
-        """
-        # Summary
-
-        Inspect a 207 Multi-Status body and raise if any item carries `status: "failed"` or `status: "error"`. The
-        comparison is case-insensitive and whitespace-tolerant because ND is inconsistent about the casing of the
-        per-item `status` value across endpoints (see the `multi-status-207-status-field-inconsistent` vault note).
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If `response["results"]` contains any item whose `status` is `"failed"` or `"error"` (any casing).
-        """
-        if not isinstance(response, dict):
-            return
-        results = response.get("results") or []
-        failed = [r for r in results if isinstance(r, dict) and str(r.get("status") or "").strip().lower() in ("failed", "error")]
-        if failed:
-            summary = "; ".join(f"{r.get('name')}: {r.get('message')}" for r in failed)
-            raise RuntimeError(f"ND rejected {len(failed)} interface(s): {summary}")
-
     def create(self, model_instance: SubinterfaceUnmanagedInterfaceModel, **kwargs) -> ResponseType:
         """
         # Summary
@@ -110,7 +81,6 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
             payload["switchId"] = switch_id
             request_body = {"interfaces": [payload]}
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-            self._raise_on_multi_status_failures(result)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
@@ -186,7 +156,6 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
                 api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
                 request_body = {"interfaces": [payload for interface_name, payload in items]}
                 result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-                self._raise_on_multi_status_failures(result)
                 results.append(result)
                 for interface_name, payload in items:
                     self._queue_deploy(interface_name, switch_id)
