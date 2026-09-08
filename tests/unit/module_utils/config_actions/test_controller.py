@@ -16,6 +16,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.controller
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import RESOURCE_CONFIG_ACTIONS, SWITCH_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionsContext
+from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModuleError
 
 
 class RecordingBackend:
@@ -63,6 +64,46 @@ class FailingDeployBackend(RecordingBackend):
     def deploy_switches(self, context: ConfigActionsContext, fabric_name: str, switch_ids: tuple[str, ...]) -> dict[str, object]:
         self.calls.append(("deploy_switches", (fabric_name, switch_ids)))
         raise RuntimeError("deploy failed")
+
+
+class StructuredFailureBackend(RecordingBackend):
+    """
+    # Summary
+
+    Backend test double that raises NDModuleError with structured context.
+
+    ## Raises
+
+    None
+    """
+
+    def __init__(self, fail_action: str) -> None:
+        super().__init__()
+        self.fail_action = fail_action
+
+    def save(self, context: ConfigActionsContext, fabric_name: str) -> dict[str, str]:
+        self.calls.append(("save", (fabric_name, context.state)))
+        if self.fail_action == "save":
+            raise NDModuleError(
+                "save rejected",
+                status=409,
+                request_payload={"save": fabric_name},
+                response_payload={"errors": [{"message": "save conflict"}]},
+                raw="raw-save-body",
+            )
+        return {"saved": fabric_name}
+
+    def deploy_switches(self, context: ConfigActionsContext, fabric_name: str, switch_ids: tuple[str, ...]) -> dict[str, object]:
+        self.calls.append(("deploy_switches", (fabric_name, switch_ids)))
+        if self.fail_action == "deploy":
+            raise NDModuleError(
+                "deploy rejected",
+                status=500,
+                request_payload={"switchIds": list(switch_ids)},
+                response_payload={"errors": [{"message": "deploy failed"}]},
+                raw="raw-deploy-body",
+            )
+        return {"fabric": fabric_name, "switch_ids": list(switch_ids)}
 
 
 def test_config_actions_controller_00000() -> None:
@@ -135,6 +176,39 @@ def test_config_actions_controller_00020() -> None:
     assert result.actions[0].scope == "resource"
 
 
+def test_config_actions_controller_00025() -> None:
+    """
+    # Summary
+
+    Verify explicit resource deploy overrides are honored when top-level deploy is false.
+
+    ## Raises
+
+    None
+    """
+    actions = parse_config_actions(
+        params={
+            "config_actions": {"deploy": False, "type": "resource"},
+            "config": [{"name": "BLUE", "deploy": True}],
+        },
+        raw_args={
+            "config_actions": {"deploy": False, "type": "resource"},
+            "config": [{"name": "BLUE", "deploy": True}],
+        },
+        policy=RESOURCE_CONFIG_ACTIONS,
+    )
+    backend = RecordingBackend()
+    result = ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(
+        actions,
+        ConfigActionsContext(fabric_names=("FAB1",), resources=("BLUE",)),
+    )
+    assert actions.deploy is False
+    assert actions.resource_deploy_enabled(0) is True
+    assert backend.calls == [("deploy_resources", ("FAB1", ("BLUE",)))]
+    assert result.status == "completed"
+    assert result.reason == "actions_executed"
+
+
 def test_config_actions_controller_00030() -> None:
     """
     # Summary
@@ -184,6 +258,71 @@ def test_config_actions_controller_00040() -> None:
     assert result.actions[1].error == "deploy failed"
 
 
+def test_config_actions_controller_00045() -> None:
+    """
+    # Summary
+
+    Verify save failures preserve structured backend exception details.
+
+    ## Raises
+
+    None
+    """
+    actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+    backend = StructuredFailureBackend("save")
+    result = ConfigActionsController(SWITCH_CONFIG_ACTIONS, backend).execute(
+        actions,
+        ConfigActionsContext(fabric_names=("FAB1",), switch_ids=("SER1",)),
+    )
+    step = result.actions[0]
+    serialized_step = step.to_result()
+    assert result.status == "failed"
+    assert result.reason == "action_failed"
+    assert step.action == "save"
+    assert step.error == "save rejected"
+    assert step.error_type == "NDModuleError"
+    assert step.http_status == 409
+    assert step.request_payload == {"save": "FAB1"}
+    assert step.response_payload == {"errors": [{"message": "save conflict"}]}
+    assert step.raw == "raw-save-body"
+    assert serialized_step["http_status"] == 409
+    assert serialized_step["response_payload"] == {"errors": [{"message": "save conflict"}]}
+
+
+def test_config_actions_controller_00046() -> None:
+    """
+    # Summary
+
+    Verify deploy failures preserve completed save and structured backend exception details.
+
+    ## Raises
+
+    None
+    """
+    actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+    backend = StructuredFailureBackend("deploy")
+    result = ConfigActionsController(SWITCH_CONFIG_ACTIONS, backend).execute(
+        actions,
+        ConfigActionsContext(fabric_names=("FAB1",), switch_ids=("SER1",)),
+    )
+    deploy_step = result.actions[1]
+    serialized_step = deploy_step.to_result()
+    assert result.status == "failed"
+    assert result.reason == "action_failed"
+    assert result.actions[0].action == "save"
+    assert result.actions[0].status == "completed"
+    assert deploy_step.action == "deploy"
+    assert deploy_step.scope == "switch"
+    assert deploy_step.error == "deploy rejected"
+    assert deploy_step.error_type == "NDModuleError"
+    assert deploy_step.http_status == 500
+    assert deploy_step.request_payload == {"switchIds": ["SER1"]}
+    assert deploy_step.response_payload == {"errors": [{"message": "deploy failed"}]}
+    assert deploy_step.raw == "raw-deploy-body"
+    assert serialized_step["http_status"] == 500
+    assert serialized_step["request_payload"] == {"switchIds": ["SER1"]}
+
+
 def test_config_actions_controller_00050() -> None:
     """
     # Summary
@@ -205,3 +344,37 @@ def test_config_actions_controller_00050() -> None:
     assert result.actions[0].status == "planned"
     assert result.actions[1].status == "skipped"
     assert result.actions[1].error == "no_targets"
+
+
+def test_config_actions_controller_00060() -> None:
+    """
+    # Summary
+
+    Verify check mode plans resource deploy when only an item override enables it.
+
+    ## Raises
+
+    None
+    """
+    actions = parse_config_actions(
+        params={
+            "config_actions": {"deploy": False, "type": "resource"},
+            "config": [{"name": "BLUE", "deploy": True}],
+        },
+        raw_args={
+            "config_actions": {"deploy": False, "type": "resource"},
+            "config": [{"name": "BLUE", "deploy": True}],
+        },
+        policy=RESOURCE_CONFIG_ACTIONS,
+    )
+    backend = RecordingBackend()
+    result = ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(
+        actions,
+        ConfigActionsContext(fabric_names=("FAB1",), check_mode=True, resources=("BLUE",)),
+    )
+    assert not backend.calls
+    assert result.status == "planned"
+    assert len(result.actions) == 1
+    assert result.actions[0].action == "deploy"
+    assert result.actions[0].scope == "resource"
+    assert result.actions[0].status == "planned"

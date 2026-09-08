@@ -77,6 +77,18 @@ class ConfigActions:
     resource_deploy_indexes: tuple[int, ...] = ()
     resource_deploy_overrides: tuple[bool | None, ...] = ()
 
+    def deploy_requested(self) -> bool:
+        """
+        # Summary
+
+        Return whether any top-level or per-resource deploy action is enabled.
+
+        ## Raises
+
+        None
+        """
+        return self.deploy or any(override is True for override in self.resource_deploy_overrides)
+
     def resource_deploy_enabled(self, index: int) -> bool:
         """
         # Summary
@@ -152,6 +164,11 @@ class ConfigActionStepResult:
     target: str | None = None
     response: Any = None
     error: str | None = None
+    error_type: str | None = None
+    http_status: int | None = None
+    request_payload: Any = None
+    response_payload: Any = None
+    raw: Any = None
 
     def to_result(self) -> dict[str, Any]:
         """
@@ -175,6 +192,16 @@ class ConfigActionStepResult:
             result["response"] = self.response
         if self.error is not None:
             result["error"] = self.error
+        if self.error_type is not None:
+            result["error_type"] = self.error_type
+        if self.http_status is not None:
+            result["http_status"] = self.http_status
+        if self.request_payload is not None:
+            result["request_payload"] = self.request_payload
+        if self.response_payload is not None:
+            result["response_payload"] = self.response_payload
+        if self.raw is not None:
+            result["raw"] = self.raw
         return result
 
 

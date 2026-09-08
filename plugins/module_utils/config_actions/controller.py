@@ -79,7 +79,7 @@ class ConfigActionsController:
                 targets=targets,
             )
 
-        if not actions.save and not actions.deploy:
+        if not actions.save and not actions.deploy_requested():
             return ConfigActionsResult(
                 requested=actions,
                 effective=actions,
@@ -106,14 +106,14 @@ class ConfigActionsController:
                     response = self.backend.save(normalized_context, fabric_name)
                     steps.append(ConfigActionStepResult(action="save", status="completed", target=fabric_name, response=response))
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    steps.append(ConfigActionStepResult(action="save", status="failed", target=fabric_name, error=str(exc)))
+                    steps.append(self._failed_step_from_exception(action="save", target=fabric_name, exc=exc))
                     return self._result(actions, targets, steps)
 
-            if actions.deploy:
+            if actions.deploy_requested():
                 try:
                     steps.append(self._deploy(actions, normalized_context, fabric_name))
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    steps.append(ConfigActionStepResult(action="deploy", scope=actions.type, status="failed", target=fabric_name, error=str(exc)))
+                    steps.append(self._failed_step_from_exception(action="deploy", target=fabric_name, exc=exc, scope=actions.type))
                     return self._result(actions, targets, steps)
 
         return self._result(actions, targets, steps)
@@ -146,6 +146,30 @@ class ConfigActionsController:
 
         return ConfigActionStepResult(action="deploy", scope=actions.type, status="skipped", target=fabric_name, error="unsupported_type")
 
+    @staticmethod
+    def _failed_step_from_exception(action: str, target: str, exc: Exception, scope: str | None = None) -> ConfigActionStepResult:
+        """
+        # Summary
+
+        Build a failed action step while preserving structured exception details.
+
+        ## Raises
+
+        None
+        """
+        return ConfigActionStepResult(
+            action=action,
+            scope=scope,
+            status="failed",
+            target=target,
+            error=getattr(exc, "msg", str(exc)),
+            error_type=exc.__class__.__name__,
+            http_status=getattr(exc, "status", None),
+            request_payload=getattr(exc, "request_payload", None),
+            response_payload=getattr(exc, "response_payload", None),
+            raw=getattr(exc, "raw", None),
+        )
+
     def _planned_steps(self, actions: ConfigActions, context: ConfigActionsContext) -> tuple[ConfigActionStepResult, ...]:
         """
         # Summary
@@ -160,7 +184,7 @@ class ConfigActionsController:
         for fabric_name in context.fabric_names:
             if actions.save:
                 steps.append(ConfigActionStepResult(action="save", status="planned", target=fabric_name))
-            if actions.deploy:
+            if actions.deploy_requested():
                 if actions.type == "switch" and not context.switch_ids:
                     steps.append(ConfigActionStepResult(action="deploy", status="skipped", scope="switch", target=fabric_name, error="no_targets"))
                 elif actions.type == "resource" and not context.resources:
