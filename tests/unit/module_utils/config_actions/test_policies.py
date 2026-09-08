@@ -13,6 +13,7 @@ from __future__ import annotations
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import (
     FABRIC_CONFIG_ACTIONS,
     INTERFACE_CONFIG_ACTIONS,
+    LEGACY_CONFIG_ACTIONS,
     RESOURCE_CONFIG_ACTIONS,
     SWITCH_CONFIG_ACTIONS,
     VPC_PAIR_CONFIG_ACTIONS,
@@ -29,7 +30,7 @@ def test_config_actions_policies_00000() -> None:
 
     None
     """
-    assert INTERFACE_CONFIG_ACTIONS.defaults.deploy is True
+    assert INTERFACE_CONFIG_ACTIONS.defaults.deploy is False
     assert INTERFACE_CONFIG_ACTIONS.supported == frozenset({"deploy"})
 
     assert FABRIC_CONFIG_ACTIONS.defaults.save is False
@@ -46,3 +47,7 @@ def test_config_actions_policies_00000() -> None:
     assert RESOURCE_CONFIG_ACTIONS.supported == frozenset({"deploy", "type"})
     assert RESOURCE_CONFIG_ACTIONS.allowed_types == frozenset({"switch", "resource"})
     assert RESOURCE_CONFIG_ACTIONS.resource_interaction == "type_resource_gated"
+
+    assert LEGACY_CONFIG_ACTIONS.defaults.save is True
+    assert LEGACY_CONFIG_ACTIONS.defaults.deploy is False
+    assert LEGACY_CONFIG_ACTIONS.allowed_types == frozenset({"resource", "switch", "global"})

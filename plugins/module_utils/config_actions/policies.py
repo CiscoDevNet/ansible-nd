@@ -18,7 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types impo
 INTERFACE_CONFIG_ACTIONS = ConfigActionsPolicy(
     name="interface",
     supported=frozenset({"deploy"}),
-    defaults=ConfigActionsDefaults(deploy=True),
+    defaults=ConfigActionsDefaults(deploy=False),
     allowed_types=frozenset(),
     deploy_requires_save=False,
     resource_interaction="none",
@@ -67,7 +67,7 @@ RESOURCE_CONFIG_ACTIONS = ConfigActionsPolicy(
 LEGACY_CONFIG_ACTIONS = ConfigActionsPolicy(
     name="legacy",
     supported=frozenset({"save", "deploy", "type"}),
-    defaults=ConfigActionsDefaults(save=True, deploy=True, type="switch"),
+    defaults=ConfigActionsDefaults(save=True, deploy=False, type="switch"),
     allowed_types=frozenset({"resource", "switch", "global"}),
     deploy_requires_save=False,
     resource_interaction="none",
