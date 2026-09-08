@@ -36,7 +36,7 @@ use the ND-native `peer1_*` / `peer2_*` naming where `peer1` corresponds to `swi
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -85,6 +85,40 @@ class AccessVpcHostPolicyModel(StormControlMutexMixin):
 
     None
     """
+
+    # `peerSwitchId` is orchestrator-injected (resolved from the vPC pair record; not in the argspec), so the
+    # proposed config can never express it. ND echoes it on reads; without this exclusion the reverse pass of
+    # `get_diff` would count it as a removal on every replaced/overridden run, breaking idempotency.
+    reverse_diff_exclude: ClassVar[set[str]] = {"peerSwitchId"}
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_vpc_access_host` template defaults (schema-sourced via nd-openapi `intVpcAccessHostTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        "bpduFilter": "default",
+        "bpduGuard": "enable",
+        "cdp": True,
+        "copyDescription": False,
+        "duplexMode": "auto",
+        "lacpPortPriority": 32768,
+        "lacpRate": "normal",
+        "lacpSuspend": False,
+        "lacpVpcConvergence": False,
+        "linkType": "auto",
+        "mirrorConfig": False,
+        "mtu": "jumbo",
+        "negotiateAuto": True,
+        "netflow": False,
+        "pfc": False,
+        "portChannelMode": "active",
+        "portTypeEdgeTrunk": True,
+        "qos": False,
+        "speed": "auto",
+        "stormControl": False,
+        "stormControlAction": "default",
+    }
 
     # --- Policy Discriminator ---
 
@@ -355,13 +389,14 @@ class AccessVpcHostInterfaceModel(NDBaseModel):
     # --- Identifier Configuration ---
     # TODO(4.2.1) vpc-interface-dual-peer-duplicate
     # A vPC interface is a single fabric-level resource, but ND echoes it from BOTH peer switches in the per-switch
-    # `/interfaces` GET (with identical `configData` and only `switchId` / `peerSwitchId` swapping). Using a composite
-    # (switch_ip, interface_name) identifier caused `_manage_override_deletions` to delete the peer-side duplicate. The
-    # identifier is therefore `interface_name` only; `switch_ip` is kept as a field for routing (URL-path resolution +
-    # peer-resolution) but is excluded from diff and dedup'd in `query_all`.
+    # `/interfaces` GET (identical `configData`; only `switchId` / `peerSwitchId` swap). That echo is deduped in
+    # `VpcInterfaceBaseOrchestrator.query_all`, keyed on `interfaceName` + the unordered `{switchId, peerSwitchId}` pair
+    # set, so the composite identifier below stays safe: two vPC pairs in one fabric may legally reuse the same vPC id
+    # (ND's `vpcId` resource pool is devicePair-scoped; issue #356), which a name-only identity cannot represent.
+    # `switch_ip` remains excluded from payload and diff (routing-only on the wire).
 
-    identifiers: ClassVar[list[str] | None] = ["interface_name"]
-    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
 
     # --- Serialization Configuration ---
 

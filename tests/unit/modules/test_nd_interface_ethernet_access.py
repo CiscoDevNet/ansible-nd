@@ -14,7 +14,11 @@ Covers `validate_within_item_duplicates`, `validate_across_item_duplicates`, and
 
 from __future__ import absolute_import, division, print_function
 
+from typing import Any
+
 import pytest
+import yaml
+from ansible_collections.cisco.nd.plugins.modules import nd_interface_ethernet_access
 from ansible_collections.cisco.nd.plugins.modules.nd_interface_ethernet_access import (
     expand_config,
     validate_across_item_duplicates,
@@ -414,3 +418,58 @@ def test_expand_config_00102_null_entry_raises_value_error_via_expand():
     config = [{"switch_ip": "1.1.1.1", "interface_names": ["Ethernet1/1", None]}]
     with pytest.raises(ValueError, match=r"interface_names\[1\].*is null"):
         expand_config(config)
+
+
+# --- config_actions.deploy default ---
+
+
+class _ArgumentSpecCaptured(Exception):
+    """
+    # Summary
+
+    Raised by the `AnsibleModule` stand-in to abort `main()` immediately after the `argument_spec` has been built, carrying the spec.
+
+    ## Raises
+
+    None
+    """
+
+
+def _capture_argument_spec(**kwargs: Any) -> None:
+    """
+    # Summary
+
+    Stand in for `AnsibleModule` inside `main()`: raise `_ArgumentSpecCaptured` with the `argument_spec` keyword argument.
+
+    ## Raises
+
+    ### _ArgumentSpecCaptured
+
+    - Always, carrying `kwargs["argument_spec"]`
+    """
+    raise _ArgumentSpecCaptured(kwargs["argument_spec"])
+
+
+def test_nd_interface_ethernet_access_00200_deploy_default_matches_documentation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify `config_actions.deploy` defaults to `False` in both the DOCUMENTATION and the runtime `argument_spec`.
+
+    ## Test
+
+    - DOCUMENTATION declares `options.config_actions.suboptions.deploy.default` as `false`
+    - `main()` builds an `argument_spec` whose `config_actions.options.deploy.default` is `False`
+
+    ## Classes and Methods
+
+    - nd_interface_ethernet_access.main()
+    """
+    documentation = yaml.safe_load(nd_interface_ethernet_access.DOCUMENTATION)
+    assert documentation["options"]["config_actions"]["suboptions"]["deploy"]["default"] is False
+
+    monkeypatch.setattr(nd_interface_ethernet_access, "AnsibleModule", _capture_argument_spec)
+    with pytest.raises(_ArgumentSpecCaptured) as exc_info:
+        nd_interface_ethernet_access.main()
+    argument_spec = exc_info.value.args[0]
+    assert argument_spec["config_actions"]["options"]["deploy"]["default"] is False
