@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.controller import ConfigActionsController
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import RESOURCE_CONFIG_ACTIONS, SWITCH_CONFIG_ACTIONS
@@ -103,6 +105,28 @@ class StructuredFailureBackend(RecordingBackend):
                 response_payload={"errors": [{"message": "deploy failed"}]},
                 raw="raw-deploy-body",
             )
+        return {"fabric": fabric_name, "switch_ids": list(switch_ids)}
+
+
+class FabricScopedFailureBackend(RecordingBackend):
+    """
+    # Summary
+
+    Backend test double that fails deploy for one selected fabric.
+
+    ## Raises
+
+    None
+    """
+
+    def __init__(self, fail_fabric: str) -> None:
+        super().__init__()
+        self.fail_fabric = fail_fabric
+
+    def deploy_switches(self, context: ConfigActionsContext, fabric_name: str, switch_ids: tuple[str, ...]) -> dict[str, object]:
+        self.calls.append(("deploy_switches", (fabric_name, switch_ids)))
+        if fabric_name == self.fail_fabric:
+            raise RuntimeError(f"{fabric_name} deploy failed")
         return {"fabric": fabric_name, "switch_ids": list(switch_ids)}
 
 
@@ -231,6 +255,132 @@ def test_config_actions_controller_00030() -> None:
     ]
     assert result.targets["fabrics"] == ("FAB1",)
     assert result.targets["switches"] == ("SER1", "SER2")
+
+
+def test_config_actions_controller_00035() -> None:
+    """
+    # Summary
+
+    Verify switch deploy targets are scoped to each fabric.
+
+    ## Raises
+
+    None
+    """
+    actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+    backend = RecordingBackend()
+    result = ConfigActionsController(SWITCH_CONFIG_ACTIONS, backend).execute(
+        actions,
+        ConfigActionsContext(
+            fabric_names=("FAB1", "FAB2"),
+            switch_ids_by_fabric={
+                "FAB1": ("FAB1-S1", "FAB1-S2", "FAB1-S1"),
+                "FAB2": ("FAB2-S1",),
+            },
+        ),
+    )
+    assert backend.calls == [
+        ("save", ("FAB1", None)),
+        ("deploy_switches", ("FAB1", ("FAB1-S1", "FAB1-S2"))),
+        ("save", ("FAB2", None)),
+        ("deploy_switches", ("FAB2", ("FAB2-S1",))),
+    ]
+    assert result.status == "completed"
+    assert result.targets["fabrics"] == ("FAB1", "FAB2")
+    assert result.targets["switches"] == ("FAB1-S1", "FAB1-S2", "FAB2-S1")
+
+
+def test_config_actions_controller_00036() -> None:
+    """
+    # Summary
+
+    Verify resource deploy targets are scoped to each fabric.
+
+    ## Raises
+
+    None
+    """
+    actions = parse_config_actions(
+        params={"config_actions": {"deploy": True, "type": "resource"}},
+        raw_args={"config_actions": {"deploy": True, "type": "resource"}},
+        policy=RESOURCE_CONFIG_ACTIONS,
+    )
+    backend = RecordingBackend()
+    result = ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(
+        actions,
+        ConfigActionsContext(
+            fabric_names=("FAB1", "FAB2"),
+            resources_by_fabric={
+                "FAB1": ("BLUE", "GREEN", "BLUE"),
+                "FAB2": ("RED",),
+            },
+        ),
+    )
+    assert backend.calls == [
+        ("deploy_resources", ("FAB1", ("BLUE", "GREEN"))),
+        ("deploy_resources", ("FAB2", ("RED",))),
+    ]
+    assert result.status == "completed"
+    assert result.targets["resources"] == ("BLUE", "GREEN", "RED")
+
+
+def test_config_actions_controller_00037() -> None:
+    """
+    # Summary
+
+    Verify flat scoped targets are rejected for multi-fabric deploy.
+
+    ## Raises
+
+    None
+    """
+    actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+    backend = RecordingBackend()
+    with pytest.raises(ValueError, match="requires switch_ids_by_fabric"):
+        ConfigActionsController(SWITCH_CONFIG_ACTIONS, backend).execute(
+            actions,
+            ConfigActionsContext(fabric_names=("FAB1", "FAB2"), switch_ids=("FAB1-S1", "FAB2-S1")),
+        )
+    assert backend.calls == []
+
+
+def test_config_actions_controller_00038() -> None:
+    """
+    # Summary
+
+    Verify multi-fabric scoped deploy preserves ordered partial-failure results.
+
+    ## Raises
+
+    None
+    """
+    actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+    backend = FabricScopedFailureBackend("FAB2")
+    result = ConfigActionsController(SWITCH_CONFIG_ACTIONS, backend).execute(
+        actions,
+        ConfigActionsContext(
+            fabric_names=("FAB1", "FAB2"),
+            switch_ids_by_fabric={
+                "FAB1": ("FAB1-S1",),
+                "FAB2": ("FAB2-S1",),
+            },
+        ),
+    )
+    assert backend.calls == [
+        ("save", ("FAB1", None)),
+        ("deploy_switches", ("FAB1", ("FAB1-S1",))),
+        ("save", ("FAB2", None)),
+        ("deploy_switches", ("FAB2", ("FAB2-S1",))),
+    ]
+    assert result.status == "failed"
+    assert result.reason == "action_failed"
+    assert [(step.action, step.target, step.status) for step in result.actions] == [
+        ("save", "FAB1", "completed"),
+        ("deploy", "FAB1", "completed"),
+        ("save", "FAB2", "completed"),
+        ("deploy", "FAB2", "failed"),
+    ]
+    assert result.actions[-1].error == "FAB2 deploy failed"
 
 
 def test_config_actions_controller_00040() -> None:

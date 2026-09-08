@@ -144,6 +144,8 @@ class ConfigActionsContext:
     reason: str = "actions_requested"
     switch_ids: tuple[str, ...] = ()
     resources: tuple[str, ...] = ()
+    switch_ids_by_fabric: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    resources_by_fabric: Mapping[str, Sequence[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
