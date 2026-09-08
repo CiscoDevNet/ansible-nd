@@ -309,6 +309,7 @@ def _resource(state="merged", *, config=None, check_mode=False, existing=None, o
     resource.sent_adds = []
     resource.proposed_cfgs = []
     resource._plan = None
+    resource._check_mode_config_actions = []
     resource.nd_logs = []
     resource.msg = ""
     resource.output = NDOutput(output_level=output_level)
@@ -1165,6 +1166,51 @@ def test_exit_json_check_mode_uses_synthetic_before_after_diff():
     assert final["before"][0]["seed_ip"] == "192.0.2.10"
     assert final["after"][1]["seed_ip"] == "192.0.2.11"
     assert final["diff"][0]["_action"] == "added"
+
+
+def test_check_mode_idempotent_out_of_sync_switch_reports_changed_for_config_actions():
+    """Check mode reports changed when an idempotent switch still needs config save/deploy."""
+    existing = [
+        _sw(
+            "192.0.2.10",
+            "SERIAL1",
+            additionalData={
+                "configSyncStatus": "outOfSync",
+                "discoveryStatus": "ok",
+                "systemMode": "normal",
+                "platformType": "nx-os",
+            },
+        )
+    ]
+    cfg = _cfg("192.0.2.10")
+    resource = _resource(
+        state="merged",
+        config=[{"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf"}],
+        check_mode=True,
+        existing=existing,
+    )
+    resource.ctx.save_config = True
+    resource.ctx.deploy_config = True
+    resource.ctx.deploy_type = "switch"
+    resource.proposed_cfgs = [cfg]
+    resource._plan = _empty_plan(idempotent=[cfg])
+
+    resource._handle_merged_state(resource._plan, {})
+    resource.exit_json()
+
+    final = resource.module.exit_kwargs
+    assert final["changed"] is True
+    assert final["diff"] == [
+        {
+            "_action": "config_actions",
+            "save": True,
+            "deploy": True,
+            "deploy_type": "switch",
+            "serial_numbers": ["SERIAL1"],
+        }
+    ]
+    assert resource.results.diffs[0]["save_deploy_required"] is True
+    assert resource.results.diffs[0]["save_deploy_serial_numbers"] == ["SERIAL1"]
 
 
 def test_exit_json_normal_requeries_inventory_and_builds_delete_add_diff(monkeypatch):

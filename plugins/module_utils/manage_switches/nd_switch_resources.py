@@ -2625,6 +2625,7 @@ class NDSwitchResourceModule:
             self.proposed_cfgs: list[SwitchConfigModel] = []
             # Plan stored here after compute_changes so check-mode output can use it
             self._plan: SwitchPlan | None = None
+            self._check_mode_config_actions: list[dict[str, Any]] = []
         except _FABRIC_OPERATION_ERRORS as e:
             msg = f"Failed to query fabric '{self.fabric}' inventory " f"during initialization: {e}"
             log.error(msg)
@@ -2797,6 +2798,7 @@ class NDSwitchResourceModule:
                     }
                 )
 
+        diff_list.extend(getattr(self, "_check_mode_config_actions", []))
         changed = bool(diff_list)
         output_level = self.module.params.get("output_level", "normal")
         result: dict[str, Any] = {
@@ -3064,16 +3066,32 @@ class NDSwitchResourceModule:
         self,
         action: str,
         diff_current: dict[str, Any],
+        save_deploy_serials: list[str] | None = None,
     ) -> None:
         """Register a check-mode result with standard metadata.
 
         Args:
             action: Action label (e.g. ``"merge"``, ``"override"``).
             diff_current: Diff payload describing what would change.
+            save_deploy_serials: Switch serial numbers that would be finalized
+                                 due to pending config-sync.
 
         Returns:
             None.
         """
+        if save_deploy_serials:
+            diff_current["save_deploy_serial_numbers"] = list(save_deploy_serials)
+            self._check_mode_config_actions = [
+                {
+                    "_action": "config_actions",
+                    "save": self.ctx.save_config,
+                    "deploy": self.ctx.deploy_config,
+                    "deploy_type": self.ctx.deploy_type,
+                    "serial_numbers": list(save_deploy_serials),
+                }
+            ]
+        else:
+            self._check_mode_config_actions = []
         self.results.action = action
         self.results.state = self.state
         self.results.operation_type = OperationType.CREATE
@@ -3256,6 +3274,7 @@ class NDSwitchResourceModule:
                     "rma": [c.seed_ip for c in plan.to_rma],
                     "save_deploy_required": idempotent_save_req,
                 },
+                save_deploy_serials=sync_serials,
             )
             return
 
@@ -3357,6 +3376,7 @@ class NDSwitchResourceModule:
                     "swap": len(plan.to_swap),
                     "save_deploy_required": idempotent_save_req,
                 },
+                save_deploy_serials=sync_serials,
             )
             return
 
@@ -3499,6 +3519,7 @@ class NDSwitchResourceModule:
                     "swap": len(plan.to_swap),
                     "save_deploy_required": idempotent_save_req,
                 },
+                save_deploy_serials=sync_serials,
             )
             return
 
