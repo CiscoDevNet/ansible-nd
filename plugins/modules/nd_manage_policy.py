@@ -193,6 +193,7 @@ options:
     - When set to V(true), policies are deployed to devices after create/update/delete operations.
     - When set to V(false), controller-side changes are staged without deploying
       the corresponding config changes to devices.
+    - Deployment is opt-in. Set O(deploy=true) explicitly to push changes to devices.
     - For C(merged), create/update deploy uses the resource-level policy deploy
       operation scoped to the affected policy IDs. Entries that already match the
       controller are also deployed when O(deploy=true), but this no-diff deploy does
@@ -222,7 +223,7 @@ options:
       to resolve to a switch ID and may also deploy a mistyped or already-clean
       target.
     type: bool
-    default: true
+    default: false
   ticket_id:
     description:
     - Change Control Ticket ID to associate with create/update operations,
@@ -366,6 +367,7 @@ EXAMPLES = r"""
 - name: Create policy including required template inputs
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
+    deploy: true
     config:
       - name: switch_freeform
         create_additional_policy: false
@@ -405,6 +407,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     use_description_as_key: true
+    deploy: true
     config:
       - name: feature_enable
         description: "Enable LACP"
@@ -422,6 +425,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     use_description_as_key: true
+    deploy: true
     config:
       - name: switch_freeform
         create_additional_policy: false
@@ -455,6 +459,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
+    deploy: true
     config:
       - name: template_101
       - name: template_102
@@ -467,6 +472,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
+    deploy: true
     config:
       - name: POLICY-101101
       - name: POLICY-102102
@@ -477,6 +483,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
+    deploy: true
     config:
       - switch:
           - serial_number: "{{ switch1 }}"
@@ -502,6 +509,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
+    deploy: true
     config:
       - name: switch_freeform
       - switch:
@@ -512,6 +520,7 @@ EXAMPLES = r"""
     fabric_name: "{{ fabric_name }}"
     use_description_as_key: true
     state: deleted
+    deploy: true
     config:
       - name: switch_freeform
         description: "Enable LACP"
@@ -538,18 +547,21 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ target_fabric }}"
     state: merged
+    deploy: true
     config: "{{ all_policies.gathered }}"
 
 - name: Round-trip on the same fabric — gathered output updates existing policies in place by policy_id
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: merged
+    deploy: true
     config: "{{ all_policies.gathered }}"
 
 - name: Use gathered output to delete those exact policies by policy ID
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
+    deploy: true
     config: "{{ all_policies.gathered }}"
 """
 

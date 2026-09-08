@@ -12,6 +12,7 @@
   vars:
     nd_vpc_pair_root: "{{ playbook_dir | dirname }}"
     nd_vpc_pair_tasks_dir: "{{ playbook_dir }}"
+    ansible_command_timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
   tasks:
     - name: Test that we have a Nexus Dashboard host, username and password
       tags: always

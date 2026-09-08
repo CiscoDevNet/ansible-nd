@@ -309,9 +309,6 @@ class HttpApi(HttpApiBase):
         if self.params.get("validate_certs") is not None:
             self.connection.set_option("validate_certs", self.params.get("validate_certs"))
 
-        if self.params.get("timeout") is not None:
-            self.connection.set_option("persistent_command_timeout", self.params.get("timeout"))
-
         # Support ND User API Key authorization within the session_key option.
         session_key = self.connection.get_option("session_key")
         user = self.connection.get_option("remote_user")

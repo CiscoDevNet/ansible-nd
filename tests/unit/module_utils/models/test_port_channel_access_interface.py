@@ -1434,3 +1434,27 @@ def test_port_channel_access_interface_01120(field, enum_cls, key):
     else:
         expected = [e.value for e in enum_cls]
     assert policy_spec[field]["choices"] == expected
+
+
+def test_port_channel_access_interface_01130():
+    """
+    # Summary
+
+    Verify `_validate_netflow_monitor_present`: `netflow_monitor` is required when `netflow` is true.
+
+    ## Test
+
+    - `netflow=True` without `netflow_monitor` is rejected
+    - `netflow=True` with `netflow_monitor` is accepted
+    - `netflow=False` (or unset) without `netflow_monitor` is accepted
+
+    ## Classes and Methods
+
+    - PortChannelAccessPolicyModel._validate_netflow_monitor_present()
+    """
+    with pytest.raises(ValidationError, match="netflow_monitor must be provided when netflow is true"):
+        PortChannelAccessPolicyModel(netflow=True)
+    with does_not_raise():
+        PortChannelAccessPolicyModel(netflow=True, netflow_monitor="MONITOR-1")
+        PortChannelAccessPolicyModel(netflow=False)
+        PortChannelAccessPolicyModel()

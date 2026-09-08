@@ -37,6 +37,5 @@
 
     - name: Run deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
-  module_defaults:
-    cisco.nd.nd_manage_route_map:
-      timeout: 300
+  vars:
+    ansible_command_timeout: 300

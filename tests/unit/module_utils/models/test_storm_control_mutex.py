@@ -514,3 +514,30 @@ def test_storm_control_mutex_00260(interface_cls, policy_cls, interface_name) ->
     existing = interface_cls.from_response(nd_interface_response(policy_cls, interface_name, {PCT_ALIAS: PCT}))
     proposed = interface_cls.from_config(proposed_config(interface_name, {PCT_ATTR: PCT}))
     assert existing.get_diff(proposed, exclude_unset=True) is True
+
+
+@pytest.mark.parametrize("interface_cls,policy_cls,interface_name", INTERFACE_MODELS)
+def test_storm_control_mutex_00270(interface_cls, policy_cls, interface_name) -> None:
+    """
+    # Summary
+
+    `state: replaced`/`overridden` detect storm-control removal (issue #410): proposed config that omits an existing
+    storm-control level entirely must classify as a difference on the `exclude_unset=False` path, so the full-payload
+    PUT that clears the level (lab-verified on ND 4.2.1 in PR #360) is issued.
+
+    ## Test
+
+    - An existing model is built from an ND response carrying `adminState` plus a percentage-only broadcast level.
+    - A proposed model is built from config re-stating `admin_state` only (no storm-control intent), so the forward
+      subset comparison alone would classify `no_diff`.
+    - `get_diff(exclude_unset=False)` reports a difference.
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - NDBaseModel.to_reverse_diff_dict()
+    - utils.has_removals()
+    """
+    existing = interface_cls.from_response(nd_interface_response(policy_cls, interface_name, {"adminState": True, PCT_ALIAS: PCT}))
+    proposed = interface_cls.from_config(proposed_config(interface_name, {"admin_state": True}))
+    assert existing.get_diff(proposed, exclude_unset=False) is False

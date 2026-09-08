@@ -31,6 +31,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import yaml
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_policy
 
 # =============================================================================
@@ -122,3 +123,12 @@ def test_nd_policy_module_00010(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert module.fail_json_called is not None
     assert "pydantic" in module.fail_json_called["msg"].lower()
+
+
+def test_nd_policy_module_00020_deploy_default_matches_documentation() -> None:
+    """Verify the safe deploy default is identical in docs and argument spec."""
+    documentation = yaml.safe_load(nd_manage_policy.DOCUMENTATION)
+    argument_spec = nd_manage_policy.PlaybookPolicyConfig.get_argument_spec()
+
+    assert documentation["options"]["deploy"]["default"] is False
+    assert argument_spec["deploy"]["default"] is False
