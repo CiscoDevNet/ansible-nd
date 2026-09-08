@@ -25,6 +25,10 @@ def _select_options(options: dict[str, Any], include: Iterable[str] | None) -> d
 
     Return a copy of `options` filtered to `include`.
 
+    `include` is an allowlist by design. If the shared fragment grows later,
+    new options must never silently appear in modules that composed an older
+    explicit subset.
+
     ## Raises
 
     ### ValueError

@@ -30,7 +30,7 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import SWITCH_CONFIG_ACTIONS
-from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionsContext
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionStepResult, ConfigActionsContext, ConfigActionsResult
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -974,3 +974,94 @@ class TestConfigActionsControllerFacade:
 
         with pytest.raises(ValueError, match="No config actions backend"):
             orch.execute_config_actions_plan(actions=actions, context=context)
+
+    @pytest.mark.parametrize(
+        ("actions_params", "actions_raw_args", "context", "expected_reason"),
+        [
+            ({}, {}, ConfigActionsContext(fabric_names=(), state="merged", switch_ids=("SER1",)), "no_fabrics"),
+            ({}, {}, ConfigActionsContext(fabric_names=("FAB1",), state="merged", eligible=False, reason="switchless_fabric"), "switchless_fabric"),
+            (
+                {"config_actions": {"save": False, "deploy": False}},
+                {"config_actions": {"save": False, "deploy": False}},
+                ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=("SER1",)),
+                "actions_disabled",
+            ),
+        ],
+    )
+    def test_facade_warns_for_top_level_skipped_results(self, actions_params, actions_raw_args, context, expected_reason):
+        """
+        # Summary
+
+        Verify top-level skipped controller results are surfaced through `rest_send.warn`.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        rest_send = _make_rest_send([])
+        orch = _make_orchestrator(rest_send)
+        actions = parse_config_actions(params=actions_params, raw_args=actions_raw_args, policy=SWITCH_CONFIG_ACTIONS)
+        backend = FacadeBackend()
+
+        result = orch.execute_config_actions_plan(actions=actions, context=context, backend=backend)
+
+        assert result.status == "skipped"
+        assert result.reason == expected_reason
+        assert backend.calls == []
+        warnings = rest_send.sender.ansible_module.warnings
+        assert len(warnings) == 1
+        assert expected_reason in warnings[0]
+
+    def test_facade_warns_for_skipped_action_steps(self):
+        """
+        # Summary
+
+        Verify skipped deploy steps from the controller are surfaced through `rest_send.warn`.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        rest_send = _make_rest_send([])
+        orch = _make_orchestrator(rest_send)
+        actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+        context = ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=())
+        backend = FacadeBackend()
+
+        result = orch.execute_config_actions_plan(actions=actions, context=context, backend=backend)
+
+        assert result.status == "completed"
+        assert result.reason == "actions_executed_with_skips"
+        assert backend.calls == [("save", "FAB1", "merged")]
+        warnings = rest_send.sender.ansible_module.warnings
+        assert len(warnings) == 1
+        assert "deploy" in warnings[0]
+        assert "switch" in warnings[0]
+        assert "no_targets" in warnings[0]
+
+    def test_facade_warns_once_when_all_action_steps_are_skipped(self):
+        """
+        # Summary
+
+        Verify all-skipped controller results emit one top-level warning.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        rest_send = _make_rest_send([])
+        orch = _make_orchestrator(rest_send)
+        actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+        result = ConfigActionsResult(
+            requested=actions,
+            effective=actions,
+            status="skipped",
+            reason="no_targets",
+            targets={"fabrics": ("FAB1",), "switches": (), "resources": ()},
+            actions=(ConfigActionStepResult(action="deploy", status="skipped", scope="switch", target="FAB1", error="no_targets"),),
+        )
+
+        orch._warn_skipped_config_actions(result)
+
+        warnings = rest_send.sender.ansible_module.warnings
+        assert warnings == ["Skipping config actions for fabric(s) FAB1: no_targets."]

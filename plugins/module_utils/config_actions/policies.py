@@ -51,6 +51,10 @@ VPC_PAIR_CONFIG_ACTIONS = ConfigActionsPolicy(
     resource_interaction="none",
 )
 
+# Resource-family modules gate per-item `config[].deploy` behind
+# `config_actions.type=resource`. This is the selected repository-wide
+# resolution for issue #368: switch/global deployment remains a module-level
+# action, while resource deployment can be overridden per config item.
 RESOURCE_CONFIG_ACTIONS = ConfigActionsPolicy(
     name="resource",
     supported=frozenset({"deploy", "type"}),

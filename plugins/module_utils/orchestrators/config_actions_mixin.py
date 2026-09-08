@@ -103,7 +103,34 @@ class ConfigActionsMixin:
             policy=self.config_actions_policy,
             backend=selected_backend,
         )
-        return controller.execute(actions, context)
+        result = controller.execute(actions, context)
+        self._warn_skipped_config_actions(result)
+        return result
+
+    def _warn_skipped_config_actions(self, result: ConfigActionsResult) -> None:
+        """
+        # Summary
+
+        Surface skipped config-action controller decisions as user-visible warnings.
+
+        The shared controller is transport-agnostic, so this facade translates
+        skipped results and skipped action steps into `rest_send.warn()` calls.
+
+        ## Raises
+
+        None
+        """
+        if result.status == "skipped":
+            fabrics = ", ".join(result.targets.get("fabrics", ())) or "<none>"
+            self.rest_send.warn(f"Skipping config actions for fabric(s) {fabrics}: {result.reason}.")
+            return
+        for step in result.actions:
+            if step.status != "skipped":
+                continue
+            target = step.target or "<unknown>"
+            details = f": {step.error}" if step.error else ""
+            scope = f" ({step.scope})" if step.scope else ""
+            self.rest_send.warn(f"Skipping config action '{step.action}'{scope} for '{target}'{details}.")
 
     def config_save(self, fabric_name: str) -> ResponseType:
         """Save fabric configuration.

@@ -19,6 +19,9 @@ def validate_config_actions(actions: ConfigActions, policy: ConfigActionsPolicy,
 
     Validate normalized config actions against a module-family policy.
 
+    Per-resource `config[].deploy` is accepted only for policies that opt into
+    `type_resource_gated`, and only when `config_actions.type` is `resource`.
+
     ## Raises
 
     ### ValueError
