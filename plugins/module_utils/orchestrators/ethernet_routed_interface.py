@@ -18,6 +18,7 @@ both the per-interface PUT and the bulk POST accept `routedHost` on a VXLAN leaf
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_links import EpManageLinksListGet
@@ -217,10 +218,28 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         ### RuntimeError
 
         - Propagated from `EthernetBaseOrchestrator._check_fabric_ownership` (fabric-owned wire policy type).
-        - If an IOS-XE interface is an endpoint of a fabric link that carries an ND link policy.
-        - Via `_fabric_link_endpoints` if the links query fails.
+        - Propagated from `_check_xe_fabric_link` (IOS-XE fabric-link endpoint, or links query failure).
         """
         super()._check_fabric_ownership(model_instance, existing_data)
+        self._check_xe_fabric_link(model_instance)
+
+    def _check_xe_fabric_link(self, model_instance: NDBaseModel) -> None:
+        """
+        # Summary
+
+        Refuse to write an IOS-XE interface that is an endpoint of a fabric link carrying an ND link policy. Such an interface is
+        fabric-owned even when its own record reads as a plain `iosXeRoutedHost` (see the class docstring), so policy type alone cannot
+        express its ownership and the fabric links are consulted (`_fabric_link_endpoints`, fetched once per run). Shared by the
+        create/update guard (`_check_fabric_ownership`) and the delete path (`preflight_delete`, `delete_bulk`): the XE reset PUT
+        would strip the link's intent just like a host-policy overwrite would (PR #550 review). No-op for non-IOS-XE models.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the IOS-XE interface is an endpoint of a fabric link that carries an ND link policy.
+        - Via `_fabric_link_endpoints` if the links query fails.
+        """
         network_os = getattr(getattr(model_instance, "config_data", None), "network_os", None)
         if getattr(network_os, "network_os_type", None) != "ios-xe":
             return
@@ -280,6 +299,28 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         if pair not in self._pending_xe_resets:
             self._pending_xe_resets.append(pair)
 
+    def preflight_delete(self, model_instances: Sequence[NDBaseModel]) -> None:
+        """
+        # Summary
+
+        Extend `EthernetBaseOrchestrator.preflight_delete` (switch resolution, port-channel membership) with the IOS-XE fabric-link
+        ownership check, so a `--check` `state: deleted` run naming an XE fabric-link endpoint is refused exactly like a normal run's
+        `delete_bulk` would refuse it. NX-OS needs no delete-side ownership guard: the state machine builds the delete set from
+        `before[]`, and `query_all` already keeps the system routed policy types (`numbered`, `vrfLiteLinkMember`, ...) out of it. An
+        IOS-XE fabric-link endpoint reads as a plain `iosXeRoutedHost` and passes that filter, so it must be refused here.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `EthernetBaseOrchestrator.preflight_delete` (unresolvable `switch_ip`, port-channel member, interface-list
+          query failure).
+        - Propagated from `_check_xe_fabric_link` (IOS-XE fabric-link endpoint, or links query failure).
+        """
+        super().preflight_delete(model_instances)
+        for model_instance in model_instances:
+            self._check_xe_fabric_link(model_instance)
+
     def delete_bulk(self, model_instances: list, **kwargs) -> None:
         """
         # Summary
@@ -292,7 +333,9 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
           delete set would strip real fabric links. Skipped interfaces are logged at INFO.
         - IOS-XE interfaces the user names explicitly under `state: deleted` are queued for the XE reset path
           (per-interface PUT via `remove_pending`) plus deploy — never the family normalize, whose body is
-          structurally unusable on C8000V (see `_xe_reset_payload`).
+          structurally unusable on C8000V (see `_xe_reset_payload`) — after the fabric-link ownership check
+          (`_check_xe_fabric_link`): the reset PUT would strip a fabric link's intent, so a named link endpoint is
+          refused before anything is queued.
         - NX-OS interfaces delegate unchanged to `EthernetBaseOrchestrator.delete_bulk` (port-channel guards,
           normalize/reset queueing).
 
@@ -302,6 +345,7 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
 
         - Propagated from `EthernetBaseOrchestrator.delete_bulk` (switch resolution, port-channel restrictions,
           interface-list query failures) or from `_resolve_switch_id` for IOS-XE items.
+        - Propagated from `_check_xe_fabric_link` when a named IOS-XE interface is a fabric-link endpoint.
         """
         state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
         nx_instances: list = []
@@ -315,6 +359,7 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
                         model_instance.switch_ip,
                     )
                     continue
+                self._check_xe_fabric_link(model_instance)
                 switch_id = self._resolve_switch_id(model_instance.switch_ip)
                 self._queue_xe_reset(model_instance.interface_name, switch_id)
                 self._queue_deploy(model_instance.interface_name, switch_id)

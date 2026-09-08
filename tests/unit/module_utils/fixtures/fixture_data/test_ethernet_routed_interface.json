@@ -47,6 +47,24 @@
             ]
         }
     },
+    "test_delete_bulk_00310b": {
+        "TEST_NOTES": [
+            "00310: fabric links consulted by the XE delete-path ownership check - none, so GigabitEthernet2 is not fabric-owned"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [],
+            "meta": {
+                "counts": {
+                    "total": 0,
+                    "remaining": 0
+                }
+            }
+        }
+    },
     "test_query_all_routed_00400a": {
         "TEST_NOTES": [
             "Fabric summary: fabric exists (for validate_prerequisites)"
@@ -533,6 +551,24 @@
         }
     },
     "test_remove_pending_00320b": {
+        "TEST_NOTES": [
+            "00320: fabric links consulted by the XE delete-path ownership check - none, so GigabitEthernet2 is not fabric-owned"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [],
+            "meta": {
+                "counts": {
+                    "total": 0,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_remove_pending_00320c": {
         "TEST_NOTES": [
             "XE reset PUT response for GigabitEthernet2 (C8000V-safe mtu-less defaults-only body)"
         ],
@@ -1105,6 +1141,41 @@
     },
     "test_remove_pending_00330b": {
         "TEST_NOTES": [
+            "00330 (orchestrator): fabric links consulted by the XE delete-path ownership check. GigabitEthernet4 sits only on a",
+            "discovered-only adjacency (no configData.policyType), which does NOT count as ownership, so all three resets proceed."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet4",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S1_TOR1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "Ethernet1/1"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 1,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_remove_pending_00330c": {
+        "TEST_NOTES": [
             "00330 (orchestrator): XE reset PUT for GigabitEthernet3 accepted (204)"
         ],
         "RETURN_CODE": 204,
@@ -1113,7 +1184,7 @@
         "MESSAGE": "No Content",
         "DATA": {}
     },
-    "test_remove_pending_00330c": {
+    "test_remove_pending_00330d": {
         "TEST_NOTES": [
             "00330 (orchestrator): XE reset PUT for GigabitEthernet4 FAILS (500); GigabitEthernet5 is never attempted.",
             "PR #550 review: only GigabitEthernet3 may be deployed by the failure-path finalizer."
@@ -1126,7 +1197,7 @@
             "message": "internal error"
         }
     },
-    "test_remove_pending_00330d": {
+    "test_remove_pending_00330e": {
         "TEST_NOTES": [
             "00330 (orchestrator): failure-path deploy of the accepted subset (GigabitEthernet3 only)"
         ],
@@ -1758,6 +1829,177 @@
         "MESSAGE": "OK",
         "DATA": {
             "links": [
+                {
+                    "linkId": "LINK-UUID-1",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {
+                        "policyType": "ebgpVrfLite"
+                    },
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet3",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S2_BG1",
+                    "dstSwitchId": "FDO33333CCC",
+                    "dstInterfaceName": "Ethernet1/3"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 2,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_preflight_delete_00970a": {
+        "TEST_NOTES": [
+            "00970 (orchestrator): IOS-XE switch 192.168.1.2 -> FDO22222BBB"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_preflight_delete_00970b": {
+        "TEST_NOTES": [
+            "00970 (orchestrator): interfaceList for FDO22222BBB. GigabitEthernet3 reads as a defaults-only iosXeRoutedHost, not a port-channel",
+            "member, so the base preflight_delete guards pass; only the fabric-link check can refuse it."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet3",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeRoutedHost",
+                                "adminState": true,
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_preflight_delete_00970c": {
+        "TEST_NOTES": [
+            "00970 (orchestrator): fabric links. GigabitEthernet3 on FDO22222BBB is the src endpoint of an `ebgpVrfLite` link, so a",
+            "`state: deleted` naming it must be refused in preflight (check mode too) - the XE reset PUT would strip the link's intent."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet4",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S1_TOR1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "Ethernet1/1"
+                },
+                {
+                    "linkId": "LINK-UUID-1",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {
+                        "policyType": "ebgpVrfLite"
+                    },
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet3",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S2_BG1",
+                    "dstSwitchId": "FDO33333CCC",
+                    "dstInterfaceName": "Ethernet1/3"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 2,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_delete_bulk_00980a": {
+        "TEST_NOTES": [
+            "00980 (orchestrator): IOS-XE switch 192.168.1.2 -> FDO22222BBB"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_00980b": {
+        "TEST_NOTES": [
+            "00980 (orchestrator): fabric links. GigabitEthernet3 on FDO22222BBB is the src endpoint of an `ebgpVrfLite` link, so",
+            "delete_bulk under `state: deleted` must refuse it before queueing the XE reset / deploy."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet4",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S1_TOR1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "Ethernet1/1"
+                },
                 {
                     "linkId": "LINK-UUID-1",
                     "linkType": "ethisl",

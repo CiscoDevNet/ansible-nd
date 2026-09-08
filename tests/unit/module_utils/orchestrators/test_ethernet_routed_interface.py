@@ -356,6 +356,7 @@ def test_ethernet_routed_orchestrator_00310() -> None:
     ## Test
 
     - state is `deleted`; delete_bulk receives one NX-OS model and one IOS-XE model
+    - The fabric links (consulted once for the IOS-XE ownership check) list no link, so the IOS-XE interface is not fabric-owned
     - The NX-OS interface is queued for normalize; the IOS-XE interface is queued for XE reset (and NOT normalize)
     - Both are queued for deploy
 
@@ -366,6 +367,7 @@ def test_ethernet_routed_orchestrator_00310() -> None:
 
     def responses():
         yield responses_ethernet_routed("test_delete_bulk_00310a")
+        yield responses_ethernet_routed("test_delete_bulk_00310b")
 
     gen_responses = ResponseGenerator(responses())
     orchestrator = _build_orchestrator(gen_responses, params={"state": "deleted"})
@@ -409,12 +411,12 @@ def test_ethernet_routed_orchestrator_00320() -> None:
     """
     # Summary
 
-    Verify `remove_pending` flushes the XE reset queue via per-interface PUT and empties it. The single fixture
-    response covers the one PUT; any additional request would exhaust the generator and fail.
+    Verify `remove_pending` flushes the XE reset queue via per-interface PUT and empties it. After the switches and links
+    GETs (`delete_bulk`), a single fixture response covers the one PUT; any additional request would exhaust the generator and fail.
 
     ## Test
 
-    - state is `deleted`; delete_bulk queues one IOS-XE interface
+    - state is `deleted`; delete_bulk queues one IOS-XE interface (the links GET lists no fabric link, so it is not fabric-owned)
     - `remove_pending` consumes exactly one PUT response and clears the XE reset queue
 
     ## Classes and Methods
@@ -425,6 +427,7 @@ def test_ethernet_routed_orchestrator_00320() -> None:
     def responses():
         yield responses_ethernet_routed("test_remove_pending_00320a")
         yield responses_ethernet_routed("test_remove_pending_00320b")
+        yield responses_ethernet_routed("test_remove_pending_00320c")
 
     gen_responses = ResponseGenerator(responses())
     orchestrator = _build_orchestrator(gen_responses, params={"state": "deleted"})
@@ -988,7 +991,8 @@ def test_ethernet_routed_orchestrator_00330() -> None:
 
     ## Test
 
-    - `delete_bulk` queues GigabitEthernet3/4/5 for XE reset and deploy
+    - `delete_bulk` queues GigabitEthernet3/4/5 for XE reset and deploy (the links GET shows Gi4 only on a discovered-only
+      adjacency, which is not ownership)
     - `remove_pending` raises `RuntimeError` naming Gi3 as reset, Gi4 as failed, Gi5 as not attempted; the queue holds Gi4 and Gi5
     - `deploy_accepted_mutations` deploys `[GigabitEthernet3]` only; Gi4/Gi5 remain in `_pending_deploys`
 
@@ -1004,6 +1008,7 @@ def test_ethernet_routed_orchestrator_00330() -> None:
         yield responses_ethernet_routed("test_remove_pending_00330b")
         yield responses_ethernet_routed("test_remove_pending_00330c")
         yield responses_ethernet_routed("test_remove_pending_00330d")
+        yield responses_ethernet_routed("test_remove_pending_00330e")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
     orchestrator.deploy = True
@@ -1427,4 +1432,76 @@ def test_ethernet_routed_orchestrator_00960() -> None:
     with pytest.raises(RuntimeError, match=r"is an endpoint of fabric link LINK-UUID-1"):
         orchestrator.create_bulk([model], existing_data=existing)
     assert orchestrator.rest_send.path == "/api/v1/manage/links?fabricName=fabric_1&offset=1"
+    assert orchestrator._pending_deploys == []
+
+
+# =============================================================================
+# Test: fabric-ownership guard on the IOS-XE delete path (PR #550 review, akinross)
+# =============================================================================
+
+
+def test_ethernet_routed_orchestrator_00970() -> None:
+    """
+    # Summary
+
+    Verify `preflight_delete` refuses an explicitly named IOS-XE interface that is an endpoint of a fabric link carrying an ND link
+    policy, so a `--check` `state: deleted` run fails like a normal run would. NX-OS fabric links never reach the delete path (their
+    system policy types are filtered out of `before[]` by `query_all`), but an IOS-XE link endpoint reads as a plain `iosXeRoutedHost`
+    and passes that filter, so the XE reset PUT would otherwise strip the link's intent.
+
+    ## Test
+
+    - interfaceList reports GigabitEthernet3 as a defaults-only `iosXeRoutedHost` (not a port-channel member)
+    - The links GET lists GigabitEthernet3 as the src endpoint of an `ebgpVrfLite` link
+    - `preflight_delete` raises `RuntimeError` naming the link
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.preflight_delete()
+    - EthernetRoutedInterfaceOrchestrator._check_xe_fabric_link()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_preflight_delete_00970a")
+        yield responses_ethernet_routed("test_preflight_delete_00970b")
+        yield responses_ethernet_routed("test_preflight_delete_00970c")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Interface GigabitEthernet3 on switch 192\.168\.1\.2 is an endpoint of fabric link LINK-UUID-1 "
+        r"\(ebgpVrfLite: WAN1 GigabitEthernet3 -> S2_BG1 Ethernet1/3\)\. Refusing to overwrite fabric-owned intent",
+    ):
+        orchestrator.preflight_delete([_xe_model("GigabitEthernet3")])
+
+
+def test_ethernet_routed_orchestrator_00980() -> None:
+    """
+    # Summary
+
+    Verify `delete_bulk` under `state: deleted` refuses an IOS-XE fabric-link endpoint before queueing anything: neither the XE reset
+    nor its deploy is queued, so `remove_pending` / `deploy_pending` have nothing to ship for it.
+
+    ## Test
+
+    - The links GET lists GigabitEthernet3 as the src endpoint of an `ebgpVrfLite` link
+    - `delete_bulk` raises `RuntimeError` naming the link
+    - The XE reset queue and the deploy queue are both empty
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.delete_bulk()
+    - EthernetRoutedInterfaceOrchestrator._check_xe_fabric_link()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_delete_bulk_00980a")
+        yield responses_ethernet_routed("test_delete_bulk_00980b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+
+    with pytest.raises(RuntimeError, match=r"GigabitEthernet3 on switch 192\.168\.1\.2 is an endpoint of fabric link LINK-UUID-1"):
+        orchestrator.delete_bulk([_xe_model("GigabitEthernet3")], existing_data={"interfaceName": "probe"})
+    assert orchestrator._pending_xe_resets == []
     assert orchestrator._pending_deploys == []
