@@ -231,7 +231,8 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         fabric-owned even when its own record reads as a plain `iosXeRoutedHost` (see the class docstring), so policy type alone cannot
         express its ownership and the fabric links are consulted (`_fabric_link_endpoints`, fetched once per run). Shared by the
         create/update guard (`_check_fabric_ownership`) and the delete path (`preflight_delete`, `delete_bulk`): the XE reset PUT
-        would strip the link's intent just like a host-policy overwrite would (PR #550 review). No-op for non-IOS-XE models.
+        would rewrite the endpoint's interface record underneath the link just like a host-policy overwrite would (PR #550 review).
+        No-op for non-IOS-XE models.
 
         ## Raises
 
@@ -307,7 +308,10 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         ownership check, so a `--check` `state: deleted` run naming an XE fabric-link endpoint is refused exactly like a normal run's
         `delete_bulk` would refuse it. NX-OS needs no delete-side ownership guard: the state machine builds the delete set from
         `before[]`, and `query_all` already keeps the system routed policy types (`numbered`, `vrfLiteLinkMember`, ...) out of it. An
-        IOS-XE fabric-link endpoint reads as a plain `iosXeRoutedHost` and passes that filter, so it must be refused here.
+        IOS-XE fabric-link endpoint reads as a plain `iosXeRoutedHost` and passes that filter, so it must be refused here. In practice
+        this fires only when the endpoint's record carries a non-default policy field (e.g. a description set in the GUI): a defaults-only
+        endpoint — the shape ND's fabric provisioning leaves (lab-verified 2026-09-08: WAN1 GigabitEthernet3, ISN->SITE2 `ebgpVrfLite`) —
+        is already at the XE reset target and `query_all` scopes it out under `deleted`, so the run is a no-op before reaching this hook.
 
         ## Raises
 
@@ -334,8 +338,8 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         - IOS-XE interfaces the user names explicitly under `state: deleted` are queued for the XE reset path
           (per-interface PUT via `remove_pending`) plus deploy — never the family normalize, whose body is
           structurally unusable on C8000V (see `_xe_reset_payload`) — after the fabric-link ownership check
-          (`_check_xe_fabric_link`): the reset PUT would strip a fabric link's intent, so a named link endpoint is
-          refused before anything is queued.
+          (`_check_xe_fabric_link`): the reset PUT would rewrite a fabric-link endpoint's record underneath the
+          link, so a named link endpoint is refused before anything is queued.
         - NX-OS interfaces delegate unchanged to `EthernetBaseOrchestrator.delete_bulk` (port-channel guards,
           normalize/reset queueing).
 
