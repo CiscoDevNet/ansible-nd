@@ -1226,6 +1226,41 @@
     },
     "test_wrapper_xe_reset_00200b": {
         "TEST_NOTES": [
+            "00200 (wrapper end-to-end): fabric links consulted once by the XE delete-path ownership check. GigabitEthernet4 sits only on a",
+            "discovered-only adjacency (no configData.policyType), which does NOT count as ownership, so all three resets proceed."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet4",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "S1_TOR1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "Ethernet1/1"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 1,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_wrapper_xe_reset_00200c": {
+        "TEST_NOTES": [
             "00200 (wrapper end-to-end): XE reset PUT for GigabitEthernet3 accepted (204)"
         ],
         "RETURN_CODE": 204,
@@ -1234,7 +1269,7 @@
         "MESSAGE": "No Content",
         "DATA": {}
     },
-    "test_wrapper_xe_reset_00200c": {
+    "test_wrapper_xe_reset_00200d": {
         "TEST_NOTES": [
             "00200 (wrapper end-to-end): XE reset PUT for GigabitEthernet4 FAILS (500); GigabitEthernet5 is never attempted.",
             "PR #550 review: only GigabitEthernet3 may be deployed by the failure-path finalizer."
@@ -1247,7 +1282,7 @@
             "message": "internal error"
         }
     },
-    "test_wrapper_xe_reset_00200d": {
+    "test_wrapper_xe_reset_00200e": {
         "TEST_NOTES": [
             "00200 (wrapper end-to-end): failure-path deploy of the accepted subset (GigabitEthernet3 only)"
         ],

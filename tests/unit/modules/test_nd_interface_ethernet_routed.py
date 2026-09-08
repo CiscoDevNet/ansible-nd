@@ -579,7 +579,7 @@ def test_nd_interface_ethernet_routed_00200(monkeypatch: pytest.MonkeyPatch) -> 
 
     ## Test
 
-    - Fixtures: switches list, PUT 204 (Gi3), PUT 500 (Gi4), deploy 200
+    - Fixtures: switches list, links list (XE ownership check; no owned link), PUT 204 (Gi3), PUT 500 (Gi4), deploy 200
     - `fail_json` msg carries the partial-state detail and a NOTE naming only Gi3
     - The deploy payload contains only Gi3; Gi4 and Gi5 remain queued for deploy and reset
 
@@ -596,7 +596,13 @@ def test_nd_interface_ethernet_routed_00200(monkeypatch: pytest.MonkeyPatch) -> 
     ]
     kwargs, orchestrator = _run_delete_main(
         monkeypatch,
-        fixture_keys=["test_wrapper_xe_reset_00200a", "test_wrapper_xe_reset_00200b", "test_wrapper_xe_reset_00200c", "test_wrapper_xe_reset_00200d"],
+        fixture_keys=[
+            "test_wrapper_xe_reset_00200a",
+            "test_wrapper_xe_reset_00200b",
+            "test_wrapper_xe_reset_00200c",
+            "test_wrapper_xe_reset_00200d",
+            "test_wrapper_xe_reset_00200e",
+        ],
         models=models,
     )
 
