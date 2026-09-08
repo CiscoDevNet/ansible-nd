@@ -72,7 +72,7 @@ def config_actions_spec(include: Iterable[str] | None = None) -> dict[str, Any]:
     The full option set is `save`, `deploy`, and `type`. Modules that expose only a subset pass the option names they support, e.g.
     `config_actions_spec(include=("deploy",))` for the `nd_interface_*` modules.
 
-    `type` selects the deploy scope and accepts `switch` (the default) or `global`: `switch` deploys only the switches left out-of-sync by the
+    `type` selects the deploy scope and accepts `switch` or `global`: `switch` deploys only the switches left out-of-sync by the
     change using the per-switch deploy action, while `global` deploys the entire fabric. Configuration is saved at the fabric level before
     deploying for both scopes.
 
@@ -85,7 +85,7 @@ def config_actions_spec(include: Iterable[str] | None = None) -> dict[str, Any]:
     options: dict[str, Any] = {
         "save": {"type": "bool", "default": True},
         "deploy": {"type": "bool", "default": False},
-        "type": {"type": "str", "default": "switch", "choices": ["switch", "global"]},
+        "type": {"type": "str", "choices": ["switch", "global"]},
     }
     return {"config_actions": {"type": "dict", "options": _select_options(options, include)}}
 
