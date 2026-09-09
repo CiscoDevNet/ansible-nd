@@ -107,6 +107,7 @@ def test_manage_vpc_pair_deploy_00010_global_scope_uses_fabric_deploy():
     assert fake_nd.payloads_for(GLOBAL_DEPLOY_PATH) == [{"type": "global"}]
     assert fake_nd.payloads_for(SAVE_PATH) == [None]  # config-save is bodyless
 
+
 def test_manage_vpc_pair_deploy_00020_save_only_runs_without_declarative_change():
     nrm = _make_nrm("switch", save=True, deploy_flag=False)
     fake_nd = _FakeNDModuleV2(nrm.module)
@@ -295,6 +296,7 @@ def test_manage_vpc_pair_deploy_00150_get_managed_pair_switches_scopes_and_filte
     assert result == ["FOXAAA"]
     assert module.warnings == []
 
+
 def test_manage_vpc_pair_deploy_00151_get_managed_pair_switches_honors_forced_serials():
     # A pending pair the query phase already resolved (force_deploy_serials) must
     # deploy even when the post-configSave inventory read transiently reports both
@@ -457,6 +459,7 @@ def test_manage_vpc_pair_deploy_00210_deploy_of_staged_pair_reports_changed_true
 
     assert SWITCH_DEPLOY_PATH in fake_nd.paths()
     assert out["changed"] is True
+
 
 def test_manage_vpc_pair_deploy_00215_staged_pair_deploys_when_inventory_reads_in_sync():
     # Regression: deploy(save=true, deploy=true) on a pair the query phase flagged

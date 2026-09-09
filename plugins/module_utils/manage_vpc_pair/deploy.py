@@ -130,6 +130,7 @@ def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
     )
     return any(signature in message for signature in non_fatal_signatures)
 
+
 def _pair_serials(pairs: Any) -> set[str]:
     """
     Flatten vPC pair identifiers into a set of peer serial numbers.
@@ -227,9 +228,7 @@ def _get_managed_pair_switches_needing_deploy(
         managed_serials.update(serial for serial in peers if serial in switches)
     forced = force_deploy_serials or set()
     return sorted(
-        serial_number
-        for serial_number in managed_serials
-        if serial_number in forced or _is_switch_config_in_sync(switches[serial_number]) is not True
+        serial_number for serial_number in managed_serials if serial_number in forced or _is_switch_config_in_sync(switches[serial_number]) is not True
     )
 
 
