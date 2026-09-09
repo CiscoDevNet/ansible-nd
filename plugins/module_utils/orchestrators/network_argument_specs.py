@@ -66,7 +66,6 @@ def _shared_network_fields(defaults=True):
         vlan_network_type=dict(type="str", choices=_VLAN_NETWORK_TYPE_CHOICES),
         primary_network_id=dict(type="int"),
         vlan_name=dict(type="str"),
-        route_target_both=dict(type="bool"),
         gateway_ipv4_address=dict(type="str"),
         gateway_ipv6_address=dict(type="str"),
         secondary_gateway_ipv4_collection=dict(type="list", elements="str"),
@@ -94,7 +93,6 @@ def _child_network_fields():
     return dict(
         multicast_group_address=dict(type="str"),
         ds_vni=dict(type="int"),
-        route_target_both=dict(type="bool"),
         dhcp_servers=dict(type="list", elements="dict", options=_dhcp_server_spec()),
         loopback_id=dict(type="int"),
         igmp_version=dict(type="int", choices=[1, 2, 3]),

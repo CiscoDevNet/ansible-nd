@@ -103,8 +103,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         "layer",
         "vlan_name",
         "vlanName",
-        "route_target_both",
-        "routeTargetBoth",
         "x_connect",
         "xConnect",
         "multicast_group_address",
@@ -203,7 +201,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
 
             kwargs.update(
                 {
-                    "rt_auto": self._rt_auto_from_route_target_both(config),
                     "x_connect": self._value(config, "x_connect", "xConnect"),
                     "fabric_data": fabric_data_payload,
                 }
@@ -213,12 +210,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if fabric_data_payload and isinstance(payload, dict):
             payload["fabricData"] = fabric_data_payload
         return payload or None
-
-    def _rt_auto_from_route_target_both(self, config: dict[str, Any]) -> bool | None:
-        route_target_both = self._value(config, "route_target_both", "routeTargetBoth")
-        if route_target_both is None:
-            return None
-        return bool(route_target_both)
 
     def _l3_data(self, config: dict[str, Any], network_type: str) -> dict[str, Any] | None:
         common = {
@@ -379,7 +370,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             "networkName": self._value(config, "network_name", "networkName"),
             "networkType": NetworkType.USER_DEFINED.value,
             "nveId": "1",
-            "rtBothAuto": self._template_config_string(self._value(config, "route_target_both", "routeTargetBoth", default=False)),
             "segmentId": self._template_config_string(self._value(config, "network_id", "networkId")),
             "type": _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE[vlan_network_type],
             "vlanId": self._template_config_string(self._value(config, "vlan_id", "vlanId")),
@@ -784,7 +774,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         l2_fabric_data = {key: value for key, value in l2_fabric_data.items() if value not in (None, "")}
         l2_data = {
             "vlanName": template_config.get("vlanName"),
-            "rtAuto": self._top_down_bool(template_config.get("rtBothAuto")),
         }
         l2_data = {key: value for key, value in l2_data.items() if value not in (None, "")}
         if l2_fabric_data:
@@ -899,7 +888,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 "isLayer2Only": model_instance.layer == NetworkLayer.LAYER2.value,
                 "tag": self._template_value(l3_data.get("routingTag")),
                 "vlanName": self._template_value(l2_data.get("vlanName")),
-                "rtBothAuto": self._template_value(l2_data.get("rtAuto")),
                 "intfDescription": self._template_value(l3_data.get("vlanInterfaceDescription")),
                 "mtu": self._template_value(l3_data.get("mtu")),
                 "suppressArp": self._template_value(l3_data.get("arpSuppression")),

@@ -125,7 +125,6 @@ class DefaultL2DataModel(NDNestedModel):
     identifiers: ClassVar[list[str]] = []
 
     vlan_name: str | None = Field(default=None, alias="vlanName", description="VLAN name")
-    rt_auto: bool | None = Field(default=None, alias="rtAuto", description="Enable L2VNI route-target both")
     x_connect: bool | None = Field(default=False, alias="xConnect", description="Enable xConnect")
     fabric_data: DefaultL2FabricDataModel | dict[str, Any] | None = Field(default=None, alias="fabricData")
 

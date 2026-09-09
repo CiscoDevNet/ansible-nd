@@ -515,7 +515,6 @@ def test_private_secondary_network_payload_is_generated_from_primary_id():
                 "primary_network_id": 50100,
                 "multicast_group_address": "239.1.1.101",
                 "vlan_name": "PVLAN_COMMUNITY_VLAN",
-                "route_target_both": True,
             }
         ]
     )[0]
@@ -535,7 +534,6 @@ def test_private_secondary_network_payload_is_generated_from_primary_id():
         "networkName": "PVLAN_COMMUNITY",
         "networkType": "userDefined",
         "nveId": "1",
-        "rtBothAuto": "true",
         "segmentId": "50101",
         "type": "Community",
         "vlanId": "2101",
@@ -1135,8 +1133,8 @@ def test_argument_spec_uses_manage_json_defaults():
     assert "default" not in spec["ipv6_trm"]
     assert "enable_ir" not in spec
     assert "rt_auto" not in spec
-    assert "default" not in spec["route_target_both"]
-    assert "default" not in spec["child_fabric_config"]["options"]["route_target_both"]
+    assert "route_target_both" not in spec
+    assert "route_target_both" not in spec["child_fabric_config"]["options"]
     assert spec["dhcp_servers"]["options"]["server_address"]["required"] is True
 
 
@@ -1758,7 +1756,6 @@ def test_transform_l2_network_payload_uses_manage_schema_shape():
                 "layer": "layer2",
                 "vlan_id": 2301,
                 "vlan_name": "BLUE_VLAN",
-                "route_target_both": True,
                 "multicast_group_address": "239.1.1.2",
             }
         ]
@@ -1769,25 +1766,10 @@ def test_transform_l2_network_payload_uses_manage_schema_shape():
     assert payload["layer"] == "layer2"
     assert payload["vrf_name"] == "NA"
     assert payload["l2_data"]["vlanName"] == "BLUE_VLAN"
-    assert payload["l2_data"]["rtAuto"] is True
+    assert "rtAuto" not in payload["l2_data"]
     assert "enableIr" not in payload["l2_data"]["fabricData"]
     assert payload["l2_data"]["fabricData"]["multicastGroup"] == "239.1.1.2"
     assert "l3_data" not in payload
-
-
-def test_transform_l2_network_payload_maps_route_target_both_false_to_rt_auto():
-    payload = _orchestrator().prepare_config_data(
-        [
-            {
-                "network_name": "BLUE_NET",
-                "layer": "layer2",
-                "route_target_both": False,
-            }
-        ]
-    )[0]
-
-    assert payload["l2_data"]["rtAuto"] is False
-    assert "disableRtAuto" not in payload["l2_data"]
 
 
 def test_network_create_result_failures_raise():
@@ -2197,7 +2179,7 @@ def test_mcfg_parent_network_query_normalizes_top_down_template_config():
     assert normalized["vlanId"] == 3130
     assert normalized["layer"] == "layer2"
     assert normalized["l2Data"]["vlanName"] == "BLUE_VLAN"
-    assert normalized["l2Data"]["rtAuto"] is True
+    assert "rtAuto" not in normalized["l2Data"]
     assert "disableRtAuto" not in normalized["l2Data"]
     assert "fabricData" not in normalized["l2Data"]
     assert normalized["l3Data"]["fabricData"]["netflow"] is True
