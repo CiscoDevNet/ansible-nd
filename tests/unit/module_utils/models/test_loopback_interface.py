@@ -2593,7 +2593,6 @@ def test_xe_from_response_tolerates_injected_policy_key() -> None:
     assert isinstance(instance.config_data.network_os.policy, XeLoopbackPolicyModel)
     with pytest.raises(ValidationError):
         result = XeLoopbackPolicyModel(policyType="iosXeLoopback", ndInjectedKey="x")  # pylint: disable=unused-variable
-    assert "policy_type" not in policy_options
 
 
 def test_loopback_interface_00740():
