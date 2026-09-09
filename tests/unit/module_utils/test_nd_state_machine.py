@@ -16,8 +16,11 @@ mutation operations are gated by check mode:
   item re-submitted without a policy is not a create and is not validated.
 - `preflight` (capability, PR #275 / issue #273) is then called over the proposed set, in check mode as well as
   normal mode, even though the underlying create/update calls are skipped in check mode.
-- For `deleted` state neither preflight is called (removing configuration does not depend on capability, and a
-  policy-less item is correct for delete -- the documented out-of-scope decision).
+- For `deleted` state neither `preflight` nor `preflight_create` is called (removing configuration does not depend on
+  capability, and a policy-less item is correct for delete -- the documented out-of-scope decision); instead
+  `preflight_delete` (PR #550 review) runs over the existing items about to be deleted, before the check-mode gate, so
+  delete-specific guards (ethernet's port-channel member refusal, switch resolution) fire in a dry run too. The
+  fabric-wide `overridden` delete set is not routed through it.
 
 These drive the full `NDStateMachine.manage_state` path with a spy orchestrator instance, so they cover
 the seam the per-method capability tests in `test_base_interface.py` cannot: the check-mode skip lives in
@@ -65,6 +68,9 @@ class _SpyLoopbackOrchestrator(LoopbackInterfaceOrchestrator):
         # Record-only, mirroring the `preflight` spy: the guard's own logic is covered in
         # test_base_interface.py; here we assert only that manage_state reaches it with the create subset.
         self._calls.append(("preflight_create", list(model_instances)))
+
+    def preflight_delete(self, model_instances) -> None:
+        self._calls.append(("preflight_delete", list(model_instances)))
 
     def create(self, model_instance, **kwargs) -> ResponseType:
         self._calls.append(("create", model_instance))
@@ -190,8 +196,9 @@ def test_nd_state_machine_00120() -> None:
     """
     # Summary
 
-    Verify `manage_state` does NOT call `preflight` for `deleted` state, documenting the out-of-scope decision:
-    removing configuration does not depend on a switch's capability to host the interface type.
+    Verify `manage_state` does NOT call `preflight` or `preflight_create` for `deleted` state, documenting the out-of-scope
+    decision: removing configuration does not depend on a switch's capability to host the interface type. The delete-specific
+    `preflight_delete` hook IS called (see 00170).
 
     ## Test
 
@@ -594,3 +601,95 @@ def test_nd_state_machine_00210() -> None:
     assert "update" in names
     assert "delete" not in names
     assert "delete_bulk" not in names
+
+
+def test_nd_state_machine_00170() -> None:
+    """
+    # Summary
+
+    Verify `manage_state` calls `preflight_delete` for `deleted` state in check mode, ahead of the check-mode gate that skips
+    the delete mutation (PR #550 review), so delete-specific guards surface in a dry run.
+
+    ## Test
+
+    - `state: deleted`, `check_mode: True`, one proposed interface; the inventory is empty
+    - `preflight_delete` is recorded exactly once, with the (empty) existing-items-to-delete list
+    - No delete mutation is recorded
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - NDStateMachine._manage_delete_state()
+    - NDBaseOrchestrator.preflight_delete()
+    """
+    instance = _build_state_machine(state="deleted", check_mode=True, config=_CONFIG)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    calls = instance.model_orchestrator._calls
+    assert [name for name, _ in calls] == ["preflight_delete"]
+    assert calls[0][1] == []
+
+
+def test_nd_state_machine_00180() -> None:
+    """
+    # Summary
+
+    Verify the fabric-wide `overridden` delete set is NOT routed through `preflight_delete`: ethernet's `delete_bulk` skips
+    port-channel members silently there, so the explicit-delete refusal must not fire on convergence.
+
+    ## Test
+
+    - `state: overridden`, `check_mode: True`, one proposed interface
+    - `preflight_create` and `preflight` are recorded; `preflight_delete` is not
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - NDStateMachine._manage_override_deletions()
+    """
+    instance = _build_state_machine(state="overridden", check_mode=True, config=_CONFIG)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert "preflight_delete" not in names
+    assert names[:2] == ["preflight_create", "preflight"]
+
+
+class _RaisingDeletePreflightSpy(_SpyLoopbackOrchestrator):
+    """Spy whose `preflight_delete` raises, to assert the error is normalized and halts the run before any delete."""
+
+    def preflight_delete(self, model_instances) -> None:
+        self._calls.append(("preflight_delete", list(model_instances)))
+        raise RuntimeError("Interface Ethernet1/7 is a member of port-channel 10")
+
+
+def test_nd_state_machine_00190() -> None:
+    """
+    # Summary
+
+    Verify a `preflight_delete` failure propagates as `NDStateMachineError` (same normalization as the create/update preflights)
+    and no delete mutation is attempted, in normal mode.
+
+    ## Test
+
+    - `state: deleted`, `check_mode: False`; `preflight_delete` raises `RuntimeError`
+    - `manage_state` raises `NDStateMachineError` matching `Preflight failed`
+    - `delete_bulk` / `delete` are not recorded
+
+    ## Classes and Methods
+
+    - NDStateMachine._manage_delete_state()
+    """
+    spy = _RaisingDeletePreflightSpy(rest_send=_build_rest_send())
+    module = _build_module(state="deleted", check_mode=False, config=_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"Preflight failed: Interface Ethernet1/7 is a member of port-channel 10"):
+        instance.manage_state()
+
+    names = [name for name, _ in spy._calls]
+    assert names == ["preflight_delete"]

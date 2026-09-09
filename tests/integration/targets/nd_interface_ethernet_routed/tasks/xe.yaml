@@ -1,0 +1,227 @@
+---
+# IOS-XE routed tests for nd_interface_ethernet_routed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Requires nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name and
+# nd_test_xe_interface_name) to be set via inventory/extra-vars; tasks/main.yaml
+# gates inclusion of this file on nd_test_xe_switch_ip being defined. The XE
+# interface (default GigabitEthernet3) must exist on the device.
+#
+# IOS-XE interfaces are merge-only under state: overridden (never reset when
+# absent from config), so this file establishes its baseline with state:
+# replaced rather than a delete pre-clean, and the overridden block asserts
+# the merge-only convergence behavior. state: deleted resets explicitly named
+# XE interfaces to their fabric default via the per-interface reset path, so
+# the deleted block runs last and leaves the XE test interface at its fabric
+# default between runs (the baseline replace restores it).
+
+# --- XE BASELINE ---
+
+- name: "XE BASELINE: Converge the XE test interface to the base config"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_routed }}"
+    state: replaced
+  register: nm_xe_baseline
+
+- name: "XE BASELINE: Verify the base config is in place"
+  vars:
+    xe_after: "{{ nm_xe_baseline.after | selectattr('interface_name', 'equalto', xe_routed.interface_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - xe_after.config_data.network_os.policy.policy_type == "iosXeRoutedHost"
+      - xe_after.config_data.network_os.policy.ip == "10.99.203.1"
+
+# --- XE MERGED IDEMPOTENCY ---
+
+- name: "XE MERGED IDEMPOTENT: Re-apply the base config (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &xe_merge
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_routed }}"
+    state: merged
+  check_mode: true
+  register: cm_xe_merged_idem
+
+- name: "XE MERGED IDEMPOTENT: Re-apply the base config (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *xe_merge
+  register: nm_xe_merged_idem
+
+- name: "XE MERGED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_merged_idem is not changed
+      - nm_xe_merged_idem is not changed
+
+# --- XE MERGED UPDATE ---
+
+- name: "XE MERGED UPDATE: Update ip and description (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &xe_merge_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_routed_updated }}"
+    state: merged
+  check_mode: true
+  register: cm_xe_merged_update
+
+- name: "XE MERGED UPDATE: Update ip and description (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *xe_merge_updated
+  register: nm_xe_merged_update
+
+- name: "XE MERGED UPDATE: Verify the update"
+  vars:
+    xe_after: "{{ nm_xe_merged_update.after | selectattr('interface_name', 'equalto', xe_routed.interface_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_merged_update is changed
+      - nm_xe_merged_update is changed
+      - xe_after.config_data.network_os.policy.ip == "10.99.203.5"
+      - xe_after.config_data.network_os.policy.description == "Updated XE routed description"
+
+- name: "XE MERGED UPDATE: Re-apply for idempotency"
+  cisco.nd.nd_interface_ethernet_routed: *xe_merge_updated
+  register: nm_xe_merged_update_idem
+
+- name: "XE MERGED UPDATE: Verify idempotency after update"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_merged_update_idem is not changed
+
+# --- XE REPLACED ---
+
+- name: "XE REPLACED: Replace back to the base config (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &xe_replace
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_routed }}"
+    state: replaced
+  check_mode: true
+  register: cm_xe_replaced
+
+- name: "XE REPLACED: Replace back to the base config (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *xe_replace
+  register: nm_xe_replaced
+
+- name: "XE REPLACED: Verify the replace"
+  vars:
+    xe_after: "{{ nm_xe_replaced.after | selectattr('interface_name', 'equalto', xe_routed.interface_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_replaced is changed
+      - nm_xe_replaced is changed
+      - xe_after.config_data.network_os.policy.ip == "10.99.203.1"
+      - xe_after.config_data.network_os.policy.description == "Ansible integration test XE routed"
+
+# --- XE OVERRIDDEN (merge-only) ---
+# The XE test interface is already at the desired state and other configured
+# IOS-XE routed interfaces in the fabric (if any) are merge-only, so this
+# convergence must report NO change and must not touch any interface absent
+# from config. This is the safety assertion for the merge-only behavior.
+
+- name: "XE OVERRIDDEN: Converge to the XE test interface only (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &xe_override
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_routed }}"
+    state: overridden
+  check_mode: true
+  register: cm_xe_overridden
+
+- name: "XE OVERRIDDEN: Converge to the XE test interface only (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *xe_override
+  register: nm_xe_overridden
+
+- name: "XE OVERRIDDEN: Verify merge-only convergence reports no change"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_overridden is not changed
+      - nm_xe_overridden is not changed
+
+# --- XE OVERRIDDEN: OMITTED IOS-XE INTERFACE IS RETAINED (PR #550 review) ---
+# An IOS-XE interface absent from config is never reset by overridden. The
+# check-mode run with an empty config proves it at query scope (the XE test
+# interface is not even in before[]); the normal-mode run - gated on the
+# check-mode before[] being empty so no NX-OS routedHost intent in the XE
+# fabric is normalized as a side effect - proves it on the wire.
+
+- name: "XE OVERRIDDEN OMITTED: Override with an empty config (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &xe_override_empty
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config: []
+    state: overridden
+  check_mode: true
+  register: cm_xe_overridden_empty
+
+- name: "XE OVERRIDDEN OMITTED: Verify the omitted XE interface is out of scope"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_overridden_empty.before | selectattr('interface_name', 'equalto', xe_routed.interface_name) | list | length == 0
+
+- name: "XE OVERRIDDEN OMITTED: Override with an empty config (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *xe_override_empty
+  register: nm_xe_overridden_empty
+  when: cm_xe_overridden_empty.before | length == 0
+
+- name: "XE OVERRIDDEN OMITTED: Re-read the XE interface after the empty override"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_routed }}"
+    state: merged
+  check_mode: true
+  register: cm_xe_after_empty_override
+
+- name: "XE OVERRIDDEN OMITTED: Verify the omitted XE interface still carries its configuration"
+  vars:
+    xe_before: "{{ cm_xe_after_empty_override.before | selectattr('interface_name', 'equalto', xe_routed.interface_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_after_empty_override is not changed
+      - xe_before.config_data.network_os.policy.ip == "10.99.203.1"
+
+# --- XE DELETED ---
+# Explicitly named XE interfaces reset to the fabric default (defaults-only
+# routed policy), which takes them out of this module's managed scope.
+
+- name: "XE DELETED: Reset the XE interface (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &xe_delete
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ xe_routed.switch_ip }}"
+        interface_name: "{{ xe_routed.interface_name }}"
+    state: deleted
+  check_mode: true
+  register: cm_xe_deleted
+
+- name: "XE DELETED: Reset the XE interface (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *xe_delete
+  register: nm_xe_deleted
+
+- name: "XE DELETED: Verify the XE interface left managed scope"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_deleted is changed
+      - nm_xe_deleted is changed
+      - nm_xe_deleted.after | selectattr('interface_name', 'equalto', xe_routed.interface_name) | list | length == 0
+
+# --- XE DELETED: IDEMPOTENCY ---
+
+- name: "XE DELETED IDEMPOTENT: Re-reset the XE interface"
+  cisco.nd.nd_interface_ethernet_routed: *xe_delete
+  register: nm_xe_deleted_idem
+
+- name: "XE DELETED IDEMPOTENT: Verify no change when already at fabric default"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_deleted_idem is not changed

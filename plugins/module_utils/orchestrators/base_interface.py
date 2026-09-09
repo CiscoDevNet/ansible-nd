@@ -16,6 +16,7 @@ with interface-type-specific payload construction and query filtering.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import ClassVar
 
@@ -196,18 +197,51 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         # Summary
 
-        Run capability preflight for the proposed interfaces. Delegates to `validate_switches_capable`, which is a
-        no-op unless the orchestrator opts in via the `interface_type`/`interface_mode` ClassVars. Invoked by
-        `NDStateMachine.manage_state` before create/update operations so the check runs in `--check` mode, where the
-        underlying mutations are skipped.
+        Pre-mutation validation for the proposed interfaces. Invoked by `NDStateMachine.manage_state` before create/update
+        operations — which are skipped in `--check` mode — so a dry run fails on the same input errors a normal run would hit
+        inside `create`/`update`. Two steps:
+
+        1. Resolve every `switch_ip` to a `switchId` via `_require_resolvable_switches`. This runs for every interface
+           orchestrator, including those that opt out of the capability preflight, so an unknown switch is reported in check
+           mode too (PR #550 review).
+        2. Capability preflight via `validate_switches_capable`, a no-op unless the orchestrator opts in via the
+           `interface_type`/`interface_mode` ClassVars.
 
         ## Raises
 
         ### RuntimeError
 
+        - If one or more `switch_ip` values do not match any switch in the fabric (aggregated into a single message).
         - Propagated from `validate_switches_capable` (see its docstring).
         """
+        self._require_resolvable_switches(model_instances)
         self.validate_switches_capable(model_instances)
+
+    def _require_resolvable_switches(self, model_instances: Sequence[ModelType]) -> set[str]:
+        """
+        # Summary
+
+        Resolve every `switch_ip` in `model_instances` and return the set of resolved `switchId` values. Unresolvable IPs are
+        aggregated into a single `RuntimeError` naming every unknown IP, so a typo on one entry does not mask resolution
+        problems on the remaining entries (issue #301). Backed by `FabricContext`, so repeated calls add no requests.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If one or more `switch_ip` values do not match any switch in the fabric.
+        """
+        switch_ids: set[str] = set()
+        unresolved: list[str] = []
+        for model_instance in model_instances:
+            switch_ip = model_instance.switch_ip
+            try:
+                switch_ids.add(self._resolve_switch_id(switch_ip))
+            except RuntimeError:
+                unresolved.append(switch_ip)
+        if unresolved:
+            raise RuntimeError(f"Cannot resolve switch_ip to switchId in fabric '{self.fabric_name}' for: {', '.join(sorted(set(unresolved)))}.")
+        return switch_ids
 
     def preflight_create(self, model_instances: Sequence[ModelType]) -> None:
         """
@@ -281,16 +315,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             raise RuntimeError(
                 f"{type(self).__name__} sets interface_type but not interface_mode; both ClassVars are required to enable capability preflight."
             )
-        switch_ids: set[str] = set()
-        unresolved: list[str] = []
-        for model_instance in model_instances:
-            switch_ip = model_instance.switch_ip
-            try:
-                switch_ids.add(self._resolve_switch_id(switch_ip))
-            except RuntimeError:
-                unresolved.append(switch_ip)
-        if unresolved:
-            raise RuntimeError(f"Cannot resolve switch_ip to switchId in fabric '{self.fabric_name}' for: {', '.join(sorted(set(unresolved)))}.")
+        switch_ids = self._require_resolvable_switches(model_instances)
         if not switch_ids:
             return
         try:
@@ -393,9 +418,12 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         switch running state remain divergent (PR #403 review).
 
         A deploy is queued only after its mutation request succeeds, so every queued pair is controller-accepted intent — except
-        pairs queued by the delete path, which queues the deploy BEFORE `remove_pending` sends the removal. Pairs still present in
-        `_pending_removes` are excluded here: their removal intent never reached the controller, and deploying them would ship
-        whatever pending intent those interfaces happen to carry.
+        pairs queued by the delete paths, which queue the deploy BEFORE `remove_pending` sends the removal / normalize / reset.
+        Pairs still present in any deferred-delete queue (`_unsent_delete_pairs`: `_pending_removes` here, plus the normalize /
+        reset queues subclasses add) are excluded: their delete intent never reached the controller — the request failed or was
+        never attempted — and deploying them would ship whatever unrelated pending intent those interfaces happen to carry
+        (PR #550 review). Delete paths dequeue a pair as soon as its request succeeds, so a pair still queued after a failure is
+        exactly one that was not accepted.
 
         Returns the deployed `(interface_name, switch_id)` pairs so the caller can name them in the failure report. Returns an
         empty list without any API call when `deploy` is `False` (staged intent is the documented contract in that case) or when
@@ -409,14 +437,62 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         if not self.deploy:
             return []
-        accepted = [pair for pair in self._pending_deploys if pair not in self._pending_removes]
+        unsent = self._unsent_delete_pairs()
+        accepted = [pair for pair in self._pending_deploys if pair not in unsent]
         if not accepted:
             return []
         try:
             self._deploy_interfaces(accepted)
         except Exception as e:
             raise RuntimeError(f"Failure-path deploy failed for accepted interfaces {accepted}: {e}") from e
-        self._pending_deploys = [pair for pair in self._pending_deploys if pair in self._pending_removes]
+        self._pending_deploys = [pair for pair in self._pending_deploys if pair in unsent]
+        return accepted
+
+    def _unsent_delete_pairs(self) -> set[tuple[str, str]]:
+        """
+        # Summary
+
+        Return the `(interface_name, switch_id)` pairs whose delete-side request has not (yet) been accepted by the controller: the
+        contents of every deferred-delete queue. The base class has one such queue (`_pending_removes`); subclasses with their own
+        deferred queues (ethernet's normalize / reset queues, routed's IOS-XE reset queue) extend the set. Consumed by
+        `deploy_accepted_mutations` so the failure-path finalizer never deploys an interface whose reset failed or was never sent.
+
+        ## Raises
+
+        None
+        """
+        return set(self._pending_removes)
+
+    def _accepted_multistatus_names(self) -> set[str]:
+        """
+        # Summary
+
+        Return the lower-cased `name` of every `DATA.results[]` item in the most recent response whose `status` is exactly
+        `success` (case/whitespace-tolerant). Used after a bulk POST that failed with HTTP 207 Multi-Status to recover the subset
+        the controller accepted, so that subset can still be queued for deploy (PR #550 review). On a 207 the per-item status
+        vocabulary is unreliable (vault: `multi-status-207-status-field-inconsistent`; issue #397), so only an exact `success`
+        is trusted — the same allowlist `NdV1Strategy.is_success` applies when classifying the response. Returns an empty set
+        when the last response was not a 207 or carries no `results[]` envelope.
+
+        ## Raises
+
+        None
+        """
+        if self.rest_send.return_code != 207:
+            return set()
+        data = self.rest_send.response_current.get("DATA")
+        results = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(results, list):
+            return set()
+        accepted: set[str] = set()
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("status") or "").strip().lower() != "success":
+                continue
+            name = item.get("name")
+            if isinstance(name, str) and name.strip():
+                accepted.add(name.strip().lower())
         return accepted
 
     def _deploy_interfaces(self, pairs: list[tuple[str, str]]) -> ResponseType:
@@ -475,3 +551,37 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint.fabric_name = self.fabric_name
         payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in self._pending_removes]}
         return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+
+
+def finalize_accepted_intent(orchestrator: NDBaseOrchestrator | None, check_mode: bool, module_log: logging.Logger) -> str:
+    """
+    # Summary
+
+    Failure-path finalizer shared by the `nd_interface_*` modules (PR #403 review): when a module fails after some mutations
+    succeeded, deploy the already-accepted subset via `deploy_accepted_mutations` so it does not remain staged-but-undeployed.
+    Without this, a retry classifies the accepted interfaces as unchanged and never deploys them, so controller intent and
+    switch running state stay divergent even after a successful retry.
+
+    Call it from every `except` handler in a module's `main()` and append the result to the failure message. It returns a
+    sentence naming what was finalized (or reporting that finalization itself failed), or an empty string when there is nothing
+    to do: check mode (no mutations were sent), `deploy: false` (staged intent is the documented contract), no accepted
+    mutations queued, the failure preceded orchestrator creation (`orchestrator` is `None`), or the orchestrator is not an
+    `NDBaseInterfaceOrchestrator`.
+
+    ## Raises
+
+    None (a finalization failure is folded into the returned message so it cannot mask the original error).
+    """
+    if orchestrator is None or check_mode:
+        return ""
+    if not isinstance(orchestrator, NDBaseInterfaceOrchestrator):
+        return ""
+    try:
+        deployed = orchestrator.deploy_accepted_mutations()
+    except Exception as deploy_error:  # pylint: disable=broad-except
+        module_log.exception("Failure-path deploy of accepted mutations failed")
+        return f" NOTE: the controller accepted some interface changes before the failure and deploying them also failed; they remain staged: {deploy_error}"
+    if not deployed:
+        return ""
+    names = ", ".join(sorted(f"{name} (switchId {switch_id})" for name, switch_id in deployed))
+    return f" NOTE: before the failure, the controller had already accepted changes for interface(s) [{names}]; those changes were deployed."
