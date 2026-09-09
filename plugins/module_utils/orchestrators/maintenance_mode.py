@@ -77,7 +77,8 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist, is not local, or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, is not local, or is in deployment-freeze mode
+      for a state that mutates configuration.
     - Via `query_all` if a user-supplied `switch_ip` is not found in the fabric.
     - Via `query_all` if any switch is currently in `migration` mode.
     - Via `update` if the POST changeSystemMode request fails or the 207 body contains per-switch failures.
