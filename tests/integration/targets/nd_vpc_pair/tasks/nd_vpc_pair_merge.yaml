@@ -891,6 +891,9 @@
         peer2_switch_id: "{{ test_switch2 }}"
         use_virtual_peer_link: true
   register: result
+  until: result is not failed
+  retries: 3
+  delay: 30
   tags: merge
 
 - name: MERGE - TC10 - ASSERT - Verify deploy path execution

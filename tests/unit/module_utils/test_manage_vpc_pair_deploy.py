@@ -107,6 +107,17 @@ def test_manage_vpc_pair_deploy_00010_global_scope_uses_fabric_deploy():
     assert fake_nd.payloads_for(GLOBAL_DEPLOY_PATH) == [{"type": "global"}]
     assert fake_nd.payloads_for(SAVE_PATH) == [None]  # config-save is bodyless
 
+def test_manage_vpc_pair_deploy_00020_save_only_runs_without_declarative_change():
+    nrm = _make_nrm("switch", save=True, deploy_flag=False)
+    fake_nd = _FakeNDModuleV2(nrm.module)
+
+    out = _run_deploy(nrm, fake_nd, {"changed": False})
+
+    assert fake_nd.payloads_for(SAVE_PATH) == [None]
+    assert GLOBAL_DEPLOY_PATH not in fake_nd.paths()
+    assert SWITCH_DEPLOY_PATH not in fake_nd.paths()
+    assert out["changed"] is False
+
 
 def test_manage_vpc_pair_deploy_00040_check_mode_switch_scope_previews_switch_endpoint():
     # check_mode must be side-effect free: no NDModuleV2 is constructed and the
@@ -284,6 +295,26 @@ def test_manage_vpc_pair_deploy_00150_get_managed_pair_switches_scopes_and_filte
     assert result == ["FOXAAA"]
     assert module.warnings == []
 
+def test_manage_vpc_pair_deploy_00151_get_managed_pair_switches_honors_forced_serials():
+    # A pending pair the query phase already resolved (force_deploy_serials) must
+    # deploy even when the post-configSave inventory read transiently reports both
+    # peers in-sync, so a needed switch-scoped deploy is never dropped.
+    switches_response = {
+        "switches": [
+            {"serialNumber": "FOXAAA", "configSyncStatus": "In-Sync"},
+            {"serialNumber": "FOXBBB", "configSyncStatus": "In-Sync"},
+        ]
+    }
+    module = _FakeModule({})
+    fake_nd = _FakeNDModuleV2(module, switches_response=switches_response)
+    config_entries = [{"switch_id": "FOXAAA", "peer_switch_id": "FOXBBB"}]
+
+    result = deploy._get_managed_pair_switches_needing_deploy(fake_nd, "fab1", config_entries, None, {"FOXAAA", "FOXBBB"})
+
+    # Both peers forced -> deployed despite the in-sync read; no spurious warning.
+    assert result == ["FOXAAA", "FOXBBB"]
+    assert module.warnings == []
+
 
 def test_manage_vpc_pair_deploy_00160_switch_scope_deploys_overridden_deleted_pair_peers():
     # Regression: state=overridden removes a pair by omitting it from config. The
@@ -427,6 +458,27 @@ def test_manage_vpc_pair_deploy_00210_deploy_of_staged_pair_reports_changed_true
     assert SWITCH_DEPLOY_PATH in fake_nd.paths()
     assert out["changed"] is True
 
+def test_manage_vpc_pair_deploy_00215_staged_pair_deploys_when_inventory_reads_in_sync():
+    # Regression: deploy(save=true, deploy=true) on a pair the query phase flagged
+    # pending (_not_in_sync_pairs). The switch inventory read taken right after the
+    # Step 1 configSave transiently reports both peers in-sync. The deploy must
+    # still fire on both peers and report changed=true instead of a silent no-op.
+    nrm = _make_switch_nrm(config=[{"switch_id": "FOX111AAA", "peer_switch_id": "FOX222AAA"}])
+    nrm.module.params["_not_in_sync_pairs"] = [{"switchId": "FOX111AAA", "peerSwitchId": "FOX222AAA"}]
+    switches_response = {
+        "switches": [
+            {"serialNumber": "FOX111AAA", "configSyncStatus": "In-Sync"},
+            {"serialNumber": "FOX222AAA", "configSyncStatus": "In-Sync"},
+        ]
+    }
+    fake_nd = _FakeNDModuleV2(nrm.module, switches_response=switches_response)
+
+    out = _run_deploy(nrm, fake_nd, result={"changed": False})
+
+    assert SWITCH_DEPLOY_PATH in fake_nd.paths()
+    assert fake_nd.payloads_for(SWITCH_DEPLOY_PATH) == [{"switchIds": ["FOX111AAA", "FOX222AAA"]}]
+    assert out["changed"] is True
+
 
 def test_manage_vpc_pair_deploy_00220_switch_scope_accepts_notexecuted_207_error():
     nrm = _make_switch_nrm(config=[{"switch_id": "LEAF-A", "peer_switch_id": "LEAF-B"}])
@@ -457,4 +509,36 @@ def test_manage_vpc_pair_deploy_00220_switch_scope_accepts_notexecuted_207_error
 
     assert SWITCH_DEPLOY_PATH in fake_nd.paths()
     assert out["changed"] is True
+    assert out["config_actions"]["type"] == "switch"
+
+
+def test_manage_vpc_pair_deploy_00235_switch_scope_accepts_notexecuted_207_error():
+    nrm = _make_switch_nrm(config=[{"switch_id": "LEAF-A", "peer_switch_id": "LEAF-B"}])
+    switches_response = {
+        "switches": [
+            {"serialNumber": "LEAF-A", "configSyncStatus": "Out-of-Sync"},
+            {"serialNumber": "LEAF-B", "configSyncStatus": "Out-of-Sync"},
+        ]
+    }
+    response_payload = {
+        "switchIds": [
+            {"switchId": "LEAF-A", "status": "notExecuted", "message": "No Commands to execute"},
+            {"switchId": "LEAF-B", "status": "notExecuted", "message": "No Commands to execute"},
+        ]
+    }
+    fake_nd = _FakeNDModuleV2(
+        nrm.module,
+        switches_response=switches_response,
+        fail_on="/switchActions/deploy",
+        fail_exception=NDModuleError(
+            msg="LEAF-A: No Commands to execute; LEAF-B: No Commands to execute",
+            status=207,
+            response_payload=response_payload,
+        ),
+    )
+
+    out = _run_deploy(nrm, fake_nd)
+
+    assert SWITCH_DEPLOY_PATH in fake_nd.paths()
+    assert out["changed"] is False
     assert out["config_actions"]["type"] == "switch"
