@@ -1054,8 +1054,9 @@ def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
             "skip_greenfield_check": True,
         }
     ]
-    assert [entry["action"] for entry in ctx.results.metadata] == ["save_credentials", "update_role", "config_save", "deploy_switches"]
-    assert ctx.results.payload[-1] == {"switchIds": ["SERIAL1"]}
+    assert [entry["action"] for entry in ctx.results.metadata] == ["save_credentials", "update_role", "config_actions"]
+    assert ctx.results.diffs[-1]["actions"][-1]["scope"] == "switch"
+    assert ctx.results.diffs[-1]["targets"]["switches"] == ["SERIAL1"]
 
     failing_wait = RecordingWait(manageable=False)
     with pytest.raises(FailJsonError, match="failed to become manageable"):
@@ -1104,7 +1105,8 @@ def test_post_add_processing_splits_reload_waits_by_platform():
             "skip_greenfield_check": True,
         }
     ]
-    assert ctx.results.payload[-1] == {"switchIds": ["NXOS1", "NXOS2", "IOSXE1", "IOSXR1"]}
+    assert ctx.results.diffs[-1]["actions"][-1]["scope"] == "switch"
+    assert ctx.results.diffs[-1]["targets"]["switches"] == ["NXOS1", "NXOS2", "IOSXE1", "IOSXR1"]
 
 
 def test_post_add_processing_forces_poap_and_swap_nxos_reload_observation():
@@ -1168,10 +1170,10 @@ def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
     ctx.nd.rest_send.result_current = {"success": True, "changed": True}
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
     assert calls == [("save", None), ("deploy_switches", ["SERIAL1"])]
-    assert [entry["action"] for entry in results.metadata] == ["config_save", "deploy_switches"]
-    assert results.path == ["/config-save", "/switch-deploy"]
-    assert results.payload == [None, {"switchIds": ["SERIAL1"]}]
-    assert [response["RETURN_CODE"] for response in results.responses] == [200, 200]
+    assert [entry["action"] for entry in results.metadata] == ["config_actions"]
+    assert results.diffs[-1]["status"] == "completed"
+    assert results.diffs[-1]["targets"]["switches"] == ["SERIAL1"]
+    assert [(step["action"], step.get("scope")) for step in results.diffs[-1]["actions"]] == [("save", None), ("deploy", "switch")]
 
     calls.clear()
     results = Results()
@@ -1181,8 +1183,8 @@ def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
     ctx.nd.rest_send.result_current = {"success": True, "changed": True}
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
     assert calls == [("save", None), ("deploy_config", None)]
-    assert [entry["action"] for entry in results.metadata] == ["config_save", "deploy_config"]
-    assert results.path == ["/config-save", "/config-deploy"]
+    assert [entry["action"] for entry in results.metadata] == ["config_actions"]
+    assert [(step["action"], step.get("scope")) for step in results.diffs[-1]["actions"]] == [("save", None), ("deploy", "global")]
 
     calls.clear()
     ctx.deploy_type = "switch"
@@ -1233,7 +1235,7 @@ def test_idempotent_sync_serials_require_resolved_switch_targets():
 
     resource.ctx.deploy_config = True
     missing_plan = _empty_plan(idempotent=[_cfg("192.0.2.99")])
-    with pytest.raises(FailJsonError, match="no switch IDs were resolved.*192.0.2.99"):
+    with pytest.raises(FailJsonError, match="switch serial numbers could not be resolved.*192.0.2.99"):
         resource._idempotent_sync_serials(missing_plan, {})
 
 
