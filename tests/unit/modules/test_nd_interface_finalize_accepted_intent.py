@@ -41,6 +41,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import Res
 # Modules carrying both the `NDStateMachineError` handler and the broad `Exception` fallback handler.
 TWO_HANDLER_MODULES = (
     "nd_interface_ethernet_access",
+    "nd_interface_ethernet_routed",
     "nd_interface_ethernet_trunk_host",
     "nd_interface_loopback",
     "nd_interface_port_channel_access",
