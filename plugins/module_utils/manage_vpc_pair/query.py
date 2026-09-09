@@ -1273,11 +1273,15 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
 
                 # Resolve pair sync state from the stronger signals.
                 #
-                # Precedence:
-                # - overview=True is authoritative in-sync.
-                # - overview=False is authoritative not-in-sync.
-                # - overview=None falls back to explicit switch out-of-sync.
-                pair_not_in_sync = sync_state is False or (sync_state is None and config_sync_state is False)
+                # A switch reporting configSyncStatus=pending means the pair's
+                # device config is staged but not deployed, and that must win over
+                # the vpcPairOverview inventory counters. Those counters are
+                # per-interface and can transiently read all-in-sync (pending=0)
+                # while the switch overall is still pending, which previously
+                # masked a needed deploy (overview=True suppressed the pending
+                # switch). Treat EITHER an explicit overview not-in-sync OR an
+                # explicit switch out-of-sync as not-in-sync.
+                pair_not_in_sync = sync_state is False or config_sync_state is False
 
                 if pair_not_in_sync:
                     not_in_sync_pairs.append(
