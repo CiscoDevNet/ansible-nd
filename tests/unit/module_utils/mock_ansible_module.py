@@ -68,6 +68,7 @@ class MockAnsibleModule:
 
     def __init__(self) -> None:
         self.warnings: list[str] = []
+        self.no_log_values: set = set()
 
     @staticmethod
     def fail_json(msg, **kwargs) -> AnsibleFailJson:

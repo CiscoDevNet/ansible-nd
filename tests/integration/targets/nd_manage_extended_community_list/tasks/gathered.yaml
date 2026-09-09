@@ -1,0 +1,170 @@
+---
+# Gathered state tests for nd_manage_extended_community_list
+# Copyright: (c) 2026, Deeksha Pandey (@deekpand)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
+# Pre-condition: merged.yaml has created ANSIBLE_ECL_STANDARD (type=standard)
+#   and ANSIBLE_ECL_EXPANDED (type=expanded).
+
+# --- GATHERED: no config (fetch everything) ---
+
+- name: "GATHERED: Read all extended community lists in the fabric"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: nm_gathered_all
+
+- name: "GATHERED: Verify read-only behavior"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_all is not changed
+      - nm_gathered_all.gathered is defined
+      - nm_gathered_all.gathered | type_debug == "list"
+      - nm_gathered_all.gathered | length >= 2
+      - nm_gathered_all.before is not defined
+      - nm_gathered_all.after is not defined
+      - nm_gathered_all.diff is not defined
+      - nm_gathered_all.proposed is not defined
+
+# --- GATHERED: explicit empty config ---
+
+- name: "GATHERED: Read all with explicit empty config"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config: []
+  register: nm_gathered_empty_config
+
+- name: "GATHERED: Verify explicit empty config gathers all"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_config is not changed
+      - nm_gathered_empty_config.gathered == nm_gathered_all.gathered
+
+# --- GATHERED: filter by name ---
+
+- name: "GATHERED: Filter by name"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: ANSIBLE_ECL_STANDARD
+  register: nm_gathered_name
+
+- name: "GATHERED: Verify name filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_name is not changed
+      - nm_gathered_name.gathered | length == 1
+      - nm_gathered_name.gathered[0].name == "ANSIBLE_ECL_STANDARD"
+
+# --- GATHERED: filter by type ---
+
+- name: "GATHERED: Filter by type"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - type: standard
+  register: nm_gathered_type
+
+- name: "GATHERED: Verify type filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_type is not changed
+      - nm_gathered_type.gathered | length >= 1
+      - nm_gathered_type.gathered | rejectattr('type', 'equalto', 'standard') | list | length == 0
+
+# --- GATHERED: filter by name + type (AND semantics) ---
+
+- name: "GATHERED: Filter by name and type (AND semantics)"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: ANSIBLE_ECL_STANDARD
+        type: standard
+  register: nm_gathered_and
+
+- name: "GATHERED: Verify AND semantics"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_and is not changed
+      - nm_gathered_and.gathered | length == 1
+      - nm_gathered_and.gathered[0].name == "ANSIBLE_ECL_STANDARD"
+      - nm_gathered_and.gathered[0].type == "standard"
+
+# --- GATHERED: AND mismatch ---
+
+- name: "GATHERED: AND filter with non-matching type"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: ANSIBLE_ECL_STANDARD
+        type: expanded
+  register: nm_gathered_and_mismatch
+
+- name: "GATHERED: Verify AND mismatch returns empty"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_and_mismatch is not changed
+      - nm_gathered_and_mismatch.gathered == []
+
+# --- GATHERED: round-trip ---
+
+- name: "GATHERED: Reuse gathered output as config in check mode"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config: "{{ nm_gathered_name.gathered }}"
+  check_mode: true
+  register: cm_reuse_gathered
+
+- name: "GATHERED: Verify gathered output round-trips as config"
+  ansible.builtin.assert:
+    that:
+      - cm_reuse_gathered is not changed
+
+# --- GATHERED: multiple OR filters ---
+
+- name: "GATHERED: Filter with multiple OR criteria"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: ANSIBLE_ECL_STANDARD
+      - name: ANSIBLE_ECL_EXPANDED
+  register: nm_gathered_or
+
+- name: "GATHERED: Verify multiple filters use OR semantics"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_or is not changed
+      - nm_gathered_or.gathered | length == 2
+
+# --- GATHERED: no-match filter ---
+
+- name: "GATHERED: Filter with no matching name"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: NONEXISTENT_ECL
+  register: nm_gathered_no_match
+
+- name: "GATHERED: Verify no-match filter returns empty list"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_no_match is not changed
+      - nm_gathered_no_match.gathered == []

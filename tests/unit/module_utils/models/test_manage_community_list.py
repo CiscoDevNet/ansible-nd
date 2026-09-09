@@ -102,7 +102,7 @@ def test_manage_community_list_00040() -> None:
     spec = CommunityListModel.get_argument_spec()
     config_options = spec["config"]["options"]
 
-    assert config_options["name"]["required"] is True
+    assert config_options["name"].get("required", False) is False
     assert spec["cluster_name"]["type"] == "str"
     assert "required" not in config_options["type"]
     assert "required" not in config_options["entries"]
@@ -345,3 +345,122 @@ def test_manage_community_list_00140() -> None:
     )
 
     assert instance.entries[0].sequence_number == 10
+
+
+# =============================================================================
+# Gathered state and filtering tests
+# =============================================================================
+
+
+def test_manage_community_list_00200_gathered_state_in_choices() -> None:
+    """
+    # Summary
+
+    Verify state choices include ``gathered`` and default is ``merged``.
+
+    ## Test
+
+    - state choices: ["merged", "replaced", "overridden", "deleted", "gathered"]
+    - state default: "merged"
+
+    ## Classes and Methods
+
+    - CommunityListModel.get_argument_spec()
+    """
+    spec = CommunityListModel.get_argument_spec()
+    state_spec = spec["state"]
+    assert state_spec["choices"] == [
+        "merged",
+        "replaced",
+        "overridden",
+        "deleted",
+        "gathered",
+    ]
+    assert state_spec["default"] == "merged"
+
+
+def test_manage_community_list_00210_config_optional_for_gathered() -> None:
+    """
+    # Summary
+
+    Verify ``config`` is optional so ``state=gathered`` can run without input.
+
+    ## Test
+
+    - config required is False
+    - name within config is not required
+
+    ## Classes and Methods
+
+    - CommunityListModel.get_argument_spec()
+    """
+    spec = CommunityListModel.get_argument_spec()
+    assert spec["config"].get("required", False) is False
+    config_options = spec["config"]["options"]
+    assert config_options["name"].get("required", False) is False
+
+
+def test_manage_community_list_00220_supports_gathered_filtering() -> None:
+    """
+    # Summary
+
+    Verify ``supports_gathered_filtering`` is ``True`` on ``CommunityListModel``
+    and ``False`` on the base ``NDBaseModel``.
+
+    ## Test
+
+    - NDBaseModel.supports_gathered_filtering is False
+    - CommunityListModel.supports_gathered_filtering is True
+
+    ## Classes and Methods
+
+    - NDBaseModel.supports_gathered_filtering
+    - CommunityListModel.supports_gathered_filtering
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+
+    assert NDBaseModel.supports_gathered_filtering is False
+    assert CommunityListModel.supports_gathered_filtering is True
+
+
+def test_manage_community_list_00230_gathered_filter_properties() -> None:
+    """
+    # Summary
+
+    Verify ``gathered_filter_properties`` contains the expected 2 properties.
+
+    ## Test
+
+    - gathered_filter_properties tuple has exactly 2 entries
+    - Entries are "name" and "type"
+
+    ## Classes and Methods
+
+    - CommunityListModel.gathered_filter_properties
+    """
+    assert CommunityListModel.gathered_filter_properties == (
+        "name",
+        "type",
+    )
+
+
+def test_manage_community_list_00240_normalize_gathered_filter_passthrough() -> None:
+    """
+    # Summary
+
+    Verify ``normalize_gathered_filter`` returns filters unchanged
+    (no custom normalization needed for community lists).
+
+    ## Test
+
+    - A filter with name is returned unchanged
+    - A filter with type is returned unchanged
+    - An empty filter is returned unchanged
+
+    ## Classes and Methods
+
+    - CommunityListModel.normalize_gathered_filter()
+    """
+    assert CommunityListModel.normalize_gathered_filter({"name": "CL1"}) == {"name": "CL1"}
+    assert CommunityListModel.normalize_gathered_filter({"type": "standard"}) == {"type": "standard"}
+    assert CommunityListModel.normalize_gathered_filter({}) == {}

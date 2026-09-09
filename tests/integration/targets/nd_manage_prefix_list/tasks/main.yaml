@@ -51,6 +51,9 @@
     - name: Run nd_manage_prefix_list merged state tests
       ansible.builtin.include_tasks: merged.yaml
 
+    - name: Run nd_manage_prefix_list gathered state tests
+      ansible.builtin.include_tasks: gathered.yaml
+
     - name: Run nd_manage_prefix_list replaced state tests
       ansible.builtin.include_tasks: replaced.yaml
 
