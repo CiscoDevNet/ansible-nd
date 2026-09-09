@@ -25,7 +25,7 @@ def test_config_actions_argument_spec_00000() -> None:
     """
     # Summary
 
-    Verify interface policy exposes only deploy with its compatibility default.
+    Verify interface policy exposes deploy as an opt-in action.
 
     ## Raises
 
@@ -35,7 +35,7 @@ def test_config_actions_argument_spec_00000() -> None:
         "config_actions": {
             "type": "dict",
             "options": {
-                "deploy": {"type": "bool", "default": True},
+                "deploy": {"type": "bool", "default": False},
             },
         },
     }

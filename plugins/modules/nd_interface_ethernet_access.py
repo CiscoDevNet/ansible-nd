@@ -257,15 +257,21 @@ options:
                     - Valid range is 0-200000000.
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_unicast_level).
                     type: int
-  deploy:
+  config_actions:
     description:
-    - Whether to deploy interface changes after mutations are complete.
-    - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module execution
-      via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
-    - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
-    - Setting O(deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
-    type: bool
-    default: true
+    - Controls deploy behavior after interface mutations are complete.
+    type: dict
+    suboptions:
+      deploy:
+        description:
+        - Whether to deploy interface changes after mutations are complete.
+        - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module
+          execution via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
+        - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
+        - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
+        - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
+        type: bool
+        default: false
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -310,6 +316,8 @@ EXAMPLES = r"""
               cdp: true
               description: Access Host Interface
               speed: auto
+    config_actions:
+      deploy: true
     state: merged
   register: result
 
@@ -339,6 +347,8 @@ EXAMPLES = r"""
               admin_state: true
               access_vlan: 200
               description: Server ports switch 2
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Apply different access configurations to different interfaces on the same switch
@@ -365,6 +375,8 @@ EXAMPLES = r"""
               admin_state: true
               access_vlan: 200
               description: VLAN 200 access ports
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Delete accessHost interface configurations
@@ -375,6 +387,8 @@ EXAMPLES = r"""
         interface_names:
           - Ethernet1/1
           - Ethernet1/2
+    config_actions:
+      deploy: true
     state: deleted
 
 - name: Create accessHost interfaces without deploying (for batching)
@@ -389,7 +403,8 @@ EXAMPLES = r"""
             policy:
               admin_state: true
               access_vlan: 100
-    deploy: false
+    config_actions:
+      deploy: false
     state: merged
 """
 
@@ -405,7 +420,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessInterfaceModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import EthernetAccessInterfaceOrchestrator
@@ -551,9 +566,7 @@ def main() -> None:
     """
     argument_spec = nd_argument_spec()
     argument_spec.update(EthernetAccessInterfaceModel.get_argument_spec())
-    argument_spec.update(
-        deploy=dict(type="bool", default=True),
-    )
+    argument_spec.update(config_actions_spec(include=("deploy",)))
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -587,13 +600,15 @@ def main() -> None:
         # visible to Pylance and validated at runtime.
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
-        nd_state_machine.model_orchestrator.deploy = module.params["deploy"]
+        config_actions = module.params.get("config_actions") or {}
+        deploy = config_actions.get("deploy", False)
+        nd_state_machine.model_orchestrator.deploy = deploy
 
         module_log.debug(
             "manage_state begin state=%s check_mode=%s deploy=%s",
             module.params.get("state"),
             module.check_mode,
-            module.params["deploy"],
+            deploy,
         )
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")

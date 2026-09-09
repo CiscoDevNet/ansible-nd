@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
-from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS, RESOURCE_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS, RESOURCE_CONFIG_ACTIONS, SWITCH_CONFIG_ACTIONS
 
 
 def test_config_actions_parser_00000() -> None:
@@ -166,3 +166,48 @@ def test_config_actions_parser_00070() -> None:
             policy=RESOURCE_CONFIG_ACTIONS,
             state="gathered",
         )
+
+
+def test_config_actions_parser_00080() -> None:
+    """
+    # Summary
+
+    Verify type-only config_actions cannot inherit write defaults in gathered state.
+
+    ## Raises
+
+    None
+    """
+    actions = parse_config_actions(
+        params={"config_actions": {"save": True, "deploy": True, "type": "switch"}},
+        raw_args={"config_actions": {"type": "switch"}},
+        policy=SWITCH_CONFIG_ACTIONS,
+        state="gathered",
+    )
+    assert actions.provided is True
+    assert actions.explicit_options == frozenset({"type"})
+    assert actions.save is False
+    assert actions.deploy is False
+    assert actions.type == "switch"
+
+
+def test_config_actions_parser_00090() -> None:
+    """
+    # Summary
+
+    Verify item-level deploy is rejected in gathered state.
+
+    ## Raises
+
+    None
+    """
+    params = {
+        "config_actions": {"deploy": True, "type": "resource"},
+        "config": [{"name": "BLUE", "deploy": True}],
+    }
+    raw_args = {
+        "config_actions": {"type": "resource"},
+        "config": [{"name": "BLUE", "deploy": True}],
+    }
+    with pytest.raises(ValueError, match=r"config\[\]\.deploy is not allowed for state='gathered'"):
+        parse_config_actions(params=params, raw_args=raw_args, policy=RESOURCE_CONFIG_ACTIONS, state="gathered")

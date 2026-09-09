@@ -10,6 +10,7 @@ Common config action execution controller.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.backend import ConfigActionsBackend
@@ -54,7 +55,9 @@ class ConfigActionsController:
 
         ## Raises
 
-        Exception
+        ### Exception
+
+        - Raised by backend save or deploy operations before the controller records the failure result.
         """
         normalized_context = self._deduplicated_context(context)
         targets = self._targets(normalized_context)
@@ -77,7 +80,7 @@ class ConfigActionsController:
                 targets=targets,
             )
 
-        if not actions.save and not actions.deploy:
+        if not actions.save and not actions.deploy_requested():
             return ConfigActionsResult(
                 requested=actions,
                 effective=actions,
@@ -85,6 +88,8 @@ class ConfigActionsController:
                 reason="actions_disabled",
                 targets=targets,
             )
+
+        self._validate_scoped_targets(actions, normalized_context)
 
         if normalized_context.check_mode:
             planned_steps = self._planned_steps(actions, normalized_context)
@@ -99,19 +104,20 @@ class ConfigActionsController:
 
         steps: list[ConfigActionStepResult] = []
         for fabric_name in normalized_context.fabric_names:
+            fabric_context = self._context_for_fabric(normalized_context, fabric_name)
             if actions.save:
                 try:
-                    response = self.backend.save(normalized_context, fabric_name)
+                    response = self.backend.save(fabric_context, fabric_name)
                     steps.append(ConfigActionStepResult(action="save", status="completed", target=fabric_name, response=response))
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    steps.append(ConfigActionStepResult(action="save", status="failed", target=fabric_name, error=str(exc)))
+                    steps.append(self._failed_step_from_exception(action="save", target=fabric_name, exc=exc))
                     return self._result(actions, targets, steps)
 
-            if actions.deploy:
+            if actions.deploy_requested():
                 try:
-                    steps.append(self._deploy(actions, normalized_context, fabric_name))
+                    steps.append(self._deploy(actions, fabric_context, fabric_name))
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    steps.append(ConfigActionStepResult(action="deploy", scope=actions.type, status="failed", target=fabric_name, error=str(exc)))
+                    steps.append(self._failed_step_from_exception(action="deploy", target=fabric_name, exc=exc, scope=actions.type))
                     return self._result(actions, targets, steps)
 
         return self._result(actions, targets, steps)
@@ -124,7 +130,9 @@ class ConfigActionsController:
 
         ## Raises
 
-        Exception
+        ### Exception
+
+        - Raised by backend deploy operations when the controller requests a supported deploy scope.
         """
         if actions.type == "global":
             response = self.backend.deploy_global(context, fabric_name)
@@ -142,6 +150,30 @@ class ConfigActionsController:
 
         return ConfigActionStepResult(action="deploy", scope=actions.type, status="skipped", target=fabric_name, error="unsupported_type")
 
+    @staticmethod
+    def _failed_step_from_exception(action: str, target: str, exc: Exception, scope: str | None = None) -> ConfigActionStepResult:
+        """
+        # Summary
+
+        Build a failed action step while preserving structured exception details.
+
+        ## Raises
+
+        None
+        """
+        return ConfigActionStepResult(
+            action=action,
+            scope=scope,
+            status="failed",
+            target=target,
+            error=getattr(exc, "msg", str(exc)),
+            error_type=exc.__class__.__name__,
+            http_status=getattr(exc, "status", None),
+            request_payload=getattr(exc, "request_payload", None),
+            response_payload=getattr(exc, "response_payload", None),
+            raw=getattr(exc, "raw", None),
+        )
+
     def _planned_steps(self, actions: ConfigActions, context: ConfigActionsContext) -> tuple[ConfigActionStepResult, ...]:
         """
         # Summary
@@ -154,12 +186,13 @@ class ConfigActionsController:
         """
         steps: list[ConfigActionStepResult] = []
         for fabric_name in context.fabric_names:
+            fabric_context = self._context_for_fabric(context, fabric_name)
             if actions.save:
                 steps.append(ConfigActionStepResult(action="save", status="planned", target=fabric_name))
-            if actions.deploy:
-                if actions.type == "switch" and not context.switch_ids:
+            if actions.deploy_requested():
+                if actions.type == "switch" and not fabric_context.switch_ids:
                     steps.append(ConfigActionStepResult(action="deploy", status="skipped", scope="switch", target=fabric_name, error="no_targets"))
-                elif actions.type == "resource" and not context.resources:
+                elif actions.type == "resource" and not fabric_context.resources:
                     steps.append(ConfigActionStepResult(action="deploy", status="skipped", scope="resource", target=fabric_name, error="no_targets"))
                 else:
                     steps.append(ConfigActionStepResult(action="deploy", status="planned", scope=actions.type, target=fabric_name))
@@ -181,6 +214,46 @@ class ConfigActionsController:
             fabric_names=ConfigActionsController._dedupe(context.fabric_names),
             switch_ids=ConfigActionsController._dedupe(context.switch_ids),
             resources=ConfigActionsController._dedupe(context.resources),
+            switch_ids_by_fabric=ConfigActionsController._dedupe_target_map(context.switch_ids_by_fabric),
+            resources_by_fabric=ConfigActionsController._dedupe_target_map(context.resources_by_fabric),
+        )
+
+    @staticmethod
+    def _validate_scoped_targets(actions: ConfigActions, context: ConfigActionsContext) -> None:
+        """
+        # Summary
+
+        Reject ambiguous flat scoped targets for multi-fabric deploy requests.
+
+        ## Raises
+
+        ### ValueError
+
+        - If switch or resource deploy targets cannot be associated with one fabric.
+        """
+        if len(context.fabric_names) <= 1 or not actions.deploy_requested():
+            return
+        if actions.type == "switch" and context.switch_ids:
+            raise ValueError("switch deploy with multiple fabrics requires switch_ids_by_fabric instead of flat switch_ids.")
+        if actions.type == "resource" and context.resources:
+            raise ValueError("resource deploy with multiple fabrics requires resources_by_fabric instead of flat resources.")
+
+    @staticmethod
+    def _context_for_fabric(context: ConfigActionsContext, fabric_name: str) -> ConfigActionsContext:
+        """
+        # Summary
+
+        Return a single-fabric context with targets scoped to `fabric_name`.
+
+        ## Raises
+
+        None
+        """
+        return replace(
+            context,
+            fabric_names=(fabric_name,),
+            switch_ids=tuple(context.switch_ids_by_fabric.get(fabric_name, context.switch_ids)),
+            resources=tuple(context.resources_by_fabric.get(fabric_name, context.resources)),
         )
 
     @staticmethod
@@ -197,6 +270,21 @@ class ConfigActionsController:
         return tuple(dict.fromkeys(values))
 
     @staticmethod
+    def _dedupe_target_map(targets_by_fabric: object) -> dict[str, tuple[str, ...]]:
+        """
+        # Summary
+
+        Deduplicate fabric-keyed target values while preserving order.
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(targets_by_fabric, dict):
+            return {}
+        return {fabric_name: ConfigActionsController._dedupe(tuple(targets)) for fabric_name, targets in targets_by_fabric.items()}
+
+    @staticmethod
     def _targets(context: ConfigActionsContext) -> dict[str, tuple[str, ...]]:
         """
         # Summary
@@ -209,9 +297,25 @@ class ConfigActionsController:
         """
         return {
             "fabrics": context.fabric_names,
-            "switches": context.switch_ids,
-            "resources": context.resources,
+            "switches": ConfigActionsController._combined_targets(context.switch_ids, context.switch_ids_by_fabric),
+            "resources": ConfigActionsController._combined_targets(context.resources, context.resources_by_fabric),
         }
+
+    @staticmethod
+    def _combined_targets(flat_targets: tuple[str, ...], targets_by_fabric: Mapping[str, Sequence[str]]) -> tuple[str, ...]:
+        """
+        # Summary
+
+        Return flattened target output from flat and fabric-keyed target inputs.
+
+        ## Raises
+
+        None
+        """
+        combined = list(flat_targets)
+        for targets in targets_by_fabric.values():
+            combined.extend(targets)
+        return ConfigActionsController._dedupe(tuple(combined))
 
     @staticmethod
     def _result(actions: ConfigActions, targets: dict[str, tuple[str, ...]], steps: list[ConfigActionStepResult]) -> ConfigActionsResult:
