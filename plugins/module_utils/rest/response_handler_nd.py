@@ -18,9 +18,14 @@ to `NdV1Strategy` (ND 4.2+):
 - Success: 200, 201, 202, 204, 207
 - Not Found: 404 (treated as success for GET)
 - Error: 405, 409
+- Terminal 4xx (not retryable): every 4xx except the transient codes 408/421/425/429 (all verbs) and 409 (GET only)
 
 If ND API v2 uses different codes, inject a new strategy via the
 `validation_strategy` property rather than modifying this class.
+
+Terminal-4xx classification is an optional strategy capability (`TerminalClientErrorPolicy`): a strategy that
+implements only the `ResponseValidationStrategy` members is still accepted, and every non-success 4xx it
+reports stays retryable (the pre-#502 behavior).
 
 ### Response Format
 
@@ -170,6 +175,35 @@ class ResponseHandler:
         else:
             self._handle_post_put_delete_response()
 
+    def _is_terminal_client_error(self, return_code: int) -> bool:
+        """
+        # Summary
+
+        Ask the injected strategy whether `return_code` is a terminal (not retryable) 4xx for the current verb, feature-detecting the capability.
+
+        ## Description
+
+        Terminal-4xx classification is an optional strategy capability (`TerminalClientErrorPolicy`), not part of the `ResponseValidationStrategy`
+        contract enforced at assignment. A strategy written against the original protocol has no `is_terminal_client_error`; for such a strategy
+        this returns False so the caller keeps the historical behavior (every non-success 4xx retryable) rather than terminalizing on its behalf.
+
+        ## Parameters
+
+        - return_code: HTTP status code of the current response
+
+        ## Returns
+
+        - True if the strategy classifies `return_code` as terminal for `self.verb`, False if it is transient or the strategy cannot classify it
+
+        ## Raises
+
+        None
+        """
+        classify = getattr(self._strategy, "is_terminal_client_error", None)
+        if classify is None:
+            return False
+        return bool(classify(return_code, self.verb))
+
     def _handle_get_response(self) -> None:
         """
         # Summary
@@ -183,22 +217,35 @@ class ResponseHandler:
             -   success:
                     -   True if RETURN_CODE in (200, 201, 202, 204, 207, 404)
                     -   False otherwise (error status codes)
+            -   retryable:
+                    -   False when the request succeeded, or when it failed with a 4xx code the injected strategy
+                        classifies as terminal for GET (the request reached the application and was rejected; an
+                        identical replay cannot succeed)
+                    -   True when it failed with any other code: 5xx (potentially transient, and GET retries also
+                        serve eventual-consistency polling) or a transient 4xx per the strategy (`NdV1Strategy`:
+                        408/421/425/429 for every verb, plus 409 for GET — documented on safe GETs where the
+                        conflict can clear on its own), or any 4xx when the strategy does not implement
+                        `TerminalClientErrorPolicy`
         """
         result = {}
-        return_code = self.response.get("RETURN_CODE")
+        # The response setter guarantees RETURN_CODE is present; the default only narrows the type for mypy.
+        return_code = self.response.get("RETURN_CODE", -1)
 
         # 404 Not Found - resource doesn't exist, but request was successful
         if self._strategy.is_not_found(return_code):
             result["found"] = False
             result["success"] = True
+            result["retryable"] = False
         # Success codes with no embedded error - resource found
         elif self._strategy.is_success(self.response):
             result["found"] = True
             result["success"] = True
+            result["retryable"] = False
         # Error codes - request failed
         else:
             result["found"] = False
             result["success"] = False
+            result["retryable"] = not self._is_terminal_client_error(return_code)
 
         self.result = copy.copy(result)
 
@@ -219,8 +266,12 @@ class ResponseHandler:
             -   `retryable`:
                 -   False when the request succeeded, or when it failed with a success-class RETURN_CODE (the application
                     definitively rejected the request, e.g. a Multi-Status per-item failure — replaying the identical
-                    payload cannot succeed, so `RestSend` must not retry)
-                -   True when the request failed with a non-success RETURN_CODE (e.g. 5xx — potentially transient)
+                    payload cannot succeed, so `RestSend` must not retry), or when it failed with a 4xx code the injected
+                    strategy classifies as terminal for the verb (the request reached the application and was rejected;
+                    same reasoning — see issue #457)
+                -   True when the request failed with any other non-success RETURN_CODE: 5xx (potentially transient),
+                    a transient 4xx per the strategy (`NdV1Strategy`: 408/421/425/429), or any 4xx when the strategy
+                    does not implement `TerminalClientErrorPolicy`
 
         ## Raises
 
@@ -237,12 +288,14 @@ class ResponseHandler:
             result["retryable"] = False
         else:
             # A failure on a success-class RETURN_CODE is an application-level rejection
-            # (embedded error or per-item failure): deterministic, so not retryable.
-            # A failure on a non-success RETURN_CODE keeps the historical retry behavior.
+            # (embedded error or per-item failure): deterministic, so not retryable. A 4xx the
+            # strategy classifies as terminal for the verb is equally deterministic — the
+            # application rejected the request (issue #457). Any other non-success RETURN_CODE
+            # keeps the historical retry behavior.
             return_code = self.response.get("RETURN_CODE", -1)
             result["success"] = False
             result["changed"] = self._strategy.is_changed_on_failure(self.response)
-            result["retryable"] = return_code not in self._strategy.success_codes
+            result["retryable"] = return_code not in self._strategy.success_codes and not self._is_terminal_client_error(return_code)
 
         self.result = copy.copy(result)
 

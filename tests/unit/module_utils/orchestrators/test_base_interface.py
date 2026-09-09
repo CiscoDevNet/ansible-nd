@@ -680,6 +680,172 @@ def test_base_interface_00630() -> None:
 
 
 # =============================================================================
+# Test: deploy_accepted_mutations
+# =============================================================================
+
+
+def test_base_interface_00640() -> None:
+    """
+    # Summary
+
+    Verify `deploy_accepted_mutations` deploys only the queued pairs whose mutation was already accepted, excluding pairs still
+    present in `_pending_removes` (their removal intent never reached the controller), and removes the deployed pairs from
+    `_pending_deploys` while leaving the delete-queued pair and the remove queue untouched.
+
+    ## Test
+
+    - `deploy` is enabled (it defaults to False)
+    - Two mutation-backed pairs are queued for deploy; a third pair is queued for BOTH deploy and remove (delete path)
+    - POST is issued to `/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy` with only the two mutation-backed pairs
+    - The returned list names the two deployed pairs
+    - `_pending_deploys` retains only the delete-queued pair; `_pending_removes` is untouched
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    - NDBaseInterfaceOrchestrator._deploy_interfaces()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    instance._queue_deploy("loopback10", "FDO12345ABC")
+    instance._queue_deploy("loopback20", "FDO12345ABD")
+    instance._queue_remove("loopback30", "FDO12345ABC")
+    instance._queue_deploy("loopback30", "FDO12345ABC")
+
+    with does_not_raise():
+        result = instance.deploy_accepted_mutations()
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy"
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    body = rest_send.committed_payload
+    assert body == {
+        "interfaces": [
+            {"interfaceName": "loopback10", "switchId": "FDO12345ABC"},
+            {"interfaceName": "loopback20", "switchId": "FDO12345ABD"},
+        ]
+    }
+    assert result == [("loopback10", "FDO12345ABC"), ("loopback20", "FDO12345ABD")]
+    assert instance._pending_deploys == [("loopback30", "FDO12345ABC")]
+    assert instance._pending_removes == [("loopback30", "FDO12345ABC")]
+
+
+def test_base_interface_00650() -> None:
+    """
+    # Summary
+
+    Verify `deploy_accepted_mutations` returns an empty list without any API call when `deploy` is False, even with
+    mutation-backed pairs queued. Staged intent is the documented contract for `deploy: false`, so the failure path must not
+    deploy either.
+
+    ## Test
+
+    - `deploy` is False (the default)
+    - One mutation-backed pair is queued
+    - No API call is made (the response generator is never consulted)
+    - The returned list is empty and the queue is untouched
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance._queue_deploy("loopback10", "FDO12345ABC")
+
+    with does_not_raise():
+        result = instance.deploy_accepted_mutations()
+
+    assert result == []
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
+def test_base_interface_00660() -> None:
+    """
+    # Summary
+
+    Verify `deploy_accepted_mutations` returns an empty list without any API call when every queued deploy pair is also queued
+    for removal (delete path only): no removal intent was sent, so there is nothing accepted to finalize.
+
+    ## Test
+
+    - `deploy` is enabled
+    - One pair is queued for BOTH deploy and remove
+    - No API call is made
+    - The returned list is empty and both queues are untouched
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    instance._queue_remove("loopback30", "FDO12345ABC")
+    instance._queue_deploy("loopback30", "FDO12345ABC")
+
+    with does_not_raise():
+        result = instance.deploy_accepted_mutations()
+
+    assert result == []
+    assert instance._pending_deploys == [("loopback30", "FDO12345ABC")]
+    assert instance._pending_removes == [("loopback30", "FDO12345ABC")]
+
+
+def test_base_interface_00670() -> None:
+    """
+    # Summary
+
+    Verify `deploy_accepted_mutations` wraps an API failure in `RuntimeError` matching `Failure-path deploy failed` and does
+    NOT clear the queue.
+
+    ## Test
+
+    - `deploy` is enabled
+    - One mutation-backed pair is queued
+    - POST returns 500
+    - `RuntimeError` matches `Failure-path deploy failed`
+    - `_pending_deploys` still contains the original entry
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    instance._queue_deploy("loopback10", "FDO12345ABC")
+
+    match = r"Failure-path deploy failed"
+    with pytest.raises(RuntimeError, match=match):
+        instance.deploy_accepted_mutations()
+
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
+# =============================================================================
 # Test: remove_pending
 # =============================================================================
 
@@ -1270,3 +1436,137 @@ def test_base_interface_00960() -> None:
 
     with pytest.raises(RuntimeError, match=r"without a policy"):
         instance.preflight_create([_iface_model("192.168.12.151", "loopback100", config_data=False)])
+
+
+# =============================================================================
+# Test: preflight resolves switches even when capability preflight is opted out (PR #550 review)
+# =============================================================================
+
+
+def test_base_interface_00970() -> None:
+    """
+    # Summary
+
+    Verify `preflight` resolves every target `switch_ip` even on an orchestrator that opts OUT of the capability preflight
+    (`interface_type == ""`), so a `--check` run fails on an unknown switch exactly like a normal run would inside a mutation.
+
+    ## Test
+
+    - `_StubInterfaceOrchestrator` leaves `interface_type` as `""`
+    - Switches inventory contains only `192.168.12.151`; `preflight` receives one known and one unknown IP
+    - `RuntimeError` names the unknown IP; no capability GET is attempted (single fixture)
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator._require_resolvable_switches()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    match = r"Cannot resolve switch_ip to switchId in fabric 'fabric_1' for: 10\.1\.1\.99\."
+    with pytest.raises(RuntimeError, match=match):
+        instance.preflight([SimpleNamespace(switch_ip="192.168.12.151"), SimpleNamespace(switch_ip="10.1.1.99")])
+
+
+def test_base_interface_00980() -> None:
+    """
+    # Summary
+
+    Verify `preflight` on an opted-out orchestrator passes when every `switch_ip` resolves, and still skips the capability
+    endpoint (the switches-list fetch is the only request).
+
+    ## Test
+
+    - `_StubInterfaceOrchestrator` leaves `interface_type` as `""`
+    - Switches inventory contains `192.168.12.151`; `preflight` receives that IP twice (deduplicated resolution)
+    - No exception; only the switches-list fixture is consumed
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator._require_resolvable_switches()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.preflight([SimpleNamespace(switch_ip="192.168.12.151"), SimpleNamespace(switch_ip="192.168.12.151")])
+    assert instance._require_resolvable_switches([SimpleNamespace(switch_ip="192.168.12.151")]) == {"FDO12345ABC"}
+
+
+@pytest.mark.parametrize("deploy", [True, False])
+def test_base_interface_00990(deploy: bool) -> None:
+    """
+    # Summary
+
+    Verify `apply_config_actions` sets `deploy` from an explicit `config_actions.deploy` and returns the resolved value.
+
+    ## Test
+
+    - `params["config_actions"]["deploy"]` is set explicitly
+    - `apply_config_actions(params)` returns that value
+    - `instance.deploy` equals that value
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.apply_config_actions()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.apply_config_actions({"config_actions": {"deploy": deploy}})
+
+    assert result is deploy
+    assert instance.deploy is deploy
+
+
+@pytest.mark.parametrize("params", [{}, {"config_actions": None}, {"config_actions": {}}])
+def test_base_interface_01000(params: dict) -> None:
+    """
+    # Summary
+
+    Verify `apply_config_actions` defaults `deploy` to `False` (deployment is opt-in) when `config_actions` is absent, `None`, or empty.
+
+    ## Test
+
+    - `config_actions` is omitted, `None`, or `{}`
+    - `apply_config_actions(params)` returns `False`
+    - `instance.deploy` is `False`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.apply_config_actions()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True  # prove the helper actively resets rather than relying on the class default
+
+    with does_not_raise():
+        result = instance.apply_config_actions(params)
+
+    assert result is False
+    assert instance.deploy is False

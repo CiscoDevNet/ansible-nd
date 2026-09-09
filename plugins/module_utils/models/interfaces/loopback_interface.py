@@ -17,11 +17,16 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
     - `interface_type` (hardcoded: "loopback")
     - `config_data` -> `LoopbackConfigDataModel`
         - `mode` (hardcoded: "managed")
-        - `network_os` -> `LoopbackNetworkOSModel`
-            - `network_os_type` (hardcoded: "nx-os")
-            - `policy` -> `LoopbackPolicyModel`
-                - `admin_state`, `ip`, `ipv6`, `vrf`, etc. (`policy_type` is hardcoded to "loopback";
-                  `ipfmLoopback` and `userDefined` policy types will get dedicated modules)
+        - `network_os` -> `NexusLoopbackNetworkOSModel | XeLoopbackNetworkOSModel` (outer discriminated union on `network_os_type`)
+            - `NexusLoopbackNetworkOSModel` (`network_os_type: "nx-os"`)
+                - `policy` -> `NexusLoopbackPolicyModel | IpfmLoopbackPolicyModel | MplsLoopbackPolicyModel` (`policy_type` discriminator)
+                    - `admin_state`, `ip`, `ipv6`, `vrf`, etc. (`ipfmLoopback` and `mplsLoopback` policy types get dedicated
+                      models sharing `NexusLoopbackPolicyBase`)
+            - `XeLoopbackNetworkOSModel` (`network_os_type: "ios-xe"`)
+                - `policy` -> `XeLoopbackPolicyModel | XeLoopbackShutNoshutPolicyModel | XeUnderlayLoopbackPolicyModel |
+                  XeInternalLoopbackPolicyModel | CsrLoopbackPolicyModel | Csr1kvLoopbackPolicyModel` (`policy_type` discriminator)
+                    - Each branch declares its own fields on `LoopbackPolicyStrictBase` (write-strict / read-tolerant; no NX-OS
+                      fields shared)
 """
 
 from __future__ import annotations
@@ -29,19 +34,98 @@ from __future__ import annotations
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
     Field,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv6CIDR
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv4HostStrict, IPv6Host
 
 
-class LoopbackPolicyModel(NDNestedModel):
+class LoopbackPolicyStrictBase(NDNestedModel):
     """
     # Summary
 
-    Policy fields for a loopback interface. Maps directly to the `configData.networkOS.policy` object in the ND API.
+    Write-strict / read-tolerant base for every managed loopback policy branch (NX-OS and IOS-XE). Sets `extra="forbid"` so fields belonging
+    to a different `policy_type` are rejected, strips `None`-valued keys first so unset flat-argspec options are not rejected, and declares
+    `admin_state` — the only field common to all loopback templates on both network OS types.
+
+    ## Raises
+
+    None
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 echoes schema-declared template defaults for every field the user never set; the reverse pass of
+    # `get_diff` normalizes existing-side matches to absent so replaced/overridden removal detection (issue #410)
+    # stays idempotent against default echoes. `adminState: true` is the one default shared by all nine loopback
+    # templates (nd-openapi `int*LoopbackTemplate`, `iosXeInt*LoopbackTemplate`, `csr*LoopbackTemplate`), so it lives
+    # here; templates declaring no other default for a field their model exposes (`iosXeLoopback`,
+    # `iosXeLoopbackShutNoshut`, `iosXeUnderlayLoopback`, `csrLoopback`, `csr1kvLoopback`) inherit this table as-is.
+    # A ClassVar override REPLACES this table rather than merging with it, so per-policy tables spread it back in.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+    }
+
+    admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_none_valued_keys(cls, data, info):
+        """
+        # Summary
+
+        Drop `None`-valued UNDECLARED keys before validation so unset flat-argspec options (wrong-branch fields arriving as
+        `None`) do not trip `extra="forbid"`. Declared keys are always kept, `None` or not: a declared `None` never trips
+        `forbid`, and dropping declared keys corrupts assignment-revalidation - with `validate_assignment=True`, every
+        `setattr` (e.g. inside `NDBaseModel.merge()`) re-runs this validator over the model's full `__dict__`, and any
+        declared field dropped here vanishes from the rebuilt `__dict__`, making the next `getattr` raise
+        `AttributeError` mid-merge (found live by the nd_interface_ethernet_routed integration run, 2026-07-27).
+
+        On the read path (validation `context={"mode": "response"}`, set by `NDBaseModel.from_response` on the interface
+        model and on any policy model read directly), also drop keys not declared on this model regardless of value, so
+        ND-injected read-only keys (e.g. `linkStateRoutingTag`) do not trip `extra="forbid"` while write-side input stays
+        strict.
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(data, dict):
+            return data
+        allowed = set(cls.model_fields) | {field.alias for field in cls.model_fields.values() if field.alias}
+        data = {key: value for key, value in data.items() if value is not None or key in allowed}
+        if info.context and info.context.get("mode") == "response":
+            data = {key: value for key, value in data.items() if key in allowed}
+        return data
+
+
+class NexusLoopbackPolicyBase(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Shared policy fields common to every managed NX-OS loopback template. Inherits write-strict / read-tolerant behavior and
+    `admin_state` from `LoopbackPolicyStrictBase`.
+
+    ## Raises
+
+    None
+    """
+
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+
+
+class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
+    """
+    # Summary
+
+    Policy fields for the NX-OS `loopback` template. Maps to `configData.networkOS.policy` where `policyType == "loopback"`.
 
     ## Raises
 
@@ -49,28 +133,20 @@ class LoopbackPolicyModel(NDNestedModel):
     """
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
-    # ND 4.2.1 `int_loopback` template defaults (schema-sourced via nd-openapi `intLoopbackTemplate`). ND echoes these
-    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
-    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
-    # Values must be in the model's DUMPED form: the schema declares routeMapTag as integer 12345, but
-    # `coerce_route_map_tag` stores it as a string (ND 4.2.1 GET-side type drift), so the table holds "12345".
+    # ND 4.2.1 `int_loopback` template defaults (schema-sourced via nd-openapi `intLoopbackTemplate`). Values must be in
+    # the model's DUMPED form: the schema declares routeMapTag as integer 12345, but `coerce_route_map_tag` stores it as
+    # a string (ND 4.2.1 GET-side type drift), so the table holds "12345".
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {
-        "adminState": True,
+        **LoopbackPolicyStrictBase.reverse_diff_defaults,
         "routeMapTag": "12345",
     }
 
-    admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
-    ipv6: IPv6CIDR = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
+    policy_type: Literal["loopback"] = Field(alias="policyType", description="Loopback policy template discriminator")
+    ipv6: IPv6Host = Field(
+        default=None, alias="ipv6", description="Loopback IPv6 address (bare host form, e.g. 2001:db8::1; CIDR input is accepted and normalized)"
+    )
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
     route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
-    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    policy_type: Literal["loopback"] = Field(
-        default="loopback", alias="policyType", frozen=True, description="Loopback policy template (hardcoded for this module)"
-    )
-
-    # --- Validators ---
 
     # TODO(4.2.1): Remove coerce_route_map_tag once GET-side type drift is fixed.
     # ND 4.2.1 returns `routeMapTag` as an integer even though the template defines it as a string.
@@ -92,19 +168,245 @@ class LoopbackPolicyModel(NDNestedModel):
         return str(value)
 
 
-class LoopbackNetworkOSModel(NDNestedModel):
+class SecondaryIpModel(NDNestedModel):
     """
     # Summary
 
-    Network OS container for a loopback interface. Maps to `configData.networkOS` in the ND API.
+    A secondary IPv4 address entry for an IPFM loopback (`secondaryIpList` item).
 
     ## Raises
 
     None
     """
 
-    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
-    policy: LoopbackPolicyModel | None = Field(default=None, alias="policy")
+    ip: IPv4HostStrict = Field(default=None, alias="ip", description="Secondary IPv4 address (bare host form; the mask length is set via `prefix`)")
+    prefix: int | None = Field(default=None, alias="prefix", ge=4, le=32, description="Subnet mask length (4-32)")
+
+
+class IpfmLoopbackPolicyModel(NexusLoopbackPolicyBase):
+    """
+    # Summary
+
+    Policy fields for the NX-OS `ipfmLoopback` template (IP Fabric for Media). Maps to `configData.networkOS.policy` where
+    `policyType == "ipfmLoopback"`.
+
+    ## Raises
+
+    None
+    """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_ipfm_loopback` template defaults (schema-sourced via nd-openapi `intIpfmLoopbackTemplate`), in the
+    # model's dumped form. `routingTag` and `secondaryIpList` declare no default.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        **LoopbackPolicyStrictBase.reverse_diff_defaults,
+        "advertiseLoopback": True,
+        "isServiceReflect": False,
+        "vrfInterface": "default",
+    }
+
+    policy_type: Literal["ipfmLoopback"] = Field(alias="policyType", description="IPFM loopback policy template discriminator")
+    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+    advertise_loopback: bool | None = Field(default=None, alias="advertiseLoopback", description="Advertise loopback via OSPF/IS-IS")
+    is_service_reflect: bool | None = Field(default=None, alias="isServiceReflect", description="Use loopback as service-reflect source")
+    routing_tag: str | None = Field(default=None, alias="routingTag", description="Routing tag associated with the interface IP")
+    secondary_ip_list: list[SecondaryIpModel] | None = Field(default=None, alias="secondaryIpList", description="Secondary IPv4 addresses")
+
+
+class MplsLoopbackPolicyModel(NexusLoopbackPolicyBase):
+    """
+    # Summary
+
+    Policy fields for the NX-OS `mplsLoopback` template. Maps to `configData.networkOS.policy` where
+    `policyType == "mplsLoopback"`. Note: `mplsLoopback` is lab-verified creatable but absent from the ND create-side
+    discriminator enum (spec drift); modelled per the template and wire.
+
+    ## Raises
+
+    None
+    """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_mpls_loopback` template defaults (schema-sourced via nd-openapi `intMplsLoopbackTemplate`), in the
+    # model's dumped form. `ospfAreaId` declares no default.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        **LoopbackPolicyStrictBase.reverse_diff_defaults,
+        "dciRoutingProtocol": "isis",
+        "dciRoutingTag": "MPLS_UNDERLAY",
+    }
+
+    policy_type: Literal["mplsLoopback"] = Field(alias="policyType", description="MPLS loopback policy template discriminator")
+    dci_routing_protocol: Literal["ospf", "isis"] | None = Field(default=None, alias="dciRoutingProtocol", description="DCI link-state routing protocol")
+    dci_routing_tag: str | None = Field(default=None, alias="dciRoutingTag", description="DCI routing tag")
+    ospf_area_id: str | None = Field(default=None, alias="ospfAreaId", min_length=1, max_length=15, description="OSPF area identifier")
+
+
+class XeLoopbackPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `iosXeLoopback` template (`ios_xe_int_loopback`). Maps to `configData.networkOS.policy` where
+    `policyType == "iosXeLoopback"`.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["iosXeLoopback"] = Field(alias="policyType", description="IOS-XE loopback policy template discriminator")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
+    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+
+
+class XeLoopbackShutNoshutPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `iosXeLoopbackShutNoshut` template (`ios_xe_int_loopback_admin_state`). The template carries only
+    `adminState`, inherited from `LoopbackPolicyStrictBase`.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["iosXeLoopbackShutNoshut"] = Field(alias="policyType", description="IOS-XE admin-state-only loopback policy template discriminator")
+
+
+class XeUnderlayLoopbackPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `iosXeUnderlayLoopback` template (`ios_xe_int_underlay_loopback`). Unlike NX-OS `underlayLoopback`
+    (system-provisioned, excluded), this policy type is in the XE create-side enum and therefore user-creatable.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["iosXeUnderlayLoopback"] = Field(alias="policyType", description="IOS-XE underlay loopback policy template discriminator")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
+    secondary_ip: IPv4Host = Field(
+        default=None,
+        alias="secondaryIp",
+        description="Secondary IPv4 address of the NVE interface loopback (bare host form; CIDR input is accepted and normalized)",
+    )
+
+
+class XeInternalLoopbackPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `iosXeInternalLoopback` template (`ios_xe_int_loopback_internal`). The ND 4.2.1 OpenAPI schema leaves
+    `ip` and `ipv6` as untyped strings for this template, but the ND template itself declares them `ipV4Address` / `ipV6Address` and the
+    controller rejects CIDR or non-address input with HTTP 400 (lab-verified 2026-08-27), so the model validates and normalizes both to
+    the bare host form like every other loopback policy branch.
+
+    ## Raises
+
+    None
+    """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 IOS-XE internal loopback template defaults (schema-sourced via nd-openapi `iosXeIntLoopbackInternalTemplate`);
+    # `enablePim` is the only field beyond `adminState` that declares one.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        **LoopbackPolicyStrictBase.reverse_diff_defaults,
+        "enablePim": False,
+    }
+
+    policy_type: Literal["iosXeInternalLoopback"] = Field(alias="policyType", description="IOS-XE internal loopback policy template discriminator")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
+    enable_pim: bool | None = Field(default=None, alias="enablePim", description="Enable PIM")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
+    ipv6: IPv6Host = Field(default=None, alias="ipv6", description="Loopback IPv6 address (bare host form; CIDR input is accepted and normalized)")
+    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+
+
+class CsrLoopbackPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `csrLoopback` template (`csr_int_loopback`). The ND 4.2.1 OpenAPI READ schema lists this
+    branch's discriminator as `csrIntLoopback`, but a live-lab probe (2026-07-18, ND 4.2.1, fabric ISN, switch WAN1) proved
+    the wire actually echoes the create-side `csrLoopback` on the intent-path GET as well. The model uses the single
+    wire-verified name; the drift is recorded in the bug-tracker vault.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["csrLoopback"] = Field(alias="policyType", description="CSR loopback policy template discriminator")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
+    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+
+
+class Csr1kvLoopbackPolicyModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `csr1kvLoopback` template (`csr1kv_loopback`). The template carries only `adminState` and `extraConfig`.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["csr1kvLoopback"] = Field(alias="policyType", description="CSR1kv loopback policy template discriminator")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+
+
+class NexusLoopbackNetworkOSModel(NDNestedModel):
+    """
+    # Summary
+
+    NX-OS branch of the network-OS container for a loopback interface. Selected from the outer union when `networkOSType == "nx-os"`.
+
+    ## Raises
+
+    None
+    """
+
+    # Not frozen: NDBaseModel.merge() assigns every explicitly-set field, and required fields are always
+    # explicitly set. The Literal constrains the value; same pattern as the policy_type discriminator.
+    network_os_type: Literal["nx-os"] = Field(alias="networkOSType", description="Network OS (platform) type discriminator; required by the ND API schema")
+    policy: NexusLoopbackPolicyModel | IpfmLoopbackPolicyModel | MplsLoopbackPolicyModel | None = Field(
+        default=None, alias="policy", discriminator="policy_type"
+    )
+
+
+class XeLoopbackNetworkOSModel(NDNestedModel):
+    """
+    # Summary
+
+    IOS-XE branch of the network-OS container for a loopback interface. Selected from the outer union when `networkOSType == "ios-xe"`.
+
+    ## Raises
+
+    None
+    """
+
+    # Not frozen: NDBaseModel.merge() assigns every explicitly-set field, and required fields are always
+    # explicitly set. The Literal constrains the value; same pattern as the policy_type discriminator.
+    network_os_type: Literal["ios-xe"] = Field(alias="networkOSType", description="Network OS (platform) type discriminator; required by the ND API schema")
+    policy: (
+        XeLoopbackPolicyModel
+        | XeLoopbackShutNoshutPolicyModel
+        | XeUnderlayLoopbackPolicyModel
+        | XeInternalLoopbackPolicyModel
+        | CsrLoopbackPolicyModel
+        | Csr1kvLoopbackPolicyModel
+        | None
+    ) = Field(default=None, alias="policy", discriminator="policy_type")
 
 
 class LoopbackConfigDataModel(NDNestedModel):
@@ -119,7 +421,7 @@ class LoopbackConfigDataModel(NDNestedModel):
     """
 
     mode: Literal["managed"] = Field(default="managed", alias="mode", frozen=True)
-    network_os: LoopbackNetworkOSModel = Field(alias="networkOS")
+    network_os: NexusLoopbackNetworkOSModel | XeLoopbackNetworkOSModel = Field(alias="networkOS", discriminator="network_os_type")
 
 
 class LoopbackInterfaceModel(NDBaseModel):
@@ -151,6 +453,22 @@ class LoopbackInterfaceModel(NDBaseModel):
     interface_name: str = Field(alias="interfaceName")
     interface_type: Literal["loopback"] = Field(default="loopback", alias="interfaceType", frozen=True)
     config_data: LoopbackConfigDataModel | None = Field(default=None, alias="configData")
+
+    @property
+    def policy_type(self) -> str | None:
+        """
+        # Summary
+
+        The `policy_type` discriminator from `config_data.network_os.policy`, or `None` when `config_data` or `policy` is
+        unset (e.g. a `state: deleted` identifier-only item).
+
+        ## Raises
+
+        None
+        """
+        if self.config_data is None or self.config_data.network_os.policy is None:
+            return None
+        return self.config_data.network_os.policy.policy_type
 
     @field_validator("interface_name", mode="before")
     @classmethod
@@ -196,16 +514,41 @@ class LoopbackInterfaceModel(NDBaseModel):
                             network_os=dict(
                                 type="dict",
                                 options=dict(
+                                    network_os_type=dict(type="str", required=True, choices=["nx-os", "ios-xe"]),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
+                                            policy_type=dict(
+                                                type="str",
+                                                required=True,
+                                                choices=[
+                                                    "loopback",
+                                                    "ipfmLoopback",
+                                                    "mplsLoopback",
+                                                    "iosXeLoopback",
+                                                    "iosXeLoopbackShutNoshut",
+                                                    "iosXeUnderlayLoopback",
+                                                    "iosXeInternalLoopback",
+                                                    "csrLoopback",
+                                                    "csr1kvLoopback",
+                                                ],
+                                            ),
                                             admin_state=dict(type="bool"),
                                             ip=dict(type="str"),
-                                            ipv6=dict(type="str"),
-                                            vrf=dict(type="str"),
-                                            route_map_tag=dict(type="str"),
                                             description=dict(type="str"),
                                             extra_config=dict(type="str"),
+                                            vrf=dict(type="str"),
+                                            ipv6=dict(type="str"),
+                                            route_map_tag=dict(type="str"),
+                                            advertise_loopback=dict(type="bool"),
+                                            is_service_reflect=dict(type="bool"),
+                                            routing_tag=dict(type="str"),
+                                            secondary_ip_list=dict(type="list", elements="dict", options=dict(ip=dict(type="str"), prefix=dict(type="int"))),
+                                            secondary_ip=dict(type="str"),
+                                            enable_pim=dict(type="bool"),
+                                            dci_routing_protocol=dict(type="str", choices=["ospf", "isis"]),
+                                            dci_routing_tag=dict(type="str"),
+                                            ospf_area_id=dict(type="str"),
                                         ),
                                     ),
                                 ),

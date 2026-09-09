@@ -160,12 +160,19 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         return
 
     def preflight_delete(self, model_instances: Sequence[ModelType]) -> None:
-        """Pre-delete safety hook executed in check and normal mode.
+        """
+        # Summary
 
-        This is distinct from the capability ``preflight`` hook: deletes do not
-        require switch capability validation, but an orchestrator may still need
-        local/controller-inventory validation before check mode predicts a safe
-        deletion (for example, detecting an ambiguous controller identity).
+        Pre-mutation hook invoked by `NDStateMachine` for `state: deleted` with the existing items about to be deleted —
+        before any delete API call, which is skipped in check mode — so subclasses can reject a delete during a dry-run
+        exactly as a normal run would (e.g. ethernet refuses to normalize a port-channel member, or links reject an
+        ambiguous controller identity). This is distinct from the capability `preflight` hook because deletion does not
+        require switch capability validation. Not invoked for the fabric-wide `overridden` delete set. Base implementation
+        is a no-op.
+
+        ## Raises
+
+        None
         """
         return
 
