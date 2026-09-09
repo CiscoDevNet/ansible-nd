@@ -82,9 +82,8 @@ def _shared_network_fields(defaults=True):
         multicast_group_address=dict(type="str"),
         ds_vni=dict(type="int"),
         netflow_enable=dict(type="bool", default=bool_default) if defaults else dict(type="bool"),
-        l2_netflow_monitor=dict(type="str"),
-        l3_netflow_monitor=dict(type="str"),
-        netflow_sampler=dict(type="str"),
+        vlan_netflow_monitor=dict(type="str"),
+        interface_netflow_monitor=dict(type="str"),
         gateway_on_border=dict(type="bool"),
     )
 
@@ -99,9 +98,8 @@ def _child_network_fields():
         trm_enable=dict(type="bool"),
         ipv6_trm=dict(type="bool"),
         netflow_enable=dict(type="bool"),
-        l2_netflow_monitor=dict(type="str"),
-        l3_netflow_monitor=dict(type="str"),
-        netflow_sampler=dict(type="str"),
+        vlan_netflow_monitor=dict(type="str"),
+        interface_netflow_monitor=dict(type="str"),
         gateway_on_border=dict(type="bool"),
     )
 

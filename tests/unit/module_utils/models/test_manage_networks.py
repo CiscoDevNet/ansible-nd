@@ -88,7 +88,6 @@ def test_manage_network_data_models_00100() -> None:
                 "netflow": True,
                 "l2NetflowMonitor": "L2_MON",
                 "l3NetflowMonitor": "L3_MON",
-                "netflowSampler": "NF_SAMPLER",
             },
         ),
     )
@@ -104,7 +103,6 @@ def test_manage_network_data_models_00100() -> None:
     assert payload["l3Data"]["mtu"] == 9216
     assert payload["l3Data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
     assert payload["l3Data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
-    assert payload["l3Data"]["fabricData"]["netflowSampler"] == "NF_SAMPLER"
 
 
 def test_manage_network_data_models_00105() -> None:

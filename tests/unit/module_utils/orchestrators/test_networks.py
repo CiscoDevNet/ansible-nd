@@ -1936,9 +1936,8 @@ def test_mcfg_parent_network_create_keeps_onemanage_netflow_monitor_fields():
                     "vrf_name": "VRF_GREEN",
                     "gateway_ipv4_address": "192.0.2.1/24",
                     "netflow_enable": True,
-                    "l2_netflow_monitor": "L2_MON",
-                    "l3_netflow_monitor": "L3_MON",
-                    "netflow_sampler": "NF_SAMPLER",
+                    "vlan_netflow_monitor": "L2_MON",
+                    "interface_netflow_monitor": "L3_MON",
                 }
             ]
         )[0]
@@ -1952,7 +1951,6 @@ def test_mcfg_parent_network_create_keeps_onemanage_netflow_monitor_fields():
     assert payload["l3Data"]["fabricData"]["netflow"] is True
     assert payload["l3Data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
     assert payload["l3Data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
-    assert payload["l3Data"]["fabricData"]["netflowSampler"] == "NF_SAMPLER"
 
 
 def test_mcfg_parent_network_update_uses_l2_onemanage_manage_schema_payload():
@@ -2164,7 +2162,7 @@ def test_mcfg_parent_network_query_normalizes_top_down_template_config():
             '{"segmentId":"901030","vlanId":"3130","vlanName":"BLUE_VLAN",'
             '"isLayer2Only":"true","rtBothAuto":"true","enableIR":"false",'
             '"ENABLE_NETFLOW":"true","l2NetflowMonitor":"L2_MON",'
-            '"l3NetflowMonitor":"L3_MON","netflowSampler":"NF_SAMPLER"}'
+            '"l3NetflowMonitor":"L3_MON"}'
         ),
     }
 
@@ -2185,7 +2183,6 @@ def test_mcfg_parent_network_query_normalizes_top_down_template_config():
     assert normalized["l3Data"]["fabricData"]["netflow"] is True
     assert normalized["l3Data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
     assert normalized["l3Data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
-    assert normalized["l3Data"]["fabricData"]["netflowSampler"] == "NF_SAMPLER"
 
 
 def test_mcfg_parent_network_query_infers_private_secondary_vlan_type_from_template_config():
@@ -3449,9 +3446,8 @@ def test_transform_l3_network_payload_uses_l3_data_fabric_data():
                 "gateway_ipv4_address": "192.0.2.1/24",
                 "trm_enable": True,
                 "netflow_enable": True,
-                "l2_netflow_monitor": "L2_MON",
-                "l3_netflow_monitor": "L3_MON",
-                "netflow_sampler": "NF_SAMPLER",
+                "vlan_netflow_monitor": "L2_MON",
+                "interface_netflow_monitor": "L3_MON",
             }
         ]
     )[0]
@@ -3463,7 +3459,6 @@ def test_transform_l3_network_payload_uses_l3_data_fabric_data():
     assert payload["l3_data"]["fabricData"]["netflow"] is True
     assert payload["l3_data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
     assert payload["l3_data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
-    assert payload["l3_data"]["fabricData"]["netflowSampler"] == "NF_SAMPLER"
 
 
 def test_transform_l3_network_payload_defaults_trm_flags_when_unset():
@@ -3482,3 +3477,42 @@ def test_transform_l3_network_payload_defaults_trm_flags_when_unset():
     assert payload["l3_data"]["fabricData"]["gatewayOnBorder"] is False
     assert payload["l3_data"]["fabricData"]["ipv4Trm"] is False
     assert payload["l3_data"]["fabricData"]["ipv6Trm"] is False
+
+
+def test_network_netflow_monitors_require_netflow_enable():
+    with pytest.raises(ValueError, match="netflow monitor fields require netflow_enable=true"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "BLUE_NET",
+                "layer": "layer3",
+                "vrf_name": "BLUE_VRF",
+                "vlan_netflow_monitor": "L2_MON",
+            }
+        )
+
+
+def test_network_interface_netflow_monitor_rejects_layer2_only():
+    with pytest.raises(ValueError, match="interface_netflow_monitor is not valid for layer2 networks"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "BLUE_NET",
+                "layer": "layer2",
+                "netflow_enable": True,
+                "interface_netflow_monitor": "L3_MON",
+            }
+        )
+
+
+def test_network_netflow_monitor_empty_strings_are_omitted():
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "BLUE_NET",
+            "layer": "layer3",
+            "vrf_name": "BLUE_VRF",
+            "l2NetflowMonitor": "",
+            "l3NetflowMonitor": "",
+        }
+    )
+
+    assert model.vlan_netflow_monitor is None
+    assert model.interface_netflow_monitor is None

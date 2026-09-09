@@ -22,6 +22,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
     DpuAffinity,
     MappingType,
     NetworkAttachmentMode,
+    NetworkLayer,
     NetworkType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.validators import (
@@ -182,9 +183,8 @@ class NetworkChildConfigModel(NDNestedModel):
     trm_enable: bool | None = Field(default=None, alias="trmEnable")
     ipv6_trm: bool | None = Field(default=None, alias="ipv6Trm")
     netflow_enable: bool | None = Field(default=None, alias="netflowEnable")
-    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
-    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
-    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
+    vlan_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    interface_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
     gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
 
     @model_validator(mode="before")
@@ -209,6 +209,37 @@ class NetworkChildConfigModel(NDNestedModel):
     @classmethod
     def _validate_igmp(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_igmp_version(v)
+
+    @field_validator("vlan_netflow_monitor", "interface_netflow_monitor", mode="before")
+    @classmethod
+    def _normalize_optional_text(cls, v: str | None) -> str | None:
+        if v == "":
+            return None
+        return v
+
+    @model_validator(mode="after")
+    def _check_child_netflow_rules(self):
+        self._validate_netflow_monitor_bindings(
+            netflow_enable=self.netflow_enable,
+            vlan_netflow_monitor=self.vlan_netflow_monitor,
+            interface_netflow_monitor=self.interface_netflow_monitor,
+        )
+        return self
+
+    @staticmethod
+    def _validate_netflow_monitor_bindings(
+        *,
+        netflow_enable: bool | None,
+        vlan_netflow_monitor: str | None,
+        interface_netflow_monitor: str | None,
+    ) -> None:
+        monitor_fields = {
+            "vlan_netflow_monitor": vlan_netflow_monitor,
+            "interface_netflow_monitor": interface_netflow_monitor,
+        }
+        configured = [field for field, value in monitor_fields.items() if value is not None]
+        if configured and netflow_enable is not True:
+            raise ValueError("netflow monitor fields require netflow_enable=true: " + ", ".join(configured))
 
 
 class NetworkConfigModel(NDBaseModel):
@@ -244,9 +275,8 @@ class NetworkConfigModel(NDBaseModel):
     trm_enable: bool | None = Field(default=None, alias="trmEnable")
     ipv6_trm: bool | None = Field(default=None, alias="ipv6Trm")
     netflow_enable: bool | None = Field(default=False, alias="netflowEnable")
-    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
-    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
-    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
+    vlan_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    interface_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
     gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
     network_template_name: str | None = Field(default=None, alias="networkTemplateName")
     network_extension_template_name: str | None = Field(default=None, alias="networkExtensionTemplateName")
@@ -364,6 +394,13 @@ class NetworkConfigModel(NDBaseModel):
     def _validate_igmp(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_igmp_version(v)
 
+    @field_validator("vlan_netflow_monitor", "interface_netflow_monitor", mode="before")
+    @classmethod
+    def _normalize_optional_text(cls, v: str | None) -> str | None:
+        if v == "":
+            return None
+        return v
+
     @model_validator(mode="after")
     def _check_cross_field_rules(self):
         network_type = self.network_type
@@ -375,9 +412,19 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
         if self.layer == "layer3" and not self.vrf_name:
             raise ValueError("vrf_name is required for layer3 networks")
+        self._check_netflow_rules()
         self._check_vlan_network_type_rules()
         self._check_attachment_interface_modes()
         return self
+
+    def _check_netflow_rules(self) -> None:
+        NetworkChildConfigModel._validate_netflow_monitor_bindings(
+            netflow_enable=self.netflow_enable,
+            vlan_netflow_monitor=self.vlan_netflow_monitor,
+            interface_netflow_monitor=self.interface_netflow_monitor,
+        )
+        if self.interface_netflow_monitor is not None and self.layer == NetworkLayer.LAYER2.value:
+            raise ValueError("interface_netflow_monitor is not valid for layer2 networks")
 
     def _check_vlan_network_type_rules(self) -> None:
         vlan_network_type = self.vlan_network_type or "normal"
@@ -409,9 +456,8 @@ class NetworkConfigModel(NDBaseModel):
             "trm_enable": None,
             "ipv6_trm": None,
             "netflow_enable": False,
-            "l2_netflow_monitor": None,
-            "l3_netflow_monitor": None,
-            "netflow_sampler": None,
+            "vlan_netflow_monitor": None,
+            "interface_netflow_monitor": None,
             "gateway_on_border": None,
             "x_connect": None,
             "ds_vni": None,
@@ -450,3 +496,12 @@ class NetworkParentConfigModel(NetworkConfigModel):
     """Parent-fabric network config with child overrides."""
 
     child_fabric_config: list[NetworkChildConfigModel] | None = Field(default=None, alias="childFabricConfig")
+
+    @model_validator(mode="after")
+    def _check_child_layer_rules(self):
+        if self.layer != NetworkLayer.LAYER2.value:
+            return self
+        invalid_children = [child.fabric_name for child in self.child_fabric_config or [] if child.interface_netflow_monitor is not None]
+        if invalid_children:
+            raise ValueError("child_fabric_config[].interface_netflow_monitor is not valid for layer2 networks: " + ", ".join(invalid_children))
+        return self

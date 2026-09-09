@@ -138,9 +138,8 @@ class VxlanL3FabricDataModel(NDNestedModel):
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion", ge=1, le=3)
     netflow: bool | None = Field(default=False, description="Enable netflow")
-    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
-    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
-    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
+    vlan_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    interface_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
     gateway_on_border: bool | None = Field(default=False, alias="gatewayOnBorder")
     ipv4_trm: bool | None = Field(default=False, alias="ipv4Trm")
     ipv6_trm: bool | None = Field(default=False, alias="ipv6Trm")
@@ -159,9 +158,8 @@ class DefaultL3FabricDataModel(NDNestedModel):
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion", ge=1, le=3)
     netflow: bool | None = Field(default=False, description="Enable netflow")
-    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
-    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
-    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
+    vlan_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    interface_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
     gateway_on_border: bool | None = Field(default=False, alias="gatewayOnBorder")
 
     @field_validator("igmp_version", mode="before")
@@ -249,7 +247,6 @@ class ClassicOrRoutedL3DataModel(NDNestedModel):
     ospf_authentication_key: str | None = Field(default=None, alias="ospfAuthenticationKey")
     ospf_passive_interface: bool | None = Field(default=True, alias="ospfPassiveInterface")
     ospfv3_passive_interface: bool | None = Field(default=True, alias="ospfv3PassiveInterface")
-    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
     gateway_ipv4_address: str | None = Field(default=None, alias="gatewayIpv4Address")
     active_primary_interface_ipv4: str | None = Field(default=None, alias="activePrimaryInterfaceIpv4")
     standby_backup_interface_ipv4: str | None = Field(default=None, alias="standbyBackupInterfaceIpv4")
@@ -268,8 +265,8 @@ class ClassicOrRoutedL3DataModel(NDNestedModel):
     virtual_mac_address: str | None = Field(default=None, alias="virtualMacAddress")
     vrrp_group: bool | None = Field(default=True, alias="vrrpGroup")
     netflow: bool | None = Field(default=False)
-    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
-    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
+    vlan_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    interface_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
 
     @field_validator(
         "gateway_ipv4_address",

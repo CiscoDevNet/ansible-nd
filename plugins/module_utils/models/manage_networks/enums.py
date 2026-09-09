@@ -68,7 +68,7 @@ class NetworkLayer(str, Enum):
     """Layer values used by network schemas."""
 
     LAYER2 = "layer2"
-    LAYER2_WITH_SECURITY_GROUP = "layer2WithSecurityGroup"
+    LAYER2_WITH_VRF = "layer2WithVrf"
     LAYER3 = "layer3"
 
     @classmethod

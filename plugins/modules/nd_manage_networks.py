@@ -15,7 +15,7 @@ description:
   - This module manages Network definitions, parent or standalone Network switch
     attachments, and optional deployment of pending Network changes.
   - Supported Network definition properties include identity, custom templates,
-    VLAN, gateway, PVLAN, TRM, netflow, and route targets.
+    VLAN, gateway, PVLAN, TRM, and netflow.
   - Automatically detects fabric type from the ND API and routes to the
     appropriate workflow without requiring extra user input.
   - For parent fabrics (MSD / MCFG), supports child-fabric coordination via the
@@ -71,7 +71,7 @@ options:
       layer:
         description: Network layer.
         type: str
-        choices: [ layer2, layer2WithSecurityGroup, layer3 ]
+        choices: [ layer2, layer2WithVrf, layer3 ]
       x_connect:
         description: Enable xConnect.
         type: bool
@@ -303,14 +303,16 @@ options:
         description: Enable netflow.
         type: bool
         default: false
-      l2_netflow_monitor:
-        description: Netflow monitor for L2 VLAN.
+      vlan_netflow_monitor:
+        description:
+          - VLAN netflow monitor name.
+          - Requires O(config[].netflow_enable=true).
         type: str
-      l3_netflow_monitor:
-        description: Netflow monitor for L3 VLAN.
-        type: str
-      netflow_sampler:
-        description: Netflow sampler name.
+      interface_netflow_monitor:
+        description:
+          - Interface netflow monitor name.
+          - Requires O(config[].netflow_enable=true).
+          - Not valid for Layer 2 Only Networks.
         type: str
       gateway_on_border:
         description: Enable gateway on border.
@@ -319,7 +321,7 @@ options:
         description:
           - Per-child-fabric override entries for MSD and MCFG parent fabrics.
           - Each entry targets a child member fabric and may override multicast,
-            DHCP, TRM, netflow, gateway, and route-target settings.
+            DHCP, TRM, netflow, and gateway settings.
           - Omitted fields inherit the parent Network setting.
           - C(attach), C(deploy), C(deploy_type), Network identity, VLAN,
             gateway, custom template fields, and PVLAN fields are not valid
@@ -367,14 +369,16 @@ options:
           netflow_enable:
             description: Enable netflow.
             type: bool
-          l2_netflow_monitor:
-            description: Netflow monitor for L2 VLAN.
+          vlan_netflow_monitor:
+            description:
+              - VLAN netflow monitor name.
+              - Requires O(config[].child_fabric_config[].netflow_enable=true).
             type: str
-          l3_netflow_monitor:
-            description: Netflow monitor for L3 VLAN.
-            type: str
-          netflow_sampler:
-            description: Netflow sampler name.
+          interface_netflow_monitor:
+            description:
+              - Interface netflow monitor name.
+              - Requires O(config[].child_fabric_config[].netflow_enable=true).
+              - Not valid for Layer 2 Only Networks.
             type: str
           gateway_on_border:
             description: Enable gateway on border.
