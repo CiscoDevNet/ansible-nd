@@ -170,8 +170,9 @@ class _FakeStateMachine:
     """
     # Summary
 
-    `NDStateMachine` stand-in: builds a `_RecordingOrchestrator` with one controller-accepted pair queued for deploy, then either
-    returns from `manage_state` or raises the configured exception to simulate a later operation failing.
+    `NDStateMachine` stand-in: builds a `_RecordingOrchestrator` with one controller-accepted pair queued for deploy, records final
+    result processing, then either returns from `manage_state` or raises the configured exception to simulate a later operation
+    failing.
 
     ## Raises
 
@@ -185,6 +186,7 @@ class _FakeStateMachine:
         self.model_orchestrator = _RecordingOrchestrator(rest_send=RestSend({"check_mode": False, "fabric_name": "fabric_1"}))
         self.model_orchestrator._queue_deploy(*ACCEPTED_PAIR)
         self.output = SimpleNamespace(format=lambda: {})
+        self.finalize_result_calls = 0
         type(self).last_instance = self
 
     def manage_state(self) -> None:
@@ -202,15 +204,19 @@ class _FakeStateMachine:
         if self.failure is not None:
             raise self.failure
 
+    def finalize_result(self) -> None:
+        """Record that the module reached its final result boundary."""
+        self.finalize_result_calls += 1
+
 
 def _run_main(
     monkeypatch: pytest.MonkeyPatch, *, config_actions: Any = OMITTED, check_mode: bool = False, failure: Exception | None = None
-) -> tuple[type[Exception], dict[str, Any], _RecordingOrchestrator]:
+) -> tuple[type[Exception], dict[str, Any], _RecordingOrchestrator, _FakeStateMachine]:
     """
     # Summary
 
-    Drive `main()` with the stand-ins and return the exit kind (`_ExitJson` or `_FailJson`), its keyword arguments, and the
-    orchestrator the module used.
+    Drive `main()` with the stand-ins and return the exit kind (`_ExitJson` or `_FailJson`), its keyword arguments, the
+    orchestrator, and the state machine the module used.
 
     ## Raises
 
@@ -231,7 +237,8 @@ def _run_main(
     with pytest.raises((_ExitJson, _FailJson)) as exc_info:
         module.main()
     assert _StateMachine.last_instance is not None
-    return type(exc_info.value), exc_info.value.args[0], _StateMachine.last_instance.model_orchestrator
+    state_machine = _StateMachine.last_instance
+    return type(exc_info.value), exc_info.value.args[0], state_machine.model_orchestrator, state_machine
 
 
 # =============================================================================
@@ -255,10 +262,11 @@ def test_nd_interface_ethernet_routed_00000(monkeypatch: pytest.MonkeyPatch) -> 
 
     - nd_interface_ethernet_routed.main()
     """
-    kind, kwargs, orchestrator = _run_main(monkeypatch)
+    kind, kwargs, orchestrator, state_machine = _run_main(monkeypatch)
 
     assert kind is _ExitJson
     assert kwargs == {}
+    assert state_machine.finalize_result_calls == 1
     assert orchestrator.deploy is False
     assert orchestrator._deployed == []
     assert orchestrator._pending_deploys == [ACCEPTED_PAIR]
@@ -281,9 +289,10 @@ def test_nd_interface_ethernet_routed_00010(monkeypatch: pytest.MonkeyPatch) -> 
     - nd_interface_ethernet_routed.main()
     - NDBaseInterfaceOrchestrator.deploy_pending()
     """
-    kind, _kwargs, orchestrator = _run_main(monkeypatch, config_actions={"deploy": True})
+    kind, _kwargs, orchestrator, state_machine = _run_main(monkeypatch, config_actions={"deploy": True})
 
     assert kind is _ExitJson
+    assert state_machine.finalize_result_calls == 1
     assert orchestrator.deploy is True
     assert orchestrator._deployed == [[ACCEPTED_PAIR]]
     assert orchestrator._pending_deploys == []
@@ -305,9 +314,10 @@ def test_nd_interface_ethernet_routed_00020(monkeypatch: pytest.MonkeyPatch) -> 
 
     - nd_interface_ethernet_routed.main()
     """
-    kind, _kwargs, orchestrator = _run_main(monkeypatch, config_actions={"deploy": False})
+    kind, _kwargs, orchestrator, state_machine = _run_main(monkeypatch, config_actions={"deploy": False})
 
     assert kind is _ExitJson
+    assert state_machine.finalize_result_calls == 1
     assert orchestrator.deploy is False
     assert orchestrator._deployed == []
     assert orchestrator._pending_deploys == [ACCEPTED_PAIR]
@@ -329,9 +339,10 @@ def test_nd_interface_ethernet_routed_00030(monkeypatch: pytest.MonkeyPatch) -> 
 
     - nd_interface_ethernet_routed.main()
     """
-    kind, _kwargs, orchestrator = _run_main(monkeypatch, config_actions={"deploy": True}, check_mode=True)
+    kind, _kwargs, orchestrator, state_machine = _run_main(monkeypatch, config_actions={"deploy": True}, check_mode=True)
 
     assert kind is _ExitJson
+    assert state_machine.finalize_result_calls == 1
     assert orchestrator.deploy is True
     assert orchestrator._deployed == []
     assert orchestrator._pending_deploys == [ACCEPTED_PAIR]
@@ -359,9 +370,10 @@ def test_nd_interface_ethernet_routed_00100(monkeypatch: pytest.MonkeyPatch) -> 
     - nd_interface_ethernet_routed.main()
     - finalize_accepted_intent()
     """
-    kind, kwargs, orchestrator = _run_main(monkeypatch, config_actions={"deploy": True}, failure=NDStateMachineError("later operation failed"))
+    kind, kwargs, orchestrator, state_machine = _run_main(monkeypatch, config_actions={"deploy": True}, failure=NDStateMachineError("later operation failed"))
 
     assert kind is _FailJson
+    assert state_machine.finalize_result_calls == 0
     assert kwargs["msg"] == f"Module execution failed: later operation failed{ACCEPTED_NOTE}"
     assert orchestrator._deployed == [[ACCEPTED_PAIR]]
     assert orchestrator._pending_deploys == []
@@ -384,9 +396,10 @@ def test_nd_interface_ethernet_routed_00110(monkeypatch: pytest.MonkeyPatch) -> 
     - nd_interface_ethernet_routed.main()
     - finalize_accepted_intent()
     """
-    kind, kwargs, orchestrator = _run_main(monkeypatch, config_actions={"deploy": True}, failure=RuntimeError("unexpected"))
+    kind, kwargs, orchestrator, state_machine = _run_main(monkeypatch, config_actions={"deploy": True}, failure=RuntimeError("unexpected"))
 
     assert kind is _FailJson
+    assert state_machine.finalize_result_calls == 0
     assert kwargs["msg"] == f"Module failed: unexpected{ACCEPTED_NOTE}"
     assert orchestrator._deployed == [[ACCEPTED_PAIR]]
 
@@ -409,9 +422,10 @@ def test_nd_interface_ethernet_routed_00120(monkeypatch: pytest.MonkeyPatch) -> 
     - nd_interface_ethernet_routed.main()
     - finalize_accepted_intent()
     """
-    kind, kwargs, orchestrator = _run_main(monkeypatch, failure=NDStateMachineError("later operation failed"))
+    kind, kwargs, orchestrator, state_machine = _run_main(monkeypatch, failure=NDStateMachineError("later operation failed"))
 
     assert kind is _FailJson
+    assert state_machine.finalize_result_calls == 0
     assert kwargs["msg"] == "Module execution failed: later operation failed"
     assert orchestrator._deployed == []
     assert orchestrator._pending_deploys == [ACCEPTED_PAIR]
@@ -434,11 +448,12 @@ def test_nd_interface_ethernet_routed_00130(monkeypatch: pytest.MonkeyPatch) -> 
     - nd_interface_ethernet_routed.main()
     - finalize_accepted_intent()
     """
-    kind, kwargs, orchestrator = _run_main(
+    kind, kwargs, orchestrator, state_machine = _run_main(
         monkeypatch, config_actions={"deploy": True}, check_mode=True, failure=NDStateMachineError("later operation failed")
     )
 
     assert kind is _FailJson
+    assert state_machine.finalize_result_calls == 0
     assert kwargs["msg"] == "Module execution failed: later operation failed"
     assert orchestrator._deployed == []
 
