@@ -45,6 +45,10 @@ options:
         description:
         - Selects the standalone interface contract used to validate O(resources[].config).
         - V(ethernet_access) uses M(cisco.nd.nd_interface_ethernet_access).
+        - V(ethernet_routed) uses M(cisco.nd.nd_interface_ethernet_routed).
+        - Configured V(ethernet_routed) items require C(config_data.network_os.network_os_type). The routed policy discriminator is
+          optional and is derived as V(routedHost) for V(nx-os) or V(iosXeRoutedHost) for V(ios-xe). Identifier-only V(deleted) items
+          may omit C(config_data).
         - V(ethernet_trunk_host) uses M(cisco.nd.nd_interface_ethernet_trunk_host).
         - V(loopback) uses M(cisco.nd.nd_interface_loopback).
         - V(port_channel_access) uses M(cisco.nd.nd_interface_port_channel_access).
@@ -58,6 +62,7 @@ options:
         required: true
         choices:
         - ethernet_access
+        - ethernet_routed
         - ethernet_trunk_host
         - loopback
         - port_channel_access
@@ -80,7 +85,7 @@ options:
         - V(deleted) acts on each explicitly listed identity regardless of its current policy family, provided the current interface is in
           the same structural domain and is safe to delete. Physical Ethernet interfaces are reset to the unconfigured fabric-default
           policy; deletable logical interfaces are removed.
-        - All ten initial interface adapters support all four values.
+        - All eleven interface adapters support all four values.
         type: str
         choices: [ merged, replaced, overridden, deleted ]
         default: merged
@@ -96,7 +101,8 @@ options:
   config_actions:
     description:
     - Controls actions coordinated after all interface mutation groups complete.
-    - Deployment is attempted only after every planned interface mutation succeeds. A mutation failure stops later writes and deployment.
+    - A mutation failure stops later mutation writes. When O(config_actions.deploy=true), any earlier targets backed by exact controller
+      success evidence are still deployed together in one failure-path request; failed, uncertain, and unattempted targets are excluded.
     - A zero-mutation workflow can deploy previously staged controller intent for explicitly requested interfaces when the already-fetched
       fabric switch record has an explicit out-of-sync or pending status.
     type: dict
@@ -130,6 +136,8 @@ extends_documentation_fragment:
 notes:
 - This module is supported only on Cisco Nexus Dashboard.
 - C(cisco.nd.nd_interface_flow_rules) is intentionally outside this workflow and is not a valid O(resources[].type).
+- C(cisco.nd.nd_manage_links) manages fabric-link resources rather than a host-interface family and is not a valid
+  O(resources[].type). Link-owned interfaces remain protected from host-interface transitions and resets.
 - A non-overridden workflow reads only the union of switches named by its resource groups. Any V(overridden) group expands the shared
   inventory scope to all switches in the fabric.
 - vPC groups load the complete intended fabric vPC-pair inventory with deterministic pagination in the same execution. They reject
@@ -139,6 +147,15 @@ notes:
 - For V(merged) and V(replaced), O(resources[].type) is the desired policy family. An explicitly listed interface using another eligible
   policy in the same structural interface domain is changed with one destination-family replacement request; no separate transition
   option is required.
+- Within the V(loopback) family, V(merged) and V(replaced) also treat a same-NOS C(policy_type) change as an explicit
+  destination-policy transition. Changing C(network_os_type) is rejected before writes.
+- Configured V(loopback) items require both C(network_os_type) and C(policy_type); the workflow does not invent discriminator defaults.
+  Identifier-only V(deleted) loopback items remain valid without C(config_data).
+- Configured V(ethernet_routed) items require C(network_os_type). The standalone model derives the matching routed policy when
+  C(policy_type) is omitted. A configured item cannot change between V(nx-os) and V(ios-xe) during an implicit transition.
+- The managed V(loopback) scope comprises NX-OS C(loopback), C(ipfmLoopback), and C(mplsLoopback), plus IOS-XE C(iosXeLoopback),
+  C(iosXeLoopbackShutNoshut), C(iosXeUnderlayLoopback), C(iosXeInternalLoopback), C(csrLoopback), and C(csr1kvLoopback).
+  V(overridden) is authoritative across those nine policies but excludes C(userDefined) and system-owned NX-OS C(underlayLoopback).
 - A policy transition is rejected before writes when controller safety metadata, structural type, vPC peer consistency, port-channel or
   vPC membership, or parent-child interface dependencies make the change unsafe.
 - Current and final physical members of port-channel and vPC interfaces are protected from independent Ethernet resets, transitions,
@@ -149,6 +166,8 @@ notes:
 - For V(deleted), the selected type supplies the input and execution contract, but explicit identity lookup is policy-independent within
   that structural interface domain. A physical Ethernet delete resets the interface to the unconfigured default instead of removing the
   physical interface.
+- For V(ethernet_routed), an NX-OS delete resets the physical port to the default V(trunkHost) policy. An IOS-XE delete keeps the physical
+  port under V(iosXeRoutedHost) but clears its configurable policy fields to the IOS-XE template defaults.
 - An unconfigured default V(trunkHost) physical interface retains the ordinary bulk-create path and is never converted into a
   per-interface transition, preserving the workflow's scale advantage.
 - Interface inventories and transition/delete safety data are shared for the complete workflow. They are not fetched once per resource
@@ -174,18 +193,20 @@ notes:
   C(mutation_count=0). Its per-resource C(changed) values remain false because controller intent did not change.
 - The authoritative vPC-pair map is shared with all vPC resource orchestrators, preventing repeated per-resource peer-lookup GETs.
 - The shared snapshot is execution-scoped and is never accepted from arbitrary caller input or persisted across Ansible tasks.
-- Normal-mode execution uses the same current interface model and orchestrator contracts as the standalone modules, so merged validation,
-  normalization, and deployment behavior is inherited automatically.
+- Normal-mode execution reuses the current standalone interface models and orchestrator contracts for validation, normalization, and
+  mutation payload construction. Final deployment orchestration is workflow-owned. A successful mutation run consolidates all pending targets
+  into one deployment request. If a later mutation fails and deployment is enabled, only earlier targets with exact success evidence are
+  consolidated into one failure-path deployment request; targets whose mutations failed, are uncertain, or were not attempted are never sent.
 - For V(merged), V(replaced), and V(deleted), C(resources[].before) and C(resources[].after) contain only identities explicitly listed in
   that resource group. Aggregate-interface members remain visible inside the requested port-channel or vPC policy instead of being mixed
   into the result as unrelated Ethernet-family records.
 - Target-scoped C(before) and C(after) include C(policy_type), including when a requested identity starts in another eligible policy family.
-  A deleted logical interface is absent from C(after); a deleted physical Ethernet interface remains present with the normalized default
-  V(trunkHost) policy.
+  A deleted logical interface is absent from C(after). A deleted physical NX-OS Ethernet interface remains present with the normalized
+  default V(trunkHost) policy; a deleted IOS-XE routed interface remains present with a defaults-only V(iosXeRoutedHost) policy.
 - C(resources[].operations) is the single operation ledger. It combines create, update, transition, physical-reset, and logical-delete
   actions with their target identities and execution status; update-like actions can include leaf-level C(changes).
-- Successful output intentionally omits duplicate top-level snapshots and task-input echoes. C(request_stats) contains read, cache,
-  refresh, overlay, and vPC metrics; C(execution) exclusively owns mutation and deployment write counters.
+- Successful output intentionally omits duplicate top-level snapshots and task-input echoes. C(request_stats) contains interface and
+  fabric-link read, cache, refresh, overlay, and vPC metrics; C(execution) exclusively owns mutation and deployment write counters.
 - At O(output_level=debug), C(resources[].family_before) and C(resources[].family_after) expose the complete selected-family collections
   used for diagnostics. Result projection is in-memory and sends no additional controller GET requests.
 - Deletes and deferred normalize/reset operations run before transitions, updates, and creates. Deployments are consolidated across
@@ -231,6 +252,18 @@ EXAMPLES = r"""
                   admin_state: true
                   access_vlan: 100
                   description: Application servers
+      - type: ethernet_routed
+        state: merged
+        config:
+          - switch_ip: 192.168.1.11
+            interface_name: Ethernet1/12
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  ip: 198.51.100.1
+                  prefix: 30
+                  description: Routed service handoff
       - type: port_channel_trunk_host
         state: replaced
         config:
@@ -429,7 +462,9 @@ resources:
       - Initial observed controller state for the identities explicitly listed by this group when O(resources[].state) is V(merged),
         V(replaced), or V(deleted).
       - For V(overridden), the complete selected-family configuration in the authoritative fabric scope.
-      - Each returned target includes C(policy_type), so a source policy owned by another eligible family remains visible.
+      - Each returned target includes C(policy_type), so a source policy owned by another eligible family remains visible. Loopback and
+        routed-Ethernet input and C(proposed) keep this discriminator nested under C(config_data.network_os.policy), while C(before)
+        promotes it to the target top level and omits the duplicate nested key.
       type: list
       elements: dict
     after:
@@ -439,9 +474,11 @@ resources:
         state when O(verify.enabled=false). Consult C(after_verified) before treating it as controller-observed state.
       - No-op and deployment-only normal-mode runs return observed state from initial discovery. Partial or failed writes force a
         reconciliation attempt even when verification is disabled.
-      - Like C(before), each target reports C(policy_type) at top level; loopback input uses the nested policy discriminator.
-      - A removed logical interface is absent. A reset physical Ethernet interface remains present with C(policy_type=trunkHost) and its
-        normalized default configuration.
+      - Like C(before), each target reports C(policy_type) at top level; loopback and routed-Ethernet input use the nested policy
+        discriminator.
+      - A removed logical interface is absent. A reset physical NX-OS Ethernet interface remains present with C(policy_type=trunkHost)
+        and its normalized default configuration. A reset IOS-XE routed interface remains present with
+        C(policy_type=iosXeRoutedHost) and defaults-only policy configuration.
       - For V(overridden), the complete selected-family configuration in the authoritative fabric scope.
       type: list
       elements: dict
@@ -470,8 +507,8 @@ resources:
       type: list
       elements: dict
 request_stats:
-  description: Shared configured-interface inventory, lazy transition/delete safety inventory, vPC context, cache, refresh, and overlay
-    counters for this execution. Write counters are reported only under C(execution).
+  description: Shared configured-interface inventory, lazy transition/delete and fabric-link safety inventory, vPC context, cache,
+    refresh, and overlay counters for this execution. Write counters are reported only under C(execution).
   returned: always
   type: dict
   contains:
@@ -518,6 +555,11 @@ request_stats:
       type: int
     snapshot_overlays:
       description: Atomic known-success overlays applied to the snapshot.
+      type: int
+    fabric_link_gets:
+      description:
+      - Fabric-link inventory GET requests used to protect IOS-XE link endpoints from host-interface transitions and resets.
+      - The lazy link cache is shared by all routed resource and platform-reset orchestrators in one workflow, including pagination.
       type: int
     vpc_pair_gets:
       description: Fabric vPC-pair inventory GETs.
