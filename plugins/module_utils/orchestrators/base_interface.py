@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
@@ -30,6 +31,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_pref
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import ModelType, NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+
+_UNSET_RESPONSE = object()
+
+
+@dataclass(frozen=True)
+class DeferredDeleteRequestGroup:
+    """One controller request boundary for queued interface delete/reset work."""
+
+    queue_name: str
+    targets: tuple[tuple[str, str], ...]
 
 
 class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
@@ -64,6 +75,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     # opts out — used by interface types with no capability endpoint (e.g. future breakout).
     interface_type: ClassVar[str] = ""
     interface_mode: ClassVar[str] = ""
+    deferred_delete_queue_names: ClassVar[frozenset[str]] = frozenset({"remove"})
 
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
@@ -436,6 +448,57 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         for interface_name, switch_id in targets:
             self._queue_remove(interface_name, switch_id)
 
+    @property
+    def deferred_delete_queues(self) -> dict[str, tuple[tuple[str, str], ...]]:
+        """Return immutable snapshots of every deferred delete/reset queue this orchestrator can flush."""
+        return {"remove": self.pending_removes}
+
+    @property
+    def pending_deferred_delete_targets(self) -> tuple[tuple[str, str], ...]:
+        """Return every queued delete/reset target once, preserving queue and insertion order."""
+        return tuple(dict.fromkeys(target for targets in self.deferred_delete_queues.values() for target in targets))
+
+    def queue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Import pre-resolved targets into one supported deferred delete/reset queue."""
+        if queue_name != "remove":
+            raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+        self.queue_remove_targets(targets)
+
+    def dequeue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Remove transferred targets from one supported deferred queue without sending a request."""
+        if queue_name != "remove":
+            raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+        removed = set(targets)
+        self._pending_removes = [target for target in self._pending_removes if target not in removed]
+
+    def deferred_delete_request_groups(self) -> tuple[DeferredDeleteRequestGroup, ...]:
+        """Describe the exact request groups and order used by `remove_pending`."""
+        if not self.pending_removes:
+            return ()
+        return (DeferredDeleteRequestGroup(queue_name="remove", targets=self.pending_removes),)
+
+    def dequeue_deploy_targets(self, targets: Sequence[tuple[str, str]]) -> None:
+        """Remove exact targets from the pending deploy queue without sending a request."""
+        removed = set(targets)
+        self._pending_deploys = [target for target in self._pending_deploys if target not in removed]
+
+    def deploy_targets(self, targets: Sequence[tuple[str, str]]) -> ResponseType | None:
+        """
+        Deploy exactly the supplied targets in one request without consulting or replacing this orchestrator's pending queue.
+
+        The aggregate workflow uses this after consolidating queues from multiple families. It is safe on a partial-failure path
+        because callers can pass only targets backed by exact controller-success evidence.
+        """
+        if not self.deploy:
+            return None
+        requested = list(dict.fromkeys(targets))
+        if not requested:
+            return None
+        try:
+            return self._deploy_interfaces(requested)
+        except Exception as e:
+            raise RuntimeError(f"Bulk deploy failed for interfaces {requested}: {e}") from e
+
     def deploy_pending(self) -> ResponseType | None:
         """
         # Summary
@@ -454,7 +517,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if not self.deploy or not self._pending_deploys:
             return None
         try:
-            result = self._deploy_interfaces(self._pending_deploys)
+            result = self.deploy_targets(self._pending_deploys)
             self._pending_deploys = []
             return result
         except Exception as e:
@@ -494,7 +557,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if not accepted:
             return []
         try:
-            self._deploy_interfaces(accepted)
+            self.deploy_targets(accepted)
         except Exception as e:
             raise RuntimeError(f"Failure-path deploy failed for accepted interfaces {accepted}: {e}") from e
         self._pending_deploys = [pair for pair in self._pending_deploys if pair in unsent]
@@ -515,24 +578,28 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         return set(self._pending_removes)
 
-    def _accepted_multistatus_names(self) -> set[str]:
+    def _accepted_multistatus_names(self, response: Mapping[str, Any] | None | object = _UNSET_RESPONSE) -> set[str]:
         """
         # Summary
 
-        Return the lower-cased `name` of every `DATA.results[]` item in the most recent response whose `status` is exactly
-        `success` (case/whitespace-tolerant). Used after a bulk POST that failed with HTTP 207 Multi-Status to recover the subset
-        the controller accepted, so that subset can still be queued for deploy (PR #550 review). On a 207 the per-item status
+        Return the lower-cased `name` of every `DATA.results[]` item in `response` whose `status` is exactly `success`
+        (case/whitespace-tolerant). Callers handling a request failure pass the response captured for that exact request; this
+        prevents an earlier HTTP 207 from being mistaken for a later request that failed before producing a response (issue #554).
+        When `response` is omitted, the current response is used for backward compatibility. On a 207 the per-item status
         vocabulary is unreliable (vault: `multi-status-207-status-field-inconsistent`; issue #397), so only an exact `success`
         is trusted — the same allowlist `NdV1Strategy.is_success` applies when classifying the response. Returns an empty set
-        when the last response was not a 207 or carries no `results[]` envelope.
+        when the supplied response was not a 207 or carries no `results[]` envelope.
 
         ## Raises
 
         None
         """
-        if self.rest_send.return_code != 207:
+        response = self.rest_send.response_current if response is _UNSET_RESPONSE else response
+        if not isinstance(response, Mapping):
             return set()
-        data = self.rest_send.response_current.get("DATA")
+        if response.get("RETURN_CODE") != 207:
+            return set()
+        data = response.get("DATA")
         results = data.get("results") if isinstance(data, dict) else None
         if not isinstance(results, list):
             return set()

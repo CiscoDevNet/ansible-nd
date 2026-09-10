@@ -23,6 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection impo
     NDConfigCollection,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    DeferredDeleteRequestGroup,
     NDBaseInterfaceOrchestrator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import (
@@ -130,6 +131,30 @@ class InterfaceWorkflowExecutor:
             "status": "not_attempted",
             "targets": [],
         }
+
+    @staticmethod
+    def _all_orchestrators(plan: InterfaceWorkflowPlan) -> tuple[NDBaseInterfaceOrchestrator, ...]:
+        """Return resource and auxiliary orchestrators once, preserving construction order."""
+        values = [resource.orchestrator for resource in plan.resources]
+        values.extend(getattr(plan, "auxiliary_orchestrators", ()))
+        unique: list[NDBaseInterfaceOrchestrator] = []
+        seen: set[int] = set()
+        for orchestrator in values:
+            if id(orchestrator) in seen:
+                continue
+            seen.add(id(orchestrator))
+            unique.append(orchestrator)
+        return tuple(unique)
+
+    @staticmethod
+    def _routed_delete_orchestrator(plan: InterfaceWorkflowPlan) -> NDBaseInterfaceOrchestrator | None:
+        """Return the planner-selected orchestrator that accepts platform-specific reset work."""
+        candidates = [*getattr(plan, "auxiliary_orchestrators", ())]
+        candidates.extend(resource.orchestrator for resource in plan.resources)
+        return next(
+            (orchestrator for orchestrator in candidates if "platform_reset" in orchestrator.deferred_delete_queue_names),
+            None,
+        )
 
     @staticmethod
     def _model_target(resource: InterfaceResourcePlan, model: NDBaseModel) -> Target:
@@ -322,12 +347,12 @@ class InterfaceWorkflowExecutor:
         return True
 
     def _enable_writes_and_preflight(self, plan: InterfaceWorkflowPlan) -> bool:
-        for resource in plan.resources:
-            resource.orchestrator.rest_send.check_mode = False
-            resource.orchestrator.rest_send.params["check_mode"] = False
-            resource.orchestrator.deploy = False
-            if resource.orchestrator.results is not None:
-                resource.orchestrator.results.check_mode = False
+        for orchestrator in self._all_orchestrators(plan):
+            orchestrator.rest_send.check_mode = False
+            orchestrator.rest_send.params["check_mode"] = False
+            orchestrator.deploy = False
+            if orchestrator.results is not None:
+                orchestrator.results.check_mode = False
         try:
             if plan.resources:
                 plan.resources[0].orchestrator.validate_prerequisites()
@@ -336,6 +361,12 @@ class InterfaceWorkflowExecutor:
                 if not has_mutations:
                     continue
                 if resource.state == "deleted":
+                    resource.orchestrator.preflight_delete(list(resource.operations.deletes))
+                    if resource.platform_deletes:
+                        routed_orchestrator = self._routed_delete_orchestrator(plan)
+                        if routed_orchestrator is None:
+                            raise RuntimeError("Platform-specific physical deletes were planned without a routed reset orchestrator.")
+                        routed_orchestrator.preflight_delete(list(resource.platform_deletes))
                     continue
                 create_candidates = [*resource.operations.creates, *(transition.desired for transition in resource.transitions)]
                 resource.orchestrator.preflight_create(create_candidates)
@@ -345,123 +376,166 @@ class InterfaceWorkflowExecutor:
             return False
         return True
 
+    def _queue_delete_batch(
+        self,
+        resource: InterfaceResourcePlan,
+        orchestrator: NDBaseInterfaceOrchestrator,
+        models: list[NDBaseModel],
+    ) -> bool:
+        """Queue one model batch and mark only targets accepted into the orchestrator's deferred contract."""
+        if not models:
+            return True
+        items = [self._item(resource, "delete", model) for model in models]
+        if orchestrator.supports_bulk_delete:
+            if not self._call_items(
+                orchestrator,
+                items,
+                lambda: orchestrator.delete_bulk(models),
+                f"resources[{resource.resource_index}] {resource.resource_type} delete preparation failed",
+            ):
+                return False
+            pending = set(orchestrator.pending_deferred_delete_targets)
+            for item in items:
+                if item.target in pending:
+                    item.status = "queued"
+                else:
+                    item.status = "skipped"
+                    item.message = "The develop orchestrator intentionally skipped this deletion."
+            return True
+
+        for model, item in zip(models, items):
+            if not self._call_items(
+                orchestrator,
+                [item],
+                lambda model=model: orchestrator.delete(model),
+                f"resources[{resource.resource_index}] {resource.resource_type} delete failed",
+            ):
+                return False
+        return True
+
     def _queue_deletes(self, plan: InterfaceWorkflowPlan) -> bool:
         for resource in plan.resources:
             models = list(resource.operations.deletes)
             if not models:
                 continue
-            orchestrator = resource.orchestrator
-            items = [self._item(resource, "delete", model) for model in models]
-            if orchestrator.supports_bulk_delete:
-                if not self._call_items(
-                    orchestrator,
-                    items,
-                    lambda orchestrator=orchestrator, models=models: orchestrator.delete_bulk(models),
-                    f"resources[{resource.resource_index}] {resource.resource_type} delete preparation failed",
-                ):
-                    return False
-                for item in items:
-                    if isinstance(orchestrator, EthernetBaseOrchestrator):
-                        queued = item.target in orchestrator.pending_normalizes or item.target in orchestrator.pending_resets
-                    else:
-                        queued = item.target in orchestrator.pending_removes
-                    if queued:
-                        item.status = "queued"
-                    else:
-                        item.status = "skipped"
-                        item.message = "The develop orchestrator intentionally skipped this deletion."
+            platform_by_identifier = {model.get_identifier_value(): model for model in getattr(resource, "platform_deletes", ())}
+            ordinary = [model for model in models if model.get_identifier_value() not in platform_by_identifier]
+            if not self._queue_delete_batch(resource, resource.orchestrator, ordinary):
+                return False
+            if not platform_by_identifier:
                 continue
-
-            for model, item in zip(models, items):
-                if not self._call_items(
-                    orchestrator,
-                    [item],
-                    lambda orchestrator=orchestrator, model=model: orchestrator.delete(model),
-                    f"resources[{resource.resource_index}] {resource.resource_type} delete failed",
-                ):
-                    return False
+            routed_orchestrator = self._routed_delete_orchestrator(plan)
+            if routed_orchestrator is None:
+                self._errors.append(
+                    f"resources[{resource.resource_index}] {resource.resource_type} platform-specific delete has no routed reset orchestrator."
+                )
+                return False
+            if not self._queue_delete_batch(resource, routed_orchestrator, list(platform_by_identifier.values())):
+                return False
         return True
 
-    def _flush_base_removes(self, plan: InterfaceWorkflowPlan) -> bool:
-        sources = [
-            resource.orchestrator
-            for resource in plan.resources
-            if not isinstance(resource.orchestrator, EthernetBaseOrchestrator) and resource.orchestrator.pending_removes
-        ]
-        if not sources:
-            return True
-        target = sources[0]
-        targets = tuple(dict.fromkeys(pair for source in sources for pair in source.pending_removes))
-        target.queue_remove_targets(targets)
-        items = [item for item in self._items if item.action == "delete" and item.status == "queued" and item.target in targets]
-        return self._call_items(
-            target,
-            items,
-            target.remove_pending,
-            "Consolidated interface removal failed",
-        )
+    def _apply_deferred_history(
+        self,
+        groups: tuple[DeferredDeleteRequestGroup, ...],
+        history: list[tuple[dict[str, Any], dict[str, Any]]],
+        error: str,
+        *,
+        raised: bool,
+    ) -> bool:
+        """Apply each response only to the exact deferred request group that produced it."""
+        success = not raised
+        failure_located = False
+        for index, group in enumerate(groups):
+            items = [item for item in self._items if item.action == "delete" and item.status == "queued" and item.target in group.targets]
+            if not items:
+                continue
+            if index < len(history):
+                response, result = history[index]
+                if result.get("success") is True:
+                    group_ok = self._apply_success_response(items, response, result, error)
+                else:
+                    self._apply_outcomes(
+                        items,
+                        self._classify_response((item.target for item in items), response, result, error),
+                    )
+                    group_ok = False
+                if not group_ok:
+                    success = False
+                    failure_located = True
+                continue
+            if raised and not failure_located:
+                for item in items:
+                    item.status = "failed"
+                    item.message = error
+                failure_located = True
+                success = False
+                continue
+            for item in items:
+                item.status = "not_attempted"
+                item.message = error
+            success = False
+        return success
 
-    def _flush_ethernet_removes(self, plan: InterfaceWorkflowPlan) -> bool:
-        sources = [resource.orchestrator for resource in plan.resources if isinstance(resource.orchestrator, EthernetBaseOrchestrator)]
-        normalizes = tuple(dict.fromkeys(pair for source in sources for pair in source.pending_normalizes))
-        resets = tuple(dict.fromkeys(pair for source in sources for pair in source.pending_resets))
-        if not normalizes and not resets:
+    def _transfer_and_flush_deletes(
+        self,
+        sources: list[NDBaseInterfaceOrchestrator],
+        context: str,
+    ) -> bool:
+        """Consolidate compatible deferred queues, flush once, and correlate every request boundary."""
+        source_queues: list[tuple[NDBaseInterfaceOrchestrator, dict[str, tuple[Target, ...]]]] = []
+        queues: dict[str, tuple[Target, ...]] = {}
+        for source in sources:
+            local = {queue_name: targets for queue_name, targets in source.deferred_delete_queues.items() if targets}
+            source_queues.append((source, local))
+            for queue_name, targets in local.items():
+                queues[queue_name] = tuple(dict.fromkeys((*queues.get(queue_name, ()), *targets)))
+        if not queues:
             return True
-        target = next(source for source in sources if source.pending_normalizes or source.pending_resets)
-        target.queue_normalize_targets(normalizes)
-        target.queue_reset_targets(resets)
-        normalize_items = [item for item in self._items if item.action == "delete" and item.status == "queued" and item.target in normalizes]
-        reset_items = [item for item in self._items if item.action == "delete" and item.status == "queued" and item.target in resets]
-
+        required = frozenset(queues)
+        target = next((source for source in sources if required.issubset(source.deferred_delete_queue_names)), None)
+        if target is None:
+            self._errors.append(f"{context}: no orchestrator accepts deferred queues {sorted(required)}.")
+            return False
+        for queue_name, targets in queues.items():
+            target.queue_deferred_delete_targets(queue_name, targets)
+        for source, local in source_queues:
+            if source is target:
+                continue
+            for queue_name, targets in local.items():
+                source.dequeue_deferred_delete_targets(queue_name, targets)
+        groups = target.deferred_delete_request_groups()
         response_start = len(target.rest_send.responses)
         result_start = len(target.rest_send.results)
         try:
             target.remove_pending()
         except Exception as exc:  # pylint: disable=broad-except
-            error = f"Consolidated Ethernet normalization/reset failed: {exc}"
+            error = f"{context}: {exc}"
             history = self._write_history(target.rest_send, response_start, result_start)
-            cursor = 0
-            if normalize_items:
-                response, result = history[cursor] if cursor < len(history) else ({}, {})
-                cursor += 1 if cursor < len(history) else 0
-                self._apply_outcomes(
-                    normalize_items,
-                    self._classify_response(
-                        (item.target for item in normalize_items),
-                        response,
-                        result,
-                        error,
-                    ),
-                )
-            for item in reset_items:
-                if cursor >= len(history):
-                    item.status = "not_attempted"
-                    item.message = error
-                    continue
-                response, result = history[cursor]
-                cursor += 1
-                self._apply_outcomes(
-                    [item],
-                    self._classify_response([item.target], response, result, error),
-                )
+            self._apply_deferred_history(groups, history, error, raised=True)
             self._errors.append(error)
             return False
         history = self._write_history(target.rest_send, response_start, result_start)
-        error = "Consolidated Ethernet normalization/reset failed: HTTP 207 response did not report exact success for every requested interface."
-        cursor = 0
-        success = True
-        if normalize_items:
-            response, result = history[cursor] if cursor < len(history) else ({}, {})
-            cursor += 1 if cursor < len(history) else 0
-            success = self._apply_success_response(normalize_items, response, result, error) and success
-        for item in reset_items:
-            response, result = history[cursor] if cursor < len(history) else ({}, {})
-            cursor += 1 if cursor < len(history) else 0
-            success = self._apply_success_response([item], response, result, error) and success
-        if not success:
+        error = f"{context}: controller responses did not report exact success for every requested interface."
+        if not self._apply_deferred_history(groups, history, error, raised=False):
             self._errors.append(error)
             return False
         return True
+
+    def _flush_base_removes(self, plan: InterfaceWorkflowPlan) -> bool:
+        sources = [
+            orchestrator
+            for orchestrator in self._all_orchestrators(plan)
+            if not isinstance(orchestrator, EthernetBaseOrchestrator) and orchestrator.pending_deferred_delete_targets
+        ]
+        return self._transfer_and_flush_deletes(sources, "Consolidated interface removal failed")
+
+    def _flush_ethernet_removes(self, plan: InterfaceWorkflowPlan) -> bool:
+        sources = [
+            orchestrator
+            for orchestrator in self._all_orchestrators(plan)
+            if isinstance(orchestrator, EthernetBaseOrchestrator) and orchestrator.pending_deferred_delete_targets
+        ]
+        return self._transfer_and_flush_deletes(sources, "Consolidated Ethernet normalization/reset failed")
 
     def _execute_transitions(self, plan: InterfaceWorkflowPlan) -> bool:
         """Replace approved foreign policies through destination-family PUTs."""
@@ -529,9 +603,12 @@ class InterfaceWorkflowExecutor:
         self,
         plan: InterfaceWorkflowPlan,
         supplemental_targets: Iterable[Target] = (),
+        mutation_targets: Iterable[Target] | None = None,
     ) -> bool:
-        mutation_targets = (pair for resource in plan.resources for pair in resource.orchestrator.pending_deploys)
-        targets = tuple(dict.fromkeys((*mutation_targets, *supplemental_targets)))
+        selected_mutations = (
+            (pair for orchestrator in self._all_orchestrators(plan) for pair in orchestrator.pending_deploys) if mutation_targets is None else mutation_targets
+        )
+        targets = tuple(dict.fromkeys((*selected_mutations, *supplemental_targets)))
         self._deployment = {
             "requested": self.deploy,
             "status": ("not_needed" if not targets else ("disabled" if not self.deploy else "pending")),
@@ -548,11 +625,10 @@ class InterfaceWorkflowExecutor:
             return True
         target = plan.resources[0].orchestrator
         target.deploy = True
-        target.queue_deploy_targets(targets)
         response_start = len(target.rest_send.responses)
         result_start = len(target.rest_send.results)
         try:
-            target.deploy_pending()
+            target.deploy_targets(targets)
         except Exception as exc:  # pylint: disable=broad-except
             error = f"Consolidated interface deployment failed: {exc}"
             history = self._write_history(target.rest_send, response_start, result_start)
@@ -566,6 +642,7 @@ class InterfaceWorkflowExecutor:
             statuses = {entry["status"] for entry in self._deployment["targets"]}
             self._deployment["status"] = "partial_failure" if "succeeded" in statuses or "uncertain" in statuses else "failed"
             self._deployment["message"] = error
+            self._dequeue_deployed_targets(plan)
             self._errors.append(error)
             return False
         history = self._write_history(target.rest_send, response_start, result_start)
@@ -582,13 +659,23 @@ class InterfaceWorkflowExecutor:
             if statuses != {"succeeded"}:
                 self._deployment["status"] = "partial_failure" if "succeeded" in statuses else "failed"
                 self._deployment["message"] = error
+                self._dequeue_deployed_targets(plan)
                 self._errors.append(error)
                 return False
         else:
             for entry in self._deployment["targets"]:
                 entry["status"] = "succeeded"
         self._deployment["status"] = "succeeded"
+        self._dequeue_deployed_targets(plan)
         return True
+
+    def _dequeue_deployed_targets(self, plan: InterfaceWorkflowPlan) -> None:
+        """Drain only targets backed by exact successful deployment evidence from every source queue."""
+        succeeded = {(entry["interface_name"], entry["switch_id"]) for entry in self._deployment["targets"] if entry["status"] == "succeeded"}
+        if not succeeded:
+            return
+        for orchestrator in self._all_orchestrators(plan):
+            orchestrator.dequeue_deploy_targets(succeeded)
 
     @staticmethod
     def _write_observations(plan: InterfaceWorkflowPlan) -> tuple[int, int, bool]:
@@ -596,8 +683,8 @@ class InterfaceWorkflowExecutor:
         deploy_requests = 0
         mutation_changed = False
         seen: set[int] = set()
-        for resource in plan.resources:
-            rest_send = resource.orchestrator.rest_send
+        for orchestrator in InterfaceWorkflowExecutor._all_orchestrators(plan):
+            rest_send = orchestrator.rest_send
             if id(rest_send) in seen:
                 continue
             seen.add(id(rest_send))
@@ -672,6 +759,10 @@ class InterfaceWorkflowExecutor:
             phases_ok = self._execute_creates(plan)
         if phases_ok:
             phases_ok = self._deploy_pending(plan, deployment_targets)
+        elif self.deploy:
+            accepted_targets = tuple(dict.fromkeys(item.target for item in self._items if item.status == "succeeded"))
+            if accepted_targets:
+                self._deploy_pending(plan, mutation_targets=accepted_targets)
 
         mutation_requests, deploy_requests, mutation_changed = self._write_observations(plan)
         execution_failed = not phases_ok or bool(self._errors)

@@ -688,8 +688,25 @@ class InterfaceWorkflowCoordinator:
         return projected
 
     @classmethod
-    def _default_ethernet_target(cls, desired) -> dict[str, Any]:
-        """Return the canonical prospective state after a physical-port reset."""
+    def _default_ethernet_target(cls, desired, current: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Return the platform-correct prospective state after a physical-port reset."""
+        network_os = ((current or {}).get("configData") or {}).get("networkOS") or {}
+        if network_os.get("networkOSType") == "ios-xe":
+            raw = {
+                "interfaceName": getattr(desired, "interface_name"),
+                "interfaceType": "ethernet",
+                "configData": {
+                    "mode": "routed",
+                    "networkOS": {
+                        "networkOSType": "ios-xe",
+                        "policy": {
+                            "policyType": "iosXeRoutedHost",
+                            "adminState": True,
+                        },
+                    },
+                },
+            }
+            return cls._serialize_raw_target(raw, getattr(desired, "switch_ip"))
         raw = InterfaceDefaultConfig().to_payload()
         raw["interfaceName"] = getattr(desired, "interface_name")
         raw["interfaceType"] = "ethernet"
@@ -715,7 +732,8 @@ class InterfaceWorkflowCoordinator:
                 continue
             if resource.state == "deleted":
                 if resource.adapter.delete_strategy == InterfaceDeleteStrategy.NORMALIZE:
-                    projected.append(self._default_ethernet_target(desired))
+                    _switch_ip, current = self._raw_target(resource, desired, original=True)
+                    projected.append(self._default_ethernet_target(desired, current))
                 continue
             current = resource.operations.after.get(key)
             if current is not None:
@@ -927,7 +945,9 @@ class InterfaceWorkflowCoordinator:
                 )
             )
 
-        request_stats = dict(self._snapshot.request_stats if self._snapshot is not None else plan.request_stats)
+        request_stats = dict(plan.request_stats)
+        if self._snapshot is not None:
+            request_stats.update(self._snapshot.request_stats)
         request_stats.pop("mutation_requests", None)
         request_stats.pop("deploy_requests", None)
         request_stats["vpc_pair_gets"] = self._vpc_pair_gets

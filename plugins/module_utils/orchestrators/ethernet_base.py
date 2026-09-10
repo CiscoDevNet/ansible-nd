@@ -41,7 +41,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    DeferredDeleteRequestGroup,
+    NDBaseInterfaceOrchestrator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 ModelType = NDBaseModel
@@ -79,6 +82,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    deferred_delete_queue_names: ClassVar[frozenset[str]] = frozenset({"normalize", "reset"})
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -211,6 +215,38 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """Add pre-resolved physical-interface targets to the reset queue."""
         for interface_name, switch_id in targets:
             self._queue_reset(interface_name, switch_id)
+
+    @property
+    def deferred_delete_queues(self) -> dict[str, tuple[tuple[str, str], ...]]:
+        """Return physical normalize and per-interface reset queues through the shared transfer contract."""
+        return {"normalize": self.pending_normalizes, "reset": self.pending_resets}
+
+    def queue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Import pre-resolved targets into a supported physical-interface reset queue."""
+        if queue_name == "normalize":
+            self.queue_normalize_targets(targets)
+            return
+        if queue_name == "reset":
+            self.queue_reset_targets(targets)
+            return
+        raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+
+    def dequeue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Remove transferred physical reset targets from one local deferred queue."""
+        removed = set(targets)
+        if queue_name == "normalize":
+            self._pending_normalizes = [target for target in self._pending_normalizes if target not in removed]
+            return
+        if queue_name == "reset":
+            self._pending_resets = [target for target in self._pending_resets if target not in removed]
+            return
+        raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+
+    def deferred_delete_request_groups(self) -> tuple[DeferredDeleteRequestGroup, ...]:
+        """Describe normalize groups followed by the individual PUT reset request boundaries."""
+        groups = [DeferredDeleteRequestGroup(queue_name="normalize", targets=tuple(group)) for group in self._normalize_groups() if group]
+        groups.extend(DeferredDeleteRequestGroup(queue_name="reset", targets=(target,)) for target in self.pending_resets)
+        return tuple(groups)
 
     @staticmethod
     def _has_unresettable_fields(existing_data: dict | None) -> bool:
@@ -418,16 +454,17 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Pre-delete validation run by `NDStateMachine` for `state: deleted` before `delete`/`delete_bulk` — which are skipped
-        in `--check` mode — so a dry run fails on an unresolvable `switch_ip` or on an explicitly named port-channel member
-        exactly like a normal run would (PR #550 review). Wire state comes from the per-switch `interfaceList` cache
-        `query_all` populated; no additional requests. The fabric-wide `overridden` delete set is not routed through this
-        hook: `delete_bulk` skips port-channel members silently there.
+        in `--check` mode — so a dry run fails on an unresolvable `switch_ip`, a fabric-owned policy, or an explicitly named
+        port-channel member exactly like a normal run would. Wire state comes from the per-switch `interfaceList` cache `query_all`
+        populated; no additional requests. The fabric-wide `overridden` delete set is not routed through this hook: `delete_bulk`
+        skips port-channel members silently there.
 
         ## Raises
 
         ### RuntimeError
 
         - If one or more `switch_ip` values do not match any switch in the fabric.
+        - If any named interface carries a fabric-owned policy.
         - If any named interface is a port-channel member.
         - If the interface-list query used to resolve port-channel membership fails.
         """
@@ -435,6 +472,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_delete_restriction(model_instance, existing_data)
 
     @staticmethod
@@ -586,10 +624,13 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         groups = self._normalize_groups()
         for index, group in enumerate(groups):
             payload = InterfaceDefaultConfig.to_normalize_payload(group)
+            response_start = len(self.rest_send.responses)
             try:
                 results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
             except Exception as e:
-                accepted = self._dequeue_accepted_normalizes(group)
+                responses = self.rest_send.responses[response_start:]
+                response = responses[-1] if responses else None
+                accepted = self._dequeue_accepted_normalizes(group, response)
                 rejected = [name for name, switch_id in group if (name, switch_id) in self._pending_normalizes]
                 not_attempted = [name for later in groups[index + 1 :] for name, _switch_id in later]
                 msg = f"Bulk normalize failed for {rejected}: {e}."
@@ -604,20 +645,25 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 self._pending_normalizes.remove(pair)
         return results
 
-    def _dequeue_accepted_normalizes(self, group: list[tuple[str, str]]) -> list[str]:
+    def _dequeue_accepted_normalizes(
+        self,
+        group: list[tuple[str, str]],
+        response: dict | None = None,
+    ) -> list[str]:
         """
         # Summary
 
-        After a failed normalize request for `group`, dequeue from `_pending_normalizes` every member the most recent response reported
-        as an exact `success` (HTTP 207 Multi-Status only; see `_accepted_multistatus_names`) and return their names in request order.
-        Names are unique within a group by construction (`_normalize_groups`), so a response `name` maps to exactly one pair. Returns an
-        empty list when the failure was not a partial 207.
+        After a failed normalize request for `group`, dequeue from `_pending_normalizes` every member that the response captured for
+        that exact request reported as an exact `success` (HTTP 207 Multi-Status only; see `_accepted_multistatus_names`) and return
+        their names in request order. Names are unique within a group by construction (`_normalize_groups`), so a response `name` maps
+        to exactly one pair. Returns an empty list when the request produced no response or was not a partial 207. The optional fallback
+        preserves compatibility for direct callers while `_normalize_interfaces` always supplies request-scoped evidence (issue #554).
 
         ## Raises
 
         None
         """
-        accepted_names = self._accepted_multistatus_names()
+        accepted_names = self._accepted_multistatus_names(response)
         accepted: list[str] = []
         for interface_name, switch_id in group:
             if interface_name.lower() in accepted_names:
@@ -778,6 +824,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_delete_restriction(model_instance, existing_data)
             if self._has_unresettable_fields(existing_data):
                 self._queue_reset(model_instance.interface_name, switch_id)
@@ -855,27 +902,36 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
         api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
         request_body = {"interfaces": [payload for _interface_name, payload in items]}
+        response_start = len(self.rest_send.responses)
         try:
             return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
         except Exception as e:
-            accepted = self._queue_accepted_bulk_items(items, switch_id)
+            responses = self.rest_send.responses[response_start:]
+            response = responses[-1] if responses else None
+            accepted = self._queue_accepted_bulk_items(items, switch_id, response)
             if accepted:
                 raise RuntimeError(f"{e}. The controller accepted {accepted} from the same request; their deploy stays queued.") from e
             raise
 
-    def _queue_accepted_bulk_items(self, items: list[tuple[str, dict]], switch_id: str) -> list[str]:
+    def _queue_accepted_bulk_items(
+        self,
+        items: list[tuple[str, dict]],
+        switch_id: str,
+        response: dict | None = None,
+    ) -> list[str]:
         """
         # Summary
 
-        After a failed per-switch bulk POST, queue a deploy for every interface in `items` that the most recent response
-        reported as an exact `success` (HTTP 207 Multi-Status only; see `_accepted_multistatus_names`). Returns the accepted
-        interface names in request order (empty when the failure was not a partial 207).
+        After a failed per-switch bulk POST, queue a deploy for every interface in `items` that the response captured for that exact
+        request reported as an exact `success` (HTTP 207 Multi-Status only; see `_accepted_multistatus_names`). Returns the accepted
+        interface names in request order (empty when the request produced no response or was not a partial 207). The optional fallback
+        preserves compatibility for direct callers while `_post_bulk_group` always supplies request-scoped evidence (issue #554).
 
         ## Raises
 
         None
         """
-        accepted_names = self._accepted_multistatus_names()
+        accepted_names = self._accepted_multistatus_names(response)
         accepted: list[str] = []
         for interface_name, _payload in items:
             if interface_name.lower() in accepted_names:
@@ -911,6 +967,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_fabric_ownership(model_instance, existing_data)
             port_channel_id = self._existing_port_channel_id(existing_data)
             if port_channel_id is not None:
                 if state == "overridden":

@@ -19,6 +19,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection impo
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlan, NDStatePlanner, SUPPORTED_STATES
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import EthernetAccessInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import EthernetRoutedInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_access_interface import PortChannelAccessInterfaceOrchestrator
@@ -150,6 +151,17 @@ _ADAPTER_DEFINITIONS = (
         "delete_strategy": InterfaceDeleteStrategy.NORMALIZE,
         "safety": InterfaceFamilySafety(guards_child_subinterfaces=True),
         "config_normalizer": expand_ethernet_config,
+    },
+    {
+        "resource_type": "ethernet_routed",
+        "module_name": "cisco.nd.nd_interface_ethernet_routed",
+        "orchestrator_class": EthernetRoutedInterfaceOrchestrator,
+        "ownership_domain": "ethernet",
+        "interface_types": frozenset({"ethernet"}),
+        "policy_types": frozenset({"routedHost", "iosXeRoutedHost"}),
+        "delete_strategy": InterfaceDeleteStrategy.NORMALIZE,
+        "supports_intra_family_policy_transitions": True,
+        "safety": InterfaceFamilySafety(guards_child_subinterfaces=True),
     },
     {
         "resource_type": "ethernet_trunk_host",

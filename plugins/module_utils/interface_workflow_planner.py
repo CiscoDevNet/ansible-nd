@@ -25,6 +25,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection impo
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlan
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import EthernetRoutedInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import (
     EthernetTrunkHostInterfaceOrchestrator,
 )
@@ -132,6 +133,7 @@ class InterfaceResourcePlan:
     operations: NDStatePlan = field(repr=False, compare=False)
     orchestrator: NDBaseInterfaceOrchestrator = field(repr=False, compare=False)
     transitions: tuple[InterfacePolicyTransition, ...] = field(default=(), repr=False, compare=False)
+    platform_deletes: tuple[NDBaseModel, ...] = field(default=(), repr=False, compare=False)
 
     @property
     def resource_type(self) -> str:
@@ -174,6 +176,7 @@ class InterfaceWorkflowPlan:
     target_switch_ids: tuple[str, ...]
     resources: tuple[InterfaceResourcePlan, ...]
     request_stats: dict[str, int]
+    auxiliary_orchestrators: tuple[NDBaseInterfaceOrchestrator, ...] = field(default=(), repr=False, compare=False)
 
     @property
     def changed(self) -> bool:
@@ -218,6 +221,8 @@ class InterfaceWorkflowPlanner:
         self._vpc_pair_scope_cache: dict[str, tuple[str, ...]] = {}
         self._vpc_peer_serial_cache: dict[str, str] | None = None
         self._inventory_by_identity: dict[tuple[str, str], dict[str, Any]] | None = None
+        self._routed_delete_orchestrator: EthernetRoutedInterfaceOrchestrator | None = None
+        self._routed_link_cache_owner: EthernetRoutedInterfaceOrchestrator | None = None
 
     def plan(self, resources: list[dict[str, Any]]) -> InterfaceWorkflowPlan:
         """Return a complete read-only plan or raise before any mutation method is called."""
@@ -242,10 +247,10 @@ class InterfaceWorkflowPlanner:
                 orchestrator = adapter.build_orchestrator(rest_send=rest_send, snapshot=self.snapshot, results=results)
                 if isinstance(orchestrator, VpcInterfaceBaseOrchestrator):
                     orchestrator.share_peer_serial_cache(self._shared_vpc_peer_serial_cache())
+                if isinstance(orchestrator, EthernetRoutedInterfaceOrchestrator):
+                    self._register_routed_orchestrator(orchestrator)
                 before = self._existing_collection(adapter, orchestrator, proposed)
-                planning_before = self._planning_before_for_policy_transitions(
-                    adapter=adapter, before=before, proposed=proposed, state=state
-                )
+                planning_before = self._planning_before_for_policy_transitions(adapter=adapter, before=before, proposed=proposed, state=state)
                 operations = adapter.plan(before=planning_before, proposed=proposed, state=state)
                 if planning_before is not before:
                     operations = replace(operations, before=before)
@@ -272,11 +277,15 @@ class InterfaceWorkflowPlanner:
             raise InterfaceWorkflowConflictError(conflicts)
 
         self._run_preflights(resource_plans)
+        auxiliary_orchestrators = () if self._routed_delete_orchestrator is None else (self._routed_delete_orchestrator,)
+        request_stats = dict(self.snapshot.request_stats)
+        request_stats["fabric_link_gets"] = self._fabric_link_gets([*(resource.orchestrator for resource in resource_plans), *auxiliary_orchestrators])
         return InterfaceWorkflowPlan(
             fabric_name=self.snapshot.fabric_name,
             target_switch_ids=target_switch_ids,
             resources=tuple(resource_plans),
-            request_stats=self.snapshot.request_stats,
+            request_stats=request_stats,
+            auxiliary_orchestrators=auxiliary_orchestrators,
         )
 
     def _validate_resource_groups(self, resources: list[dict[str, Any]]) -> list[tuple[int, InterfaceFamilyAdapter, str, NDConfigCollection]]:
@@ -604,12 +613,94 @@ class InterfaceWorkflowPlanner:
         current_records: tuple[tuple[str, dict[str, Any]], ...],
     ) -> bool:
         """Return whether one physical port is already at the fabric default."""
-        return (
-            adapter.delete_strategy == InterfaceDeleteStrategy.NORMALIZE
-            and len(current_records) == 1
-            and InterfaceStateSnapshot.policy_type(current_records[0][1]) == "trunkHost"
-            and EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_default(current_records[0][1])
-        )
+        if adapter.delete_strategy != InterfaceDeleteStrategy.NORMALIZE or len(current_records) != 1:
+            return False
+        current = current_records[0][1]
+        policy_type = InterfaceStateSnapshot.policy_type(current)
+        if policy_type == "trunkHost":
+            return EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_default(current)
+        if policy_type == "iosXeRoutedHost":
+            return EthernetRoutedInterfaceOrchestrator._is_unconfigured_default(current)
+        return False
+
+    def _platform_delete_models(
+        self,
+        resource: InterfaceResourcePlan,
+        operations: NDStatePlan,
+        inventory: Mapping[tuple[str, str], dict[str, Any]],
+    ) -> tuple[NDBaseModel, ...]:
+        """Build routed proxy models for physical deletes requiring a platform-specific reset implementation."""
+        if resource.adapter.ownership_domain != "ethernet":
+            return ()
+        model_class = get_interface_family_adapter("ethernet_routed").model_class
+        platform_deletes: list[NDBaseModel] = []
+        for desired in operations.deletes:
+            switch_id = self.fabric_context.get_switch_id(getattr(desired, "switch_ip"))
+            current = inventory.get((switch_id, getattr(desired, "interface_name").lower()))
+            if self._wire_network_os_type(current or {}) != "ios-xe":
+                continue
+            platform_deletes.append(
+                model_class(
+                    switch_ip=getattr(desired, "switch_ip"),
+                    interface_name=getattr(desired, "interface_name"),
+                    config_data={"network_os": {"network_os_type": "ios-xe"}},
+                )
+            )
+        if (
+            platform_deletes
+            and resource.state == "deleted"
+            and isinstance(resource.orchestrator, EthernetRoutedInterfaceOrchestrator)
+            and self._routed_delete_orchestrator is None
+        ):
+            self._routed_delete_orchestrator = resource.orchestrator
+        return tuple(platform_deletes)
+
+    def _register_routed_orchestrator(self, orchestrator: EthernetRoutedInterfaceOrchestrator) -> None:
+        """Share one lazy fabric-link cache across every routed orchestrator in this workflow."""
+        if self._routed_link_cache_owner is None:
+            self._routed_link_cache_owner = orchestrator
+            return
+        orchestrator.share_fabric_link_cache(self._routed_link_cache_owner)
+
+    @staticmethod
+    def _fabric_link_gets(orchestrators: Iterable[NDBaseInterfaceOrchestrator]) -> int:
+        """Count unique routed fabric-link GET responses used by safety preflight."""
+        count = 0
+        seen: set[int] = set()
+        for orchestrator in orchestrators:
+            rest_send = orchestrator.rest_send
+            if id(rest_send) in seen:
+                continue
+            seen.add(id(rest_send))
+            for response in rest_send.responses:
+                method = getattr(response.get("METHOD"), "value", response.get("METHOD"))
+                path = str(response.get("REQUEST_PATH") or "")
+                if str(method).upper() == "GET" and "/links" in path:
+                    count += 1
+        return count
+
+    def _shared_routed_delete_orchestrator(self) -> EthernetRoutedInterfaceOrchestrator:
+        """Return one routed orchestrator shared by every platform-specific physical reset in this workflow."""
+        if self._routed_delete_orchestrator is None:
+            params = {
+                "fabric_name": self.snapshot.fabric_name,
+                "state": "deleted",
+                "config": [],
+                "check_mode": True,
+            }
+            results = Results()
+            results.state = "deleted"
+            results.check_mode = True
+            orchestrator = get_interface_family_adapter("ethernet_routed").build_orchestrator(
+                rest_send=self.rest_send_factory(params),
+                snapshot=self.snapshot,
+                results=results,
+            )
+            if not isinstance(orchestrator, EthernetRoutedInterfaceOrchestrator):
+                raise InterfaceWorkflowValidationError("The ethernet_routed adapter did not build its routed orchestrator.")
+            self._register_routed_orchestrator(orchestrator)
+            self._routed_delete_orchestrator = orchestrator
+        return self._routed_delete_orchestrator
 
     def _dependency_errors(
         self,
@@ -974,6 +1065,7 @@ class InterfaceWorkflowPlanner:
                     resource,
                     operations=operations,
                     transitions=tuple(transitions_by_index[resource.resource_index]),
+                    platform_deletes=self._platform_delete_models(resource, operations, inventory),
                 )
             )
         return updated_resources
@@ -1454,11 +1546,15 @@ class InterfaceWorkflowPlanner:
                 )
 
     def _run_preflights(self, resources: list[InterfaceResourcePlan]) -> None:
-        """Run local create guards and optional API-backed capability checks after conflicts."""
+        """Run explicit-delete, local create, and optional API-backed capability guards after conflicts."""
         for resource in resources:
-            if resource.state == "deleted":
-                continue
             try:
+                if resource.state == "deleted":
+                    resource.orchestrator.preflight_delete(list(resource.operations.deletes))
+                    if resource.platform_deletes:
+                        routed_orchestrator = self._shared_routed_delete_orchestrator()
+                        routed_orchestrator.preflight_delete(list(resource.platform_deletes))
+                    continue
                 create_candidates = [*resource.operations.creates, *(transition.desired for transition in resource.transitions)]
                 resource.orchestrator.preflight_create(create_candidates)
                 if self.run_capability_preflight:
