@@ -26,7 +26,8 @@
       - nd_iw_absent_matches | length == 0
   when: >-
     nd_iw_assert_resource_result.state != 'deleted'
-    or (nd_iw_assert_family | default(nd_iw_current_case.family | default(''))) not in ['ethernet_access', 'ethernet_trunk_host']
+    or (nd_iw_assert_family | default(nd_iw_current_case.family | default('')))
+       not in ['ethernet_access', 'ethernet_routed', 'ethernet_trunk_host']
 
 - name: Verify deleted physical Ethernet interfaces were reset to the default policy
   vars:
@@ -47,4 +48,5 @@
   when:
     - nd_iw_assert_resource_result.state == 'deleted'
     - >-
-      (nd_iw_assert_family | default(nd_iw_current_case.family | default(''))) in ['ethernet_access', 'ethernet_trunk_host']
+      (nd_iw_assert_family | default(nd_iw_current_case.family | default('')))
+      in ['ethernet_access', 'ethernet_routed', 'ethernet_trunk_host']

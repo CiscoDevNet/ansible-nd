@@ -83,7 +83,7 @@
         nd_iw_override_removal_action: >-
           {{
             "reset"
-            if nd_iw_current_case.family in ["ethernet_access", "ethernet_trunk_host"]
+            if nd_iw_current_case.family in ["ethernet_access", "ethernet_routed", "ethernet_trunk_host"]
             else "delete"
           }}
       ansible.builtin.assert:
@@ -118,7 +118,7 @@
         nd_iw_override_removal_action: >-
           {{
             "reset"
-            if nd_iw_current_case.family in ["ethernet_access", "ethernet_trunk_host"]
+            if nd_iw_current_case.family in ["ethernet_access", "ethernet_routed", "ethernet_trunk_host"]
             else "delete"
           }}
       ansible.builtin.assert:

@@ -94,12 +94,13 @@
       - nd_iw_output_result.request_stats.interface_summary_pages is defined
       - nd_iw_output_result.request_stats.interface_summary_cache_hits is defined
       - nd_iw_output_result.request_stats.snapshot_overlays is defined
+      - nd_iw_output_result.request_stats.fabric_link_gets is defined
       - nd_iw_output_result.request_stats.vpc_pair_gets is defined
       - nd_iw_output_result.request_stats.mutation_requests is not defined
       - nd_iw_output_result.request_stats.deploy_requests is not defined
       - nd_iw_output_result.execution.mutations_sent == 0
       - nd_iw_output_result.execution.deployments_sent == 0
-      - nd_iw_output_result.execution.items is not defined
+      - "'items' not in nd_iw_output_result.execution"
   loop:
     - "{{ nd_iw_output_normal }}"
     - "{{ nd_iw_output_info }}"
@@ -128,7 +129,7 @@
       - nd_iw_output_normal.resources[0].operations == nd_iw_output_info.resources[0].operations
       - nd_iw_output_info.resources[0].operations == nd_iw_output_debug.resources[0].operations
       - nd_iw_output_normal.resources[0].after | length == nd_iw_output_info.resources[0].proposed | length
-      - nd_iw_output_debug.resources[0].family_before | length >= nd_iw_output_debug.resources[0].before | length
+      # A transition's targeted before state can belong to a different source family.
       - nd_iw_output_debug.resources[0].family_after | length >= nd_iw_output_debug.resources[0].after | length
 
 - name: Verify compact operation identities and check-mode status
