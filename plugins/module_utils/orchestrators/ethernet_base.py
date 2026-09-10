@@ -67,7 +67,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interfa
     InterfaceDefaultConfig,
     InterfaceDefaultPolicyModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    DeferredDeleteRequestGroup,
+    NDBaseInterfaceOrchestrator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 ModelType = NDBaseModel
@@ -132,6 +135,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    deferred_delete_queue_names: ClassVar[frozenset[str]] = frozenset({"normalize", "reset", "platform_reset"})
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -231,6 +235,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         self._pending_resets: list[tuple[str, str]] = []
         self._pending_xe_resets: list[tuple[str, str]] = []
         self._fabric_link_endpoints_cache: dict[tuple[str, str], dict] | None = None
+        self._fabric_link_cache_provider: EthernetBaseOrchestrator | None = None
         # Flipped for the rest of the run once the controller rejects the template's empty `description` (ND 4.3.1); see
         # `_post_normalize`.
         self._normalize_omits_description: bool = False
@@ -357,6 +362,10 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             },
         }
 
+    def share_fabric_link_cache(self, provider: EthernetBaseOrchestrator) -> None:
+        """Use one Ethernet orchestrator as the workflow-wide owner of lazy fabric-link discovery."""
+        self._fabric_link_cache_provider = None if provider is self else provider
+
     def _fabric_link_endpoints(self) -> dict[tuple[str, str], dict]:
         """
         # Summary
@@ -376,6 +385,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - Via `_request` if the links query fails with a non-404 status.
         """
+        if self._fabric_link_cache_provider is not None:
+            return self._fabric_link_cache_provider._fabric_link_endpoints()
         if self._fabric_link_endpoints_cache is not None:
             return self._fabric_link_endpoints_cache
         endpoints: dict[tuple[str, str], dict] = {}
@@ -489,6 +500,56 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             if isinstance(switch_ip, str) and isinstance(interface_name, str):
                 named.add((switch_ip, normalize_ethernet_interface_name(interface_name)))
         return named
+
+    @property
+    def pending_platform_resets(self) -> tuple[tuple[str, str], ...]:
+        """Return IOS-XE defaults-only PUT resets through the shared transfer contract."""
+        return tuple(self._pending_xe_resets)
+
+    @property
+    def deferred_delete_queues(self) -> dict[str, tuple[tuple[str, str], ...]]:
+        """Return physical normalize, generic reset, and platform-specific reset queues."""
+        return {
+            "platform_reset": self.pending_platform_resets,
+            "normalize": self.pending_normalizes,
+            "reset": self.pending_resets,
+        }
+
+    def queue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Import pre-resolved targets into a supported physical-interface reset queue."""
+        if queue_name == "normalize":
+            self.queue_normalize_targets(targets)
+            return
+        if queue_name == "reset":
+            self.queue_reset_targets(targets)
+            return
+        if queue_name == "platform_reset":
+            for interface_name, switch_id in targets:
+                self._queue_xe_reset(interface_name, switch_id)
+            return
+        raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+
+    def dequeue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Remove transferred physical reset targets from one local deferred queue."""
+        removed = set(targets)
+        if queue_name == "normalize":
+            self._pending_normalizes = [target for target in self._pending_normalizes if target not in removed]
+            return
+        if queue_name == "reset":
+            self._pending_resets = [target for target in self._pending_resets if target not in removed]
+            return
+        if queue_name == "platform_reset":
+            self._pending_xe_resets = [target for target in self._pending_xe_resets if target not in removed]
+            return
+        raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+
+    def deferred_delete_request_groups(self) -> tuple[DeferredDeleteRequestGroup, ...]:
+        """Describe platform PUTs, normalize groups, and generic PUTs in execution order."""
+        groups = [DeferredDeleteRequestGroup(queue_name="platform_reset", targets=(target,)) for target in self.pending_platform_resets]
+        groups.extend(DeferredDeleteRequestGroup(queue_name="normalize", targets=tuple(group)) for group in self._normalize_groups() if group)
+        groups.extend(DeferredDeleteRequestGroup(queue_name="reset", targets=(target,)) for target in self.pending_resets)
+        return tuple(groups)
+
     @staticmethod
     def _has_unresettable_fields(existing_data: dict | None) -> bool:
         """
@@ -1207,6 +1268,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         ### RuntimeError
 
         - If one or more `switch_ip` values do not match any switch in the fabric.
+        - If any named interface carries a fabric-owned policy.
         - If any named interface is a port-channel member.
         - If the interface-list query used to resolve port-channel membership fails.
         - Propagated from `_check_xe_fabric_link` (IOS-XE fabric-link endpoint, or links query failure).
@@ -1215,6 +1277,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_delete_restriction(model_instance, existing_data, switch_id=switch_id)
             self._check_xe_fabric_link(model_instance, existing_data)
 
@@ -1460,10 +1523,12 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         results: list[ResponseType] = []
         groups = self._normalize_groups()
         for index, group in enumerate(groups):
+            response_start = self.rest_send.response_count
             try:
                 results.append(self._post_normalize(api_endpoint, group))
             except Exception as e:
-                accepted = self._dequeue_accepted_normalizes(group)
+                response = self.rest_send.response_current if self.rest_send.response_count > response_start else None
+                accepted = self._dequeue_accepted_normalizes(group, response)
                 rejected = [name for name, switch_id in group if (name, switch_id) in self._pending_normalizes]
                 not_attempted = [name for later in groups[index + 1 :] for name, _switch_id in later]
                 msg = f"Bulk normalize failed for {rejected}: {e}."
@@ -1538,20 +1603,25 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 return True
         return False
 
-    def _dequeue_accepted_normalizes(self, group: list[tuple[str, str]]) -> list[str]:
+    def _dequeue_accepted_normalizes(
+        self,
+        group: list[tuple[str, str]],
+        response: dict | None = None,
+    ) -> list[str]:
         """
         # Summary
 
-        After a failed normalize request for `group`, dequeue from `_pending_normalizes` every member the most recent response reported
-        as an exact `success` (HTTP 207 Multi-Status only; see `_accepted_multistatus_names`) and return their names in request order.
-        Names are unique within a group by construction (`_normalize_groups`), so a response `name` maps to exactly one pair. Returns an
-        empty list when the failure was not a partial 207.
+        After a failed normalize request for `group`, dequeue from `_pending_normalizes` every member that the response captured for
+        that exact request reported as an exact `success` (HTTP 207 Multi-Status only; see `_accepted_multistatus_names`) and return
+        their names in request order. Names are unique within a group by construction (`_normalize_groups`), so a response `name` maps
+        to exactly one pair. Returns an empty list when the request produced no response or was not a partial 207. The optional fallback
+        preserves compatibility for direct callers while `_normalize_interfaces` always supplies request-scoped evidence (issue #554).
 
         ## Raises
 
         None
         """
-        accepted_names = self._accepted_multistatus_names()
+        accepted_names = self._accepted_multistatus_names(response)
         accepted: list[str] = []
         for interface_name, switch_id in group:
             if interface_name.lower() in accepted_names:
@@ -1806,6 +1876,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_delete_restriction(model_instance, existing_data, switch_id=switch_id)
             if self._model_is_ios_xe(model_instance):
                 self._check_xe_fabric_link(model_instance)
@@ -1923,6 +1994,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 )
                 continue
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_fabric_ownership(model_instance, existing_data)
             restriction = self._port_channel_delete_restriction(
                 model_instance,
                 existing_data,
