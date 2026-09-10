@@ -67,6 +67,9 @@ class NDStatePlanner:
                 identifier = None
                 try:
                     identifier = proposed_item.get_identifier_value()
+                    existing_match = after.get(identifier)
+                    if existing_match is not None and getattr(existing_match, "is_unsupported_policy", False):
+                        raise ValueError(existing_match.describe_unsupported_policy() + "; this module cannot modify it.")
                     diff_status = after.get_diff_config(proposed_item, exclude_unset=state == "merged")
                     if diff_status == "no_diff":
                         continue
@@ -92,11 +95,21 @@ class NDStatePlanner:
 
             if state == "overridden":
                 diff_identifiers = before.get_diff_identifiers(proposed)
-                deletes = [existing_item for identifier in diff_identifiers if (existing_item := after.get(identifier)) is not None]
+                deletes = [
+                    existing_item
+                    for identifier in diff_identifiers
+                    if (existing_item := after.get(identifier)) is not None and not getattr(existing_item, "is_unsupported_policy", False)
+                ]
                 after.delete_many([item.get_identifier_value() for item in deletes])
 
         elif state == "deleted":
-            deletes = [existing_item for proposed_item in proposed if (existing_item := after.get(proposed_item.get_identifier_value())) is not None]
+            for proposed_item in proposed:
+                existing_item = after.get(proposed_item.get_identifier_value())
+                if existing_item is None:
+                    continue
+                if getattr(existing_item, "is_unsupported_policy", False):
+                    raise ValueError(existing_item.describe_unsupported_policy() + "; this module cannot delete it.")
+                deletes.append(existing_item)
             after.delete_many([item.get_identifier_value() for item in deletes])
 
         return NDStatePlan(

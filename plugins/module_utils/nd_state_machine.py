@@ -26,9 +26,21 @@ class NDStateMachine:
     Generic State Machine for Nexus Dashboard (Bulk Support).
     """
 
-    def __init__(self, module: AnsibleModule, model_orchestrator: type[NDBaseOrchestrator] | NDBaseOrchestrator):
+    def __init__(
+        self,
+        module: AnsibleModule,
+        model_orchestrator: type[NDBaseOrchestrator] | NDBaseOrchestrator,
+        config: list | None = None,
+    ):
         """
         Initialize the ND State Machine.
+
+        ``config``: optional caller-prepared config list used to build the
+        proposed collection. When omitted, ``module.params["config"]`` is used.
+        Callers that need ``prepare_config_data`` transforms (switch-id backfill,
+        payload nesting) must run it themselves and pass the result here (or write
+        it back to ``module.params["config"]``); the state machine no longer calls
+        ``prepare_config_data`` so non-idempotent orchestrators are not run twice.
         """
         self.module = module
 
@@ -42,7 +54,10 @@ class NDStateMachine:
         self.rest_send.response_handler = ResponseHandler()
 
         # Operation tracking
-        self.output = NDOutput(output_level=module.params.get("output_level", "normal"))
+        self.output = NDOutput(
+            output_level=module.params.get("output_level", "normal"),
+            state=module.params.get("state", ""),
+        )
         self.results = Results()
         self.results.state = self.module.params.get("state", "")
         self.results.check_mode = self.module.check_mode
@@ -66,24 +81,53 @@ class NDStateMachine:
         self.supports_bulk_create = self.model_orchestrator.supports_bulk_create
         self.supports_bulk_delete = self.model_orchestrator.supports_bulk_delete
 
+        # Mask secret input values in the invocation echo. Ansible auto-masks
+        # ``no_log`` argument-spec params, but secrets in free-form/nested dicts
+        # have no static suboption to flag; the model declares them via
+        # ``collect_secret_values`` and we register them here, generically for
+        # every module rather than per-module boilerplate. ``no_log_values`` is
+        # always present on a real AnsibleModule; guard for module stubs.
+        if hasattr(self.module, "no_log_values"):
+            for config_item in self.module.params.get("config") or []:
+                self.module.no_log_values |= self.model_class.collect_secret_values(config_item)
+
         # Initialize collections
         try:
             response_data = self.model_orchestrator.query_all()
             # State of configuration objects in ND before change execution
             self.before = NDConfigCollection.from_api_response(response_data=response_data, model_class=self.model_class)
+            # Surface controller objects whose type this module does not model. They
+            # are preserved as opaque read-only records (see the links tolerant read
+            # path) and are protected from implicit/explicit modification below.
+            self._warn_unsupported(self.before)
             # State of current configuration objects in ND during change execution
             self.existing = self.before.copy()
             # Ongoing collection of configuration objects that were changed
             self.sent = NDConfigCollection(model_class=self.model_class)
-            # Collection of configuration objects given by user.
+            # Collection of configuration objects given by user. Coalesce None to
+            # an empty list so read-only states (e.g. gathered) with no config work.
             # ``context={"state": ...}`` is threaded into pydantic validation so models can apply
             # state-aware validation (e.g. require certain fields for write states while accepting
             # identifier-only items for ``deleted``). Models that do not read the context ignore it.
-            self.proposed = NDConfigCollection.from_ansible_config(
-                data=self.module.params.get("config", []), model_class=self.model_class, context={"state": self.state}
-            )
+            #
+            # ``prepare_config_data`` (switch-id backfill, payload transforms) is
+            # the caller's responsibility. Workflow coordinators already run it and
+            # write the result back to ``module.params["config"]``; ``nd_manage_links``
+            # passes its prepared copy via ``config=``. Running it here as well would
+            # double-transform non-idempotent orchestrators (e.g. nd_vrf/nd_network),
+            # reverting user-supplied fields to their hardcoded defaults.
+            raw_config = config if config is not None else (self.module.params.get("config") or [])
+            self.proposed = NDConfigCollection.from_ansible_config(data=raw_config, model_class=self.model_class, context={"state": self.state})
 
-            self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
+            # Argument-spec ``config.options`` drives pruning of gathered output
+            # so it round-trips cleanly as ``config``. Derived from the model,
+            # so it is generic across modules and needs no per-module wiring.
+            gathered_spec = {}
+            get_argument_spec = getattr(self.model_class, "get_argument_spec", None)
+            if callable(get_argument_spec):
+                gathered_spec = get_argument_spec().get("config", {}).get("options", {}) or {}
+
+            self.output.assign(after=self.existing, before=self.before, proposed=self.proposed, gathered_spec=gathered_spec)
 
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}") from e
@@ -93,6 +137,12 @@ class NDStateMachine:
         """
         Manage state according to desired configuration.
         """
+        if self.state == "gathered":
+            # Read-only state: __init__ already queried the existing objects and
+            # assigned them as ``after`` in the output. Bypass the mutation-only
+            # planner so gathered remains a standalone readback state.
+            return
+
         plan = self._build_plan()
         if self.state in ["merged", "replaced", "overridden"]:
             proposed_items = list(self.proposed)
@@ -130,6 +180,7 @@ class NDStateMachine:
         elif self.state == "deleted":
             # Capability preflight intentionally NOT run for deletes: removing configuration does not
             # depend on a switch's capability to host the interface type (PR #275 scope decision).
+            # The delete-specific guards run via preflight_delete inside _manage_delete_state.
             self._manage_delete_state(plan)
 
         else:
@@ -153,14 +204,19 @@ class NDStateMachine:
                 raise NDStateMachineError(error_msg) from e
         return None
 
-    def _build_plan(self) -> NDStatePlan:
+    def _build_plan(
+        self,
+        *,
+        state: str | None = None,
+        before: NDConfigCollection | None = None,
+    ) -> NDStatePlan:
         """Calculate all operations without invoking an orchestrator mutation method."""
         try:
             return NDStatePlanner.plan(
-                state=self.state,
-                before=self.before,
+                state=state if state is not None else self.state,
+                before=before if before is not None else self.before,
                 proposed=self.proposed,
-                ignore_errors=self.ignore_errors,
+                ignore_errors=getattr(self, "ignore_errors", False),
             )
         except Exception as e:
             raise NDStateMachineError(str(e)) from e
@@ -201,15 +257,33 @@ class NDStateMachine:
         # Log operation
         self.output.assign(after=self.existing)
 
+    def _warn_unsupported(self, collection) -> None:
+        """Warn once per object whose type this module preserves read-only."""
+        if not hasattr(self.module, "warn"):
+            return
+        for item in collection:
+            if getattr(item, "is_unsupported_policy", False):
+                self.module.warn(item.describe_unsupported_policy() + "; it is read-only and will not be modified or deleted by this module.")
+
     def _manage_override_deletions(self, plan: NDStatePlan | None = None) -> None:
-        """Delete items not in proposed config for overridden state."""
-        plan = plan or self._build_plan()
+        """Delete supported items absent from overridden proposed config."""
+        plan = plan or self._build_plan(state="overridden")
         self._delete_items(list(plan.deletes))
 
     def _manage_delete_state(self, plan: NDStatePlan | None = None) -> None:
         """Handle deleted state."""
-        plan = plan or self._build_plan()
-        self._delete_items(list(plan.deletes))
+        plan = plan or self._build_plan(state="deleted", before=self.existing)
+        items_to_delete = list(plan.deletes)
+        # Delete preflight (switch resolution, port-channel membership) runs here -- before _delete_items, whose
+        # mutation is skipped in check mode -- so a dry run rejects what a normal run would (PR #550 review).
+        # Same error normalization as the create/update preflights in manage_state.
+        try:
+            self.model_orchestrator.preflight_delete(items_to_delete)
+        except NDStateMachineError:
+            raise
+        except Exception as e:
+            raise NDStateMachineError(f"Preflight failed: {e}") from e
+        self._delete_items(items_to_delete)
 
     def _delete_items(self, items: list[NDBaseModel]) -> None:
         """Delete a list of items individually or in bulk."""

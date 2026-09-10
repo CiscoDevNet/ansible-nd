@@ -25,9 +25,11 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_validation import ResponseValidationStrategy, TerminalClientErrorPolicy
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_strategies.nd_v1_strategy import NdV1Strategy
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
+from ansible_collections.cisco.nd.tests.unit.module_utils.legacy_response_strategy import LegacyStrategy
 
 # =============================================================================
 # Test: ResponseHandler initialization
@@ -2737,11 +2739,11 @@ def test_response_handler_nd_01570():
 
 
 # =============================================================================
-# Test: terminal and retryable HTTP responses (issue #457)
+# Test: 4xx terminal classification in the retry policy (issue #457, PR #502)
 # =============================================================================
 
 
-def test_response_handler_nd_01580():
+def test_response_handler_nd_01600():
     """
     # Summary
 
@@ -2756,7 +2758,7 @@ def test_response_handler_nd_01580():
 
     ## Classes and Methods
 
-    - ResponseHandler._is_terminal_client_error()
+    - NdV1Strategy.is_terminal_client_error()
     - ResponseHandler._handle_post_put_delete_response()
     - ResponseHandler.commit()
     """
@@ -2774,12 +2776,12 @@ def test_response_handler_nd_01580():
     assert instance.result["changed"] is False
 
 
-def test_response_handler_nd_01590():
+def test_response_handler_nd_01610():
     """
     # Summary
 
-    Verify a POST failing with 429 (Too Many Requests) remains retryable: rate limiting is the one transient 4xx, so
-    it is excluded from the 4xx-terminal rule (issue #457).
+    Verify a POST failing with 429 (Too Many Requests) remains retryable: rate limiting is transient, so 429 is
+    excluded from the 4xx-terminal rule (issue #457).
 
     ## Test
 
@@ -2788,7 +2790,7 @@ def test_response_handler_nd_01590():
 
     ## Classes and Methods
 
-    - ResponseHandler._is_terminal_client_error()
+    - NdV1Strategy.is_terminal_client_error()
     - ResponseHandler._handle_post_put_delete_response()
     - ResponseHandler.commit()
     """
@@ -2805,7 +2807,7 @@ def test_response_handler_nd_01590():
     assert instance.result["retryable"] is True
 
 
-def test_response_handler_nd_01600():
+def test_response_handler_nd_01620():
     """
     # Summary
 
@@ -2820,7 +2822,7 @@ def test_response_handler_nd_01600():
 
     ## Classes and Methods
 
-    - ResponseHandler._is_terminal_client_error()
+    - NdV1Strategy.is_terminal_client_error()
     - ResponseHandler._handle_get_response()
     - ResponseHandler.commit()
     """
@@ -2838,7 +2840,7 @@ def test_response_handler_nd_01600():
     assert instance.result["retryable"] is False
 
 
-def test_response_handler_nd_01610():
+def test_response_handler_nd_01630():
     """
     # Summary
 
@@ -2869,7 +2871,7 @@ def test_response_handler_nd_01610():
     assert instance.result["retryable"] is False
 
 
-def test_response_handler_nd_01620():
+def test_response_handler_nd_01640():
     """
     # Summary
 
@@ -2884,7 +2886,7 @@ def test_response_handler_nd_01620():
 
     ## Classes and Methods
 
-    - ResponseHandler._is_terminal_client_error()
+    - NdV1Strategy.is_terminal_client_error()
     - ResponseHandler._handle_post_put_delete_response()
     - ResponseHandler.commit()
     """
@@ -2899,3 +2901,289 @@ def test_response_handler_nd_01620():
         instance.commit()
     assert instance.result["success"] is False
     assert instance.result["retryable"] is False
+
+
+def test_response_handler_nd_01650():
+    """
+    # Summary
+
+    Verify a GET failing with 409 (Conflict) remains retryable: the ND 4.2.1 OpenAPI documents 409 on safe GETs
+    (e.g. manage /links, /remoteFabrics) where the conflict is with the resource's current state and can clear on
+    its own (e.g. topology reconciliation), so GET retries/polls through it.
+
+    ## Test
+
+    - GET returns 409
+    - success is False, found is False, retryable is True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_terminal_client_error()
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 409,
+        "MESSAGE": "Conflict",
+        "DATA": {"code": 409, "message": "The request could not be completed due to a conflict with the current state of the resource."},
+    }
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["found"] is False
+    assert instance.result["retryable"] is True
+
+
+def test_response_handler_nd_01660():
+    """
+    # Summary
+
+    Verify a POST failing with 409 (Conflict) is terminal (retryable=False): for mutations 409 is a deterministic
+    create/update conflict (e.g. resource already exists), so an identical replay cannot succeed — only GET treats
+    409 as transient.
+
+    ## Test
+
+    - POST returns 409
+    - success is False and retryable is False
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_terminal_client_error()
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 409,
+        "MESSAGE": "Conflict",
+        "DATA": {"code": 409, "message": "Fabric already exists"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["retryable"] is False
+
+
+def test_response_handler_nd_01670():
+    """
+    # Summary
+
+    Verify a POST failing with 408 (Request Timeout) remains retryable: RFC 9110 section 15.5.9 defines 408 as
+    retryable (the server timed out waiting for the request), so it is in the transient set for every verb.
+
+    ## Test
+
+    - POST returns 408
+    - success is False and retryable is True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_terminal_client_error()
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 408,
+        "MESSAGE": "Request Timeout",
+        "DATA": {},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["retryable"] is True
+
+
+def test_response_handler_nd_01680():
+    """
+    # Summary
+
+    Verify a GET failing with 425 (Too Early) remains retryable: RFC 8470 section 5.2 expects an automatic retry
+    outside early data, so 425 is in the transient set for every verb.
+
+    ## Test
+
+    - GET returns 425
+    - success is False, found is False, retryable is True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_terminal_client_error()
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 425,
+        "MESSAGE": "Too Early",
+        "DATA": {},
+    }
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["found"] is False
+    assert instance.result["retryable"] is True
+
+
+def test_response_handler_nd_01690():
+    """
+    # Summary
+
+    Verify a GET failing with 421 (Misdirected Request) remains retryable: RFC 9110 section 15.5.20 permits retrying
+    421 (on a different connection — connection lifecycle belongs to Ansible's persistent httpapi transport, so the
+    retry rides whatever connection that layer provides).
+
+    ## Test
+
+    - GET returns 421
+    - success is False, found is False, retryable is True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_terminal_client_error()
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 421,
+        "MESSAGE": "Misdirected Request",
+        "DATA": {},
+    }
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["found"] is False
+    assert instance.result["retryable"] is True
+
+
+# =============================================================================
+# Test: Legacy (pre-#502) injected strategies remain accepted
+# =============================================================================
+
+
+def test_response_handler_nd_01700():
+    """
+    # Summary
+
+    Verify a strategy implementing only the pre-#502 protocol members is still accepted by the validation_strategy
+    setter: terminal-4xx classification is an optional capability, so widening the retry policy must not turn the
+    documented strategy-injection extension point into a breaking change.
+
+    ## Test
+
+    - A structural strategy without is_terminal_client_error() is assigned
+    - No TypeError is raised and the getter returns the injected instance
+
+    ## Classes and Methods
+
+    - ResponseHandler.validation_strategy (setter)
+    - ResponseHandler.validation_strategy (getter)
+    """
+    instance = ResponseHandler()
+    strategy = LegacyStrategy()
+    with does_not_raise():
+        instance.validation_strategy = strategy
+    assert instance.validation_strategy is strategy
+
+
+def test_response_handler_nd_01710():
+    """
+    # Summary
+
+    Verify a POST failing with 400 under a legacy strategy (no is_terminal_client_error()) keeps the historical
+    retryable=True behavior: when the injected strategy cannot classify client errors, the handler must not
+    terminalize on its behalf.
+
+    ## Test
+
+    - Legacy strategy is injected
+    - POST returns 400
+    - success is False, changed is False, retryable is True
+
+    ## Classes and Methods
+
+    - ResponseHandler._is_terminal_client_error()
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.validation_strategy = LegacyStrategy()
+    instance.response = {
+        "RETURN_CODE": 400,
+        "MESSAGE": "Bad Request",
+        "DATA": {"error": "Invalid fabric settings"},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
+    assert instance.result["retryable"] is True
+
+
+def test_response_handler_nd_01720():
+    """
+    # Summary
+
+    Verify a GET failing with 400 under a legacy strategy (no is_terminal_client_error()) keeps the historical
+    retryable=True behavior on the GET path as well.
+
+    ## Test
+
+    - Legacy strategy is injected
+    - GET returns 400
+    - success is False, found is False, retryable is True
+
+    ## Classes and Methods
+
+    - ResponseHandler._is_terminal_client_error()
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.validation_strategy = LegacyStrategy()
+    instance.response = {
+        "RETURN_CODE": 400,
+        "MESSAGE": "Bad Request",
+        "DATA": {"error": "Invalid query"},
+    }
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["success"] is False
+    assert instance.result["found"] is False
+    assert instance.result["retryable"] is True
+
+
+def test_response_handler_nd_01730():
+    """
+    # Summary
+
+    Verify the protocol split: NdV1Strategy satisfies both the base ResponseValidationStrategy protocol and the
+    optional TerminalClientErrorPolicy capability, while the legacy strategy satisfies only the base protocol.
+
+    ## Test
+
+    - isinstance(NdV1Strategy(), ResponseValidationStrategy) is True
+    - isinstance(NdV1Strategy(), TerminalClientErrorPolicy) is True
+    - isinstance(LegacyStrategy(), ResponseValidationStrategy) is True
+    - isinstance(LegacyStrategy(), TerminalClientErrorPolicy) is False
+
+    ## Classes and Methods
+
+    - ResponseValidationStrategy
+    - TerminalClientErrorPolicy
+    - NdV1Strategy
+    """
+    assert isinstance(NdV1Strategy(), ResponseValidationStrategy)
+    assert isinstance(NdV1Strategy(), TerminalClientErrorPolicy)
+    assert isinstance(LegacyStrategy(), ResponseValidationStrategy)
+    assert not isinstance(LegacyStrategy(), TerminalClientErrorPolicy)

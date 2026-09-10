@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.links.links import NDLinkModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlanner
 
@@ -25,6 +26,43 @@ def _loopback(name: str, *, ip: str | None = None, description: str | None = Non
 
 def _collection(config: list[dict], state: str = "merged") -> NDConfigCollection:
     return NDConfigCollection.from_ansible_config(data=config, model_class=LoopbackInterfaceModel, context={"state": state})
+
+
+def _link_identity() -> dict:
+    return {
+        "src_cluster_name": "c1",
+        "dst_cluster_name": "c1",
+        "src_fabric_name": "f1",
+        "dst_fabric_name": "f1",
+        "src_switch_name": "leaf1",
+        "dst_switch_name": "spine1",
+        "src_interface_name": "Ethernet1/1",
+        "dst_interface_name": "Ethernet1/1",
+    }
+
+
+def _unsupported_link_collection() -> NDConfigCollection:
+    response = {
+        "srcClusterName": "c1",
+        "dstClusterName": "c1",
+        "srcFabricName": "f1",
+        "dstFabricName": "f1",
+        "srcSwitchName": "leaf1",
+        "dstSwitchName": "spine1",
+        "srcInterfaceName": "Ethernet1/1",
+        "dstInterfaceName": "Ethernet1/1",
+        "linkId": "L-opaque",
+        "configData": {"policyType": "ipfmNumbered", "templateInputs": {"srcIp": "192.0.2.1"}},
+    }
+    return NDConfigCollection.from_api_response(response_data=[response], model_class=NDLinkModel)
+
+
+def _supported_link_collection(state: str) -> NDConfigCollection:
+    config = {
+        **_link_identity(),
+        "config_data": {"policy_type": "numbered", "template_inputs": {"src_ip": "192.0.2.1", "dst_ip": "192.0.2.2"}},
+    }
+    return NDConfigCollection.from_ansible_config(data=[config], model_class=NDLinkModel, context={"state": state})
 
 
 def test_merged_plan_preserves_unspecified_current_fields_without_mutating_before() -> None:
@@ -103,3 +141,49 @@ def test_invalid_state_fails_without_changing_inputs() -> None:
 
     assert len(before) == 0
     assert len(proposed) == 0
+
+
+def test_explicit_unsupported_update_fails() -> None:
+    """A proposed supported policy cannot replace an opaque controller object."""
+    before = _unsupported_link_collection()
+    proposed = _supported_link_collection("replaced")
+
+    with pytest.raises(ValueError, match="cannot modify"):
+        NDStatePlanner.plan(state="replaced", before=before, proposed=proposed)
+
+
+def test_ignored_unsupported_update_is_reported_and_preserved() -> None:
+    """ignore_errors records the update refusal without mutating the opaque object."""
+    before = _unsupported_link_collection()
+    proposed = _supported_link_collection("merged")
+
+    plan = NDStatePlanner.plan(state="merged", before=before, proposed=proposed, ignore_errors=True)
+
+    assert not plan.changed
+    assert len(plan.errors) == 1
+    assert "cannot modify" in plan.errors[0]
+    assert list(plan.after)[0].is_unsupported_policy is True
+
+
+def test_explicit_unsupported_delete_fails_even_with_ignore_errors() -> None:
+    """Explicit deletion of an opaque object remains a hard safety failure."""
+    before = _unsupported_link_collection()
+    proposed = NDConfigCollection.from_ansible_config(
+        data=[_link_identity()],
+        model_class=NDLinkModel,
+        context={"state": "deleted"},
+    )
+
+    with pytest.raises(ValueError, match="cannot delete"):
+        NDStatePlanner.plan(state="deleted", before=before, proposed=proposed, ignore_errors=True)
+
+
+def test_overridden_preserves_unsupported_objects() -> None:
+    """Authoritative reconciliation excludes opaque objects from implicit deletes."""
+    before = _unsupported_link_collection()
+    proposed = NDConfigCollection(model_class=NDLinkModel)
+
+    plan = NDStatePlanner.plan(state="overridden", before=before, proposed=proposed)
+
+    assert not plan.deletes
+    assert [item.link_id for item in plan.after] == ["L-opaque"]
