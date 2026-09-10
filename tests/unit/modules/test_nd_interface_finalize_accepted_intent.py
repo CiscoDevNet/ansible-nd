@@ -38,8 +38,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
-# Every interface module carries both the `NDStateMachineError` handler and the broad `Exception` fallback handler (the svi and
-# subinterface modules gained the broad handler in PR #551, issue #379).
+# Every interface module delegates its single `except Exception` clause to `fail_from_exception` (issue #556), which handles
+# both the `NDStateMachineError` tier and the unhandled-exception tier.
 INTERFACE_MODULES = (
     "nd_interface_ethernet_access",
     "nd_interface_ethernet_routed",
@@ -261,7 +261,7 @@ def test_nd_interface_finalize_accepted_intent_00000(monkeypatch: pytest.MonkeyP
     """
     # Summary
 
-    Verify the `NDStateMachineError` handler of each interface module deploys the controller-accepted pair and names it in the
+    Verify the `NDStateMachineError` tier of each interface module's handler deploys the controller-accepted pair and names it in the
     failure message.
 
     ## Test
@@ -287,8 +287,8 @@ def test_nd_interface_finalize_accepted_intent_00010(monkeypatch: pytest.MonkeyP
     """
     # Summary
 
-    Verify the broad `Exception` handler of each interface module also deploys the controller-accepted pair and
-    names it in the failure message.
+    Verify the unhandled-exception tier of each interface module's handler also deploys the controller-accepted pair and names
+    it in the failure message.
 
     ## Test
 
