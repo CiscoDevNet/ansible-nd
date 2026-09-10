@@ -34,6 +34,7 @@ nd_iw_family_order:
   - port_channel_access
   - port_channel_trunk_host
   - ethernet_access
+  - ethernet_routed
   - ethernet_trunk_host
 
 # The runner must set these aliases for the currently selected fabric before it
