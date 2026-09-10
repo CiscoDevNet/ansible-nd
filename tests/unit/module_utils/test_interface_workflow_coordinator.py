@@ -912,6 +912,43 @@ def test_physical_delete_reports_reset_default_or_idempotent_default(raw, action
         assert {"path": "policy_type", "before": "accessHost", "after": "trunkHost"} in projected["operations"][0]["changes"]
 
 
+def test_ios_xe_physical_delete_projects_defaults_only_routed_policy() -> None:
+    """Verification-disabled output reflects the IOS-XE PUT reset rather than the NX-OS trunk default."""
+    proposed = [_ethernet_config("192.0.2.1", "GigabitEthernet3")]
+    resource_plan = _projection_resource("ethernet_access", "deleted", proposed, action="delete")
+    raw = {
+        "interfaceName": "GigabitEthernet3",
+        "interfaceType": "ethernet",
+        "configData": {
+            "mode": "routed",
+            "networkOS": {
+                "networkOSType": "ios-xe",
+                "policy": {
+                    "policyType": "iosXeRoutedHost",
+                    "adminState": True,
+                    "ip": "198.51.100.1",
+                    "prefix": 30,
+                },
+            },
+        },
+    }
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    coordinator._snapshot = ProjectionSnapshot([("SERIAL1", "GigabitEthernet3", raw)])
+
+    projected = coordinator._format_result(_projection_plan(resource_plan))["resources"][0]
+
+    assert projected["before"][0]["policy_type"] == "iosXeRoutedHost"
+    assert projected["after"][0]["policy_type"] == "iosXeRoutedHost"
+    assert projected["after"][0]["config_data"]["network_os"] == {
+        "network_os_type": "ios-xe",
+        "policy": {"admin_state": True},
+    }
+    assert projected["operations"][0]["action"] == "reset"
+    changes = projected["operations"][0]["changes"]
+    assert {"path": "config_data.network_os.policy.ip", "before": "198.51.100.1", "after": None} in changes
+    assert {"path": "config_data.network_os.policy.prefix", "before": 30, "after": None} in changes
+
+
 @pytest.mark.parametrize("present", [True, False])
 def test_logical_delete_reports_requested_resource_or_clean_absence(present):
     config = [{"switch_ip": "192.0.2.1", "interface_name": "loopback10"}]
@@ -1392,10 +1429,13 @@ def test_vpc_pair_inventory_count_remains_visible_in_request_stats():
     coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
     coordinator._snapshot = SimpleNamespace(request_stats={"switches": 2, "interface_inventory_gets": 2})
     coordinator._vpc_pair_gets = 1
+    workflow_plan = plan()
+    workflow_plan.request_stats["fabric_link_gets"] = 2
 
-    result = coordinator._format_result(plan())
+    result = coordinator._format_result(workflow_plan)
 
     assert result["request_stats"]["vpc_pair_gets"] == 1
+    assert result["request_stats"]["fabric_link_gets"] == 2
 
 
 def test_authoritative_pair_inventory_seeds_one_cache_shared_by_all_vpc_orchestrators():

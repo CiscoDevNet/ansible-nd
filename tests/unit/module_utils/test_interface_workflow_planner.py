@@ -26,6 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planne
     InterfaceWorkflowConflictError,
     InterfaceWorkflowPlanner,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import EthernetRoutedInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
 
@@ -38,10 +39,7 @@ class _RequestRecorder:
         summary_responses: Mapping[str, dict[str, Any] | list[dict[str, Any]]] | None = None,
     ) -> None:
         self._responses: Iterator[dict[str, Any]] = iter(responses)
-        self._summary_responses = {
-            switch_id: iter(value if isinstance(value, list) else [value])
-            for switch_id, value in (summary_responses or {}).items()
-        }
+        self._summary_responses = {switch_id: iter(value if isinstance(value, list) else [value]) for switch_id, value in (summary_responses or {}).items()}
         self.calls: list[dict[str, Any]] = []
 
     def __call__(self, **kwargs: Any) -> dict[str, Any]:
@@ -193,10 +191,11 @@ def _summary_row(
     return row
 
 
-def test_registry_is_the_exact_ten_family_scope_and_delegates_model_ownership() -> None:
+def test_registry_is_the_exact_eleven_family_scope_and_delegates_model_ownership() -> None:
     """The authoritative registry excludes flow-rules and derives every model from its orchestrator."""
     assert set(INTERFACE_FAMILY_ADAPTERS) == {
         "ethernet_access",
+        "ethernet_routed",
         "ethernet_trunk_host",
         "loopback",
         "port_channel_access",
@@ -216,6 +215,7 @@ def test_registry_declares_generic_transition_delete_and_structural_safety_metad
     """Every adapter advertises its mutation strategy and structural dependency guards."""
     expected = {
         "ethernet_access": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
+        "ethernet_routed": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
         "ethernet_trunk_host": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
         "loopback": (InterfaceDeleteStrategy.REMOVE, False, False, False),
         "port_channel_access": (InterfaceDeleteStrategy.REMOVE, False, True, True),
@@ -235,13 +235,11 @@ def test_registry_declares_generic_transition_delete_and_structural_safety_metad
         assert adapter.safety.requires_pair_consistency is pair_consistency
         assert adapter.safety.owns_physical_members is owns_members
         assert adapter.safety.guards_child_subinterfaces is child_guard
-        assert adapter.supports_intra_family_policy_transitions is (resource_type == "loopback")
+        assert adapter.supports_intra_family_policy_transitions is (resource_type in {"ethernet_routed", "loopback"})
         assert not hasattr(adapter, "policy_transition_sources")
 
     assert IMPLICIT_TRANSITION_STATES == frozenset({"merged", "replaced"})
-    assert {
-        adapter.delete_strategy for adapter in INTERFACE_FAMILY_ADAPTERS.values()
-    } == {
+    assert {adapter.delete_strategy for adapter in INTERFACE_FAMILY_ADAPTERS.values()} == {
         InterfaceDeleteStrategy.NORMALIZE,
         InterfaceDeleteStrategy.REMOVE,
         InterfaceDeleteStrategy.DELETE,
@@ -628,13 +626,7 @@ def test_svi_transition_accepts_switch_virtual_interface_summary_alias() -> None
     current = _wire_interface("vlan100", "switchVirtualInterface", "foreignSviPolicy")
     planner, _recorder = _planner(
         responses=[{"interfaces": [current]}],
-        summary_responses={
-            "SERIAL1": {
-                "interfaces": [
-                    _summary_row(current, "SERIAL1", interfaceType="switchVirtualInterface")
-                ]
-            }
-        },
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1", interfaceType="switchVirtualInterface")]}},
     )
     config = {
         "switch_ip": "192.0.2.1",
@@ -663,9 +655,7 @@ def test_implicit_transition_requires_and_accepts_a_consistent_vpc_pair(resource
         vpc_pairs=pairs,
     )
 
-    plan = planner.plan(
-        [{"type": resource_type, "state": "merged", "config": [_vpc("192.0.2.1", trunk=trunk)]}]
-    )
+    plan = planner.plan([{"type": resource_type, "state": "merged", "config": [_vpc("192.0.2.1", trunk=trunk)]}])
 
     transition = plan.resources[0].transitions[0]
     assert len(transition.current_records) == 2
@@ -724,9 +714,7 @@ def test_summary_inventory_is_lazy_and_shared_for_two_transitions_on_one_switch(
     second = _wire_interface("Ethernet1/11", "ethernet", "dot1qTunnelHost")
     planner, recorder = _planner(
         responses=[{"interfaces": [first, second]}],
-        summary_responses={
-            "SERIAL1": {"interfaces": [_summary_row(first, "SERIAL1"), _summary_row(second, "SERIAL1")]}
-        },
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(first, "SERIAL1"), _summary_row(second, "SERIAL1")]}},
     )
     config = {
         "switch_ip": "192.0.2.1",
@@ -769,32 +757,49 @@ def test_same_name_different_interface_type_is_a_structural_collision() -> None:
 
 
 @pytest.mark.parametrize(
-    ("resource_type", "config", "interface_name", "interface_type"),
+    ("resource_type", "config", "interface_name", "interface_type", "current_policy_type"),
     [
         (
             "ethernet_access",
             {"switch_ip": "192.0.2.1", "interface_names": ["Ethernet1/1"]},
             "Ethernet1/1",
             "ethernet",
+            "dot1qTunnelHost",
+        ),
+        (
+            "ethernet_routed",
+            {"switch_ip": "192.0.2.1", "interface_name": "Ethernet1/3"},
+            "Ethernet1/3",
+            "ethernet",
+            "accessHost",
         ),
         (
             "ethernet_trunk_host",
             {"switch_ip": "192.0.2.1", "interface_names": ["Ethernet1/2"]},
             "Ethernet1/2",
             "ethernet",
+            "dot1qTunnelHost",
         ),
-        ("loopback", {"switch_ip": "192.0.2.1", "interface_name": "loopback10"}, "loopback10", "loopback"),
+        (
+            "loopback",
+            {"switch_ip": "192.0.2.1", "interface_name": "loopback10"},
+            "loopback10",
+            "loopback",
+            "foreignDeletablePolicy",
+        ),
         (
             "port_channel_access",
             {"switch_ip": "192.0.2.1", "interface_name": "port-channel10"},
             "port-channel10",
             "portChannel",
+            "foreignDeletablePolicy",
         ),
         (
             "port_channel_trunk_host",
             {"switch_ip": "192.0.2.1", "interface_name": "port-channel11"},
             "port-channel11",
             "portChannel",
+            "foreignDeletablePolicy",
         ),
         (
             "subinterface_managed",
@@ -804,6 +809,7 @@ def test_same_name_different_interface_type_is_a_structural_collision() -> None:
             },
             "Ethernet1/3.10",
             "subInterface",
+            "foreignDeletablePolicy",
         ),
         (
             "subinterface_unmanaged",
@@ -813,6 +819,7 @@ def test_same_name_different_interface_type_is_a_structural_collision() -> None:
             },
             "Ethernet1/4.20",
             "subInterface",
+            "foreignDeletablePolicy",
         ),
         (
             "svi",
@@ -822,6 +829,7 @@ def test_same_name_different_interface_type_is_a_structural_collision() -> None:
             },
             "vlan100",
             "svi",
+            "foreignDeletablePolicy",
         ),
     ],
 )
@@ -830,9 +838,10 @@ def test_deleted_is_policy_independent_within_the_selected_structure(
     config: dict[str, Any],
     interface_name: str,
     interface_type: str,
+    current_policy_type: str,
 ) -> None:
-    """Explicit deleted targets a foreign policy and uses the destination adapter's delete path."""
-    current = _wire_interface(interface_name, interface_type, "foreignDeletablePolicy")
+    """Explicit deleted targets a safe cross-family policy and uses the destination adapter's delete path."""
+    current = _wire_interface(interface_name, interface_type, current_policy_type)
     planner, _recorder = _planner(
         responses=[{"interfaces": [current]}],
         summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
@@ -844,6 +853,20 @@ def test_deleted_is_policy_independent_within_the_selected_structure(
     assert resource.transitions == ()
     assert len(resource.operations.deletes) == 1
     assert resource.mutation_count == 1
+
+
+def test_deleted_rejects_fabric_owned_ethernet_policy_before_writes() -> None:
+    """Explicit physical delete cannot normalize a fabric link carrying a system-owned policy."""
+    current = _wire_interface("Ethernet1/1", "ethernet", "numbered", ip="198.51.100.1", prefix=30)
+    planner, recorder = _planner(
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=r"system policy 'numbered'"):
+        planner.plan([{"type": "ethernet_access", "state": "deleted", "config": [_ethernet("192.0.2.1")]}])
+
+    assert len(recorder.calls) == 2
 
 
 @pytest.mark.parametrize(
@@ -863,6 +886,260 @@ def test_deleted_absent_or_default_ethernet_is_idempotent_without_summary(invent
     assert plan.mutation_count == 0
     assert plan.request_stats["interface_summary_gets"] == 0
     assert len(recorder.calls) == 1
+
+
+def test_deleted_ios_xe_default_is_idempotent_without_platform_reset_or_summary() -> None:
+    """A defaults-only IOS-XE routed physical port is already at its platform reset target."""
+    current = _wire_interface("GigabitEthernet3", "ethernet", "iosXeRoutedHost", adminState=True, speed="auto")
+    current["configData"]["mode"] = "routed"
+    current["configData"]["networkOS"]["networkOSType"] = "ios-xe"
+    planner, recorder = _planner(responses=[{"interfaces": [current]}])
+    config = {"switch_ip": "192.0.2.1", "interface_names": ["GigabitEthernet3"]}
+
+    plan = planner.plan([{"type": "ethernet_access", "state": "deleted", "config": [config]}])
+
+    assert plan.changed is False
+    assert plan.mutation_count == 0
+    assert plan.auxiliary_orchestrators == ()
+    assert plan.request_stats["interface_summary_gets"] == 0
+    assert len(recorder.calls) == 1
+
+
+def test_deleted_ios_xe_configured_port_uses_routed_platform_reset_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cross-family IOS-XE physical delete keeps one logical item while selecting the routed reset implementation."""
+    current = _wire_interface(
+        "GigabitEthernet3",
+        "ethernet",
+        "iosXeRoutedHost",
+        adminState=True,
+        ip="198.51.100.1",
+        prefix=30,
+    )
+    current["configData"]["mode"] = "routed"
+    current["configData"]["networkOS"]["networkOSType"] = "ios-xe"
+    planner, recorder = _planner(
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+    monkeypatch.setattr(EthernetRoutedInterfaceOrchestrator, "preflight_delete", lambda _self, _models: None)
+    config = {"switch_ip": "192.0.2.1", "interface_names": ["GigabitEthernet3"]}
+
+    plan = planner.plan([{"type": "ethernet_access", "state": "deleted", "config": [config]}])
+
+    resource = plan.resources[0]
+    assert len(resource.operations.deletes) == 1
+    assert len(resource.platform_deletes) == 1
+    proxy = resource.platform_deletes[0]
+    assert proxy.get_identifier_value() == ("192.0.2.1", "GigabitEthernet3")
+    assert proxy.config_data.network_os.network_os_type == "ios-xe"
+    assert len(plan.auxiliary_orchestrators) == 1
+    assert isinstance(plan.auxiliary_orchestrators[0], EthernetRoutedInterfaceOrchestrator)
+    assert plan.request_stats["interface_inventory_gets"] == 1
+    assert plan.request_stats["interface_summary_gets"] == 1
+    assert len(recorder.calls) == 2
+
+
+def test_direct_routed_ios_xe_delete_refuses_a_fabric_link_endpoint_during_planning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A direct routed delete fails closed on an IOS-XE fabric-link endpoint before any mutation can run."""
+    current = _wire_interface(
+        "GigabitEthernet3",
+        "ethernet",
+        "iosXeRoutedHost",
+        adminState=True,
+        description="fabric-owned endpoint",
+        ip="198.51.100.1",
+        prefix=30,
+    )
+    current["configData"]["mode"] = "routed"
+    current["configData"]["networkOS"]["networkOSType"] = "ios-xe"
+    planner, recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1"},
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+    link_calls: list[tuple[str, str]] = []
+
+    def links_request(_orchestrator, *, path, verb, **_kwargs):
+        link_calls.append((getattr(verb, "value", verb), path))
+        return {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-1",
+                    "configData": {"policyType": "ebgpVrfLite"},
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "SERIAL1",
+                    "srcInterfaceName": "GigabitEthernet3",
+                    "dstSwitchName": "BORDER1",
+                    "dstSwitchId": "SERIAL9",
+                    "dstInterfaceName": "Ethernet1/3",
+                }
+            ],
+            "meta": {"counts": {"remaining": 0}},
+        }
+
+    monkeypatch.setattr(EthernetRoutedInterfaceOrchestrator, "_request", links_request)
+    resources = [
+        {
+            "type": "ethernet_routed",
+            "state": "deleted",
+            "config": [{"switch_ip": "192.0.2.1", "interface_name": "GigabitEthernet3"}],
+        }
+    ]
+
+    with pytest.raises(
+        InterfaceWorkflowValidationError,
+        match=r"resources\[0\] type 'ethernet_routed' preflight failed: Interface GigabitEthernet3 .* endpoint of fabric link LINK-UUID-1",
+    ):
+        planner.plan(resources)
+
+    assert link_calls == [("GET", "/api/v1/manage/links?fabricName=fabric_1")]
+    assert planner.snapshot.request_stats["interface_inventory_gets"] == 1
+    assert planner.snapshot.request_stats["interface_summary_gets"] == 0
+    assert len(recorder.calls) == 1
+    assert {getattr(call["verb"], "value", call["verb"]) for call in recorder.calls} == {"GET"}
+
+
+def test_first_of_two_direct_routed_ios_xe_deletes_refuses_a_fabric_link_endpoint_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two direct routed groups load their inventories, then the first link-owned target stops planning after one links GET."""
+    first = _wire_interface(
+        "GigabitEthernet3",
+        "ethernet",
+        "iosXeRoutedHost",
+        adminState=True,
+        description="fabric-owned endpoint",
+        ip="198.51.100.1",
+        prefix=30,
+    )
+    second = _wire_interface(
+        "GigabitEthernet4",
+        "ethernet",
+        "iosXeRoutedHost",
+        adminState=True,
+        description="ordinary routed interface",
+        ip="198.51.100.5",
+        prefix=30,
+    )
+    for current in (first, second):
+        current["configData"]["mode"] = "routed"
+        current["configData"]["networkOS"]["networkOSType"] = "ios-xe"
+    planner, recorder = _planner(
+        responses=[{"interfaces": [first]}, {"interfaces": [second]}],
+        summary_responses={
+            "SERIAL1": {"interfaces": [_summary_row(first, "SERIAL1")]},
+            "SERIAL2": {"interfaces": [_summary_row(second, "SERIAL2")]},
+        },
+    )
+    link_calls: list[tuple[str, str]] = []
+
+    def links_request(_orchestrator, *, path, verb, **_kwargs):
+        link_calls.append((getattr(verb, "value", verb), path))
+        return {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-1",
+                    "configData": {"policyType": "ebgpVrfLite"},
+                    "srcSwitchName": "WAN1",
+                    "srcSwitchId": "SERIAL1",
+                    "srcInterfaceName": "GigabitEthernet3",
+                    "dstSwitchName": "BORDER1",
+                    "dstSwitchId": "SERIAL9",
+                    "dstInterfaceName": "Ethernet1/3",
+                }
+            ],
+            "meta": {"counts": {"remaining": 0}},
+        }
+
+    monkeypatch.setattr(EthernetRoutedInterfaceOrchestrator, "_request", links_request)
+    resources = [
+        {
+            "type": "ethernet_routed",
+            "state": "deleted",
+            "config": [{"switch_ip": "192.0.2.1", "interface_name": "GigabitEthernet3"}],
+        },
+        {
+            "type": "ethernet_routed",
+            "state": "deleted",
+            "config": [{"switch_ip": "192.0.2.2", "interface_name": "GigabitEthernet4"}],
+        },
+    ]
+
+    with pytest.raises(
+        InterfaceWorkflowValidationError,
+        match=r"resources\[0\] type 'ethernet_routed' preflight failed: Interface GigabitEthernet3 .* endpoint of fabric link LINK-UUID-1",
+    ):
+        planner.plan(resources)
+
+    assert link_calls == [("GET", "/api/v1/manage/links?fabricName=fabric_1")]
+    assert planner.snapshot.request_stats["interface_inventory_gets"] == 2
+    assert planner.snapshot.request_stats["interface_summary_gets"] == 0
+    assert len(recorder.calls) == 2
+    assert {getattr(call["verb"], "value", call["verb"]) for call in recorder.calls} == {"GET"}
+
+
+def test_multiple_routed_ios_xe_deletes_share_one_link_inventory_and_reset_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Direct routed delete groups reuse one lazy link query and the first resource orchestrator for platform resets."""
+    first = _wire_interface(
+        "GigabitEthernet3",
+        "ethernet",
+        "iosXeRoutedHost",
+        adminState=True,
+        ip="198.51.100.1",
+        prefix=30,
+    )
+    second = _wire_interface(
+        "GigabitEthernet4",
+        "ethernet",
+        "iosXeRoutedHost",
+        adminState=True,
+        ip="198.51.100.5",
+        prefix=30,
+    )
+    for current in (first, second):
+        current["configData"]["mode"] = "routed"
+        current["configData"]["networkOS"]["networkOSType"] = "ios-xe"
+    planner, recorder = _planner(
+        responses=[{"interfaces": [first]}, {"interfaces": [second]}],
+        summary_responses={
+            "SERIAL1": {"interfaces": [_summary_row(first, "SERIAL1")]},
+            "SERIAL2": {"interfaces": [_summary_row(second, "SERIAL2")]},
+        },
+    )
+    link_calls = []
+
+    def links_request(orchestrator, *, path, verb, **_kwargs):
+        link_calls.append((id(orchestrator), path))
+        response = {
+            "RETURN_CODE": 200,
+            "METHOD": getattr(verb, "value", verb),
+            "REQUEST_PATH": path,
+            "DATA": {"links": []},
+        }
+        orchestrator.rest_send._response.append(response)
+        orchestrator.rest_send._result.append({"success": True, "changed": False})
+        return {"links": []}
+
+    monkeypatch.setattr(EthernetRoutedInterfaceOrchestrator, "_request", links_request)
+    resources = [
+        {
+            "type": "ethernet_routed",
+            "state": "deleted",
+            "config": [{"switch_ip": "192.0.2.1", "interface_name": "GigabitEthernet3"}],
+        },
+        {
+            "type": "ethernet_routed",
+            "state": "deleted",
+            "config": [{"switch_ip": "192.0.2.2", "interface_name": "GigabitEthernet4"}],
+        },
+    ]
+
+    plan = planner.plan(resources)
+
+    assert len(link_calls) == 1
+    assert plan.request_stats["fabric_link_gets"] == 1
+    assert plan.auxiliary_orchestrators == (plan.resources[0].orchestrator,)
+    assert plan.resources[1].orchestrator._fabric_link_cache_provider is plan.resources[0].orchestrator
+    assert all(len(resource.platform_deletes) == 1 for resource in plan.resources)
+    assert len(recorder.calls) == 2
 
 
 @pytest.mark.parametrize("resource_type", ["vpc_access", "vpc_trunk_host"])
@@ -1173,10 +1450,7 @@ def test_subinterface_write_requires_existing_routed_parent(
     with pytest.raises(InterfaceWorkflowConflictError, match=expected_reason) as exc_info:
         planner.plan([{"type": "subinterface_managed", "state": "merged", "config": [child]}])
 
-    assert "subinterface_parent_prerequisite" in {
-        conflict.code
-        for conflict in exc_info.value.conflicts
-    }
+    assert "subinterface_parent_prerequisite" in {conflict.code for conflict in exc_info.value.conflicts}
 
 
 @pytest.mark.parametrize(
@@ -1228,11 +1502,7 @@ def test_port_channel_current_and_final_members_conflict_with_ethernet_mutation(
     """Both current and final port-channel members are protected from Ethernet actions."""
     current = _wire_interface("port-channel10", "portChannel", "foreignPoPolicy", ports=["Ethernet1/1"])
     responses = [{"interfaces": [current]}] if current_member else [{"interfaces": []}]
-    summaries = (
-        {"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}}
-        if current_member
-        else None
-    )
+    summaries = {"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}} if current_member else None
     final_members = ["Ethernet1/2"] if current_member else ["Ethernet1/1"]
     planner, _recorder = _planner(responses=responses, summary_responses=summaries)
 
@@ -1254,17 +1524,9 @@ def test_port_channel_current_and_final_members_conflict_with_ethernet_mutation(
 @pytest.mark.parametrize("current_member", [False, True])
 def test_vpc_current_and_final_members_conflict_with_ethernet_mutation(current_member: bool) -> None:
     """Both current and final per-peer vPC members are protected from Ethernet actions."""
-    primary = _wire_interface(
-        "vpc10", "vpc", "foreignVpcPolicy", peerSwitchId="SERIAL2", peer1MemberPorts=["Ethernet1/1"]
-    )
-    peer = _wire_interface(
-        "vpc10", "vpc", "foreignVpcPolicy", peerSwitchId="SERIAL1", peer1MemberPorts=["Ethernet1/1"]
-    )
-    responses = (
-        [{"interfaces": [primary]}, {"interfaces": [peer]}]
-        if current_member
-        else [{"interfaces": []}, {"interfaces": []}]
-    )
+    primary = _wire_interface("vpc10", "vpc", "foreignVpcPolicy", peerSwitchId="SERIAL2", peer1MemberPorts=["Ethernet1/1"])
+    peer = _wire_interface("vpc10", "vpc", "foreignVpcPolicy", peerSwitchId="SERIAL1", peer1MemberPorts=["Ethernet1/1"])
+    responses = [{"interfaces": [primary]}, {"interfaces": [peer]}] if current_member else [{"interfaces": []}, {"interfaces": []}]
     summaries = (
         {
             "SERIAL1": {"interfaces": [_summary_row(primary, "SERIAL1")]},
@@ -1452,11 +1714,7 @@ def test_ethernet_only_action_cannot_mutate_untouched_port_channel_member(
     )
     ethernet = _wire_interface("Ethernet1/1", "ethernet", policy_type, accessVlan=10)
     ethernet["operData"] = {"portChannelId": -1}
-    summaries = (
-        {"SERIAL1": {"interfaces": [_summary_row(ethernet, "SERIAL1")]}}
-        if state == "merged"
-        else None
-    )
+    summaries = {"SERIAL1": {"interfaces": [_summary_row(ethernet, "SERIAL1")]}} if state == "merged" else None
     planner, _recorder = _planner(
         responses=[{"interfaces": [parent, ethernet]}],
         summary_responses=summaries,
@@ -1486,9 +1744,7 @@ def test_ethernet_only_action_cannot_mutate_untouched_vpc_member() -> None:
     )
 
     with pytest.raises(InterfaceWorkflowConflictError) as exc_info:
-        planner.plan(
-            [{"type": "ethernet_access", "state": "deleted", "config": [_ethernet("192.0.2.1")]}]
-        )
+        planner.plan([{"type": "ethernet_access", "state": "deleted", "config": [_ethernet("192.0.2.1")]}])
 
     assert "ethernet_member_collision" in {conflict.code for conflict in exc_info.value.conflicts}
 
@@ -1699,10 +1955,7 @@ def test_overridden_preserves_same_vpc_name_as_two_pair_scoped_records() -> None
     resource = plan.resources[0]
     assert len(resource.before) == 2
     assert len(resource.operations.deletes) == 2
-    assert {
-        (item.switch_ip, item.interface_name)
-        for item in resource.operations.deletes
-    } == {
+    assert {(item.switch_ip, item.interface_name) for item in resource.operations.deletes} == {
         ("192.0.2.1", "vpc10"),
         ("192.0.2.3", "vpc10"),
     }
@@ -1728,8 +1981,8 @@ def test_opposite_primaries_on_the_same_vpc_pair_share_one_identity() -> None:
     assert "duplicate_ownership" in {conflict.code for conflict in exc_info.value.conflicts}
 
 
-def test_ten_family_plan_shares_one_inventory_fetch_per_switch() -> None:
-    """The actual workflow path reduces ten family inventories over two switches to two GETs."""
+def test_eleven_family_plan_shares_one_inventory_fetch_per_switch() -> None:
+    """The actual workflow path reduces eleven family inventories over two switches to two GETs."""
 
     def config(switch_ip: str, interface_name: str, policy: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
@@ -1758,6 +2011,22 @@ def test_ten_family_plan_shares_one_inventory_fetch_per_switch() -> None:
             "type": "ethernet_access",
             "state": "merged",
             "config": [_ethernet("192.0.2.1", "Ethernet1/1")],
+        },
+        {
+            "type": "ethernet_routed",
+            "state": "merged",
+            "config": [
+                {
+                    "switch_ip": "192.0.2.1",
+                    "interface_name": "Ethernet1/5",
+                    "config_data": {
+                        "network_os": {
+                            "network_os_type": "nx-os",
+                            "policy": {"ip": "198.51.100.1", "prefix": 30},
+                        }
+                    },
+                }
+            ],
         },
         {
             "type": "ethernet_trunk_host",
@@ -1808,8 +2077,8 @@ def test_ten_family_plan_shares_one_inventory_fetch_per_switch() -> None:
 
     plan = planner.plan(resources)
 
-    assert len(plan.resources) == 10
-    assert plan.mutation_count == 10
+    assert len(plan.resources) == 11
+    assert plan.mutation_count == 11
     assert plan.target_switch_ids == ("SERIAL1", "SERIAL2")
     assert plan.request_stats["interface_inventory_gets"] == 2
     assert len(recorder.calls) == 2

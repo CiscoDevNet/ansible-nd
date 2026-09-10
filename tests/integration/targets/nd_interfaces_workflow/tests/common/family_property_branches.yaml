@@ -26,4 +26,19 @@
 
 - name: Exercise guarded {{ nd_iw_expected_family }} authoritative override
   ansible.builtin.include_tasks: "{{ role_path }}/tests/common/overridden.yaml"
-  when: nd_iw_run_destructive | bool
+  when:
+    - nd_iw_run_destructive | bool
+    - >-
+      nd_iw_current_case.generic_override_safe | default(true) | bool
+      or nd_iw_enable_ethernet_routed_override | bool
+
+- name: Report skipped generic authoritative override for {{ nd_iw_expected_family }}
+  ansible.builtin.debug:
+    msg: >-
+      The generic authoritative override is disabled for {{ nd_iw_expected_family }} because it can reset
+      unrelated managed routed interfaces. Select only ethernet_routed and explicitly enable its dedicated
+      override gate after confirming exclusive ownership of every managed routedHost interface in the fabric.
+  when:
+    - nd_iw_run_destructive | bool
+    - not (nd_iw_current_case.generic_override_safe | default(true) | bool)
+    - not (nd_iw_enable_ethernet_routed_override | bool)

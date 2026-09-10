@@ -32,6 +32,17 @@
       nd_iw_profile=destructive. No fabric-wide override was attempted.
   when: nd_iw_profile == 'destructive'
 
+- name: Interface workflow preflight | Require exclusive scope for routed authoritative override
+  ansible.builtin.assert:
+    that:
+      - nd_iw_profile == 'destructive'
+      - nd_iw_enable_destructive | bool
+      - nd_iw_selected_families == ['ethernet_routed']
+    fail_msg: >-
+      Routed authoritative override can reset every managed NX-OS routedHost interface in the fabric.
+      Use the destructive profile, enable its normal safety gates, and select only ethernet_routed.
+  when: nd_iw_enable_ethernet_routed_override | bool
+
 - name: Interface workflow preflight | Derive immutable run flags
   ansible.builtin.set_fact:
     nd_iw_module_check_mode: "{{ nd_iw_execution_mode != 'live' }}"

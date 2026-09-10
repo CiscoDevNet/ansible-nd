@@ -240,6 +240,220 @@ nd_iw_property_matrix:
       - config_data.network_os.policy.storm_control_unicast_level
       - config_data.network_os.policy.storm_control_unicast_level_pps
 
+  ethernet_routed:
+    module: cisco.nd.nd_interface_ethernet_routed
+    ownership_domain: ethernet
+    identity_fields: [switch_ip, interface_name]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: [physical_interfaces]
+    unsupported_expected_error: {}
+    # A generic routed override would reset every managed NX-OS routedHost in
+    # the fabric, including a parent reserved for subinterface tests. Its live
+    # branch therefore requires the dedicated, single-family isolation gate.
+    generic_override_safe: false
+    minimal: &nd_iw_er_minimal
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              # policy_type intentionally omitted to verify derivation from
+              # network_os_type through the standalone routed model.
+              admin_state: true
+              ip: "{{ nd_iw_active_resources.ethernet_routed.primary_ipv4 }}"
+              prefix: 30
+              description: IW Ethernet routed minimal
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: routedHost
+              admin_state: true
+              description: IW Ethernet routed maximal
+              extra_config: load-interval counter 1 30
+              fec: auto
+              ip: "{{ nd_iw_active_resources.ethernet_routed.primary_ipv4 }}"
+              ip_redirects: false
+              mtu: 9216
+              netflow: false
+              pfc: false
+              pim_dr_priority: 901
+              pim_sparse: false
+              prefix: 30
+              qos: false
+              routing_tag: "903"
+              speed: auto
+              vrf: "{{ nd_iw_active_resources.references.vrf }}"
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: routedHost
+              admin_state: false
+              description: IW Ethernet routed alternate
+              extra_config: load-interval counter 1 60
+              fec: "off"
+              ip: "{{ nd_iw_active_resources.ethernet_routed.alternate_ipv4 }}"
+              ip_redirects: true
+              mtu: 1500
+              netflow: false
+              pfc: false
+              pim_dr_priority: 902
+              pim_sparse: true
+              prefix: 30
+              qos: false
+              routing_tag: "904"
+              speed: auto
+              vrf: "{{ nd_iw_active_resources.references.vrf }}"
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: routedHost
+              admin_state: true
+              ip: "{{ nd_iw_active_resources.ethernet_routed.alternate_ipv4 }}"
+              prefix: 30
+              description: IW Ethernet routed replaced
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.ethernet_routed.secondary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: routedHost
+              admin_state: true
+              ip: "{{ nd_iw_active_resources.ethernet_routed.secondary_ipv4 }}"
+              prefix: 30
+              description: IW Ethernet routed override victim
+    override: *nd_iw_er_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.ethernet_routed.secondary_name }}"
+    mutex_variants: []
+    optional_packs:
+      - name: referenced_netflow_qos_pfc
+        live_safe: false
+        requirements:
+          - l3_netflow_monitor_exists
+          - netflow_sampler_supported
+          - qos_policy_exists
+          - queuing_policy_exists
+          - pfc_supported
+        properties:
+          - config_data.network_os.policy.netflow
+          - config_data.network_os.policy.netflow_monitor
+          - config_data.network_os.policy.netflow_sampler
+          - config_data.network_os.policy.pfc
+          - config_data.network_os.policy.qos
+          - config_data.network_os.policy.qos_policy
+          - config_data.network_os.policy.queuing_policy
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  policy_type: routedHost
+                  netflow: true
+                  netflow_monitor: "{{ nd_iw_active_resources.references.l3_netflow_monitor }}"
+                  netflow_sampler: "{{ nd_iw_active_resources.references.netflow_sampler }}"
+                  pfc: true
+                  qos: true
+                  qos_policy: "{{ nd_iw_active_resources.references.qos_policy }}"
+                  queuing_policy: "{{ nd_iw_active_resources.references.queuing_policy }}"
+    invalid:
+      - name: missing_network_os_type
+        expected_error: network_os_type
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+            config_data:
+              network_os:
+                policy:
+                  policy_type: routedHost
+      - name: wrong_policy_for_nx_os
+        expected_error: routedHost
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  policy_type: iosXeRoutedHost
+      - name: mtu_below_nx_os_minimum
+        expected_error: greater than or equal to 576
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  mtu: 575
+      - name: prefix_above_maximum
+        expected_error: less than or equal to 31
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  prefix: 32
+      - name: non_ascii_description
+        expected_error: ASCII
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  description: "IW café"
+    properties:
+      - switch_ip
+      - interface_name
+      - config_data.network_os.network_os_type
+      - config_data.network_os.policy.policy_type
+      - config_data.network_os.policy.admin_state
+      - config_data.network_os.policy.description
+      - config_data.network_os.policy.extra_config
+      - config_data.network_os.policy.fec
+      - config_data.network_os.policy.ip
+      - config_data.network_os.policy.ip_redirects
+      - config_data.network_os.policy.mtu
+      - config_data.network_os.policy.netflow
+      - config_data.network_os.policy.netflow_monitor
+      - config_data.network_os.policy.netflow_sampler
+      - config_data.network_os.policy.pfc
+      - config_data.network_os.policy.pim_dr_priority
+      - config_data.network_os.policy.pim_sparse
+      - config_data.network_os.policy.prefix
+      - config_data.network_os.policy.qos
+      - config_data.network_os.policy.qos_policy
+      - config_data.network_os.policy.queuing_policy
+      - config_data.network_os.policy.routing_tag
+      - config_data.network_os.policy.speed
+      - config_data.network_os.policy.vrf
+
   ethernet_trunk_host:
     module: cisco.nd.nd_interface_ethernet_trunk_host
     ownership_domain: ethernet

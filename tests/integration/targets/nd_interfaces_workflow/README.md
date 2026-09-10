@@ -5,7 +5,7 @@ GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gp
 
 # `nd_interfaces_workflow` network integration target
 
-This target qualifies `cisco.nd.nd_interfaces_workflow` against live Nexus Dashboard fabrics. It exercises all ten interface-family adapters, aggregate lifecycle behavior, shared snapshots, implicit policy transitions, policy-independent explicit deletion, conflicts, output controls, invalid inputs, optional property packs, and guarded cleanup.
+This target qualifies `cisco.nd.nd_interfaces_workflow` against live Nexus Dashboard fabrics. It exercises all eleven interface-family adapters, aggregate lifecycle behavior, shared snapshots, implicit policy transitions, policy-independent explicit deletion, conflicts, output controls, invalid inputs, optional property packs, and guarded cleanup.
 
 ## Run the target
 
@@ -27,12 +27,14 @@ Put the target variables in inventory or associated inventory/group variables. T
 
 The defaults are `nd_iw_profile: smoke`, `nd_iw_execution_mode: check`, and `nd_iw_enable_live_mutation: false`. Check mode still queries the live controller and validates plans, but it must send no mutation or deployment requests.
 
-Measured on one fabric in the current live setup:
+Historical ten-family measurements on one fabric, before `ethernet_routed` joined the matrix, were:
 
 - Smoke profile: **57.56 seconds**
 - Full check profile: **306.82 seconds** (about 5 minutes 7 seconds)
 
-These are reference measurements, not timeouts; controller load, latency, and selected families can change runtime. The role is guarded with `run_once`, and selected fabrics run serially to protect the shared lab.
+These are reference measurements, not timeouts. An all-eleven run performs additional routed-interface planning and lifecycle requests,
+so replace these figures after collecting a comparable run. Controller load, latency, and selected families can change runtime. The role
+is guarded with `run_once`, and selected fabrics run serially to protect the shared lab.
 ### Scale and request-count invariants
 
 The target treats request counts as part of the module contract:
@@ -75,7 +77,7 @@ inputs or snapshots:
   Normal mode carries the matching execution outcome into the same operation entry, so `execution.items` is not duplicated.
 - `output_level: info` adds `resources[].proposed`. `output_level: debug` adds `resources[].proposed`,
   `resources[].family_before`, and `resources[].family_after`. The selected output level is an input control and is not echoed.
-- `request_stats` contains only read, cache, refresh, overlay, and vPC metrics. `execution.mutations_sent` and
+- `request_stats` contains only interface/fabric-link read, cache, refresh, overlay, and vPC metrics. `execution.mutations_sent` and
   `execution.deployments_sent` are the sole write-request counters.
 
 Post-mutation verification is optional and disabled by default. A successful mutating task without a `verify` mapping, or with
@@ -92,8 +94,8 @@ Resource snapshot scope remains state-aware:
   targets.
 - Target records include `policy_type`. Cross-policy transitions and policy-independent deletes therefore show the actual source policy
   in `before` and the destination or normalized policy in `after`.
-- Logical deletion removes the requested identity from `after`. Physical Ethernet deletion keeps the requested identity in `after`
-  with the normalized default `trunkHost` policy.
+- Logical deletion removes the requested identity from `after`. Physical NX-OS Ethernet deletion keeps the requested identity in
+  `after` with the normalized default `trunkHost` policy; IOS-XE routed deletion keeps it with defaults-only `iosXeRoutedHost` intent.
 - Port-channel and vPC members remain nested in their requested aggregate-interface policy; unrelated Ethernet-family records are not
   added.
 - Full-family debug projection and compact operation deltas are derived in memory and require no additional controller GETs.
@@ -117,6 +119,16 @@ nd_iw_profile: destructive
 nd_iw_enable_destructive: true
 ```
 
+The generic all-family destructive run skips `ethernet_routed` override because NX-OS routed override resets every managed
+`routedHost` omitted from the task, including a separately prepared subinterface parent. To exercise that state, use an isolated
+resource-owner fabric containing no unrelated managed routed interfaces, select only `ethernet_routed`, satisfy the normal destructive
+fabric gates, and additionally set:
+
+```yaml
+nd_iw_selected_families: [ethernet_routed]
+nd_iw_enable_ethernet_routed_override: true
+```
+
 Physical deployment is independently gated by `nd_iw_enable_deploy: true`. Leave it false unless the reserved interfaces may safely be deployed. The target cleans only its reserved identities before and after live execution; `nd_iw_cleanup_strict` defaults to true so cleanup failures fail the run.
 
 With that gate enabled, `deploy_controls.yaml` stages an exact reserved configuration with deployment disabled, previews an identical
@@ -134,7 +146,9 @@ The supported fabric discriminators are:
 - `vxlanIbgp`
 - `externalConnectivity`
 
-`aimlVxlanEbgp` and `aimlVxlanIbgp` are intentionally excluded from this target for now. `interface_flow_rules` is also outside this interface-aggregator matrix.
+`aimlVxlanEbgp` and `aimlVxlanIbgp` are intentionally excluded from this target for now. `interface_flow_rules` is also outside this
+interface-aggregator matrix. `nd_manage_links` owns fabric-link resources rather than a host-interface family and is likewise not an
+aggregator resource type; the target verifies both exclusions before mutation.
 
 `nd_iw_selected_fabric_types` defaults to all three supported discriminators. For a one-fabric run, set it to a one-item list. Each selected fabric must have an enabled matrix entry, an inventory host present in `hostvars`, the real fabric name, and the management IP of a reserved primary switch. The inventory host must securely supply `ansible_host`, `ansible_user`, and `ansible_password`; do not commit those credentials to this target.
 
@@ -152,9 +166,10 @@ The preflight reads the mapped fabric and, when `nd_iw_verify_fabric_type` is tr
 
 ## Interface-family capabilities
 
-Each fabric currently lists the same ten `candidate_families`:
+Each fabric currently lists the same eleven `candidate_families`:
 
 - `ethernet_access`
+- `ethernet_routed`
 - `ethernet_trunk_host`
 - `loopback`
 - `port_channel_access`
@@ -173,7 +188,8 @@ The checked-in mappings currently declare no unsupported families. Add an exclus
 
 Before selecting a family, reserve controller-visible resources that will not collide with other tests:
 
-- Physical interfaces for Ethernet cases and physical member interfaces for port channels.
+- Physical interfaces for Ethernet cases and physical member interfaces for port channels. The checked-in NX-OS routed cases reserve
+  `Ethernet1/52` and `Ethernet1/53` by default; override both identities when those ports are not test-owned.
 - A valid vPC pair and per-peer member interfaces for vPC cases.
 - Routed parent interfaces for managed and unmanaged subinterfaces.
 - Test-owned loopback, port-channel, subinterface, SVI, vPC, and VLAN identifiers matching the reserved-resource overrides.
@@ -192,6 +208,11 @@ of the three managed NX-OS policies (`loopback`, `ipfmLoopback`, `mplsLoopback`)
 Identifier-only loopback deletion intentionally omits both discriminators. The checked-in live property matrix covers only the classic
 NX-OS `loopback` policy today. IPFM, MPLS, and IOS-XE property packs are explicit follow-up work; IOS-XE requires an explicitly
 declared IOS-XE test inventory.
+
+Configured `ethernet_routed` cases use the standalone module's outer network-OS discriminator. The checked-in live matrix covers NX-OS
+`routedHost`, including derived `policy_type`, all controller-object-independent policy fields, guarded optional NetFlow/QoS/PFC fields,
+and reset to the default `trunkHost` policy. IOS-XE `iosXeRoutedHost` needs a separately declared IOS-XE switch and free interface and is
+not inferred from the NX-OS fabric mappings.
 
 The full check-only profile cannot deterministically preview a sibling-policy transition without first seeding live source state. The full live profile uses the standalone Ethernet access and trunk-host modules to establish deterministic sibling-policy sources, then verifies implicit accessHost↔trunkHost transitions under both `merged` and `replaced`, transition metadata, idempotency, and policy-independent deletion through the opposite Ethernet type. It also verifies that physical deletion resets both interfaces to the default `trunkHost` policy without physical deployment. Other structural domains and source policies remain unit-tested until each combination has a safe, model-backed live setup path; do not use fabric-owned loopbacks, SVIs, peer links, or other controller-owned interfaces merely to manufacture transition coverage.
 

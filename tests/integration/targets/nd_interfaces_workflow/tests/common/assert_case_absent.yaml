@@ -8,7 +8,7 @@
     nd_iw_assert_delete_action: >-
       {{
         "reset"
-        if nd_iw_assert_family in ["ethernet_access", "ethernet_trunk_host"]
+        if nd_iw_assert_family in ["ethernet_access", "ethernet_routed", "ethernet_trunk_host"]
         else "delete"
       }}
   ansible.builtin.assert:

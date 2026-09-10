@@ -17,6 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planne
     InterfacePolicyTransition,
     InterfaceWorkflowPlanner,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import DeferredDeleteRequestGroup
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_interface_base import (
     VpcInterfaceBaseOrchestrator,
 )
@@ -83,6 +84,7 @@ class FakeOrchestrator:
 
     supports_bulk_delete = True
     supports_bulk_create = True
+    deferred_delete_queue_names = frozenset({"remove"})
 
     def __init__(
         self,
@@ -90,6 +92,7 @@ class FakeOrchestrator:
         events,
         *,
         fail_preflight=False,
+        fail_delete_preflight=False,
         fail_create=False,
         fail_deploy=False,
         fail_transition=False,
@@ -97,6 +100,7 @@ class FakeOrchestrator:
         self.name = name
         self.events = events
         self.fail_preflight = fail_preflight
+        self.fail_delete_preflight = fail_delete_preflight
         self.fail_create = fail_create
         self.fail_deploy = fail_deploy
         self.rest_send = FakeRestSend()
@@ -125,6 +129,28 @@ class FakeOrchestrator:
             if target not in self._removes:
                 self._removes.append(target)
 
+    @property
+    def deferred_delete_queues(self):
+        return {"remove": self.pending_removes}
+
+    @property
+    def pending_deferred_delete_targets(self):
+        return self.pending_removes
+
+    def queue_deferred_delete_targets(self, queue_name, targets):
+        assert queue_name == "remove"
+        self.queue_remove_targets(targets)
+
+    def dequeue_deferred_delete_targets(self, queue_name, targets):
+        assert queue_name == "remove"
+        removed = set(targets)
+        self._removes = [target for target in self._removes if target not in removed]
+
+    def deferred_delete_request_groups(self):
+        if not self.pending_removes:
+            return ()
+        return (DeferredDeleteRequestGroup("remove", self.pending_removes),)
+
     def validate_prerequisites(self):
         self.events.append(("validate", self.name))
 
@@ -135,6 +161,11 @@ class FakeOrchestrator:
         self.events.append(("preflight", self.name))
         if self.fail_preflight:
             raise RuntimeError("switch is not capable")
+
+    def preflight_delete(self, _models):
+        self.events.append(("preflight_delete", self.name))
+        if self.fail_delete_preflight:
+            raise RuntimeError("delete target is fabric-owned")
 
     def delete_bulk(self, models):
         self.events.append(("delete_bulk", self.name, tuple(model.interface_name for model in models)))
@@ -187,8 +218,12 @@ class FakeOrchestrator:
             )
             self.queue_deploy_targets([target])
 
-    def deploy_pending(self):
-        targets = tuple(self._deploys)
+    def dequeue_deploy_targets(self, targets):
+        removed = set(targets)
+        self._deploys = [target for target in self._deploys if target not in removed]
+
+    def deploy_targets(self, targets):
+        targets = tuple(dict.fromkeys(targets))
         self.events.append(("deploy", self.name, targets))
         if self.fail_deploy:
             outcomes = [
@@ -208,7 +243,12 @@ class FakeOrchestrator:
             )
             raise RuntimeError("mixed deploy result")
         self.rest_send.record("/interfaceActions/deploy")
-        self._deploys = []
+
+    def deploy_pending(self):
+        targets = tuple(self._deploys)
+        result = self.deploy_targets(targets)
+        self.dequeue_deploy_targets(targets)
+        return result
 
 
 class PolicyGroupedFakeOrchestrator(FakeOrchestrator):
@@ -286,8 +326,8 @@ class NormalReturn207CreateFakeOrchestrator(FakeOrchestrator):
 class NormalReturn207DeployFakeOrchestrator(FakeOrchestrator):
     """Return a superficially successful HTTP 207 that omits one deployed target."""
 
-    def deploy_pending(self):
-        targets = tuple(self._deploys)
+    def deploy_targets(self, targets):
+        targets = tuple(dict.fromkeys(targets))
         self.events.append(("deploy", self.name, targets))
         self.rest_send.record(
             "/interfaceActions/deploy",
@@ -304,14 +344,13 @@ class NormalReturn207DeployFakeOrchestrator(FakeOrchestrator):
             },
             return_code=207,
         )
-        self._deploys = []
 
 
 class MixedSwitch207DeployFakeOrchestrator(FakeOrchestrator):
     """Fail deployment with per-switch outcomes rather than per-interface outcomes."""
 
-    def deploy_pending(self):
-        targets = tuple(self._deploys)
+    def deploy_targets(self, targets):
+        targets = tuple(dict.fromkeys(targets))
         self.events.append(("deploy", self.name, targets))
         self.rest_send.record(
             "/interfaceActions/deploy",
@@ -342,6 +381,8 @@ class MixedSwitch207DeployFakeOrchestrator(FakeOrchestrator):
 class NormalReturn207EthernetFakeOrchestrator(FakeOrchestrator):
     """Model Ethernet normalize returning HTTP 207 while omitting one target."""
 
+    deferred_delete_queue_names = frozenset({"normalize", "reset"})
+
     def __init__(self, name, events):
         super().__init__(name, events)
         self._normalizes = []
@@ -364,6 +405,36 @@ class NormalReturn207EthernetFakeOrchestrator(FakeOrchestrator):
         for target in targets:
             if target not in self._resets:
                 self._resets.append(target)
+
+    @property
+    def deferred_delete_queues(self):
+        return {"normalize": self.pending_normalizes, "reset": self.pending_resets}
+
+    @property
+    def pending_deferred_delete_targets(self):
+        return tuple((*self.pending_normalizes, *self.pending_resets))
+
+    def queue_deferred_delete_targets(self, queue_name, targets):
+        if queue_name == "normalize":
+            self.queue_normalize_targets(targets)
+            return
+        assert queue_name == "reset"
+        self.queue_reset_targets(targets)
+
+    def dequeue_deferred_delete_targets(self, queue_name, targets):
+        removed = set(targets)
+        if queue_name == "normalize":
+            self._normalizes = [target for target in self._normalizes if target not in removed]
+            return
+        assert queue_name == "reset"
+        self._resets = [target for target in self._resets if target not in removed]
+
+    def deferred_delete_request_groups(self):
+        groups = []
+        if self.pending_normalizes:
+            groups.append(DeferredDeleteRequestGroup("normalize", self.pending_normalizes))
+        groups.extend(DeferredDeleteRequestGroup("reset", (target,)) for target in self.pending_resets)
+        return tuple(groups)
 
     def delete_bulk(self, models):
         self.events.append(("delete_bulk", self.name, tuple(model.interface_name for model in models)))
@@ -395,6 +466,71 @@ class NormalReturn207EthernetFakeOrchestrator(FakeOrchestrator):
         )
         self._normalizes = []
         self._resets = []
+
+
+class PlatformResetFakeOrchestrator(FakeOrchestrator):
+    """Model the routed orchestrator's per-interface IOS-XE reset queue."""
+
+    deferred_delete_queue_names = frozenset({"platform_reset"})
+
+    def __init__(self, name, events):
+        super().__init__(name, events)
+        self._platform_resets = []
+
+    @property
+    def deferred_delete_queues(self):
+        return {"platform_reset": tuple(self._platform_resets)}
+
+    @property
+    def pending_deferred_delete_targets(self):
+        return tuple(self._platform_resets)
+
+    def queue_deferred_delete_targets(self, queue_name, targets):
+        assert queue_name == "platform_reset"
+        for target in targets:
+            if target not in self._platform_resets:
+                self._platform_resets.append(target)
+
+    def dequeue_deferred_delete_targets(self, queue_name, targets):
+        assert queue_name == "platform_reset"
+        removed = set(targets)
+        self._platform_resets = [target for target in self._platform_resets if target not in removed]
+
+    def deferred_delete_request_groups(self):
+        return tuple(DeferredDeleteRequestGroup("platform_reset", (target,)) for target in self._platform_resets)
+
+    def delete_bulk(self, models):
+        self.events.append(("platform_delete_bulk", self.name, tuple(model.interface_name for model in models)))
+        for model in models:
+            target = (model.interface_name, self.fabric_context.get_switch_id(model.switch_ip))
+            self.queue_deferred_delete_targets("platform_reset", [target])
+            self.queue_deploy_targets([target])
+
+    def remove_pending(self):
+        for target in tuple(self._platform_resets):
+            self.events.append(("platform_reset", self.name, target))
+            self.rest_send.record(f"/interfaces/{target[0]}", method="PUT")
+            self._platform_resets.remove(target)
+
+
+class OverriddenPlatformResetFakeOrchestrator(PlatformResetFakeOrchestrator):
+    """Model the routed overridden contract, which skips IOS-XE physical deletes."""
+
+    def delete_bulk(self, models):
+        self.events.append(("platform_delete_bulk_skipped", self.name, tuple(model.interface_name for model in models)))
+
+
+class PlatformResetPreflightFakeOrchestrator(PlatformResetFakeOrchestrator):
+    """Fail only when the platform-aware IOS-XE reset proxy is preflighted."""
+
+    def __init__(self, name, events, blocked_model):
+        super().__init__(name, events)
+        self.blocked_model = blocked_model
+
+    def preflight_delete(self, models):
+        self.events.append(("preflight_delete_models", self.name, tuple(models)))
+        if self.blocked_model in models:
+            raise RuntimeError("IOS-XE target became a fabric-link endpoint")
 
 
 class FakeAdapter:
@@ -438,18 +574,31 @@ class FakeSnapshot:
         }
 
 
-def resource(index, orchestrator, *, deletes=(), transitions=(), updates=(), creates=(), actual=("after",)):
+def resource(
+    index,
+    orchestrator,
+    *,
+    deletes=(),
+    transitions=(),
+    updates=(),
+    creates=(),
+    platform_deletes=(),
+    state="merged",
+    resource_type="loopback",
+    actual=("after",),
+):
     """Build one InterfaceResourcePlan-shaped value."""
     before = FakeCollection(["before"])
     return SimpleNamespace(
         resource_index=index,
-        resource_type="loopback",
-        state="merged",
+        resource_type=resource_type,
+        state=state,
         proposed=FakeCollection(["proposed"]),
         before=before,
         transitions=tuple(transitions),
         operations=SimpleNamespace(deletes=tuple(deletes), updates=tuple(updates), creates=tuple(creates)),
         orchestrator=orchestrator,
+        platform_deletes=tuple(platform_deletes),
         adapter=FakeAdapter(FakeCollection(actual)),
     )
 
@@ -467,9 +616,13 @@ def policy_transition(name="Ethernet1/1"):
     )
 
 
-def plan(*resources):
+def plan(*resources, auxiliary_orchestrators=()):
     """Build one InterfaceWorkflowPlan-shaped value."""
-    return SimpleNamespace(resources=tuple(resources), target_switch_ids=("SERIAL1", "SERIAL2"))
+    return SimpleNamespace(
+        resources=tuple(resources),
+        target_switch_ids=("SERIAL1", "SERIAL2"),
+        auxiliary_orchestrators=tuple(auxiliary_orchestrators),
+    )
 
 
 def test_executor_orders_phases_consolidates_remove_and_deploy_then_refreshes():
@@ -514,6 +667,10 @@ def test_executor_orders_phases_consolidates_remove_and_deploy_then_refreshes():
         ("loopback4", "SERIAL2"),
         ("loopback5", "SERIAL2"),
     }
+    assert first.pending_removes == ()
+    assert second.pending_removes == ()
+    assert first.pending_deploys == ()
+    assert second.pending_deploys == ()
     assert events[-2:] == [
         ("dirty", ("SERIAL1", "SERIAL2")),
         ("refresh", ("SERIAL1", "SERIAL2")),
@@ -756,6 +913,148 @@ def test_preflight_failure_sends_no_writes_and_leaves_every_item_not_attempted()
     assert not any(event[0] in {"create", "deploy", "dirty", "refresh"} for event in events)
 
 
+def test_explicit_delete_preflight_is_repeated_immediately_before_writes() -> None:
+    """Normal execution refuses a newly unsafe explicit delete before queueing or sending any mutation."""
+    events = []
+    orchestrator = FakeOrchestrator("only", events, fail_delete_preflight=True)
+    workflow_plan = plan(resource(0, orchestrator, deletes=[FakeModel("Ethernet1/1")], state="deleted", actual=("before",)))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.changed is False
+    assert result.mutation_requests == 0
+    assert result.deploy_requests == 0
+    assert result.items[0].status == "not_attempted"
+    assert ("preflight_delete", "only") in events
+    assert not any(event[0] in {"delete_bulk", "remove", "deploy"} for event in events)
+
+
+def test_overridden_delete_does_not_call_explicit_delete_preflight() -> None:
+    """Fabric-wide overridden keeps its distinct skip semantics instead of using the explicit-delete refusal hook."""
+    events = []
+    orchestrator = FakeOrchestrator("only", events, fail_delete_preflight=True)
+    workflow_plan = plan(resource(0, orchestrator, deletes=[FakeModel("loopback1")], state="overridden"))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert ("preflight_delete", "only") not in events
+    assert ("delete_bulk", "only", ("loopback1",)) in events
+
+
+def test_ios_xe_physical_delete_uses_auxiliary_routed_reset_and_one_consolidated_deploy(monkeypatch) -> None:
+    """A delete requested through another Ethernet family routes its IOS-XE reset through the routed orchestrator."""
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
+        PlatformResetFakeOrchestrator,
+    )
+    events = []
+    selected = FakeOrchestrator("access", events)
+    routed = PlatformResetFakeOrchestrator("routed", events)
+    desired = FakeModel("GigabitEthernet3")
+    routed_proxy = FakeModel("GigabitEthernet3")
+    workflow_plan = plan(
+        resource(
+            0,
+            selected,
+            deletes=[desired],
+            platform_deletes=[routed_proxy],
+            state="deleted",
+            resource_type="ethernet_access",
+        ),
+        auxiliary_orchestrators=(routed,),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.status == "completed"
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 1
+    assert result.items[0].status == "succeeded"
+    assert ("delete_bulk", "access", ("GigabitEthernet3",)) not in events
+    assert ("platform_delete_bulk", "routed", ("GigabitEthernet3",)) in events
+    assert ("platform_reset", "routed", ("GigabitEthernet3", "SERIAL1")) in events
+    deploy_events = [event for event in events if event[0] == "deploy"]
+    assert deploy_events == [("deploy", "access", (("GigabitEthernet3", "SERIAL1"),))]
+    assert routed.pending_deferred_delete_targets == ()
+    assert selected.pending_deploys == ()
+    assert routed.pending_deploys == ()
+
+
+def test_ios_xe_explicit_delete_prefers_planner_selected_reset_after_routed_overridden(monkeypatch) -> None:
+    """An earlier routed overridden group cannot suppress a later explicit IOS-XE physical reset."""
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
+        PlatformResetFakeOrchestrator,
+    )
+    events = []
+    overridden = OverriddenPlatformResetFakeOrchestrator("routed_overridden", events)
+    selected = FakeOrchestrator("access_deleted", events)
+    reset = PlatformResetFakeOrchestrator("routed_deleted", events)
+    desired = FakeModel("GigabitEthernet4")
+    routed_proxy = FakeModel("GigabitEthernet4")
+    workflow_plan = plan(
+        resource(0, overridden, state="overridden", resource_type="ethernet_routed"),
+        resource(
+            1,
+            selected,
+            deletes=[desired],
+            platform_deletes=[routed_proxy],
+            state="deleted",
+            resource_type="ethernet_access",
+        ),
+        auxiliary_orchestrators=(reset,),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 1
+    assert result.items[0].status == "succeeded"
+    assert ("platform_delete_bulk_skipped", "routed_overridden", ("GigabitEthernet4",)) not in events
+    assert ("platform_delete_bulk", "routed_deleted", ("GigabitEthernet4",)) in events
+    assert ("platform_reset", "routed_deleted", ("GigabitEthernet4", "SERIAL1")) in events
+
+
+def test_direct_routed_ios_xe_delete_rechecks_platform_proxy_immediately_before_writes(monkeypatch) -> None:
+    """A newly fabric-owned direct routed target is refused through its IOS-XE proxy before any mutation request."""
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
+        PlatformResetFakeOrchestrator,
+    )
+    events = []
+    desired = FakeModel("GigabitEthernet5")
+    routed_proxy = FakeModel("GigabitEthernet5")
+    routed = PlatformResetPreflightFakeOrchestrator("routed_deleted", events, routed_proxy)
+    workflow_plan = plan(
+        resource(
+            0,
+            routed,
+            deletes=[desired],
+            platform_deletes=[routed_proxy],
+            state="deleted",
+            resource_type="ethernet_routed",
+        ),
+        auxiliary_orchestrators=(routed,),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.mutation_requests == 0
+    assert result.deploy_requests == 0
+    assert result.items[0].status == "not_attempted"
+    assert [(event[0], event[1]) for event in events if event[0] == "preflight_delete_models"] == [
+        ("preflight_delete_models", "routed_deleted"),
+        ("preflight_delete_models", "routed_deleted"),
+    ]
+    assert not any(event[0] in {"platform_delete_bulk", "platform_reset", "deploy"} for event in events)
+
+
 def test_preflight_failure_reconciles_equal_vpc_names_by_pair_without_false_change(monkeypatch):
     """A read-only failed run keeps independent same-name pairs and reports no controller change."""
     switch_map = {
@@ -942,13 +1241,16 @@ def test_normal_return_207_create_omitting_target_fails_end_to_end():
     assert result.failed is True
     assert result.status == "partial_failure"
     assert result.mutation_requests == 1
-    assert result.deploy_requests == 0
+    assert result.deploy_requests == 1
     assert {item.interface_name: item.status for item in result.items} == {
         "loopback1": "succeeded",
         "loopback2": "failed",
     }
-    assert result.deployment["status"] == "not_attempted"
-    assert "deploy" not in [event[0] for event in events]
+    assert result.deployment == {
+        "requested": True,
+        "status": "succeeded",
+        "targets": [{"interface_name": "loopback1", "switch_id": "SERIAL1", "status": "succeeded"}],
+    }
     assert result.errors == (
         "resources[0] loopback bulk create failed on SERIAL1: HTTP 207 response did not report exact success for every requested interface.",
     )
@@ -985,13 +1287,16 @@ def test_normal_return_207_ethernet_normalize_omitting_target_fails_end_to_end(m
     assert result.failed is True
     assert result.status == "partial_failure"
     assert result.mutation_requests == 1
-    assert result.deploy_requests == 0
+    assert result.deploy_requests == 1
     assert {item.interface_name: item.status for item in result.items} == {
         "Ethernet1/1": "succeeded",
         "Ethernet1/2": "failed",
     }
-    assert result.deployment["status"] == "not_attempted"
-    assert "deploy" not in [event[0] for event in events]
+    assert result.deployment == {
+        "requested": True,
+        "status": "succeeded",
+        "targets": [{"interface_name": "Ethernet1/1", "switch_id": "SERIAL1", "status": "succeeded"}],
+    }
 
 
 def test_normal_return_207_deploy_omitting_target_fails_end_to_end():
@@ -1077,7 +1382,7 @@ def test_bulk_create_matches_loopback_switch_and_policy_request_boundaries():
     assert result.deploy_requests == 0
 
 
-def test_mixed_create_response_preserves_per_item_partial_success_and_stops_deploy():
+def test_mixed_create_response_deploys_only_the_exact_successful_item():
     events = []
     orchestrator = FakeOrchestrator("only", events, fail_create=True)
     workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1"), FakeModel("loopback2")]))
@@ -1089,10 +1394,13 @@ def test_mixed_create_response_preserves_per_item_partial_success_and_stops_depl
     assert result.status == "partial_failure"
     assert result.changed is True
     assert result.mutation_requests == 1
-    assert result.deploy_requests == 0
+    assert result.deploy_requests == 1
     assert statuses == {"loopback1": "succeeded", "loopback2": "failed"}
-    assert result.deployment["status"] == "not_attempted"
-    assert "deploy" not in [event[0] for event in events]
+    assert result.deployment == {
+        "requested": True,
+        "status": "succeeded",
+        "targets": [{"interface_name": "loopback1", "switch_id": "SERIAL1", "status": "succeeded"}],
+    }
     assert events[-2:] == [
         ("dirty", ("SERIAL1", "SERIAL2")),
         ("refresh", ("SERIAL1", "SERIAL2")),

@@ -13,6 +13,7 @@
     nd_iw_raw_observed_fingerprint_keys: []
     nd_iw_raw_policy_type_by_family:
       ethernet_access: accessHost
+      ethernet_routed: routedHost
       ethernet_trunk_host: trunkHost
       loopback: loopback
       port_channel_access: accessPoHost

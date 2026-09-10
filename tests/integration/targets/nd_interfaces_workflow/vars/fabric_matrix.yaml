@@ -22,6 +22,7 @@ nd_iw_fabric_matrix:
     capability_mode: declared
     candidate_families: &all_interface_families
       - ethernet_access
+      - ethernet_routed
       - ethernet_trunk_host
       - loopback
       - port_channel_access

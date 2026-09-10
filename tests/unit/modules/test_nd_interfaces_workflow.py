@@ -16,9 +16,10 @@ def test_argument_spec_uses_exact_registry_and_excludes_flow_rules():
     resource_options = spec["resources"]["options"]
     choices = resource_options["type"]["choices"]
 
-    assert len(choices) == 10
+    assert len(choices) == 11
     assert set(choices) == {
         "ethernet_access",
+        "ethernet_routed",
         "ethernet_trunk_host",
         "loopback",
         "port_channel_access",
@@ -30,6 +31,8 @@ def test_argument_spec_uses_exact_registry_and_excludes_flow_rules():
         "vpc_trunk_host",
     }
     assert "flow_rules" not in choices
+    assert "interface_flow_rules" not in choices
+    assert "manage_links" not in choices
     assert resource_options["state"]["choices"] == [
         "deleted",
         "merged",
@@ -52,6 +55,7 @@ def test_argument_spec_uses_exact_registry_and_excludes_flow_rules():
 def test_documentation_links_every_standalone_module_and_not_flow_rules():
     for module_name in (
         "nd_interface_ethernet_access",
+        "nd_interface_ethernet_routed",
         "nd_interface_ethernet_trunk_host",
         "nd_interface_loopback",
         "nd_interface_port_channel_access",
@@ -64,6 +68,8 @@ def test_documentation_links_every_standalone_module_and_not_flow_rules():
     ):
         assert f"M(cisco.nd.{module_name})" in nd_interfaces_workflow.DOCUMENTATION
     assert "M(cisco.nd.nd_interface_flow_rules)" not in nd_interfaces_workflow.DOCUMENTATION
+    assert "M(cisco.nd.nd_manage_links)" not in nd_interfaces_workflow.DOCUMENTATION
+    assert "C(cisco.nd.nd_manage_links)" in nd_interfaces_workflow.DOCUMENTATION
     assert "default: false" in nd_interfaces_workflow.DOCUMENTATION
     assert "Outstanding interface" not in nd_interfaces_workflow.DOCUMENTATION
     assert "allow_policy_transition" not in nd_interfaces_workflow.DOCUMENTATION
@@ -74,6 +80,15 @@ def test_documentation_links_every_standalone_module_and_not_flow_rules():
     assert "\n  verify:" in nd_interfaces_workflow.DOCUMENTATION
     assert "after_verified" in nd_interfaces_workflow.DOCUMENTATION
     assert "from_policy_type" in nd_interfaces_workflow.RETURN
+
+
+def test_ethernet_routed_union_and_reset_contract_is_explicit_in_documentation():
+    assert "V(ethernet_routed) uses M(cisco.nd.nd_interface_ethernet_routed)" in nd_interfaces_workflow.DOCUMENTATION
+    assert "C(network_os_type)" in nd_interfaces_workflow.DOCUMENTATION
+    assert "V(routedHost)" in nd_interfaces_workflow.DOCUMENTATION
+    assert "V(iosXeRoutedHost)" in nd_interfaces_workflow.DOCUMENTATION
+    assert "defaults-only V(iosXeRoutedHost)" in nd_interfaces_workflow.DOCUMENTATION
+    assert "type: ethernet_routed" in nd_interfaces_workflow.EXAMPLES
 
 
 def test_loopback_union_contract_is_explicit_in_documentation_and_examples():

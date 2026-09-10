@@ -12,6 +12,12 @@ nd_iw_reserved_resources:
         - "{{ nd_iw_ethernet_access_fanout | default('Ethernet1/42', true) }}"
       secondary:
         - "{{ nd_iw_ethernet_access_secondary | default('Ethernet1/43', true) }}"
+    ethernet_routed:
+      primary_name: "{{ nd_iw_ethernet_routed_primary | default('Ethernet1/52', true) }}"
+      secondary_name: "{{ nd_iw_ethernet_routed_secondary | default('Ethernet1/53', true) }}"
+      primary_ipv4: "{{ nd_iw_ethernet_routed_primary_ipv4 | default('198.18.93.1', true) }}"
+      alternate_ipv4: "{{ nd_iw_ethernet_routed_alternate_ipv4 | default('198.18.93.5', true) }}"
+      secondary_ipv4: "{{ nd_iw_ethernet_routed_secondary_ipv4 | default('198.18.93.9', true) }}"
     ethernet_trunk_host:
       primary:
         - "{{ nd_iw_ethernet_trunk_primary | default('Ethernet1/44', true) }}"
@@ -180,6 +186,13 @@ nd_iw_cleanup_resources:
     config:
       - switch_ip: "{{ nd_iw_active_switches.primary }}"
         interface_names: "{{ nd_iw_active_resources.ethernet_access.primary + nd_iw_active_resources.ethernet_access.secondary }}"
+  - type: ethernet_routed
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.ethernet_routed.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.ethernet_routed.secondary_name }}"
   - type: ethernet_trunk_host
     state: deleted
     config:
