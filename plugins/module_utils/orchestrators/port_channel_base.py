@@ -271,9 +271,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             self.validate_prerequisites()
             all_port_channels = []
             for switch_ip, switch_id in self._switches_to_query().items():
-                api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-                interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
+                interfaces = list(self._switch_interfaces(switch_id).values())
                 port_channels = [iface for iface in interfaces if iface.get("interfaceType") == "portChannel"]
                 managed = [
                     iface for iface in port_channels if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_types

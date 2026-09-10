@@ -28,7 +28,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPost,
     EpManageInterfacesPut,
     EpManageInterfacesRemove,
+    EpManageInterfacesSummaryGet,
     ManageInterfacesListEndpointParams,
+    ManageInterfacesSummaryEndpointParams,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
@@ -327,6 +329,48 @@ def test_ep_manage_interfaces_00140():
         "sort=ifName%3Aasc",
         "configOnly=true",
     }
+
+
+def test_ep_manage_interfaces_00150():
+    """Verify the interface-summary endpoint defaults and GET verb."""
+    with does_not_raise():
+        instance = EpManageInterfacesSummaryGet()
+    assert instance.class_name == "EpManageInterfacesSummaryGet"
+    assert instance.verb == HttpVerbEnum.GET
+    assert instance.fabric_name is None
+    assert isinstance(instance.endpoint_params, ManageInterfacesSummaryEndpointParams)
+
+
+def test_ep_manage_interfaces_00160():
+    """Verify the interface-summary path and supported query parameters."""
+    instance = EpManageInterfacesSummaryGet()
+    instance.fabric_name = "fab/one"
+    instance.endpoint_params.cluster_name = "cluster-a"
+    instance.endpoint_params.filter = "interfaceName:Ethernet1/1"
+    instance.endpoint_params.max = 500
+    instance.endpoint_params.offset = 0
+    instance.endpoint_params.sort = "interfaceName:asc"
+    instance.endpoint_params.switch_id = "SN123"
+
+    path, query = instance.path.split("?", 1)
+
+    assert path == "/api/v1/manage/fabrics/fab%2Fone/interfacesSummary"
+    assert set(query.split("&")) == {
+        "clusterName=cluster-a",
+        "filter=interfaceName%3AEthernet1%2F1",
+        "max=500",
+        "offset=0",
+        "sort=interfaceName%3Aasc",
+        "switchId=SN123",
+    }
+
+
+def test_ep_manage_interfaces_00170():
+    """Verify the interface-summary endpoint requires a fabric name."""
+    instance = EpManageInterfacesSummaryGet()
+
+    with pytest.raises(ValueError, match="fabric_name must be set"):
+        result = instance.path  # pylint: disable=unused-variable
 
 
 # =============================================================================

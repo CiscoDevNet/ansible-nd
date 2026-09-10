@@ -1,0 +1,454 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Reset batched interface workflow lifecycle inputs
+  ansible.builtin.set_fact:
+    nd_iw_batch_create_resources: []
+    nd_iw_batch_update_resources: []
+    nd_iw_batch_replace_resources: []
+    nd_iw_batch_delete_resources: []
+    nd_iw_batch_cleanup_resources: []
+
+- name: Build batched interface workflow lifecycle inputs
+  ansible.builtin.set_fact:
+    nd_iw_batch_create_resources: >-
+      {{
+        nd_iw_batch_create_resources
+        + [
+          {
+            'type': item.family | default(item.type | default('')),
+            'state': 'merged',
+            'config': item.create_config | default(item.maximal | default(item.minimal | default([])))
+          }
+        ]
+      }}
+    nd_iw_batch_update_resources: >-
+      {{
+        nd_iw_batch_update_resources
+        + [
+          {
+            'type': item.family | default(item.type | default('')),
+            'state': 'merged',
+            'config': item.update_config | default(item.alternate | default([]))
+          }
+        ]
+      }}
+    nd_iw_batch_replace_resources: >-
+      {{
+        nd_iw_batch_replace_resources
+        + [
+          {
+            'type': item.family | default(item.type | default('')),
+            'state': 'replaced',
+            'config': item.replace_config | default(item.replacement | default([]))
+          }
+        ]
+      }}
+    nd_iw_batch_delete_resources: >-
+      {{
+        nd_iw_batch_delete_resources
+        + [
+          {
+            'type': item.family | default(item.type | default('')),
+            'state': 'deleted',
+            'config': item.delete_config | default(item.delete | default([]))
+          }
+        ]
+      }}
+    nd_iw_batch_cleanup_resources: >-
+      {{
+        nd_iw_batch_cleanup_resources
+        + [
+          {
+            'type': item.family | default(item.type | default('')),
+            'state': 'deleted',
+            'config': item.delete_all_config
+              | default(item.delete_all | default(item.delete_config | default(item.delete | default([]))))
+          }
+        ]
+      }}
+  loop: "{{ nd_iw_active_cases }}"
+  loop_control:
+    label: "{{ item.family | default(item.type | default('unknown')) }}"
+
+- name: Exercise the batched interface workflow lifecycle
+  when: nd_iw_active_cases | length > 0
+  block:
+    - name: Remove only reserved lifecycle resources before the live run
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_cleanup_resources }}"
+        config_actions:
+          deploy: false
+        verify:
+          enabled: true
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_batch_precleanup
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Preview the batched merged create
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_create_resources }}"
+        config_actions:
+          deploy: true
+        output_level: info
+      check_mode: true
+      register: nd_iw_batch_create_preview
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+    - name: Verify the complete create plan has no side effects
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_create_preview.execution.status == 'check_mode'
+          - nd_iw_batch_create_preview.execution.mutations_sent == 0
+          - nd_iw_batch_create_preview.execution.deployments_sent == 0
+          - nd_iw_batch_create_preview.resources | length == nd_iw_active_cases | length
+          - nd_iw_batch_create_preview.resources | map(attribute='resource_index') | list == range(0, nd_iw_active_cases | length) | list
+          - nd_iw_batch_create_preview.resources | map(attribute='state') | unique | list == ['merged']
+          - nd_iw_batch_create_preview.resources | selectattr('after_verified', 'equalto', false) | list | length == nd_iw_active_cases | length
+          - nd_iw_batch_create_preview.resources | selectattr('proposed', 'defined') | list | length == nd_iw_active_cases | length
+          - not nd_iw_module_check_mode or nd_iw_batch_create_preview.planned_changed
+
+    - name: Verify shared inventory reads tolerate pagination and avoid family refetches
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_create_preview.request_stats.switches == nd_iw_batch_create_preview.target_switch_ids | length
+          - nd_iw_batch_create_preview.request_stats.interface_inventory_gets == nd_iw_batch_create_preview.request_stats.interface_inventory_pages
+          - nd_iw_batch_create_preview.request_stats.interface_inventory_gets >= nd_iw_batch_create_preview.request_stats.switches
+          - nd_iw_batch_create_preview.request_stats.interface_inventory_cache_hits >= nd_iw_active_cases | length
+          - nd_iw_batch_create_preview.request_stats.interface_inventory_cache_hits > 0
+          - >-
+            nd_iw_batch_create_preview.request_stats.vpc_pair_gets
+            == (1 if (nd_iw_batch_create_resources | selectattr('type', 'in', ['vpc_access', 'vpc_trunk_host']) | list | length > 0) else 0)
+
+    - name: Apply the batched merged create with verification disabled by default
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_create_resources }}"
+        config_actions:
+          deploy: false
+        output_level: info
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_batch_create
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Verify the live batched create result
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_create is changed
+          - nd_iw_batch_create.planned_changed
+          - nd_iw_batch_create.execution.status == 'staged'
+          - nd_iw_batch_create.execution.mutations_sent > 0
+          - nd_iw_batch_create.execution.deployments_sent == 0
+          - nd_iw_batch_create.resources | length == nd_iw_active_cases | length
+          - nd_iw_batch_create.resources | selectattr('after_verified', 'equalto', false) | list | length == nd_iw_active_cases | length
+          - nd_iw_batch_create.request_stats.interface_inventory_refreshes == 0
+          - nd_iw_batch_create.request_stats.interface_inventory_dirty_refetches == 0
+      when: not nd_iw_module_check_mode
+
+    - name: Verify every created family and configured property
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_case_result.yaml"
+      vars:
+        nd_iw_assert_case: "{{ nd_iw_assert_case_item }}"
+        nd_iw_assert_expected_config: >-
+          {{
+            nd_iw_assert_case_item.create_config
+            | default(nd_iw_assert_case_item.maximal | default(nd_iw_assert_case_item.minimal | default([])))
+          }}
+        nd_iw_assert_resource_result: "{{ nd_iw_batch_create.resources[nd_iw_assert_case_index] }}"
+        nd_iw_assert_state: merged
+        nd_iw_assert_after_verified: false
+      loop: "{{ nd_iw_active_cases }}"
+      loop_control:
+        loop_var: nd_iw_assert_case_item
+        index_var: nd_iw_assert_case_index
+        label: "{{ nd_iw_assert_case_item.family | default(nd_iw_assert_case_item.type | default('unknown')) }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Independently verify created intent through raw controller inventory
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/controller_verify_inventory.yaml"
+      vars:
+        nd_iw_raw_verify_mode: present
+        nd_iw_raw_workflow_result: "{{ nd_iw_batch_create }}"
+        nd_iw_raw_identity_resources: "{{ nd_iw_batch_create_resources }}"
+        nd_iw_raw_fingerprint_resources: "{{ nd_iw_batch_create_resources }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Reapply the batched create for idempotency
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_create_resources }}"
+        config_actions:
+          deploy: "{{ nd_iw_enable_deploy | bool }}"
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_batch_create_idempotent
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Verify merged create idempotency performs no write or deployment
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_create_idempotent is not changed
+          - not nd_iw_batch_create_idempotent.planned_changed
+          - nd_iw_batch_create_idempotent.execution.status == 'no_change'
+          - nd_iw_batch_create_idempotent.execution.mutations_sent == 0
+          - nd_iw_batch_create_idempotent.execution.deployments_sent == 0
+      when: not nd_iw_module_check_mode
+
+    - name: Preview the batched merged update
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_update_resources }}"
+        config_actions:
+          deploy: true
+        output_level: normal
+      check_mode: true
+      register: nd_iw_batch_update_preview
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+    - name: Verify the merged update preview performs no writes
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_update_preview is changed
+          - nd_iw_batch_update_preview.execution.status == 'check_mode'
+          - nd_iw_batch_update_preview.execution.mutations_sent == 0
+          - nd_iw_batch_update_preview.execution.deployments_sent == 0
+
+    - name: Apply the batched merged update
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_update_resources }}"
+        config_actions:
+          deploy: false
+        verify:
+          enabled: true
+        output_level: info
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_batch_update
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Verify explicit post-mutation readback refreshed affected inventories
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_update.request_stats.interface_inventory_refreshes > 0
+          - nd_iw_batch_update.request_stats.interface_inventory_dirty_refetches > 0
+          - nd_iw_batch_update.resources | selectattr('after_verified', 'equalto', true) | list | length == nd_iw_active_cases | length
+      when: not nd_iw_module_check_mode
+
+    - name: Verify every updated family and configured property
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_case_result.yaml"
+      vars:
+        nd_iw_assert_case: "{{ nd_iw_assert_case_item }}"
+        nd_iw_assert_expected_config: >-
+          {{ nd_iw_assert_case_item.update_config | default(nd_iw_assert_case_item.alternate | default([])) }}
+        nd_iw_assert_resource_result: "{{ nd_iw_batch_update.resources[nd_iw_assert_case_index] }}"
+        nd_iw_assert_state: merged
+      loop: "{{ nd_iw_active_cases }}"
+      loop_control:
+        loop_var: nd_iw_assert_case_item
+        index_var: nd_iw_assert_case_index
+        label: "{{ nd_iw_assert_case_item.family | default(nd_iw_assert_case_item.type | default('unknown')) }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Reapply the batched merged update for idempotency
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_update_resources }}"
+        config_actions:
+          deploy: "{{ nd_iw_enable_deploy | bool }}"
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_batch_update_idempotent
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Verify merged update idempotency performs no write or deployment
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_update_idempotent is not changed
+          - not nd_iw_batch_update_idempotent.planned_changed
+          - nd_iw_batch_update_idempotent.execution.mutations_sent == 0
+          - nd_iw_batch_update_idempotent.execution.deployments_sent == 0
+      when: not nd_iw_module_check_mode
+
+    - name: Preview the batched replaced state
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_replace_resources }}"
+        config_actions:
+          deploy: true
+        output_level: normal
+      check_mode: true
+      register: nd_iw_batch_replace_preview
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: nd_iw_run_full | bool
+
+    - name: Verify the replaced preview performs no writes
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_replace_preview is changed
+          - nd_iw_batch_replace_preview.execution.status == 'check_mode'
+          - nd_iw_batch_replace_preview.resources | map(attribute='state') | unique | list == ['replaced']
+          - nd_iw_batch_replace_preview.execution.mutations_sent == 0
+          - nd_iw_batch_replace_preview.execution.deployments_sent == 0
+      when: nd_iw_run_full | bool
+
+    - name: Apply the batched replaced state
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_replace_resources }}"
+        config_actions:
+          deploy: false
+        verify:
+          enabled: true
+        output_level: info
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_batch_replace
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when:
+        - nd_iw_run_full | bool
+        - not nd_iw_module_check_mode
+
+    - name: Verify every replaced family and configured property
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_case_result.yaml"
+      vars:
+        nd_iw_assert_case: "{{ nd_iw_assert_case_item }}"
+        nd_iw_assert_expected_config: >-
+          {{ nd_iw_assert_case_item.replace_config | default(nd_iw_assert_case_item.replacement | default([])) }}
+        nd_iw_assert_resource_result: "{{ nd_iw_batch_replace.resources[nd_iw_assert_case_index] }}"
+        nd_iw_assert_state: replaced
+      loop: "{{ nd_iw_active_cases }}"
+      loop_control:
+        loop_var: nd_iw_assert_case_item
+        index_var: nd_iw_assert_case_index
+        label: "{{ nd_iw_assert_case_item.family | default(nd_iw_assert_case_item.type | default('unknown')) }}"
+      when:
+        - nd_iw_run_full | bool
+        - not nd_iw_module_check_mode
+
+    - name: Reapply the batched replaced state for idempotency
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_replace_resources }}"
+        config_actions:
+          deploy: "{{ nd_iw_enable_deploy | bool }}"
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_batch_replace_idempotent
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when:
+        - nd_iw_run_full | bool
+        - not nd_iw_module_check_mode
+
+    - name: Verify replaced idempotency performs no write or deployment
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_replace_idempotent is not changed
+          - not nd_iw_batch_replace_idempotent.planned_changed
+          - nd_iw_batch_replace_idempotent.execution.mutations_sent == 0
+          - nd_iw_batch_replace_idempotent.execution.deployments_sent == 0
+      when:
+        - nd_iw_run_full | bool
+        - not nd_iw_module_check_mode
+
+    - name: Preview the batched deleted state
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_delete_resources }}"
+        config_actions:
+          deploy: true
+        output_level: normal
+      check_mode: true
+      register: nd_iw_batch_delete_preview
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+    - name: Verify the deleted preview performs no writes
+      ansible.builtin.assert:
+        that:
+          - nd_iw_module_check_mode or nd_iw_batch_delete_preview is changed
+          - nd_iw_batch_delete_preview.execution.status == 'check_mode'
+          - nd_iw_batch_delete_preview.resources | map(attribute='state') | unique | list == ['deleted']
+          - nd_iw_batch_delete_preview.execution.mutations_sent == 0
+          - nd_iw_batch_delete_preview.execution.deployments_sent == 0
+
+    - name: Apply the batched deleted state
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_delete_resources }}"
+        config_actions:
+          deploy: false
+        verify:
+          enabled: true
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_batch_delete
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Verify every deleted family is absent from reconciled state
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_case_absent.yaml"
+      vars:
+        nd_iw_assert_absent_config: >-
+          {{ nd_iw_assert_case_item.delete_config | default(nd_iw_assert_case_item.delete | default([])) }}
+        nd_iw_assert_resource_result: "{{ nd_iw_batch_delete.resources[nd_iw_assert_case_index] }}"
+        nd_iw_assert_family: "{{ nd_iw_assert_case_item.family | default(nd_iw_assert_case_item.type | default('')) }}"
+      loop: "{{ nd_iw_active_cases }}"
+      loop_control:
+        loop_var: nd_iw_assert_case_item
+        index_var: nd_iw_assert_case_index
+        label: "{{ nd_iw_assert_case_item.family | default(nd_iw_assert_case_item.type | default('unknown')) }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Independently verify deleted intent through raw controller inventory
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/controller_verify_inventory.yaml"
+      vars:
+        nd_iw_raw_verify_mode: absent
+        nd_iw_raw_workflow_result: "{{ nd_iw_batch_delete }}"
+        nd_iw_raw_identity_resources: "{{ nd_iw_batch_delete_resources }}"
+        nd_iw_raw_fingerprint_resources: "{{ nd_iw_batch_replace_resources }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Reapply the batched deleted state for idempotency
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_delete_resources }}"
+        config_actions:
+          deploy: "{{ nd_iw_enable_deploy | bool }}"
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_batch_delete_idempotent
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode
+
+    - name: Verify deleted idempotency performs no write or deployment
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_delete_idempotent is not changed
+          - not nd_iw_batch_delete_idempotent.planned_changed
+          - nd_iw_batch_delete_idempotent.execution.status == 'no_change'
+          - nd_iw_batch_delete_idempotent.execution.mutations_sent == 0
+          - nd_iw_batch_delete_idempotent.execution.deployments_sent == 0
+      when: not nd_iw_module_check_mode
+
+  always:
+    - name: Remove only reserved lifecycle resources after the live run
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_cleanup_resources }}"
+        config_actions:
+          deploy: false
+        verify:
+          enabled: true
+        output_level: normal
+      check_mode: "{{ nd_iw_module_check_mode }}"
+      register: nd_iw_batch_cleanup
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when: not nd_iw_module_check_mode

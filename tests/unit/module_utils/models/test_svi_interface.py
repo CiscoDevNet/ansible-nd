@@ -424,6 +424,84 @@ def test_svi_interface_00250():
         SviPolicyModel()
 
 
+def test_svi_interface_00260():
+    """
+    # Summary
+
+    Verify `merge` atomically adds a complete IPv6 address/prefix pair to a policy that has neither field set.
+
+    ## Test
+
+    - Build current policy without `ipv6` or `prefixv6`
+    - Merge a proposed policy containing both fields
+    - Both values are set without triggering transient assignment validation
+
+    ## Classes and Methods
+
+    - SviPolicyModel.merge()
+    """
+    current = SviPolicyModel()
+    proposed = SviPolicyModel(ipv6="2001:db8::2", prefixv6=96)
+
+    merged = current.merge(proposed)
+
+    assert merged is current
+    assert merged.ipv6 == "2001:db8::2"
+    assert merged.prefixv6 == 96
+
+
+def test_svi_interface_00270():
+    """
+    # Summary
+
+    Verify `merge` atomically adds a complete IPv4 address/prefix pair to a policy that has neither field set.
+
+    ## Test
+
+    - Build current policy without `ip` or `prefix`
+    - Merge a proposed policy containing both fields
+    - Both values are set without triggering transient assignment validation
+
+    ## Classes and Methods
+
+    - SviPolicyModel.merge()
+    """
+    current = SviPolicyModel()
+    proposed = SviPolicyModel(ip="192.0.2.2", prefix=25)
+
+    merged = current.merge(proposed)
+
+    assert merged is current
+    assert merged.ip == "192.0.2.2"
+    assert merged.prefix == 25
+
+
+def test_svi_interface_00280():
+    """
+    # Summary
+
+    Verify `merge` atomically enables NetFlow with its required monitor on a policy that has neither field set.
+
+    ## Test
+
+    - Build current policy without `netflow` or `netflow_monitor`
+    - Merge a proposed policy enabling NetFlow and supplying its monitor
+    - Both values are set without triggering transient assignment validation
+
+    ## Classes and Methods
+
+    - SviPolicyModel.merge()
+    """
+    current = SviPolicyModel()
+    proposed = SviPolicyModel(netflow=True, netflow_monitor="MONITOR-1")
+
+    merged = current.merge(proposed)
+
+    assert merged is current
+    assert merged.netflow is True
+    assert merged.netflow_monitor == "MONITOR-1"
+
+
 # =============================================================================
 # Test: SviPolicyModel — payload / config serialization
 # =============================================================================

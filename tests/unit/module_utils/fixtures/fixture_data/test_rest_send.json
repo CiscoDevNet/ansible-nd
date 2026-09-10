@@ -147,6 +147,14 @@
             "error": "Invalid request data"
         }
     },
+    "test_rest_send_00510b": {
+        "TEST_NOTES": ["Sentinel success. Must NOT be consumed after the terminal 400 response."],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/badrequest",
+        "MESSAGE": "OK",
+        "DATA": {"status": "unexpected retry"}
+    },
     "test_rest_send_00520a": {
         "TEST_NOTES": ["500 Internal Server Error response"],
         "RETURN_CODE": 500,

@@ -19,8 +19,8 @@ use the ND-native `peer1_*` / `peer2_*` naming where `peer1` corresponds to `swi
 ## Model Hierarchy
 
 - `TrunkVpcHostInterfaceModel` (top-level, `NDBaseModel`)
-    - `switch_ip` (routing field; excluded from diff/payload)
-    - `interface_name` (identifier; e.g. `vpc100`)
+    - `switch_ip` (composite identifier; routing field excluded from diff/payload)
+    - `interface_name` (composite identifier; e.g. `vpc100`)
     - `interface_type` (frozen: "vpc")
     - `config_data` -> `TrunkVpcHostConfigDataModel`
         - `mode` (frozen: "trunk")
@@ -556,11 +556,11 @@ class TrunkVpcHostInterfaceModel(NDBaseModel):
     # --- Identifier Configuration ---
     # TODO(4.2.1) vpc-interface-dual-peer-duplicate
     # A vPC interface is a single fabric-level resource, but ND echoes it from BOTH peer switches in the per-switch
-    # `/interfaces` GET (identical `configData`; only `switchId` / `peerSwitchId` swap). That echo is deduped in
-    # `VpcInterfaceBaseOrchestrator.query_all`, keyed on `interfaceName` + the unordered `{switchId, peerSwitchId}` pair
-    # set, so the composite identifier below stays safe: two vPC pairs in one fabric may legally reuse the same vPC id
-    # (ND's `vpcId` resource pool is devicePair-scoped; issue #356), which a name-only identity cannot represent.
-    # `switch_ip` remains excluded from payload and diff (routing-only on the wire).
+    # `/interfaces` GET (identical `configData`; only `switchId` / `peerSwitchId` swap). Both the aggregate workflow and
+    # `VpcInterfaceBaseOrchestrator.query_all` dedupe that echo by `interfaceName` plus the authoritative unordered
+    # `{switchId, peerSwitchId}` pair set. This preserves distinct resources when two vPC pairs in one fabric reuse the
+    # same vPC id (the ND `vpcId` resource pool is devicePair-scoped; issue #356), which a name-only identity cannot
+    # represent. `switch_ip` remains excluded from payload and diff because it is routing-only on the wire.
 
     identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"

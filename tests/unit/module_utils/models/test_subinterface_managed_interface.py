@@ -424,6 +424,54 @@ def test_subinterface_managed_interface_00260():
         SubinterfaceManagedPolicyModel()
 
 
+def test_subinterface_managed_interface_00270():
+    """
+    # Summary
+
+    Verify merge atomically adds a complete IPv6 address/prefix pair to a policy that has neither field set.
+    """
+    current = SubinterfaceManagedPolicyModel()
+    proposed = SubinterfaceManagedPolicyModel(ipv6="2001:db8::2", ipv6_prefix=96)
+
+    merged = current.merge(proposed)
+
+    assert merged is current
+    assert merged.ipv6 == "2001:db8::2"
+    assert merged.ipv6_prefix == 96
+
+
+def test_subinterface_managed_interface_00280():
+    """
+    # Summary
+
+    Verify merge atomically adds a complete IPv4 address/prefix pair to a policy that has neither field set.
+    """
+    current = SubinterfaceManagedPolicyModel()
+    proposed = SubinterfaceManagedPolicyModel(ip="192.0.2.2", prefix=25)
+
+    merged = current.merge(proposed)
+
+    assert merged is current
+    assert merged.ip == "192.0.2.2"
+    assert merged.prefix == 25
+
+
+def test_subinterface_managed_interface_00290():
+    """
+    # Summary
+
+    Verify merge atomically enables NetFlow with its required monitor.
+    """
+    current = SubinterfaceManagedPolicyModel()
+    proposed = SubinterfaceManagedPolicyModel(netflow=True, netflow_monitor="MONITOR-1")
+
+    merged = current.merge(proposed)
+
+    assert merged is current
+    assert merged.netflow is True
+    assert merged.netflow_monitor == "MONITOR-1"
+
+
 # =============================================================================
 # Test: SubinterfaceManagedPolicyModel — payload / config serialization
 # =============================================================================

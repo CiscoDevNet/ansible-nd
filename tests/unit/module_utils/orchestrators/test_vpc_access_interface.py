@@ -631,8 +631,8 @@ def test_vpc_access_orchestrator_00440_overridden_mixed_case_idempotent() -> Non
             spy,
             expected_switch_ip="192.168.1.2",
             expected_paths=[
-                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces",
-                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
             ],
         )
 
@@ -669,8 +669,8 @@ def test_vpc_access_orchestrator_00445_overridden_mixed_case_idempotent_check_mo
             spy,
             expected_switch_ip="192.168.1.2",
             expected_paths=[
-                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces",
-                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
             ],
         )
 
@@ -711,8 +711,8 @@ def test_vpc_access_orchestrator_00450_overridden_one_peer_missing_peer_switch_i
             spy,
             expected_switch_ip="192.168.1.1",
             expected_paths=[
-                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces",
-                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
                 "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/vpcPair",
             ],
         )
@@ -753,9 +753,9 @@ def test_vpc_access_orchestrator_00455_overridden_both_peers_missing_peer_switch
             spy,
             expected_switch_ip="192.168.1.1",
             expected_paths=[
-                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
                 "/api/v1/manage/fabrics/fabric_1/switches/FDOAAAAAAAA/vpcPair",
-                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces",
+                "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
                 "/api/v1/manage/fabrics/fabric_1/switches/FDOBBBBBBBB/vpcPair",
             ],
         )

@@ -693,3 +693,31 @@ def test_nd_state_machine_00190() -> None:
 
     names = [name for name, _ in spy._calls]
     assert names == ["preflight_delete"]
+
+
+def test_gathered_bypasses_mutation_planning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gathered is read-only and must not enter the mutation-only shared planner."""
+    module = _build_module(state="gathered", check_mode=False, config=[])
+    module.params["config"] = None
+    instance = NDStateMachine(module=module, model_orchestrator=_SpyLoopbackOrchestrator(rest_send=_build_rest_send()))
+    monkeypatch.setattr(instance, "_build_plan", lambda: pytest.fail("gathered attempted mutation planning"))
+
+    instance.manage_state()
+
+    assert instance.model_orchestrator._calls == []
+    assert instance.output.format()["gathered"] == []
+    assert instance.output.format()["changed"] is False
+
+
+def test_caller_prepared_config_is_used_without_repreparation() -> None:
+    """The optional config argument, not raw module.params, builds proposed state."""
+    module = _build_module(state="merged", check_mode=True, config=[])
+    prepared = [{"switch_ip": "192.168.12.151", "interface_name": "loopback77"}]
+
+    instance = NDStateMachine(
+        module=module,
+        model_orchestrator=_SpyLoopbackOrchestrator(rest_send=_build_rest_send()),
+        config=prepared,
+    )
+
+    assert instance.proposed.keys() == [("192.168.12.151", "loopback77")]
