@@ -279,16 +279,20 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         inventory = self._switch_interfaces(switch_id)
         owners: dict[str, str] = {}
-        for iface in inventory.values():
-            if iface.get("interfaceType") != "portChannel":
-                continue
-            for member in self._policy_of(iface).get("ports") or []:
-                if isinstance(member, str) and member:
-                    owners[member.lower()] = iface.get("interfaceName", "")
         for name, iface in inventory.items():
-            policy_type = self._policy_of(iface).get("policyType")
-            if name not in owners and isinstance(policy_type, str) and policy_type.endswith("Member"):
-                owners[name] = f"unknown port-channel (member policyType {policy_type})"
+            policy = self._policy_of(iface)
+            policy_type = policy.get("policyType")
+
+            # A member-typed ethernet defaults to an unknown owner; setdefault never overwrites an explicit owner already
+            # recorded from a port-channel seen earlier in the inventory.
+            if isinstance(policy_type, str) and policy_type.endswith("Member"):
+                owners.setdefault(name, f"unknown port-channel (member policyType {policy_type})")
+
+            # A port-channel's `ports` list names the explicit owner, replacing any unknown default recorded above or later.
+            if iface.get("interfaceType") == "portChannel":
+                for member in policy.get("ports") or []:
+                    if isinstance(member, str) and member:
+                        owners[member.lower()] = iface.get("interfaceName", "")
         return owners
 
     def _validate_members_available(self, model_instances: Sequence[ModelType]) -> None:
