@@ -286,5 +286,113 @@
         "DATA": {
             "error": "boom"
         }
+    },
+    "test_base_interface_00671a": {
+        "TEST_NOTES": [
+            "deploy_pending failure that precedes deploy_accepted_mutations: POST interfaceActions/deploy returns 500; the finalizer must NOT resubmit"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "error": "boom"
+        }
+    },
+    "test_base_interface_00730a": {
+        "TEST_NOTES": [
+            "remove_pending mixed 207: loopback10 on switch A succeeds, loopback10 on switch B and loopback20 on switch A fail (vault: multi-status-207-status-field-inconsistent)"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/remove",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "switchId": "FDO12345ABC",
+                    "switchName": "SW-A",
+                    "interfaceName": "loopback10",
+                    "status": "success",
+                    "message": "Interface deleted successfully"
+                },
+                {
+                    "switchId": "FDO12345ABD",
+                    "switchName": "SW-B",
+                    "interfaceName": "loopback10",
+                    "status": "Failed",
+                    "message": "Invalid Interface"
+                },
+                {
+                    "switchId": "FDO12345ABC",
+                    "switchName": "SW-A",
+                    "interfaceName": "loopback20",
+                    "status": "failed",
+                    "message": "Interface delete failed due to configuration error"
+                }
+            ]
+        }
+    },
+    "test_base_interface_00740a": {
+        "TEST_NOTES": [
+            "remove_pending 207 with untrusted statuses: only an exact (case/whitespace-tolerant) 'success' is accepted; 'error', a missing status, a non-dict item, and a pair that was never submitted are all ignored"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/remove",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "switchId": "FDO12345ABC",
+                    "interfaceName": "Loopback10",
+                    "status": " Success ",
+                    "message": "Interface deleted successfully"
+                },
+                {
+                    "switchId": "FDO12345ABC",
+                    "interfaceName": "loopback20",
+                    "status": "error",
+                    "message": "Interface delete failed"
+                },
+                {
+                    "switchId": "FDO12345ABC",
+                    "interfaceName": "loopback30",
+                    "message": "no status key"
+                },
+                {
+                    "switchId": "FDO12345ABC",
+                    "interfaceName": "loopback99",
+                    "status": "success",
+                    "message": "never submitted"
+                },
+                "not-a-dict"
+            ]
+        }
+    },
+    "test_base_interface_00750a": {
+        "TEST_NOTES": [
+            "remove_pending happy 207 (every item exact success) consumed by the FIRST remove in the test; the SECOND remove then raises from the sender before any response is recorded, leaving this 207 stale in response_current (issue #554)"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/remove",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "switchId": "FDO12345ABC",
+                    "interfaceName": "loopback10",
+                    "status": "success",
+                    "message": "Interface deleted successfully"
+                },
+                {
+                    "switchId": "FDO12345ABD",
+                    "interfaceName": "loopback10",
+                    "status": "success",
+                    "message": "Interface deleted successfully"
+                }
+            ]
+        }
     }
 }

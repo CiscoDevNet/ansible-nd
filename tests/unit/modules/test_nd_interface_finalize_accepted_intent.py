@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import importlib
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
@@ -161,17 +161,23 @@ class _RecordingOrchestrator(NDBaseInterfaceOrchestrator):
         super().model_post_init(__context)
         self._deployed: list[list[tuple[str, str]]] = []  # pylint: disable=attribute-defined-outside-init
 
+    deploy_failure: ClassVar[Exception | None] = None
+
     def _deploy_interfaces(self, pairs: list[tuple[str, str]]) -> dict[str, Any]:
         """
         # Summary
 
-        Record `pairs` instead of sending `interfaceActions/deploy`.
+        Record `pairs` instead of sending `interfaceActions/deploy`, then raise the class-level `deploy_failure` if one is set.
 
         ## Raises
 
-        None
+        ### Exception
+
+        - The class-level `deploy_failure`, when set (simulates a rejected deploy request)
         """
         self._deployed.append(list(pairs))
+        if self.deploy_failure is not None:
+            raise self.deploy_failure
         return {"RETURN_CODE": 200, "MESSAGE": "OK", "DATA": {}}
 
 
@@ -187,11 +193,15 @@ class _FakeStateMachine:
     None
     """
 
-    failure: Exception = NDStateMachineError("later operation failed")
+    failure: Exception | None = NDStateMachineError("later operation failed")
+    deploy_failure: Exception | None = None
     last_instance: _FakeStateMachine | None = None
 
     def __init__(self, module: Any, model_orchestrator: Any) -> None:
-        self.model_orchestrator = _RecordingOrchestrator(rest_send=RestSend({"check_mode": False, "fabric_name": "fabric_1"}))
+        class _Orchestrator(_RecordingOrchestrator):
+            deploy_failure = self.deploy_failure
+
+        self.model_orchestrator = _Orchestrator(rest_send=RestSend({"check_mode": False, "fabric_name": "fabric_1"}))
         self.model_orchestrator._queue_deploy(*ACCEPTED_PAIR)
         self.output = SimpleNamespace(format=lambda: {})
         type(self).last_instance = self
@@ -200,24 +210,32 @@ class _FakeStateMachine:
         """
         # Summary
 
-        Raise the configured failure after the accepted pair has been queued.
+        Raise the configured failure after the accepted pair has been queued; return normally when `failure` is `None`.
 
         ## Raises
 
         ### Exception
 
-        - Always, the class-level `failure`
+        - The class-level `failure`, when set
         """
-        raise self.failure
+        if self.failure is not None:
+            raise self.failure
 
 
-def _run_main(
-    monkeypatch: pytest.MonkeyPatch, module_name: str, *, failure: Exception, deploy: bool = True, check_mode: bool = False
+def _run_main(  # pylint: disable=too-many-arguments
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+    *,
+    failure: Exception | None,
+    deploy: bool = True,
+    check_mode: bool = False,
+    deploy_failure: Exception | None = None,
 ) -> tuple[dict[str, Any], _RecordingOrchestrator]:
     """
     # Summary
 
     Drive `module_name.main()` with the stand-ins and return the captured `fail_json` kwargs plus the orchestrator the module used.
+    `failure` is raised from `manage_state` (`None` lets it succeed); `deploy_failure` is raised from the orchestrator's deploy request.
 
     ## Raises
 
@@ -231,6 +249,7 @@ def _run_main(
         pass
 
     _StateMachine.failure = failure
+    _StateMachine.deploy_failure = deploy_failure
     monkeypatch.setattr(module, "AnsibleModule", lambda **kwargs: _FakeAnsibleModule(deploy=deploy, check_mode=check_mode, **kwargs))
     monkeypatch.setattr(module, "NDStateMachine", _StateMachine)
     monkeypatch.setattr(module, "require_pydantic", lambda module: None)
@@ -340,3 +359,32 @@ def test_nd_interface_finalize_accepted_intent_00030(monkeypatch: pytest.MonkeyP
 
     assert kwargs["msg"] == "Module execution failed: later operation failed"
     assert orchestrator._deployed == []
+
+
+@pytest.mark.parametrize("module_name", TWO_HANDLER_MODULES)
+def test_nd_interface_finalize_accepted_intent_00040(monkeypatch: pytest.MonkeyPatch, module_name: str) -> None:
+    """
+    # Summary
+
+    Verify that when the normal `deploy_pending` request itself fails, the broad handler's finalizer does not resubmit the same
+    deployment: exactly one deploy request is made, the message reports the deploy failure without an accepted-interface NOTE,
+    and the pair stays queued (PR #547 review).
+
+    ## Test
+
+    - `config_actions.deploy` is true, `manage_state` succeeds, and the deploy request raises `RuntimeError`
+    - `fail_json` is called with the wrapped `Bulk deploy failed` message only
+    - The orchestrator issued exactly one deploy request, for the queued pair
+
+    ## Classes and Methods
+
+    - nd_interface_*.main()
+    - finalize_accepted_intent()
+    - NDBaseInterfaceOrchestrator.deploy_pending()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+    kwargs, orchestrator = _run_main(monkeypatch, module_name, failure=None, deploy_failure=RuntimeError("deploy rejected"))
+
+    assert kwargs["msg"] == f"Module failed: Bulk deploy failed for interfaces [{ACCEPTED_PAIR!r}]: deploy rejected"
+    assert orchestrator._deployed == [[ACCEPTED_PAIR]]
+    assert orchestrator._pending_deploys == [ACCEPTED_PAIR]

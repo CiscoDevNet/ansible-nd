@@ -846,6 +846,48 @@ def test_base_interface_00670() -> None:
     assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
 
 
+def test_base_interface_00671() -> None:
+    """
+    # Summary
+
+    Verify `deploy_accepted_mutations` issues no API call and returns an empty list once `deploy_pending` has already attempted the
+    normal deployment and failed: the retained queue is the failed deployment itself, not accepted-but-undeployed intent, so the
+    failure-path finalizer must not resubmit it (PR #547 review).
+
+    ## Test
+
+    - `deploy` is enabled and one pair is queued
+    - `deploy_pending` POSTs to `interfaceActions/deploy`, receives 500, and raises `RuntimeError` with the queue retained
+    - `deploy_accepted_mutations` returns an empty list
+    - Exactly one response was recorded (no second deploy request); the queue is still retained
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.deploy_pending()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    instance._queue_deploy("loopback10", "FDO12345ABC")
+
+    with pytest.raises(RuntimeError, match=r"Bulk deploy failed"):
+        instance.deploy_pending()
+
+    with does_not_raise():
+        result = instance.deploy_accepted_mutations()
+
+    assert result == []
+    assert len(rest_send.responses) == 1
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
 # =============================================================================
 # Test: finalize_accepted_intent (module-side failure-path helper)
 # =============================================================================
@@ -1160,6 +1202,137 @@ def test_base_interface_00720() -> None:
         instance.remove_pending()
 
     assert instance._pending_removes == [("loopback10", "FDO12345ABC")]
+
+
+def test_base_interface_00730() -> None:
+    """
+    # Summary
+
+    Verify `remove_pending` reconciles a mixed HTTP 207 from `interfaceActions/remove`: the pairs the controller reports as an exact
+    `success` are dequeued (their removal IS on the controller, so the failure-path finalizer must still deploy them) while the
+    rejected pairs stay queued, and the raised message names both sets. Matching is on the `(interfaceName, switchId)` pair, so
+    the same interface name on two switches is told apart (PR #547 review).
+
+    ## Test
+
+    - Three pairs are queued: loopback10 on switch A, loopback10 on switch B, loopback20 on switch A
+    - POST returns 207: loopback10/A `success`, loopback10/B `Failed`, loopback20/A `failed`
+    - `RuntimeError` matches `Bulk remove failed` and names the accepted pair
+    - `_pending_removes` retains only loopback10/B and loopback20/A, in queue order
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.remove_pending()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_pairs()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance._queue_remove("loopback10", "FDO12345ABC")
+    instance._queue_remove("loopback10", "FDO12345ABD")
+    instance._queue_remove("loopback20", "FDO12345ABC")
+
+    match = (
+        r"Bulk remove failed for interfaces \[\('loopback10', 'FDO12345ABD'\), \('loopback20', 'FDO12345ABC'\)\]"
+        r".*accepted the removal of \[\('loopback10', 'FDO12345ABC'\)\]"
+    )
+    with pytest.raises(RuntimeError, match=match):
+        instance.remove_pending()
+
+    assert instance._pending_removes == [("loopback10", "FDO12345ABD"), ("loopback20", "FDO12345ABC")]
+
+
+def test_base_interface_00740() -> None:
+    """
+    # Summary
+
+    Verify `remove_pending` trusts only an exact (case/whitespace-tolerant) `success` item status when reconciling a 207 and
+    ignores everything else: `error`, a missing `status` key, a non-dict item, and a `success` for a pair that was never submitted
+    (vault: `multi-status-207-status-field-inconsistent`).
+
+    ## Test
+
+    - Three pairs are queued: loopback10, loopback20, loopback30, all on switch A
+    - POST returns 207: `Loopback10` ` Success ` (case and whitespace differ), loopback20 `error`, loopback30 without a status key,
+      an unsubmitted loopback99 `success`, and a bare string item
+    - `RuntimeError` matches `Bulk remove failed`
+    - Only loopback10 is dequeued; loopback20 and loopback30 remain queued
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.remove_pending()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_pairs()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance._queue_remove("loopback10", "FDO12345ABC")
+    instance._queue_remove("loopback20", "FDO12345ABC")
+    instance._queue_remove("loopback30", "FDO12345ABC")
+
+    with pytest.raises(RuntimeError, match=r"Bulk remove failed"):
+        instance.remove_pending()
+
+    assert instance._pending_removes == [("loopback20", "FDO12345ABC"), ("loopback30", "FDO12345ABC")]
+
+
+def test_base_interface_00750() -> None:
+    """
+    # Summary
+
+    Verify `remove_pending` does not reconcile against a stale response: when the sender raises before any response is recorded,
+    `response_current` still holds the previous request's all-success 207, and none of its pairs may be dequeued from the new
+    request (issue #554 freshness requirement).
+
+    ## Test
+
+    - First call: loopback10 on switches A and B are queued; POST returns an all-success 207; the queue is cleared
+    - The same two pairs are re-queued and the sender is set to raise `ValueError` from `commit`
+    - Second call: `RuntimeError` matches `Bulk remove failed` and does not claim any accepted removal
+    - Both pairs remain queued; still exactly one response was recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.remove_pending()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_pairs()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance._queue_remove("loopback10", "FDO12345ABC")
+    instance._queue_remove("loopback10", "FDO12345ABD")
+
+    with does_not_raise():
+        instance.remove_pending()
+    assert instance._pending_removes == []
+    assert rest_send.return_code == 207
+
+    instance._queue_remove("loopback10", "FDO12345ABC")
+    instance._queue_remove("loopback10", "FDO12345ABD")
+    rest_send.sender.raise_method = "commit"
+    rest_send.sender.raise_exception = ValueError("simulated transport failure")
+
+    with pytest.raises(RuntimeError, match=r"Bulk remove failed") as exc_info:
+        instance.remove_pending()
+
+    assert "accepted the removal" not in str(exc_info.value)
+    assert instance._pending_removes == [("loopback10", "FDO12345ABC"), ("loopback10", "FDO12345ABD")]
+    assert len(rest_send.responses) == 1
 
 
 # =============================================================================
