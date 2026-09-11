@@ -1,0 +1,244 @@
+---
+# Test code for the ND modules
+# Copyright: (c) 2026, Cisco Systems
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+#############################################################################
+# CLEANUP - Ensure clean state before tests
+#############################################################################
+- name: Clean up any existing test fabrics before starting tests
+  cisco.nd.nd_manage_fabric_routed:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ routed_test_fabric_merged }}"
+      - fabric_name: "{{ routed_test_fabric_replaced }}"
+      - fabric_name: "{{ routed_test_fabric_deleted }}"
+  tags: always
+
+#############################################################################
+# TEST 1: STATE MERGED - Create fabric using merged state
+#############################################################################
+- name: "TEST 1a: Create Routed fabric using state merged (first run)"
+  cisco.nd.nd_manage_fabric_routed:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': routed_test_fabric_merged} | combine(fabric_config_routed) }}"
+  register: merged_result_1
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1a: Verify fabric was created using merged state"
+  assert:
+    that:
+      - merged_result_1 is changed
+      - merged_result_1 is not failed
+    fail_msg: "Routed fabric creation with state merged failed"
+    success_msg: "Routed fabric successfully created with state merged"
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1b: Create fabric using state merged (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_routed:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': routed_test_fabric_merged} | combine(fabric_config_routed) }}"
+  register: merged_result_2
+  tags: [test_merged, test_merged_idempotent]
+
+- name: "TEST 1b: Verify merged state is idempotent"
+  assert:
+    that:
+      - merged_result_2 is not changed
+      - merged_result_2 is not failed
+    fail_msg: "Merged state is not idempotent - should not change when run twice with same config"
+    success_msg: "Merged state is idempotent - no changes on second run"
+  tags: [test_merged, test_merged_idempotent]
+
+- name: "TEST 1c: Update fabric using state merged (modify existing)"
+  cisco.nd.nd_manage_fabric_routed:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ routed_test_fabric_merged }}"
+        management:
+          anycast_gateway_mac: "2020.0000.00bb"
+          performance_monitoring: true
+  register: merged_result_3
+  tags: [test_merged, test_merged_update]
+
+- name: "TEST 1c: Verify fabric was updated using merged state"
+  assert:
+    that:
+      - merged_result_3 is changed
+      - merged_result_3 is not failed
+    fail_msg: "Routed fabric update with state merged failed"
+    success_msg: "Routed fabric successfully updated with state merged"
+  tags: [test_merged, test_merged_update]
+
+#############################################################################
+# VALIDATION: Query merged fabric and validate fabric type + changed fields
+#############################################################################
+- name: "VALIDATION: Authenticate with ND to get token"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_auth_response
+  tags: [test_merged, test_merged_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION: Query merged fabric configuration from ND"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ routed_test_fabric_merged }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: merged_fabric_query
+  tags: [test_merged, test_merged_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION: Parse fabric configuration response"
+  set_fact:
+    merged_fabric_config: "{{ merged_fabric_query.json }}"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION: Verify fabric type is routed and changed properties applied"
+  assert:
+    that:
+      - merged_fabric_config.management.type == "routed"
+      - merged_fabric_config.management.anycastGatewayMac == "2020.0000.00bb"
+      - merged_fabric_config.management.performanceMonitoring == true
+    fail_msg: >-
+      Routed fabric validation failed.
+      type: {{ merged_fabric_config.management.type }} (expected routed),
+      anycastGatewayMac: {{ merged_fabric_config.management.anycastGatewayMac }} (expected 2020.0000.00bb),
+      performanceMonitoring: {{ merged_fabric_config.management.performanceMonitoring }} (expected true)
+    success_msg: "Routed fabric type and changed properties validated"
+  tags: [test_merged, test_merged_validation]
+
+#############################################################################
+# TEST 2: STATE REPLACED - Create and manage fabric using replaced state
+#############################################################################
+- name: "TEST 2a: Create Routed fabric using state replaced (first run)"
+  cisco.nd.nd_manage_fabric_routed:
+    <<: *nd_info
+    state: replaced
+    config:
+      - "{{ {'fabric_name': routed_test_fabric_replaced} | combine(fabric_config_routed) }}"
+  register: replaced_result_1
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2a: Verify fabric was created using replaced state"
+  assert:
+    that:
+      - replaced_result_1 is changed
+      - replaced_result_1 is not failed
+    fail_msg: "Routed fabric creation with state replaced failed"
+    success_msg: "Routed fabric successfully created with state replaced"
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2b: Create fabric using state replaced (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_routed:
+    <<: *nd_info
+    state: replaced
+    config:
+      - "{{ {'fabric_name': routed_test_fabric_replaced} | combine(fabric_config_routed) }}"
+  register: replaced_result_2
+  tags: [test_replaced, test_replaced_idempotent]
+
+- name: "TEST 2b: Verify replaced state is idempotent"
+  assert:
+    that:
+      - replaced_result_2 is not changed
+      - replaced_result_2 is not failed
+    fail_msg: "Replaced state is not idempotent - should not change when run twice with same config"
+    success_msg: "Replaced state is idempotent - no changes on second run"
+  tags: [test_replaced, test_replaced_idempotent]
+
+#############################################################################
+# TEST 3: STATE OVERRIDDEN - Enforce exact inventory (deletes unlisted fabrics)
+#############################################################################
+- name: "TEST 3a: Override inventory to a single fabric (deletes others)"
+  cisco.nd.nd_manage_fabric_routed:
+    <<: *nd_info
+    state: overridden
+    config:
+      - "{{ {'fabric_name': routed_test_fabric_merged} | combine(fabric_config_routed) }}"
+  register: overridden_result_1
+  tags: [test_overridden]
+
+- name: "TEST 3a: Verify overridden state changed inventory"
+  assert:
+    that:
+      - overridden_result_1 is changed
+      - overridden_result_1 is not failed
+    fail_msg: "Routed fabric overridden state failed"
+    success_msg: "Routed fabric inventory enforced with overridden state"
+  tags: [test_overridden]
+
+#############################################################################
+# TEST 4: STATE DELETED - Delete fabrics
+#############################################################################
+- name: "TEST 4a: Delete the remaining fabric using state deleted"
+  cisco.nd.nd_manage_fabric_routed:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ routed_test_fabric_merged }}"
+  register: deleted_result_1
+  tags: [test_deleted]
+
+- name: "TEST 4a: Verify fabric was deleted"
+  assert:
+    that:
+      - deleted_result_1 is changed
+      - deleted_result_1 is not failed
+    fail_msg: "Routed fabric deletion with state deleted failed"
+    success_msg: "Routed fabric successfully deleted with state deleted"
+  tags: [test_deleted]
+
+- name: "TEST 4b: Delete the same fabric again (idempotency test)"
+  cisco.nd.nd_manage_fabric_routed:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ routed_test_fabric_merged }}"
+  register: deleted_result_2
+  tags: [test_deleted]
+
+- name: "TEST 4b: Verify delete is idempotent"
+  assert:
+    that:
+      - deleted_result_2 is not changed
+      - deleted_result_2 is not failed
+    fail_msg: "Deleted state is not idempotent - should not change when fabric already absent"
+    success_msg: "Deleted state is idempotent - no changes when fabric already absent"
+  tags: [test_deleted]
