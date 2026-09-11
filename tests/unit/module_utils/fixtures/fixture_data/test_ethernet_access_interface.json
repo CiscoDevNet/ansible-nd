@@ -1124,7 +1124,9 @@
         }
     },
     "test_reset_partial_failure_00630a": {
-        "TEST_NOTES": ["00630: first per-interface PUT reset succeeds (Ethernet1/1)"],
+        "TEST_NOTES": [
+            "00630: first per-interface PUT reset succeeds (Ethernet1/1)"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "PUT",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F1",
@@ -1132,11 +1134,301 @@
         "DATA": {}
     },
     "test_reset_partial_failure_00630b": {
-        "TEST_NOTES": ["00630: second per-interface PUT reset fails (Ethernet1/2) -> remove_pending raises with partial-state detail"],
+        "TEST_NOTES": [
+            "00630: second per-interface PUT reset fails (Ethernet1/2) -> remove_pending raises with partial-state detail"
+        ],
         "RETURN_CODE": 500,
         "METHOD": "PUT",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F2",
         "MESSAGE": "Internal Server Error",
+        "DATA": {}
+    },
+    "test_create_bulk_grouping_00710a": {
+        "TEST_NOTES": [
+            "00710: switch_map fetch -- one switch carrying both an NX-OS and an IOS-XE access model (unit-level grouping proof)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_create_bulk_grouping_00710b": {
+        "TEST_NOTES": [
+            "00710: first per-(switch, policyType) POST (accessHost group)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "ok"
+        }
+    },
+    "test_create_bulk_grouping_00710c": {
+        "TEST_NOTES": [
+            "00710: second per-(switch, policyType) POST (iosXeAccess group) -- one POST per group, never a mixed interfaces[] array"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "ok"
+        }
+    },
+    "test_delete_bulk_xe_00720a": {
+        "TEST_NOTES": [
+            "00720: switch_map fetch -- NX leaf + IOS-XE Catalyst in fabric_1"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_xe_00725a": {
+        "TEST_NOTES": [
+            "00725: switch_map fetch (overridden XE merge-only skip)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_xe_remove_pending_00740a": {
+        "TEST_NOTES": [
+            "00740: switch_map fetch -- IOS-XE Catalyst"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_xe_remove_pending_00740b": {
+        "TEST_NOTES": [
+            "00740: XE reset PUT response for GigabitEthernet1/0/1 (defaults-only iosXeTrunkHost body, mtu-less)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces/GigabitEthernet1/0/1",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_query_all_overridden_xe_00750a": {
+        "TEST_NOTES": [
+            "00750: fabric summary (validate_prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_query_all_overridden_xe_00750b": {
+        "TEST_NOTES": [
+            "00750: switch list -- one NX-OS leaf, one IOS-XE Catalyst"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_query_all_overridden_xe_00750c": {
+        "TEST_NOTES": [
+            "00750: NX-OS switch interfaces -- one accessHost (kept, NX stays in overridden scope), one trunkHost (filtered by managed types)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 10
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_query_all_overridden_xe_00750d": {
+        "TEST_NOTES": [
+            "00750: IOS-XE switch interfaces -- two iosXeAccess (only the NAMED one survives overridden scope: XE is merge-only), one iosXeTrunkHost (filtered by managed types)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccess",
+                                "accessVlan": 20
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccess",
+                                "accessVlan": 30
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/3",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost",
+                                "allowedVlans": "none"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_xe_reset_partial_00760a": {
+        "TEST_NOTES": [
+            "00760: switch_map fetch -- IOS-XE Catalyst"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_xe_reset_partial_00760b": {
+        "TEST_NOTES": [
+            "00760: first XE reset PUT succeeds"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces/GigabitEthernet1/0/1",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_xe_reset_partial_00760c": {
+        "TEST_NOTES": [
+            "00760: second XE reset PUT fails (500); the third is never attempted"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces/GigabitEthernet1/0/2",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "message": "unexpected error during policy execution"
+        }
+    },
+    "test_xe_reset_partial_00760d": {
+        "TEST_NOTES": [
+            "00760: failure-path deploy of the accepted subset (GigabitEthernet1/0/1 only)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
         "DATA": {}
     }
 }

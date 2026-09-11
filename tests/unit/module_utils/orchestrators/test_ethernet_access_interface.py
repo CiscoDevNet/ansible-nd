@@ -33,6 +33,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     EthernetAccessInterfaceModel,
     EthernetAccessNetworkOSModel,
     EthernetAccessPolicyModel,
+    XeEthernetAccessNetworkOSModel,
+    XeEthernetAccessPolicyModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import (
     EthernetAccessInterfaceOrchestrator,
@@ -162,7 +164,7 @@ def test_ethernet_access_orchestrator_00100() -> None:
 
     gen_responses = ResponseGenerator(responses())
     orchestrator = _build_orchestrator(gen_responses)
-    assert orchestrator._managed_policy_types() == {"accessHost"}
+    assert orchestrator._managed_policy_types() == {"accessHost", "iosXeAccess"}
 
 
 def test_ethernet_access_orchestrator_00110() -> None:
@@ -1035,3 +1037,290 @@ def test_ethernet_access_orchestrator_00630() -> None:
     assert "Successfully reset before failure: ['Ethernet1/1']" in message
     assert "Not attempted: ['Ethernet1/3']" in message
     assert "were not rolled back" in message
+
+
+# =============================================================================
+# Test: IOS-XE branch (issue #534) — grouping, reset path, overridden scope
+# =============================================================================
+
+
+def _build_xe_access_model(policy_kwargs: dict, interface_name: str = "GigabitEthernet1/0/1", switch_ip: str = "192.168.2.1") -> EthernetAccessInterfaceModel:
+    """Build an IOS-XE `EthernetAccessInterfaceModel` whose policy carries exactly `policy_kwargs`."""
+    return EthernetAccessInterfaceModel(
+        switch_ip=switch_ip,
+        interface_name=interface_name,
+        config_data=EthernetAccessConfigDataModel(
+            network_os=XeEthernetAccessNetworkOSModel(
+                network_os_type="ios-xe",
+                policy=XeEthernetAccessPolicyModel(policy_type="iosXeAccess", **policy_kwargs),
+            ),
+        ),
+    )
+
+
+def test_ethernet_access_orchestrator_00700() -> None:
+    """
+    # Summary
+
+    Verify `_managed_policy_types` is exactly the union of the NX-OS and IOS-XE access policy types, so `query_all` keeps Catalyst
+    `iosXeAccess` interfaces in scope alongside NX-OS `accessHost`.
+
+    ## Test
+
+    - Result == {"accessHost", "iosXeAccess"}
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceOrchestrator._managed_policy_types()
+    """
+
+    def responses():
+        yield {}
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()))
+    assert orchestrator._managed_policy_types() == {"accessHost", "iosXeAccess"}
+
+
+def test_ethernet_access_orchestrator_00710() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` groups by `(switch_id, policy_type)` and sends one POST per group (issue #409): ND rejects an
+    `interfaces[]` array that mixes `policyType` values (HTTP 207 with a single failed item; nothing created), so an NX-OS
+    `accessHost` and an IOS-XE `iosXeAccess` item on the same switch must never share a request. Both are queued for deploy.
+
+    ## Test
+
+    - Two models on the same switch: one `accessHost`, one `iosXeAccess`; `existing_data` supplied so no interface-list GET
+    - Exactly three responses are consumed: the switch map plus two POSTs (a fourth request would exhaust the generator)
+    - The last POST body carries only the `iosXeAccess` item; both pairs are in `_pending_deploys`
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.create_bulk()
+    - EthernetBaseOrchestrator._group_by_switch_and_policy_type()
+    """
+
+    def responses():
+        yield responses_access("test_create_bulk_grouping_00710a")
+        yield responses_access("test_create_bulk_grouping_00710b")
+        yield responses_access("test_create_bulk_grouping_00710c")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    nx = _build_access_model({"access_vlan": 10}, interface_name="Ethernet1/1", switch_ip="192.168.1.1")
+    xe = _build_xe_access_model({"access_vlan": 20}, interface_name="GigabitEthernet1/0/1", switch_ip="192.168.1.1")
+    with does_not_raise():
+        result = orchestrator.create_bulk([nx, xe], existing_data={"interfaceName": "probe", "operData": {"portChannelId": -1}})
+    assert len(result) == 2
+    assert len(orchestrator.rest_send.responses) == 3
+    last_body = orchestrator.rest_send.committed_payload
+    assert [item["interfaceName"] for item in last_body["interfaces"]] == ["GigabitEthernet1/0/1"]
+    assert last_body["interfaces"][0]["configData"]["networkOS"]["policy"]["policyType"] == "iosXeAccess"
+    assert orchestrator._pending_deploys == [("Ethernet1/1", "FDO11111AAA"), ("GigabitEthernet1/0/1", "FDO11111AAA")]
+
+
+def test_ethernet_access_orchestrator_00720() -> None:
+    """
+    # Summary
+
+    Verify an explicitly named IOS-XE interface under `state: deleted` is queued for the XE reset path (per-interface PUT via
+    `remove_pending`), never the NX-OS normalize queue: `interfaceActions/normalize` carries the NX-shaped `int_trunk_host` body and
+    cannot express an IOS-XE policy. The NX-OS interface keeps the family normalize path. Both are queued for deploy.
+
+    ## Test
+
+    - state is `deleted`; delete_bulk receives one NX-OS model and one IOS-XE model
+    - NX-OS pair in `_pending_normalizes`; XE pair in `_pending_xe_resets` and NOT in `_pending_normalizes`
+    - Both pairs in `_pending_deploys`
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.delete_bulk()
+    - EthernetBaseOrchestrator._queue_xe_reset()
+    """
+
+    def responses():
+        yield responses_access("test_delete_bulk_xe_00720a")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    nx = _build_access_model({"access_vlan": 10}, interface_name="Ethernet1/1", switch_ip="192.168.1.1")
+    xe = _build_xe_access_model({"access_vlan": 20})
+    with does_not_raise():
+        orchestrator.delete_bulk([nx, xe], existing_data={"interfaceName": "probe", "operData": {"portChannelId": -1}})
+    assert orchestrator._pending_normalizes == [("Ethernet1/1", "FDO11111AAA")]
+    assert orchestrator._pending_xe_resets == [("GigabitEthernet1/0/1", "FDO22222BBB")]
+    assert orchestrator._pending_deploys == [("Ethernet1/1", "FDO11111AAA"), ("GigabitEthernet1/0/1", "FDO22222BBB")]
+
+
+def test_ethernet_access_orchestrator_00725() -> None:
+    """
+    # Summary
+
+    Verify `state: overridden` never queues an IOS-XE interface for reset (IOS-XE is merge-only under overridden, the contract
+    `nd_interface_ethernet_routed` shipped): only the NX-OS interface is queued.
+
+    ## Test
+
+    - state is `overridden`; delete_bulk receives one NX-OS model and one IOS-XE model
+    - NX-OS pair queued for normalize + deploy; nothing queued for the IOS-XE interface
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.delete_bulk()
+    """
+
+    def responses():
+        yield responses_access("test_delete_bulk_xe_00725a")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "overridden"})
+    nx = _build_access_model({"access_vlan": 10}, interface_name="Ethernet1/1", switch_ip="192.168.1.1")
+    xe = _build_xe_access_model({"access_vlan": 20})
+    with does_not_raise():
+        orchestrator.delete_bulk([nx, xe], existing_data={"interfaceName": "probe", "operData": {"portChannelId": -1}})
+    assert orchestrator._pending_normalizes == [("Ethernet1/1", "FDO11111AAA")]
+    assert orchestrator._pending_xe_resets == []
+    assert orchestrator._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+
+
+def test_ethernet_access_orchestrator_00730() -> None:
+    """
+    # Summary
+
+    Verify the IOS-XE reset payload for the host-facing ethernet modules is the XE mirror of the NX-OS normalize target: a
+    defaults-only `iosXeTrunkHost` policy in `trunk` mode with NO `mtu` key (ND injects the schema defaults on the echo, landing the
+    interface on the unconfigured-default trunk signature so it leaves both the access and trunk modules' managed scope).
+
+    ## Test
+
+    - Payload carries interfaceName/interfaceType/switchId, mode "trunk", networkOSType "ios-xe"
+    - Policy is exactly {policyType: iosXeTrunkHost, adminState: true}; no "mtu" anywhere
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._xe_reset_payload()
+    """
+    payload = EthernetAccessInterfaceOrchestrator._xe_reset_payload("GigabitEthernet1/0/1", "FDO22222BBB")
+    assert payload["interfaceName"] == "GigabitEthernet1/0/1"
+    assert payload["interfaceType"] == "ethernet"
+    assert payload["switchId"] == "FDO22222BBB"
+    assert payload["configData"]["mode"] == "trunk"
+    assert payload["configData"]["networkOS"]["networkOSType"] == "ios-xe"
+    assert payload["configData"]["networkOS"]["policy"] == {"policyType": "iosXeTrunkHost", "adminState": True}
+    assert "mtu" not in str(payload)
+
+
+def test_ethernet_access_orchestrator_00740() -> None:
+    """
+    # Summary
+
+    Verify `remove_pending` flushes the XE reset queue via one per-interface PUT carrying the `_xe_reset_payload` body and empties
+    the queue. After the switch-map GET, a single fixture covers the PUT; any additional request would exhaust the generator.
+
+    ## Test
+
+    - state is `deleted`; delete_bulk queues one IOS-XE interface
+    - `remove_pending` consumes exactly one PUT, whose body is the reset payload, and clears `_pending_xe_resets`
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.remove_pending()
+    """
+
+    def responses():
+        yield responses_access("test_xe_remove_pending_00740a")
+        yield responses_access("test_xe_remove_pending_00740b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    with does_not_raise():
+        orchestrator.delete_bulk([_build_xe_access_model({"access_vlan": 20})], existing_data={"interfaceName": "probe", "operData": {"portChannelId": -1}})
+        orchestrator.remove_pending()
+    assert orchestrator._pending_xe_resets == []
+    assert orchestrator.rest_send.committed_payload == EthernetAccessInterfaceOrchestrator._xe_reset_payload("GigabitEthernet1/0/1", "FDO22222BBB")
+
+
+def test_ethernet_access_orchestrator_00750() -> None:
+    """
+    # Summary
+
+    Verify `state: overridden` scope excludes IOS-XE interfaces that are NOT named in the task config (XE merge-only) at QUERY scope,
+    so the state machine never computes delete intent for them and changed/diff reporting stays truthful. A configured NX-OS
+    interface stays in scope regardless; a NAMED IOS-XE interface stays in scope (named in abbreviated lowercase to prove config
+    names are canonicalized before matching).
+
+    ## Test
+
+    - state is `overridden`; config names Ethernet1/1 (NX) and gi1/0/1 (XE)
+    - Result keeps Ethernet1/1 and GigabitEthernet1/0/1; drops the unnamed GigabitEthernet1/0/2 and the trunk-mode interfaces
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.query_all()
+    - EthernetBaseOrchestrator._named_interfaces()
+    """
+
+    def responses():
+        yield responses_access("test_query_all_overridden_xe_00750a")
+        yield responses_access("test_query_all_overridden_xe_00750b")
+        yield responses_access("test_query_all_overridden_xe_00750c")
+        yield responses_access("test_query_all_overridden_xe_00750d")
+
+    orchestrator = _build_orchestrator(
+        ResponseGenerator(responses()),
+        params={
+            "state": "overridden",
+            "config": [{"switch_ip": "192.168.1.1", "interface_name": "Ethernet1/1"}, {"switch_ip": "192.168.2.1", "interface_name": "gi1/0/1"}],
+        },
+    )
+    with does_not_raise():
+        result = orchestrator.query_all()
+    assert {iface["interfaceName"] for iface in result} == {"Ethernet1/1", "GigabitEthernet1/0/1"}
+
+
+def test_ethernet_access_orchestrator_00760() -> None:
+    """
+    # Summary
+
+    Verify the failure-path finalizer deploys ONLY the IOS-XE resets the controller accepted. Three XE interfaces are queued for
+    reset under `state: deleted`; the first PUT succeeds, the second fails, the third is never attempted. `remove_pending` raises
+    with that partial-state detail, and `deploy_accepted_mutations` deploys exactly the first interface: the failed and unattempted
+    pairs stay in the XE reset queue (`_unsent_delete_pairs`) and are excluded.
+
+    ## Test
+
+    - `delete_bulk` queues GigabitEthernet1/0/1, 1/0/2, 1/0/3 for XE reset and deploy
+    - `remove_pending` raises naming 1/0/1 as reset, 1/0/2 as failed, 1/0/3 as not attempted; the queue holds 1/0/2 and 1/0/3
+    - `deploy_accepted_mutations` deploys `[GigabitEthernet1/0/1]` only; the other two remain in `_pending_deploys`
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.remove_pending()
+    - EthernetBaseOrchestrator._unsent_delete_pairs()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+
+    def responses():
+        yield responses_access("test_xe_reset_partial_00760a")
+        yield responses_access("test_xe_reset_partial_00760b")
+        yield responses_access("test_xe_reset_partial_00760c")
+        yield responses_access("test_xe_reset_partial_00760d")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    orchestrator.deploy = True
+    models = [
+        _build_xe_access_model({"access_vlan": 20}, interface_name=name) for name in ("GigabitEthernet1/0/1", "GigabitEthernet1/0/2", "GigabitEthernet1/0/3")
+    ]
+    with does_not_raise():
+        orchestrator.delete_bulk(models, existing_data={"interfaceName": "probe", "operData": {"portChannelId": -1}})
+
+    match = (
+        r"IOS-XE reset failed at GigabitEthernet1/0/2 on FDO22222BBB: .*"
+        r"Successfully reset before failure: \['GigabitEthernet1/0/1'\]\. Not attempted: \['GigabitEthernet1/0/3'\]"
+    )
+    with pytest.raises(RuntimeError, match=match):
+        orchestrator.remove_pending()
+    assert orchestrator._pending_xe_resets == [("GigabitEthernet1/0/2", "FDO22222BBB"), ("GigabitEthernet1/0/3", "FDO22222BBB")]
+
+    with does_not_raise():
+        deployed = orchestrator.deploy_accepted_mutations()
+    assert deployed == [("GigabitEthernet1/0/1", "FDO22222BBB")]
+    assert orchestrator._pending_deploys == [("GigabitEthernet1/0/2", "FDO22222BBB"), ("GigabitEthernet1/0/3", "FDO22222BBB")]
