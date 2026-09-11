@@ -172,5 +172,5 @@ xe_access_updated:
         policy_type: iosXeAccess
         admin_state: true
         access_vlan: 150
-        mtu: 9000
+        mtu: 8000  # Cat9kv (CML beta) caps system and port MTU at 8978; a real 9300 allows 9198. Keep below both.
         description: "Updated XE access description"
