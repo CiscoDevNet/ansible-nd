@@ -1505,3 +1505,96 @@ def test_ethernet_routed_orchestrator_00980() -> None:
         orchestrator.delete_bulk([_xe_model("GigabitEthernet3")], existing_data={"interfaceName": "probe"})
     assert orchestrator._pending_xe_resets == []
     assert orchestrator._pending_deploys == []
+
+
+def test_ethernet_routed_orchestrator_00990() -> None:
+    """
+    # Summary
+
+    Verify the ND 4.3.1 fallback in `_post_normalize`: when the controller rejects the template body's `description: ""` with HTTP 400
+    `minimum string length is 1`, the same group is resent once without `description`, the run remembers to omit it, and the
+    delete-side bookkeeping is the normal success path (every pair dequeued, deploys still queued).
+
+    ## Test
+
+    - `delete_bulk` queues Ethernet1/31 and Ethernet1/32 for normalize and deploy
+    - The first normalize POST returns 400 naming `/configData/networkOS/policy/description`; the resend returns 207 success for both
+    - `remove_pending` does not raise; `_pending_normalizes` is empty; `_pending_deploys` still holds both pairs
+    - The last committed payload carries no `description`; `_normalize_omits_description` is set for the rest of the run
+    - Exactly three responses were consumed (switch list, rejection, resend)
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.remove_pending()
+    - EthernetBaseOrchestrator._normalize_interfaces()
+    - EthernetBaseOrchestrator._post_normalize()
+    - EthernetBaseOrchestrator._rejected_empty_description()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_remove_pending_00990a")
+        yield responses_ethernet_routed("test_remove_pending_00990b")
+        yield responses_ethernet_routed("test_remove_pending_00990c")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    orchestrator.deploy = True
+    with does_not_raise():
+        orchestrator.delete_bulk([_nx_model("Ethernet1/31"), _nx_model("Ethernet1/32")], existing_data={"interfaceName": "probe"})
+    assert orchestrator._normalize_omits_description is False
+
+    with does_not_raise():
+        results = orchestrator.remove_pending()
+
+    assert len(results) == 1
+    assert not orchestrator._pending_normalizes
+    assert orchestrator._pending_deploys == [("Ethernet1/31", "FDO11111AAA"), ("Ethernet1/32", "FDO11111AAA")]
+    assert orchestrator._normalize_omits_description is True
+    assert len(orchestrator.rest_send.responses) == 3
+    policy = orchestrator.rest_send.committed_payload["configData"]["networkOS"]["policy"]
+    assert "description" not in policy
+    assert policy["policyType"] == "trunkHost"
+    assert policy["extraConfig"] == ""
+    assert orchestrator.rest_send.committed_payload["switchInterfaces"] == [
+        {"interfaceName": "Ethernet1/31", "switchId": "FDO11111AAA"},
+        {"interfaceName": "Ethernet1/32", "switchId": "FDO11111AAA"},
+    ]
+
+
+def test_ethernet_routed_orchestrator_01000() -> None:
+    """
+    # Summary
+
+    Verify `_post_normalize` does NOT resend on a 400 that is not the empty-description rejection: the request fails once, the
+    error propagates with the existing all-or-nothing message, and every pair stays queued (the response generator has no further
+    fixture, so a resend would raise a different error).
+
+    ## Test
+
+    - `delete_bulk` queues Ethernet1/31 for normalize and deploy
+    - The normalize POST returns 400 naming `/configData/networkOS/policy/mtu`
+    - `remove_pending` raises `Bulk normalize failed` with `None of these interfaces were reset`
+    - `_pending_normalizes` still holds the pair; `_normalize_omits_description` stays `False`; two responses consumed
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.remove_pending()
+    - EthernetBaseOrchestrator._post_normalize()
+    - EthernetBaseOrchestrator._rejected_empty_description()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_remove_pending_01000a")
+        yield responses_ethernet_routed("test_remove_pending_01000b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    orchestrator.deploy = True
+    with does_not_raise():
+        orchestrator.delete_bulk([_nx_model("Ethernet1/31")], existing_data={"interfaceName": "probe"})
+
+    with pytest.raises(RuntimeError, match=r"Bulk normalize failed for \['Ethernet1/31'\]: .*None of these interfaces were reset\.$"):
+        orchestrator.remove_pending()
+
+    assert orchestrator._pending_normalizes == [("Ethernet1/31", "FDO11111AAA")]
+    assert orchestrator._normalize_omits_description is False
+    assert len(orchestrator.rest_send.responses) == 2
+    assert orchestrator.rest_send.committed_payload["configData"]["networkOS"]["policy"]["description"] == ""
