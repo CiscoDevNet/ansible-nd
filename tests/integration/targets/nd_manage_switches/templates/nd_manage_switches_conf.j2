@@ -23,9 +23,6 @@
 {% set poap_item = {} %}
 {% set _ = poap_item.update({'serial_number': switch.poap.serial_number}) %}
 {% set _ = poap_item.update({'hostname': switch.poap.hostname}) %}
-{% if switch.poap.image_policy is defined and switch.poap.image_policy %}
-{% set _ = poap_item.update({'image_policy': switch.poap.image_policy}) %}
-{% endif %}
 {% if switch.poap.discovery_username is defined and switch.poap.discovery_username %}
 {% set _ = poap_item.update({'discovery_username': switch.poap.discovery_username}) %}
 {% endif %}
@@ -46,9 +43,6 @@
 {% set _ = preprov_config.update({k: switch.preprovision.config_data[k]}) %}
 {% endfor %}
 {% set _ = preprov_item.update({'config_data': preprov_config}) %}
-{% endif %}
-{% if switch.preprovision.image_policy is defined and switch.preprovision.image_policy %}
-{% set _ = preprov_item.update({'image_policy': switch.preprovision.image_policy}) %}
 {% endif %}
 {% if switch.preprovision.discovery_username is defined and switch.preprovision.discovery_username %}
 {% set _ = preprov_item.update({'discovery_username': switch.preprovision.discovery_username}) %}

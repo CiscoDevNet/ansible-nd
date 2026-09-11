@@ -110,7 +110,6 @@ class VrfWorkflowCoordinator:
         """
         module_args: dict = dict(self.module.params)
         try:
-            self._normalize_module_args(module_args)
             if self.strategy is None:
                 self.strategy = self._resolve_strategy(module_args)
             self._trace(
@@ -199,12 +198,6 @@ class VrfWorkflowCoordinator:
         if self._trace_enabled():
             result["workflow_trace"] = list(self._workflow_trace)
         return result
-
-    @staticmethod
-    def _normalize_module_args(module_args: dict) -> None:
-        """Normalize legacy module-level aliases before workflow routing."""
-        if module_args.get("state") == "query":
-            module_args["state"] = "gathered"
 
     def _validate_topology_argument_scope(
         self,
@@ -1091,6 +1084,21 @@ class VrfWorkflowCoordinator:
         else:
             vrfs = []
         return vrfs, self._finalize_api_trace(results)
+
+    def _query_current_vrfs_by_names(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        vrf_names: list[str],
+    ) -> list[dict[str, Any]]:
+        """Gather selected current VRF records for the target fabric."""
+        orchestrator, _results = self._new_vrf_orchestrator(module_args, strategy)
+        data = orchestrator.query_by_names(vrf_names)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("vrfs") or data.get("items") or []
+        return []
 
     def _wait_for_vrfs_delete_ready(
         self,

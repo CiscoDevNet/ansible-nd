@@ -52,12 +52,15 @@ def _bootstrap_import_payload(**overrides):
         "serialNumber": "POAP1",
         "model": "N9K-C93180YC-EX",
         "softwareVersion": "10.3(1)",
+        "softwareImage": "nxos64-cs.10.3.1.F.bin",
         "hostname": "leaf-poap",
         "ip": "192.0.2.10",
         "password": "password",
         "discoveryAuthProtocol": "md5",
         "fingerPrint": "fingerprint",
         "publicKey": "public-key",
+        "dhcpBootstrapIp": "192.0.2.50",
+        "seedSwitch": False,
     }
     data.update(overrides)
     return data
@@ -68,6 +71,7 @@ def _rma_payload(**overrides):
         "gatewayIpMask": "192.0.2.1/24",
         "model": "N9K-C93180YC-EX",
         "softwareVersion": "10.3(1)",
+        "softwareImage": "nxos64-cs.10.3.1.F.bin",
         "switchRole": "leaf",
         "password": "password",
         "discoveryAuthProtocol": "md5",
@@ -155,6 +159,36 @@ def test_switch_config_requires_credentials_for_write_states():
         SwitchConfigModel.model_validate({"seed_ip": "192.0.2.10"}, context={"state": "merged"})
 
 
+def test_switch_config_accepts_poap_software_image_and_rejects_preprovision_software_image():
+    """POAP config accepts software_image; pre-provision uses version only."""
+    poap_cfg = SwitchConfigModel.model_validate(
+        _normal_config(
+            poap={
+                "serial_number": "POAP1",
+                "hostname": "leaf-poap",
+                "software_image": "nxos64-cs.10.6.4.M.bin",
+            }
+        ),
+        context={"state": "merged"},
+    )
+    assert poap_cfg.poap.software_image == "nxos64-cs.10.6.4.M.bin"
+
+    with pytest.raises(ValidationError, match="software_image"):
+        SwitchConfigModel.model_validate(
+            _normal_config(
+                preprovision={
+                    "serial_number": "PREPROV1",
+                    "model": "N9K-C93180YC-EX",
+                    "version": "10.6(4)",
+                    "hostname": "leaf-preprov",
+                    "software_image": "nxos64-cs.10.6.4.M.bin",
+                    "config_data": {"models": ["N9K-C93180YC-EX"], "gateway": "192.0.2.1/24"},
+                }
+            ),
+            context={"state": "merged"},
+        )
+
+
 def test_switch_config_rejects_invalid_special_operation_combinations():
     """RMA cannot be combined with POAP/preprovision blocks."""
     with pytest.raises(ValidationError, match="Cannot specify 'rma' together"):
@@ -176,6 +210,23 @@ def test_bootstrap_import_model_requires_call_home_identity_fields():
         BootstrapImportSwitchModel.model_validate(_bootstrap_import_payload(fingerPrint=" "))
 
 
+def test_bootstrap_import_payload_matches_nd42_schema_fields():
+    """Bootstrap payload carries softwareImage and omits removed imagePolicy."""
+    payload = BootstrapImportSwitchModel.model_validate(_bootstrap_import_payload(imagePolicy="legacy-policy")).to_payload()
+
+    assert payload["softwareImage"] == "nxos64-cs.10.3.1.F.bin"
+    assert payload["dhcpBootstrapIp"] == "192.0.2.50"
+    assert "imagePolicy" not in payload
+    assert "reAdd" not in payload
+
+
+def test_bootstrap_import_payload_omits_empty_dhcp_bootstrap_ip():
+    """Bootstrap payload tolerates empty optional dhcpBootstrapIp from controller."""
+    payload = BootstrapImportSwitchModel.model_validate(_bootstrap_import_payload(dhcpBootstrapIp="")).to_payload()
+
+    assert "dhcpBootstrapIp" not in payload
+
+
 def test_rma_model_requires_call_home_identity_fields():
     """RMA payload rejects missing replacement-switch identity fields."""
     with pytest.raises(ValidationError, match="NEW1.*publicKey.*finish calling home"):
@@ -183,6 +234,15 @@ def test_rma_model_requires_call_home_identity_fields():
 
     with pytest.raises(ValidationError, match="NEW1.*fingerPrint.*finish calling home"):
         RMASwitchModel.model_validate(_rma_payload(fingerPrint=" "))
+
+
+def test_rma_payload_matches_nd42_schema_fields():
+    """RMA body omits path-only oldSwitchId and removed imagePolicy."""
+    payload = RMASwitchModel.model_validate(_rma_payload(imagePolicy="legacy-policy")).to_payload()
+
+    assert payload["softwareImage"] == "nxos64-cs.10.3.1.F.bin"
+    assert "oldSwitchId" not in payload
+    assert "imagePolicy" not in payload
 
 
 def test_switch_data_from_inventory_response_and_to_config_dict():
