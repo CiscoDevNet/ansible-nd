@@ -60,6 +60,9 @@ class InterfaceDefaultPolicyModel(NDNestedModel):
     cdp: bool = Field(default=True)
     config_template: str = Field(default="int_trunk_host", alias="configTemplate")
     debounce_timer: int = Field(default=100, alias="debounceTimer")
+    # `""` is the template default and what ND 4.2.1 needs to clear a description: 4.2.1 leaves any field the normalize body omits
+    # untouched. ND 4.3.1 enforces the spec's `interfaceDescription` minLength 1 (HTTP 400 "minimum string length is 1") but resets
+    # an omitted field, so `to_normalize_payload(omit_description=True)` drops the key for it. Lab-verified on both, 2026-09-11.
     description: str = Field(default="")
     duplex_mode: str = Field(default="auto", alias="duplexMode")
     error_detection_acl: bool = Field(default=True, alias="errorDetectionAcl")
@@ -151,11 +154,16 @@ class InterfaceDefaultConfig(NDNestedModel):
     UNRESETTABLE_FIELDS: ClassVar[set[str]] = {"bandwidth", "debounceLinkupTimer", "inheritBandwidth"}
 
     @classmethod
-    def to_normalize_payload(cls, switch_interfaces: list[tuple[str, str]]) -> dict:
+    def to_normalize_payload(cls, switch_interfaces: list[tuple[str, str]], omit_description: bool = False) -> dict:
         """
         # Summary
 
         Build the full `interfaceActions/normalize` request body from a list of `(interface_name, switch_id)` pairs.
+
+        With `omit_description` the `description` key is dropped from the policy: ND 4.3.1 rejects the template's empty string
+        (`interfaceDescription` is minLength 1 in the spec) yet resets an omitted field, while ND 4.2.1 accepts the empty string and
+        needs it, since it leaves an omitted field untouched. `EthernetBaseOrchestrator._normalize_interfaces` sends the template
+        body first and switches to `omit_description=True` for the rest of the run when the controller answers with that rejection.
 
         ## Raises
 
@@ -163,6 +171,8 @@ class InterfaceDefaultConfig(NDNestedModel):
         """
         instance = cls()
         payload = instance.to_payload()
+        if omit_description:
+            payload["configData"]["networkOS"]["policy"].pop("description", None)
         payload["switchInterfaces"] = [{"interfaceName": name, "switchId": switch_id} for name, switch_id in switch_interfaces]
         return payload
 
