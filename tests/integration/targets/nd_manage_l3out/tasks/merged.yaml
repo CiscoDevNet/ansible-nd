@@ -160,6 +160,11 @@
               ipv4_peering_details:
                 ipv4_route_map_in: rm-in
                 ipv4_route_map_out: rm-out
+            fabric2_details:
+              advertise_default_route: true
+              ipv4_peering_details:
+                ipv4_route_map_in: rm-in
+                ipv4_route_map_out: rm-out
     state: merged
   check_mode: true
   register: cm_merged_mgmt_ip_idem
