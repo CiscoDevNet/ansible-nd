@@ -54,6 +54,16 @@
     - name: Run IOS-XE routed tests (requires nd_test_xe_switch_ip)
       ansible.builtin.include_tasks: xe.yaml
       when: nd_test_xe_switch_ip is defined and nd_test_xe_switch_ip | length > 0
+
+    - name: Run opt-in routed port-channel member tests
+      ansible.builtin.include_tasks: port_channel_member_case.yaml
+      loop: "{{ routed_member_test_cases }}"
+      loop_control:
+        loop_var: routed_member_case
+        label: "{{ routed_member_case.expected_policy_type }} {{ routed_member_case.interface_name }}"
+      when:
+        - routed_member_case.interface_name | length > 0
+        - routed_member_case.baseline_supplied | bool
   vars:
     ansible_command_timeout: 300
   environment:

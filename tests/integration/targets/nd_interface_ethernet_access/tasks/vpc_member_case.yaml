@@ -1,0 +1,166 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Pair-aware IFACE-004 coverage for a pre-existing access vPC member. This is
+# deliberately opt-in: the test cannot safely create or infer the operator's
+# shared vPC baseline. All controller intent remains staged (deploy: false).
+
+- name: "VPC MEMBER: Exercise an existing accessVpcPoMember safely"
+  block:
+    - name: "VPC MEMBER SETUP: Initialize the mutation guard"
+      ansible.builtin.set_fact:
+        access_vpc_member_mutation_attempted: false
+
+    - name: "VPC MEMBER SETUP: Resolve the selected switch id"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ access_vpc_member_case.fabric_name }}/switches"
+        method: get
+      register: access_vpc_member_switches
+
+    - name: "VPC MEMBER SETUP: Save the selected switch id"
+      ansible.builtin.set_fact:
+        access_vpc_member_switch_id: >-
+          {{ (access_vpc_member_switches.current.switches
+             | selectattr('fabricManagementIp', 'equalto', access_vpc_member_case.switch_ip)
+             | first).switchId }}
+
+    - name: "VPC MEMBER SETUP: Read the original selected member"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ access_vpc_member_case.fabric_name }}/switches/{{ access_vpc_member_switch_id }}/interfaces/{{ access_vpc_member_case.interface_name | replace('/', '%2F') }}
+        method: get
+      register: access_vpc_member_before_wire
+
+    - name: "VPC MEMBER SETUP: Verify policy and exact restoration baseline"
+      vars:
+        original_policy: "{{ access_vpc_member_before_wire.current.configData.networkOS.policy }}"
+      ansible.builtin.assert:
+        that:
+          - access_vpc_member_case.baseline_supplied | bool
+          - access_vpc_member_case.baseline_admin_state is boolean
+          - access_vpc_member_case.baseline_description is string
+          - access_vpc_member_case.baseline_extra_config is string
+          - original_policy.policyType == access_vpc_member_case.expected_policy_type
+          - original_policy.portChannelId is defined
+          - (original_policy.adminState | bool) == (access_vpc_member_case.baseline_admin_state | bool)
+          - (original_policy.description | default(none)) == access_vpc_member_case.baseline_description
+          - (original_policy.extraConfig | default(none)) == access_vpc_member_case.baseline_extra_config
+        fail_msg: >-
+          Refusing to mutate {{ access_vpc_member_case.interface_name }}. Explicitly supplied
+          baseline values must exactly match its current adminState, description, and extraConfig.
+
+    - name: "VPC MEMBER MERGED: Preview all safe fields"
+      cisco.nd.nd_interface_ethernet_access: &merge_access_vpc_member
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ access_vpc_member_case.fabric_name }}"
+        config:
+          - switch_ip: "{{ access_vpc_member_case.switch_ip }}"
+            interface_names:
+              - "{{ access_vpc_member_case.interface_name }}"
+            config_data:
+              network_os:
+                policy:
+                  admin_state: "{{ not (access_vpc_member_case.baseline_admin_state | bool) }}"
+                  description: "{{ access_vpc_member_case.updated_description }}"
+                  extra_config: "{{ access_vpc_member_case.updated_extra_config }}"
+        config_actions:
+          deploy: false
+        state: merged
+      check_mode: true
+      register: access_vpc_member_check_mode
+
+    - name: "VPC MEMBER MERGED: Mark the mutation attempt"
+      ansible.builtin.set_fact:
+        access_vpc_member_mutation_attempted: true
+
+    - name: "VPC MEMBER MERGED: Apply all safe fields"
+      cisco.nd.nd_interface_ethernet_access: *merge_access_vpc_member
+      register: access_vpc_member_update
+
+    - name: "VPC MEMBER MERGED: Verify the planned and applied update"
+      vars:
+        member_after: >-
+          {{ access_vpc_member_update.after
+             | selectattr('interface_name', 'equalto', access_vpc_member_case.interface_name)
+             | first }}
+      ansible.builtin.assert:
+        that:
+          - access_vpc_member_check_mode is changed
+          - access_vpc_member_update is changed
+          - member_after.config_data.network_os.policy.admin_state == (not (access_vpc_member_case.baseline_admin_state | bool))
+          - member_after.config_data.network_os.policy.description == access_vpc_member_case.updated_description
+          - member_after.config_data.network_os.policy.extra_config == access_vpc_member_case.updated_extra_config
+
+    - name: "VPC MEMBER MERGED: Read the updated member from the wire"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ access_vpc_member_case.fabric_name }}/switches/{{ access_vpc_member_switch_id }}/interfaces/{{ access_vpc_member_case.interface_name | replace('/', '%2F') }}
+        method: get
+      register: access_vpc_member_after_wire
+
+    - name: "VPC MEMBER MERGED: Verify every modeled preservation field"
+      vars:
+        before_policy: "{{ access_vpc_member_before_wire.current.configData.networkOS.policy }}"
+        after_policy: "{{ access_vpc_member_after_wire.current.configData.networkOS.policy }}"
+        member_preservation_fields:
+          - policyType
+          - portChannelId
+          - portChannelMode
+          - cdp
+          - lacpPortPriority
+          - lacpRate
+          - debounceTimer
+          - debounceLinkupTimer
+          - fec
+          - primaryInterface
+        before_preserved_policy: >-
+          {{ before_policy | dict2items
+             | selectattr('key', 'in', member_preservation_fields)
+             | list | items2dict }}
+        after_preserved_policy: >-
+          {{ after_policy | dict2items
+             | selectattr('key', 'in', member_preservation_fields)
+             | list | items2dict }}
+      ansible.builtin.assert:
+        that:
+          - before_preserved_policy == after_preserved_policy
+          - access_vpc_member_after_wire.current.interfaceName == access_vpc_member_before_wire.current.interfaceName
+          - access_vpc_member_after_wire.current.interfaceType == access_vpc_member_before_wire.current.interfaceType
+          - access_vpc_member_after_wire.current.configData.mode == access_vpc_member_before_wire.current.configData.mode
+          - >-
+            access_vpc_member_after_wire.current.configData.networkOS.networkOSType
+            == access_vpc_member_before_wire.current.configData.networkOS.networkOSType
+          - after_policy.adminState == (not (access_vpc_member_case.baseline_admin_state | bool))
+          - after_policy.description == access_vpc_member_case.updated_description
+          - after_policy.extraConfig == access_vpc_member_case.updated_extra_config
+
+    - name: "VPC MEMBER IDEMPOTENT: Reapply the safe update"
+      cisco.nd.nd_interface_ethernet_access: *merge_access_vpc_member
+      register: access_vpc_member_idempotent
+
+    - name: "VPC MEMBER IDEMPOTENT: Verify no second mutation"
+      ansible.builtin.assert:
+        that:
+          - access_vpc_member_idempotent is not changed
+  always:
+    - name: "VPC MEMBER CLEANUP: Restore the validated baseline"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ access_vpc_member_case.fabric_name }}"
+        config:
+          - switch_ip: "{{ access_vpc_member_case.switch_ip }}"
+            interface_names:
+              - "{{ access_vpc_member_case.interface_name }}"
+            config_data:
+              network_os:
+                policy:
+                  admin_state: "{{ access_vpc_member_case.baseline_admin_state }}"
+                  description: "{{ access_vpc_member_case.baseline_description }}"
+                  extra_config: "{{ access_vpc_member_case.baseline_extra_config }}"
+        config_actions:
+          deploy: false
+        state: merged
+      when:
+        - access_vpc_member_mutation_attempted | default(false) | bool

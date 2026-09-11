@@ -21,7 +21,9 @@ import logging
 from collections.abc import Sequence
 from typing import ClassVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_links import EpManageLinksListGet
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_links import (
+    EpManageLinksListGet,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
     EthernetRoutedPolicyTypeEnum,
@@ -33,9 +35,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     XeEthernetRoutedPolicyModel,
     normalize_ethernet_interface_name,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import (
+    InterfacePolicyStrictBase,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import (
+    EthernetBaseOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +122,7 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
     """
 
     model_class: ClassVar[type[NDBaseModel]] = EthernetRoutedInterfaceModel
+    MEMBER_FAMILY: ClassVar[str] = "routed"
 
     # TODO(4.2.1) capable-switches-empty-for-ethernet-on-vxlan
     # Deliberate opt-OUT of the capability preflight (both ClassVars ""): the unpublished capableSwitches
@@ -281,7 +290,10 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
             "switchId": switch_id,
             "configData": {
                 "mode": "routed",
-                "networkOS": {"networkOSType": "ios-xe", "policy": {"policyType": "iosXeRoutedHost", "adminState": True}},
+                "networkOS": {
+                    "networkOSType": "ios-xe",
+                    "policy": {"policyType": "iosXeRoutedHost", "adminState": True},
+                },
             },
         }
 
@@ -446,7 +458,10 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         policy_cls = _POLICY_MODELS.get(policy_type)
         if policy_cls is None:
             return None
-        return {**policy_cls.reverse_diff_defaults, **_ND_INJECTED_READ_KEY_DEFAULTS.get(policy_type, {})}
+        return {
+            **policy_cls.reverse_diff_defaults,
+            **_ND_INJECTED_READ_KEY_DEFAULTS.get(policy_type, {}),
+        }
 
     @staticmethod
     def _is_unconfigured_default(iface: dict) -> bool:
@@ -542,7 +557,7 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         result = [iface for iface in result if in_scope(iface)]
         if state == "overridden":
             result = [iface for iface in result if not self._is_ios_xe(iface) or (iface.get("switchIp"), iface.get("interfaceName")) in named]
-        return result
+        return self._append_named_member_projections(result)
 
     @staticmethod
     def _is_ios_xe(iface: dict) -> bool:

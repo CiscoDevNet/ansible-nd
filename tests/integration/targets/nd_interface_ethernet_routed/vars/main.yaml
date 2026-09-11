@@ -114,6 +114,39 @@ routed_34_configured:
 test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
 test_xe_interface_name: "{{ nd_test_xe_interface_name | default('GigabitEthernet3') }}"
 
+# IFACE-004 routed-member coverage is opt-in because this collection cannot
+# create routed port-channel parents. Supply an interface that already carries
+# the expected member policy and explicitly supply all three safe-field baseline
+# values. The scenario verifies that the live values exactly match the supplied
+# baseline before attempting its first write and restores that baseline after an
+# attempted mutation. admin_state must be boolean; description and extra_config
+# must be strings. No baseline value is inferred or defaulted.
+routed_member_test_cases:
+  - fabric_name: "{{ nd_test_routed_nxos_member_fabric_name | default(test_fabric_name) }}"
+    switch_ip: "{{ nd_test_routed_nxos_member_switch_ip | default(test_switch_ip) }}"
+    interface_name: "{{ nd_test_routed_nxos_member_interface_name | default('') }}"
+    network_os_type: nx-os
+    expected_policy_type: l3PoMember
+    baseline_supplied: >-
+      {{ nd_test_routed_nxos_member_baseline_admin_state is defined
+         and nd_test_routed_nxos_member_baseline_description is defined
+         and nd_test_routed_nxos_member_baseline_extra_config is defined }}
+    baseline_admin_state: "{{ nd_test_routed_nxos_member_baseline_admin_state | default(none) }}"
+    baseline_description: "{{ nd_test_routed_nxos_member_baseline_description | default(none) }}"
+    baseline_extra_config: "{{ nd_test_routed_nxos_member_baseline_extra_config | default(none) }}"
+  - fabric_name: "{{ nd_test_routed_iosxe_member_fabric_name | default(test_xe_fabric_name) }}"
+    switch_ip: "{{ nd_test_routed_iosxe_member_switch_ip | default(nd_test_xe_switch_ip | default('')) }}"
+    interface_name: "{{ nd_test_routed_iosxe_member_interface_name | default('') }}"
+    network_os_type: ios-xe
+    expected_policy_type: iosXeL3PoMember
+    baseline_supplied: >-
+      {{ nd_test_routed_iosxe_member_baseline_admin_state is defined
+         and nd_test_routed_iosxe_member_baseline_description is defined
+         and nd_test_routed_iosxe_member_baseline_extra_config is defined }}
+    baseline_admin_state: "{{ nd_test_routed_iosxe_member_baseline_admin_state | default(none) }}"
+    baseline_description: "{{ nd_test_routed_iosxe_member_baseline_description | default(none) }}"
+    baseline_extra_config: "{{ nd_test_routed_iosxe_member_baseline_extra_config | default(none) }}"
+
 xe_routed:
   switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
   interface_name: "{{ test_xe_interface_name }}"
