@@ -3,26 +3,31 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """
-Ethernet trunk host (trunkHost) interface Pydantic models for Nexus Dashboard.
+Ethernet trunk-mode host interface Pydantic models for Nexus Dashboard (NX-OS `trunkHost`, IOS-XE `iosXeTrunkHost`; issue #535).
 
 This module defines nested Pydantic models that mirror the ND Manage Interfaces API payload
-structure for ethernet trunkHost interfaces. The playbook config uses the same nesting so that
+structure for ethernet trunk-mode host interfaces. The playbook config uses the same nesting so that
 `to_payload()` and `from_response()` work via standard Pydantic serialization with no custom
 wrapping or flattening.
 
 ## Model Hierarchy
 
 - `EthernetTrunkHostInterfaceModel` (top-level, `NDBaseModel`)
-    - `interface_name` (identifier)
-    - `interface_type` (default: "ethernet")
+    - `switch_ip` (composite identifier)
+    - `interface_name` (composite identifier)
+    - `interface_type` (hardcoded: "ethernet")
     - `config_data` -> `EthernetTrunkHostConfigDataModel`
-        - `mode` (default: "trunk")
-        - `network_os` -> `EthernetTrunkHostNetworkOSModel`
-            - `network_os_type` (default: "nx-os")
-            - `policy` -> `EthernetTrunkHostPolicyModel`
-                - `admin_state`, `allowed_vlans`, `native_vlan`, `vlan_mapping`,
-                  `vlan_mapping_entries`, `bpdu_guard`, `speed`, `policy_type`, etc.
-                - `vlan_mapping_entries` -> list[`EthernetTrunkHostVlanMappingEntryModel`]
+        - `mode` (hardcoded: "trunk")
+        - `network_os` -> `EthernetTrunkHostNetworkOSModel | XeEthernetTrunkHostNetworkOSModel` (discriminated union on
+          `network_os_type`; injected as `nx-os` when omitted so pre-#535 playbooks are unchanged)
+            - `EthernetTrunkHostNetworkOSModel` (`network_os_type: "nx-os"`)
+                - `policy` -> `EthernetTrunkHostPolicyModel` (`policy_type: "trunkHost"`, injected when omitted)
+                    - `vlan_mapping_entries` -> list[`EthernetTrunkHostVlanMappingEntryModel`]
+            - `XeEthernetTrunkHostNetworkOSModel` (`network_os_type: "ios-xe"`)
+                - `policy` -> `XeEthernetTrunkHostPolicyModel` (`policy_type: "iosXeTrunkHost"`, injected when omitted)
+
+`policy_type` is optional on input: each network OS has exactly one managed trunk-host policy type today, so it is derived from
+`network_os_type` (`ethernet_common.default_policy_type`). An explicit value is still accepted and validated.
 """
 
 from __future__ import annotations
@@ -33,9 +38,7 @@ from typing import Annotated, Any, ClassVar, Literal, Optional  # Optional neede
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
     Field,
-    SerializationInfo,
     field_validator,
-    model_serializer,
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -49,7 +52,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     SpeedEnum,
     StormControlActionEnum,
     TrunkHostPolicyTypeEnum,
+    XeEthernetSpeedEnum,
+    XeTrunkHostPolicyTypeEnum,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
+    default_network_os_type,
+    default_policy_type,
+    normalize_ethernet_interface_name,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
@@ -58,14 +69,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.types import Ascii
 _ALLOWED_VLANS_SHAPE = re.compile(r"^(none|all|(\d+(-\d+)?)(,\d+(-\d+)?)*)$")
 # Single VLAN id or range token (e.g. "100" or "100-200"). Range bounds are validated separately.
 _VLAN_ID_OR_RANGE_SHAPE = re.compile(r"^\d+(-\d+)?$")
-# Module-level so it stays a real re.Pattern; Pydantic v2 wraps any leading-underscore
-# class attribute in ModelPrivateAttr regardless of ClassVar annotation.
-_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
 
-# This module exclusively manages ethernet interfaces (interface_type is frozen to "ethernet"),
-# so the canonical wire prefix is always "Ethernet". Any case-insensitive NX-OS abbreviation of
-# this name (e.g. "e", "eth", "ether") expands to the full form so user input matches the wire key.
-_CANONICAL_INTERFACE_TYPE = "Ethernet"
+# Public argspec `speed` choices: the union of the NX-OS and IOS-XE speed enums, in NX order with the XE-only extras appended.
+# The Ansible argspec cannot express the per-policy_type subset (that stays with the Pydantic branch models), but listing the
+# union lets ansible-doc / schema consumers discover every accepted spelling (PR #550 review).
+_NX_SPEED_CHOICES: list[str] = [e.value for e in SpeedEnum]
+_SPEED_ARGSPEC_CHOICES: list[str] = _NX_SPEED_CHOICES + [e.value for e in XeEthernetSpeedEnum if e.value not in _NX_SPEED_CHOICES]
 
 
 def _validate_vlan_id_or_range(token: str, field_name: str) -> None:
@@ -172,11 +181,9 @@ def _validate_customer_vlan_id_list(value):
 # constraints (native_vlan, customer_inner_vlan_id, provider_vlan_id, access_vlan, ...) — the constraint is already enforced today,
 # this is cosmetic/consistency cleanup. Each branch currently carries its own copy of the validators because adding VLAN-specific code
 # to the loopback base branch (where types.py lives) is out of that branch's scope. Tracked in CiscoDevNet/ansible-nd#347.
-# In the same consolidation, fold the interface-name normalizer into a shared helper: `normalize_interface_name`,
-# `_CANONICAL_INTERFACE_TYPE`, and `_INTERFACE_NAME_PREFIX_RE` are byte-identical here and in ethernet_access_interface.py, while
-# loopback_interface.py needs a different rule (it lowercases the whole name to match ND's GET form). So the shared helper must be
-# parameterized (canonical prefix + an expand-vs-lowercase policy), e.g. a `normalize_interface_name(value, canonical="Ethernet", ...)`
-# in models/types.py that each model calls from its own `@field_validator("interface_name")`.
+# The ethernet interface-name normalizer already lives in `ethernet_common.normalize_ethernet_interface_name` (shared by the
+# access, trunk-host, and routed models); loopback_interface.py still needs a different rule (it lowercases the whole name to match
+# ND's GET form), so the eventual shared helper (issue #353) must be parameterized (canonical prefixes + an expand-vs-lowercase policy).
 # See AsciiDescription comment in models/types.py for why Optional[...] is used at runtime instead of `... | None`.
 AllowedVlans = Annotated[Optional[str], BeforeValidator(_validate_allowed_vlans)]
 """Trunk allowed-VLANs spec (`str | None`): 'none', 'all', or comma-separated VLAN ids/ranges in 1..4094."""
@@ -282,9 +289,24 @@ class EthernetTrunkHostPolicyModel(StormControlMutexMixin):
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
     orphan_port: bool | None = Field(default=None, alias="orphanPort", description="Enable vPC orphan port")
     pfc: bool | None = Field(default=None, alias="pfc", description="Enable priority flow control")
-    policy_type: TrunkHostPolicyTypeEnum = Field(
-        default=TrunkHostPolicyTypeEnum.TRUNK_HOST, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)"
+    policy_type: Literal["trunkHost"] = Field(
+        alias="policyType", description="Trunk-host policy template discriminator; injected as `trunkHost` when omitted (see `default_policy_type`)"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_policy_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `policyType: trunkHost` when the input omits the discriminator (`ethernet_common.default_policy_type`).
+
+        ## Raises
+
+        None
+        """
+        return default_policy_type(data, TrunkHostPolicyTypeEnum.TRUNK_HOST.value)
+
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Enable spanning-tree edge port behavior")
     qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
     qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
@@ -341,41 +363,6 @@ class EthernetTrunkHostPolicyModel(StormControlMutexMixin):
         default=None, alias="vlanMappingEntries", description="List of VLAN mapping entries; required when `vlan_mapping` is true"
     )
 
-    @model_serializer(mode="wrap")
-    def _strip_policy_type_in_config(self, handler, info: SerializationInfo):
-        """
-        # Summary
-
-        Omit `policy_type` from `to_config()` output while leaving payload and diff modes untouched.
-
-        The field is hardcoded by the model (frozen at `TrunkHostPolicyTypeEnum.TRUNK_HOST`), is excluded
-        from the Ansible argspec, and is therefore not something the user supplies or needs surfaced back.
-        The wire form `"trunkHost"` would otherwise appear under the `policy_type` key in
-        `before`/`after`/`gathered` output and confuse playbooks that compare against the Ansible
-        snake_case convention. Payload and diff serialization still emit the wire value so the POST/PUT
-        body and the round-trip diff comparison line up with what ND returns.
-
-        Implemented as a wrap-mode model serializer because `exclude_none=True` on `to_config()` evaluates
-        the field value before serialization runs — returning None from a field_serializer is too late to
-        drop the key.
-
-        ## Raises
-
-        ### AssertionError
-
-        - If the wrapped handler returns a non-`dict`. A model-level serializer always serializes to a `dict`,
-          so this is an invariant check that fails loudly rather than silently leaving `policy_type` in the
-          config output.
-        """
-        result = handler(self)
-        if not isinstance(result, dict):
-            raise AssertionError(f"Expected dict from model serialization, got {type(result).__name__}")
-        mode = (info.context or {}).get("mode", "payload")
-        if mode == "config":
-            result.pop("policy_type", None)
-            result.pop("policyType", None)
-        return result
-
     @model_validator(mode="after")
     def _validate_vlan_mapping_entries_present(self) -> EthernetTrunkHostPolicyModel:
         """
@@ -397,18 +384,113 @@ class EthernetTrunkHostPolicyModel(StormControlMutexMixin):
         return self
 
 
-class EthernetTrunkHostNetworkOSModel(NDNestedModel):
+class XeEthernetTrunkHostPolicyModel(InterfacePolicyStrictBase):
     """
     # Summary
 
-    Network OS container for an ethernet trunkHost interface. Maps to `configData.networkOS` in the ND API.
+    Policy fields for the IOS-XE `iosXeTrunkHost` template (`ios_xe_int_trunk_host`). Maps to `configData.networkOS.policy` where
+    `policyType == "iosXeTrunkHost"`. A strict subset of the NX-OS branch: no `native_vlan` / `vlan_mapping`, `description` max
+    length is 200, `mtu` is an integer 1500-9216 (NX-OS takes the `default` / `jumbo` enum), and `speed` uses the XE enum. The
+    4.3.1-only `deviceTrackingPolicy` / `flowMonitors` fields are deliberately not modeled while both 4.2.1 and 4.3.1 are supported.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `allowed_vlans` is not `none`, `all`, or a comma-separated list of VLAN ids / ranges (shared `AllowedVlans` parser)
+    """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND `ios_xe_int_trunk_host` template defaults (schema-sourced via nd-openapi `iosXeIntTrunkHostTemplate`, identical on
+    # 4.2.1 and 4.3.1), in the model's dumped form. The orchestrator derives its unconfigured-default query filter from this table.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        **InterfacePolicyStrictBase.reverse_diff_defaults,
+        "allowedVlans": "none",
+        "bpduGuard": "default",
+        "mtu": 1500,
+        "speed": "auto",
+    }
+
+    policy_type: Literal["iosXeTrunkHost"] = Field(
+        alias="policyType",
+        description="IOS-XE trunk-host policy template discriminator; injected as `iosXeTrunkHost` when omitted (see `default_policy_type`)",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_policy_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `policyType: iosXeTrunkHost` when the input omits the discriminator (`ethernet_common.default_policy_type`).
+
+        ## Raises
+
+        None
+        """
+        return default_policy_type(data, XeTrunkHostPolicyTypeEnum.IOS_XE_TRUNK_HOST.value)
+
+    allowed_vlans: AllowedVlans = Field(
+        default=None,
+        alias="allowedVlans",
+        description="Allowed VLANs: 'none', 'all', or a comma-separated list of VLAN ids/ranges (e.g. '1-200,500-2000,3000')",
+    )
+    bpdu_guard: BpduGuardEnum | None = Field(default=None, alias="bpduGuard", description="Enable spanning-tree BPDU guard")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    mtu: int | None = Field(default=None, alias="mtu", ge=1500, le=9216, description="Interface MTU (1500-9216)")
+    speed: XeEthernetSpeedEnum | None = Field(default=None, alias="speed", description="Interface speed")
+
+    @field_validator("mtu", mode="before")
+    @classmethod
+    def coerce_mtu(cls, value):
+        """
+        # Summary
+
+        Coerce a numeric-string `mtu` to `int`. The shared argspec `mtu` option is `str`-typed so the NX-OS branch can take its
+        `default` / `jumbo` enum, which means an IOS-XE value arrives from Ansible as e.g. `"9000"`. Non-numeric strings are left
+        for the `int` field to reject with a clear error.
+
+        ## Raises
+
+        None
+        """
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value.strip())
+        return value
+
+
+class XeEthernetTrunkHostNetworkOSModel(NDNestedModel):
+    """
+    # Summary
+
+    IOS-XE branch of the network-OS container for a trunk-mode ethernet interface. Selected from the outer union when
+    `networkOSType == "ios-xe"`.
 
     ## Raises
 
     None
     """
 
-    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
+    # Not frozen: NDBaseModel.merge() assigns every explicitly-set field. The Literal constrains the value.
+    network_os_type: Literal["ios-xe"] = Field(default="ios-xe", alias="networkOSType", description="Network OS (platform) type discriminator")
+    policy: XeEthernetTrunkHostPolicyModel | None = Field(default=None, alias="policy")
+
+
+class EthernetTrunkHostNetworkOSModel(NDNestedModel):
+    """
+    # Summary
+
+    NX-OS branch of the network-OS container for a trunk-mode ethernet interface. Selected from the outer union when
+    `networkOSType == "nx-os"` (the injected default when the input omits it).
+
+    ## Raises
+
+    None
+    """
+
+    # Not frozen: NDBaseModel.merge() assigns every explicitly-set field. The Literal constrains the value.
+    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", description="Network OS (platform) type discriminator")
     policy: EthernetTrunkHostPolicyModel | None = Field(default=None, alias="policy")
 
 
@@ -416,7 +498,7 @@ class EthernetTrunkHostConfigDataModel(NDNestedModel):
     """
     # Summary
 
-    Config data container for an ethernet trunkHost interface. Maps to `configData` in the ND API.
+    Config data container for a trunk-mode ethernet interface. Maps to `configData` in the ND API.
 
     ## Raises
 
@@ -424,14 +506,37 @@ class EthernetTrunkHostConfigDataModel(NDNestedModel):
     """
 
     mode: Literal["trunk"] = Field(default="trunk", alias="mode", frozen=True)
-    network_os: EthernetTrunkHostNetworkOSModel = Field(default_factory=EthernetTrunkHostNetworkOSModel, alias="networkOS")
+    network_os: EthernetTrunkHostNetworkOSModel | XeEthernetTrunkHostNetworkOSModel = Field(
+        default_factory=EthernetTrunkHostNetworkOSModel, alias="networkOS", discriminator="network_os_type"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_network_os_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `networkOSType: nx-os` on the `network_os` input when it omits the discriminator (key absent, or `None` as the
+        argspec passes an omitted option), so playbooks written before the IOS-XE branch existed keep selecting the NX-OS branch
+        (`ethernet_common.default_network_os_type`).
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(data, dict):
+            return data
+        for key in ("network_os", "networkOS"):
+            if isinstance(data.get(key), dict):
+                return {**data, key: default_network_os_type(data[key])}
+        return data
 
 
 class EthernetTrunkHostInterfaceModel(NDBaseModel):
     """
     # Summary
 
-    Ethernet trunkHost interface configuration for Nexus Dashboard.
+    Trunk-mode ethernet host interface configuration for Nexus Dashboard (NX-OS `trunkHost` or IOS-XE `iosXeTrunkHost`).
 
     Uses a composite identifier (`switch_ip`, `interface_name`). The nested model structure mirrors the ND Manage
     Interfaces API payload, so `to_payload()` and `from_response()` work via standard Pydantic serialization.
@@ -457,42 +562,43 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
     interface_type: Literal["ethernet"] = Field(default="ethernet", alias="interfaceType", frozen=True)
     config_data: EthernetTrunkHostConfigDataModel | None = Field(default=None, alias="configData")
 
+    @property
+    def policy_type(self) -> str | None:
+        """
+        # Summary
+
+        The `policy_type` discriminator from `config_data.network_os.policy`, or `None` when `config_data` or `policy` is
+        unset (e.g. a `state: deleted` identifier-only item).
+
+        ## Raises
+
+        None
+        """
+        if self.config_data is None or self.config_data.network_os.policy is None:
+            return None
+        return self.config_data.network_os.policy.policy_type
+
     @field_validator("interface_name", mode="before")
     @classmethod
     def normalize_interface_name(cls, value):
         """
         # Summary
 
-        Normalize the leading alphabetic prefix of an interface name to ND's canonical `Ethernet` form so that
-        any user-supplied casing or NX-OS abbreviation round-trips against the wire form. Examples:
+        Normalize the leading alphabetic prefix of an interface name to its wire-canonical form so that user-supplied casing or
+        abbreviations round-trip against the wire (`ethernet_common.normalize_ethernet_interface_name`). Examples:
 
-        - `ethernet1/1` -> `Ethernet1/1`
-        - `ETHERNET1/1` -> `Ethernet1/1`
-        - `etHernet1/1` -> `Ethernet1/1`
-        - `eth1/1` -> `Ethernet1/1` (abbreviation expanded)
-        - `e1/1` -> `Ethernet1/1` (abbreviation expanded)
-        - `Ethernet1/1` -> `Ethernet1/1` (idempotent)
+        - `ethernet1/1`, `ETHERNET1/1`, `eth1/1`, `e1/1` -> `Ethernet1/1`
+        - `gigabitethernet1/0/1`, `gi1/0/1` -> `GigabitEthernet1/0/1`
+        - `Ethernet1/1.10` -> `Ethernet1/1.10` (idempotent; digits and separators preserved verbatim)
 
-        Because the wire key is matched exactly, an abbreviated prefix that is not expanded would never match
-        ND's `Ethernet...` form, silently breaking idempotency. Any case-insensitive prefix of `Ethernet`
-        (`e`, `et`, `eth`, ...) is therefore expanded to the full canonical name. An unrecognized prefix falls
-        back to Title case so it still round-trips. Only the leading alphabetic run is rewritten; digits and
-        separators (`/`, `.`, `-`) are preserved verbatim, so subinterface and breakout forms
-        (`Ethernet1/1.10`, `Ethernet1/1/1`) pass through unchanged.
+        An ambiguous or unrecognized prefix (e.g. `t1/1`, `TenGigabitEthernet1/1/1`) passes through verbatim - never
+        re-cased - so correctly-typed names of interface families outside the canonical list are not corrupted.
 
         ## Raises
 
         None
         """
-        if not isinstance(value, str) or not value:
-            return value
-        match = _INTERFACE_NAME_PREFIX_RE.match(value)
-        if not match:
-            return value
-        prefix, rest = match.groups()
-        if _CANONICAL_INTERFACE_TYPE.lower().startswith(prefix.lower()):
-            return _CANONICAL_INTERFACE_TYPE + rest
-        return prefix[0].upper() + prefix[1:].lower() + rest
+        return normalize_ethernet_interface_name(value)
 
     # --- Argument Spec ---
 
@@ -522,9 +628,14 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
                             network_os=dict(
                                 type="dict",
                                 options=dict(
+                                    network_os_type=dict(type="str", default="nx-os", choices=["nx-os", "ios-xe"]),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
+                                            policy_type=dict(
+                                                type="str",
+                                                choices=[TrunkHostPolicyTypeEnum.TRUNK_HOST.value, XeTrunkHostPolicyTypeEnum.IOS_XE_TRUNK_HOST.value],
+                                            ),
                                             admin_state=dict(type="bool"),
                                             allowed_vlans=dict(type="str"),
                                             bandwidth=dict(type="int"),
@@ -541,7 +652,7 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
                                             inherit_bandwidth=dict(type="int"),
                                             link_type=dict(type="str", choices=[e.value for e in LinkTypeEnum]),
                                             monitor=dict(type="bool"),
-                                            mtu=dict(type="str", choices=[e.value for e in MtuEnum]),
+                                            mtu=dict(type="str"),
                                             native_vlan=dict(type="int"),
                                             negotiate_auto=dict(type="bool"),
                                             netflow=dict(type="bool"),
@@ -553,7 +664,7 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
                                             qos=dict(type="bool"),
                                             qos_policy=dict(type="str"),
                                             queuing_policy=dict(type="str"),
-                                            speed=dict(type="str", choices=[e.value for e in SpeedEnum]),
+                                            speed=dict(type="str", choices=_SPEED_ARGSPEC_CHOICES),
                                             storm_control=dict(type="bool"),
                                             storm_control_action=dict(type="str", choices=[e.value for e in StormControlActionEnum]),
                                             storm_control_broadcast_level=dict(type="float"),

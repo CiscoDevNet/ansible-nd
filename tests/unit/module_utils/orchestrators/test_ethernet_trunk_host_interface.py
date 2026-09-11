@@ -30,7 +30,10 @@ import inspect
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
+    EthernetTrunkHostConfigDataModel,
     EthernetTrunkHostInterfaceModel,
+    XeEthernetTrunkHostNetworkOSModel,
+    XeEthernetTrunkHostPolicyModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import (
     EthernetTrunkHostInterfaceOrchestrator,
@@ -147,7 +150,7 @@ def test_ethernet_trunk_host_orchestrator_00100() -> None:
 
     gen_responses = ResponseGenerator(responses())
     orchestrator = _build_orchestrator(gen_responses)
-    assert orchestrator._managed_policy_types() == {"trunkHost"}
+    assert orchestrator._managed_policy_types() == {"trunkHost", "iosXeTrunkHost"}
 
 
 def test_ethernet_trunk_host_orchestrator_00110() -> None:
@@ -501,3 +504,135 @@ def test_ethernet_trunk_host_orchestrator_00420() -> None:
 
     with pytest.raises(RuntimeError, match=r"Query all failed.*missing_fabric"):
         orchestrator.query_all()
+
+
+# =============================================================================
+# Test: IOS-XE branch (issue #535)
+# =============================================================================
+
+
+def test_ethernet_trunk_host_orchestrator_00120() -> None:
+    """
+    # Summary
+
+    Verify `_managed_policy_types` is exactly the union of the NX-OS and IOS-XE trunk-host policy types, so `query_all` keeps
+    Catalyst `iosXeTrunkHost` interfaces in scope alongside NX-OS `trunkHost`.
+
+    ## Test
+
+    - Result == {"trunkHost", "iosXeTrunkHost"}
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceOrchestrator._managed_policy_types()
+    """
+
+    def responses():
+        yield {}
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()))
+    assert orchestrator._managed_policy_types() == {"trunkHost", "iosXeTrunkHost"}
+
+
+XE_TRUNK_DEFAULTS_ONLY_POLICY = {
+    "policyType": "iosXeTrunkHost",
+    "adminState": True,
+    "allowedVlans": "none",
+    "bpduGuard": "default",
+    "mtu": 1500,
+    "speed": "auto",
+}
+
+
+@pytest.mark.parametrize(
+    "policy_overrides,expected",
+    [
+        ({}, True),
+        ({"description": ""}, True),
+        ({"allowedVlans": "10"}, False),
+        ({"allowedVlans": "all"}, False),
+        ({"description": "cat trunk"}, False),
+        ({"mtu": 9000}, False),
+        ({"speed": "1Gb"}, False),
+        ({"bpduGuard": "enable"}, False),
+        ({"adminState": False}, False),
+        ({"extraConfig": "spanning-tree portfast trunk"}, False),
+        ({"deviceTrackingPolicy": "IPDT_POLICY"}, False),
+    ],
+    ids=[
+        "xe_defaults_only",
+        "xe_empty_description",
+        "xe_allowed_vlans_set",
+        "xe_allowed_vlans_all",
+        "xe_description_set",
+        "xe_mtu_nondefault",
+        "xe_speed_nondefault",
+        "xe_bpdu_guard_nondefault",
+        "xe_admin_down",
+        "xe_extra_config_set",
+        "xe_431_only_field_set",
+    ],
+)
+def test_ethernet_trunk_host_orchestrator_00210(policy_overrides, expected) -> None:
+    """
+    # Summary
+
+    Exercise the IOS-XE truth table for `_is_unconfigured_default`: a Catalyst port reset by the XE reset PUT reads back as a
+    defaults-only `iosXeTrunkHost` (ND injects the `iosXeIntTrunkHostTemplate` defaults on the echo), and it must leave this
+    module's scope so `state: overridden` and repeat `deleted` runs stay idempotent. Any configured field (including a 4.3.1-only
+    field the model does not declare) or any non-default value keeps the interface in scope.
+
+    ## Test
+
+    - XE defaults-only (and an empty `description`) -> True; every override -> False
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_default()
+    """
+    policy = {**XE_TRUNK_DEFAULTS_ONLY_POLICY, **policy_overrides}
+    iface = {"configData": {"mode": "trunk", "networkOS": {"networkOSType": "ios-xe", "policy": policy}}}
+    assert EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_default(iface) is expected
+
+
+def test_ethernet_trunk_host_orchestrator_00440() -> None:
+    """
+    # Summary
+
+    Verify an explicitly named IOS-XE trunk interface under `state: deleted` is queued for the XE reset path with the shared
+    defaults-only `iosXeTrunkHost` reset body (never the NX-OS normalize queue), and is queued for deploy.
+
+    ## Test
+
+    - state is `deleted`; delete_bulk receives one IOS-XE model
+    - XE pair in `_pending_xe_resets`, not in `_pending_normalizes`; pair in `_pending_deploys`
+    - `_xe_reset_payload` policy is exactly {policyType: iosXeTrunkHost, adminState: true} in `trunk` mode
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.delete_bulk()
+    - EthernetBaseOrchestrator._xe_reset_payload()
+    """
+
+    def responses():
+        yield responses_trunk_host("test_xe_reset_payload_00440a")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    xe = EthernetTrunkHostInterfaceModel(
+        switch_ip="192.168.2.1",
+        interface_name="GigabitEthernet1/0/1",
+        config_data=EthernetTrunkHostConfigDataModel(
+            network_os=XeEthernetTrunkHostNetworkOSModel(
+                network_os_type="ios-xe",
+                policy=XeEthernetTrunkHostPolicyModel(policy_type="iosXeTrunkHost", allowed_vlans="10"),
+            ),
+        ),
+    )
+    with does_not_raise():
+        orchestrator.delete_bulk([xe], existing_data={"interfaceName": "probe", "operData": {"portChannelId": -1}})
+    assert orchestrator._pending_xe_resets == [("GigabitEthernet1/0/1", "FDO22222BBB")]
+    assert orchestrator._pending_normalizes == []
+    assert orchestrator._pending_deploys == [("GigabitEthernet1/0/1", "FDO22222BBB")]
+    payload = EthernetTrunkHostInterfaceOrchestrator._xe_reset_payload("GigabitEthernet1/0/1", "FDO22222BBB")
+    assert payload["configData"]["mode"] == "trunk"
+    assert payload["configData"]["networkOS"] == {"networkOSType": "ios-xe", "policy": {"policyType": "iosXeTrunkHost", "adminState": True}}
