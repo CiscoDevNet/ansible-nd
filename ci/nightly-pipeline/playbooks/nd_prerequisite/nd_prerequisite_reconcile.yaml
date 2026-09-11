@@ -1,0 +1,43 @@
+---
+# Gated live reconciliation. Reached only when nd_prerequisite_mode is 'live'
+# and nd_prerequisite_apply is true. Each confirmed operation from the offline
+# planner is applied by its own task file so unsupported shapes cannot execute.
+
+- name: Establish the canonical lab reference maps
+  ansible.builtin.set_fact:
+    _ndp_fabric_name_by_ref:
+      advanced: VXLAN_EVPN_Fabric
+      external: External_Connectivity_Fabric
+      disposable_ibgp: ANSIBLE_NIGHTLY_IBGP
+      disposable_ebgp: ANSIBLE_NIGHTLY_EBGP
+      disposable_ai_ibgp: ANSIBLE_NIGHTLY_AI_IBGP
+      disposable_ai_ebgp: ANSIBLE_NIGHTLY_AI_EBGP
+      disposable_external: ANSIBLE_NIGHTLY_EXTERNAL
+    _ndp_fabric_module_by_type:
+      vxlanIbgp: cisco.nd.nd_manage_fabric_ibgp_vxlan
+      vxlanEbgp: cisco.nd.nd_manage_fabric_ebgp_vxlan
+      aimlVxlanIbgp: cisco.nd.nd_manage_fabric_ai_ibgp_vxlan
+      aimlVxlanEbgp: cisco.nd.nd_manage_fabric_ai_ebgp_vxlan
+      externalConnectivity: cisco.nd.nd_manage_fabric_external
+    _ndp_switch_seed_ip:
+      vxlan_leaf_1: 192.0.2.195
+      vxlan_leaf_2: 192.0.2.196
+      vxlan_spine_1: 192.0.2.194
+      vxlan_border_1: 192.0.2.88
+      external_edge_1: 192.0.2.89
+      external_edge_2: 192.0.2.90
+    _ndp_switch_serial:
+      vxlan_leaf_1: SERIAL00001
+      vxlan_leaf_2: SERIAL00002
+      vxlan_spine_1: SERIAL00003
+      vxlan_border_1: SERIAL00004
+      external_edge_1: SERIAL00005
+      external_edge_2: SERIAL00006
+  run_once: true
+
+- name: Apply each confirmed ND prerequisite operation
+  ansible.builtin.include_tasks: "apply_{{ _ndp_operation.operation }}.yaml"
+  loop: "{{ _ndp_result.operations }}"
+  loop_control:
+    loop_var: _ndp_operation
+    label: "{{ _ndp_operation.operation }}"

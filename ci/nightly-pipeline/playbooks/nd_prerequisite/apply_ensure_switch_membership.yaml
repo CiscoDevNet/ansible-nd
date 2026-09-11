@@ -1,0 +1,19 @@
+---
+# Adds a switch that is absent from fabric inventory to its canonical baseline.
+# The planner rejects this operation if either the fabric or role differs from
+# the immutable lab assignment, so this task never performs a cross-fabric move.
+- name: "ensure_switch_membership add {{ _ndp_operation.switch_ref }} to {{ _ndp_operation.fabric_ref }}"
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+    config:
+      - seed_ip: "{{ _ndp_switch_seed_ip[_ndp_operation.switch_ref] }}"
+        role: "{{ _ndp_operation.desired_role }}"
+        username: "{{ nd_switch_username | default(switch_username) | default(omit) }}"
+        password: "{{ nd_switch_password | default(switch_password) | default(omit) }}"
+        preserve_config: true
+  run_once: true
+  no_log: true

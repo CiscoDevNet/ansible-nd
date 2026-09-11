@@ -1,0 +1,63 @@
+---
+fabrics:
+  advanced: {name: VXLAN_EVPN_Fabric, type: vxlanIbgp, lifecycle: retained, bfd_enabled: true}
+  external: {name: External_Connectivity_Fabric, type: externalConnectivity, lifecycle: retained}
+switches:
+  vxlan_leaf_1: {fabric_ref: advanced, serial: SERIAL00001, seed_ip: 192.0.2.195, role: leaf, intended_system_mode: normal, sync_status: inSync}
+  vxlan_leaf_2: {fabric_ref: advanced, serial: SERIAL00002, seed_ip: 192.0.2.196, role: leaf, intended_system_mode: normal, sync_status: inSync}
+  vxlan_spine_1: {fabric_ref: advanced, serial: SERIAL00003, seed_ip: 192.0.2.194, role: spine, intended_system_mode: normal, sync_status: inSync}
+  vxlan_border_1: {fabric_ref: advanced, serial: SERIAL00004, seed_ip: 192.0.2.88, role: border, intended_system_mode: normal, sync_status: inSync}
+  external_edge_1: {fabric_ref: external, serial: SERIAL00005, seed_ip: 192.0.2.89, role: edge_router, intended_system_mode: normal, sync_status: inSync}
+  external_edge_2: {fabric_ref: external, serial: SERIAL00006, seed_ip: 192.0.2.90, role: edge_router, intended_system_mode: maintenance, sync_status: inSync}
+interfaces:
+  vxlan_leaf_1:
+    Ethernet1/1: {admin_state: true, operational_state: up}
+    Ethernet1/2: {admin_state: true, operational_state: up}
+    Ethernet1/3: {admin_state: true, operational_state: up}
+    Ethernet1/4: {admin_state: true, operational_state: up}
+    Ethernet1/5: {admin_state: true, operational_state: up}
+    Ethernet1/6: {admin_state: true, operational_state: up}
+    Ethernet1/7: {admin_state: true, operational_state: up}
+    Ethernet1/8: {admin_state: true, operational_state: up}
+    Ethernet1/9: {admin_state: true, operational_state: up}
+    Ethernet1/10: {admin_state: true, operational_state: up}
+    Ethernet1/20: {admin_state: true, operational_state: up}
+  vxlan_leaf_2:
+    Ethernet1/1: {admin_state: true, operational_state: up}
+    Ethernet1/2: {admin_state: true, operational_state: up}
+    Ethernet1/3: {admin_state: true, operational_state: up}
+    Ethernet1/5: {admin_state: true, operational_state: up}
+    Ethernet1/6: {admin_state: true, operational_state: up}
+    Ethernet1/7: {admin_state: true, operational_state: up}
+    Ethernet1/8: {admin_state: true, operational_state: up}
+    Ethernet1/9: {admin_state: true, operational_state: up}
+    Ethernet1/10: {admin_state: true, operational_state: up}
+  vxlan_border_1:
+    Ethernet1/1: {admin_state: true, operational_state: up}
+    Ethernet1/2: {admin_state: true, operational_state: up}
+  external_edge_1:
+    Ethernet1/1: {admin_state: true, operational_state: up}
+    Ethernet1/2: {admin_state: true, operational_state: up}
+  external_edge_2: {}
+vpc_pairs:
+  - {fabric_ref: advanced, peer_refs: [vxlan_leaf_1, vxlan_leaf_2], mode: virtual, sync_status: inSync, consistent: true}
+links:
+  - {srcSwitchId: SERIAL00001, srcInterfaceName: Ethernet1/1, dstSwitchId: SERIAL00005, dstInterfaceName: Ethernet1/1, templateName: ext_l3_dci_link}
+resources:
+  - {kind: pool, name: L3_VNI, type: ID, state: existing}
+managed_domains:
+  fabrics: []
+  switches: []
+  vpc_pairs: []
+  physical_interfaces: []
+  vpc_interfaces: []
+  resource_allocations: []
+  policies: []
+  policy_groups: []
+  vrfs: []
+  networks: []
+  l3outs: []
+  acls: []
+  prefix_lists: []
+  route_maps: []
+  vrf_lite: []

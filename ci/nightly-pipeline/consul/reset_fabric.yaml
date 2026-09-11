@@ -1,0 +1,270 @@
+---
+# Reset the cisco.nd nightly fabrics to a clean baseline.
+#
+# Deletes every object the nd_manage_* / nd_interface_* / nd_vpc_* nightly
+# playbooks can create, plus the throwaway fabrics they spin up, so a run that
+# died mid-way leaves nothing behind. Tasks are ordered so dependents are removed
+# before their dependencies (L3Out -> VRFs -> external fabric; interfaces -> vPC
+# pair). Every task is idempotent (state: deleted) and tolerant (ignore_errors),
+# so an already-clean ND still passes.
+#
+# NOTE: this resets the CONTENTS of the persistent test fabrics (VXLAN_EVPN_Fabric
+# and the MSD fabric msd_p) and deletes the throwaway fabrics; it does NOT delete
+# VXLAN_EVPN_Fabric / External_Connectivity_Fabric or evict their member switches.
+# Switch-scoped cleanups
+# (policy, vPC pair, vPC host interfaces) iterate over every switch on both
+# fabrics so nothing is missed.
+- name: cisco.nd nightly - reset fabrics to baseline
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_fabric_name: VXLAN_EVPN_Fabric
+    nd_external_fabric_name: External_Connectivity_Fabric
+    # MSD fabric the vrfs/networks integration targets run against; dynamic
+    # leftovers (AKB_NET_*/AKB_VRF_*) accumulate here across builds.
+    nd_msd_fabric_name: msd_p
+    # Each fabric carries ITS OWN switches; switch-scoped cleanups iterate per
+    # fabric so the external fabric uses its own switches, not the main pair.
+    reset_fabric_switches:
+      - fabric: VXLAN_EVPN_Fabric
+        serials: [SERIAL00001, SERIAL00002, SERIAL00003, SERIAL00004]
+        ips: [192.0.2.195, 192.0.2.196, 192.0.2.194, 192.0.2.88]
+      - fabric: External_Connectivity_Fabric
+        serials: [SERIAL00005, SERIAL00006]
+        ips: [192.0.2.89, 192.0.2.90]
+    ebgp_fabric_name: ANSIBLE_NIGHTLY_EBGP
+    ibgp_fabric_name: ANSIBLE_NIGHTLY_IBGP
+    ai_ebgp_fabric_name: ANSIBLE_NIGHTLY_AI_EBGP
+    ai_ibgp_fabric_name: ANSIBLE_NIGHTLY_AI_IBGP
+    ext_disposable_fabric_name: ANSIBLE_NIGHTLY_EXTERNAL
+  tasks:
+    - name: Guard - reset may only delete disposable ANSIBLE_NIGHTLY_ fabrics
+      ansible.builtin.assert:
+        that:
+          - ext_disposable_fabric_name is match('^ANSIBLE_NIGHTLY_')
+          - ebgp_fabric_name is match('^ANSIBLE_NIGHTLY_')
+          - ibgp_fabric_name is match('^ANSIBLE_NIGHTLY_')
+          - ai_ebgp_fabric_name is match('^ANSIBLE_NIGHTLY_')
+          - ai_ibgp_fabric_name is match('^ANSIBLE_NIGHTLY_')
+          - ext_disposable_fabric_name not in [nd_fabric_name, nd_external_fabric_name]
+        fail_msg: "reset_fabric refuses to delete a non-disposable fabric."
+
+    # --- L3Out first (depends on the two VRFs and the external fabric) ---
+    - name: Delete leftover L3Out
+      cisco.nd.nd_manage_l3out:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - name: ANSIBLE_NIGHTLY_L3OUT
+      ignore_errors: true
+
+    # --- vPC host interfaces (every switch, both fabrics) before the vPC pair ---
+    - name: Delete leftover access vPC host interface on every switch of both fabrics
+      cisco.nd.nd_interface_vpc_access:
+        fabric_name: "{{ item.0.fabric }}"
+        state: deleted
+        config:
+          - switch_ip: "{{ item.1 }}"
+            interface_name: vpc100
+      loop: "{{ reset_fabric_switches | subelements('ips') }}"
+      loop_control:
+        label: "{{ item.0.fabric }} / {{ item.1 }}"
+      ignore_errors: true
+
+    - name: Delete leftover trunk vPC host interface on every switch of both fabrics
+      cisco.nd.nd_interface_vpc_trunk_host:
+        fabric_name: "{{ item.0.fabric }}"
+        state: deleted
+        config:
+          - switch_ip: "{{ item.1 }}"
+            interface_name: vpc500
+      loop: "{{ reset_fabric_switches | subelements('ips') }}"
+      loop_control:
+        label: "{{ item.0.fabric }} / {{ item.1 }}"
+      ignore_errors: true
+
+    # The checked-out cisco.nd collection does not expose nd_manage_vrf_lite.
+    # Leave this cleanup disabled until that module is available; an executable
+    # reference to the missing module prevents reset parsing.
+    # - name: Delete leftover VRF Lite attachments (TENANT_A)
+    #   cisco.nd.nd_manage_vrf_lite:
+    #     fabric_name: "{{ nd_fabric_name }}"
+    #     state: deleted
+    #     config:
+    #       - vrf_name: TENANT_A
+    #   ignore_errors: true
+
+    - name: Delete leftover vPC pair on both fabrics
+      cisco.nd.nd_manage_vpc_pair:
+        fabric_name: "{{ item.fabric }}"
+        state: deleted
+        config:
+          - peer1_switch_id: "{{ item.serials[0] }}"
+            peer2_switch_id: "{{ item.serials[1] }}"
+      loop: "{{ reset_fabric_switches }}"
+      loop_control:
+        label: "{{ item.fabric }}"
+      ignore_errors: true
+
+    # --- Switch policy on every switch of both fabrics ---
+    - name: Delete leftover switch policy on every switch of both fabrics (by description key)
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ item.0.fabric }}"
+        state: deleted
+        use_description_as_key: true
+        config:
+          - name: switch_freeform
+            description: "ANSIBLE_NIGHTLY_POLICY"
+          - switch:
+              - serial_number: "{{ item.1 }}"
+      loop: "{{ reset_fabric_switches | subelements('serials') }}"
+      loop_control:
+        label: "{{ item.0.fabric }} / {{ item.1 }}"
+      ignore_errors: true
+
+    - name: Delete leftover policy group
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - name: feature_enable
+            description: ANSIBLE_NIGHTLY_PG
+      ignore_errors: true
+
+    # Networks reference VRFs, so EVERY network must go before the VRF delete-all
+    # below -- a leftover attached network (e.g. AKB_NET_*) otherwise blocks its
+    # VRF. nd_manage_networks has no config:[] delete-all, so gather then delete
+    # each by name.
+    - name: Gather all networks on the main fabric
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: gathered
+        config: []
+      register: reset_main_networks
+      ignore_errors: true
+
+    - name: Delete every network on the main fabric (before VRFs)
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - network_name: "{{ item.network_name }}"
+            is_l2only: "{{ item.is_l2only | default(omit) }}"
+      loop: "{{ reset_main_networks.gathered | default(reset_main_networks.current) | default(reset_main_networks.response) | default([]) }}"
+      loop_control:
+        label: "{{ nd_fabric_name }} / {{ item.network_name | default(item) }}"
+      ignore_errors: true
+
+    # --- Route map before the prefix list it may reference ---
+    - name: Delete leftover route map
+      cisco.nd.nd_manage_route_map:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - name: RM_ANSIBLE_NIGHTLY
+      ignore_errors: true
+
+    - name: Delete leftover prefix list
+      cisco.nd.nd_manage_prefix_list:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - ip_version: ipv4
+            name: PL_ANSIBLE_NIGHTLY
+      ignore_errors: true
+
+    - name: Delete leftover ACL
+      cisco.nd.nd_manage_acl:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - name: ACL_ANSIBLE_NIGHTLY
+      ignore_errors: true
+
+    # --- VRFs on the main fabric (after L3Out and VRF Lite are gone) ---
+    # config: [] = delete EVERY VRF (the same delete-all the vrfs integration
+    # setup uses), so dynamic leftovers like AKB_VRF_* are cleared, not just fixed
+    # names. NOTE: a VRF with a network still attached cannot be deleted, so a
+    # leftover attached network (e.g. AKB_NET_*) keeps its VRF -- that must be
+    # cleaned up collection-side (the networks test's own cleanup).
+    - name: Delete ALL leftover VRFs on the main fabric
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config: []
+      ignore_errors: true
+
+    # --- MSD fabric (msd_p): the vrfs/networks integration targets run here, so
+    # dynamic leftovers (AKB_NET_*/AKB_VRF_*) pile up build-to-build. Same order:
+    # delete every network first, then every VRF. ---
+    - name: Gather all networks on the MSD fabric (msd_p)
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd_msd_fabric_name }}"
+        state: gathered
+        config: []
+      register: reset_msd_networks
+      ignore_errors: true
+
+    - name: Delete every network on the MSD fabric (before VRFs)
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd_msd_fabric_name }}"
+        state: deleted
+        config:
+          - network_name: "{{ item.network_name }}"
+            is_l2only: "{{ item.is_l2only | default(omit) }}"
+      loop: "{{ reset_msd_networks.gathered | default(reset_msd_networks.current) | default(reset_msd_networks.response) | default([]) }}"
+      loop_control:
+        label: "{{ nd_msd_fabric_name }} / {{ item.network_name | default(item) }}"
+      ignore_errors: true
+
+    - name: Delete ALL leftover VRFs on the MSD fabric (msd_p)
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: "{{ nd_msd_fabric_name }}"
+        state: deleted
+        config: []
+      ignore_errors: true
+
+    # --- External fabric: its VRF first, then the fabric itself ---
+    - name: Delete leftover VRF on the external fabric
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: "{{ nd_external_fabric_name }}"
+        state: deleted
+        config:
+          - vrf_name: ANSIBLE_L3OUT_VRF2
+      ignore_errors: true
+
+    - name: Delete leftover external connectivity fabric (disposable only)
+      cisco.nd.nd_manage_fabric_external:
+        state: deleted
+        config:
+          - fabric_name: "{{ ext_disposable_fabric_name }}"
+      ignore_errors: true
+
+    # --- Throwaway VXLAN fabrics created by the fabric playbooks ---
+    - name: Delete leftover eBGP VXLAN fabric
+      cisco.nd.nd_manage_fabric_ebgp_vxlan:
+        state: deleted
+        config:
+          - fabric_name: "{{ ebgp_fabric_name }}"
+      ignore_errors: true
+
+    - name: Delete leftover iBGP VXLAN fabric
+      cisco.nd.nd_manage_fabric_ibgp_vxlan:
+        state: deleted
+        config:
+          - fabric_name: "{{ ibgp_fabric_name }}"
+      ignore_errors: true
+
+    - name: Delete leftover AI/ML eBGP VXLAN fabric
+      cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+        state: deleted
+        config:
+          - fabric_name: "{{ ai_ebgp_fabric_name }}"
+      ignore_errors: true
+
+    - name: Delete leftover AI/ML iBGP VXLAN fabric
+      cisco.nd.nd_manage_fabric_ai_ibgp_vxlan:
+        state: deleted
+        config:
+          - fabric_name: "{{ ai_ibgp_fabric_name }}"
+      ignore_errors: true

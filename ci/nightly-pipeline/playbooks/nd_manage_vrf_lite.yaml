@@ -1,0 +1,92 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_vrf_lite.
+# Self-contained: creates a prerequisite VRF, gathers, merges + deploys a VRF Lite
+# attachment on the border switch, then deletes the attachment and the VRF.
+- name: cisco.nd nightly - nd_manage_vrf_lite
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_vrf_lite
+      fabric_types: [vxlanIbgp]
+      switch_count: 1
+      switch_roles: [border]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+    vl_vrf_name: TENANT_A
+    vl_vlan_id: 500
+    vl_switch_ip: 192.0.2.195
+    vl_interface: Ethernet1/4
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Gather VRF Lite state
+      cisco.nd.nd_manage_vrf_lite:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: gathered
+      register: nd_vrf_lite
+
+    # --- Prerequisite: the VRF must exist before a VRF Lite attachment ---
+    - name: Pre-clean the prerequisite VRF (ignore if absent)
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - vrf_name: "{{ vl_vrf_name }}"
+      ignore_errors: true
+      when: vl_vrf_name is defined
+
+    - name: Create the prerequisite VRF
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        config:
+          - vrf_name: "{{ vl_vrf_name }}"
+            vrf_id: 51701
+            vlan_id: 2701
+            vrf_vlan_name: "{{ vl_vrf_name }}_VLAN"
+            vrf_description: "cisco.nd nightly VRF Lite prereq"
+      when: vl_vrf_name is defined
+
+    - name: Merge a VRF Lite attachment (save and deploy)
+      cisco.nd.nd_manage_vrf_lite:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        config_actions:
+          save: true
+          deploy: true
+        config:
+          - vrf_name: "{{ vl_vrf_name }}"
+            vlan_id: "{{ vl_vlan_id }}"
+            attach:
+              - ip_address: "{{ vl_switch_ip }}"
+                vrf_lite:
+                  - interface: "{{ vl_interface }}"
+                    dot1q: "{{ vl_vlan_id }}"
+                    ipv4_addr: 10.33.0.2/24
+                    neighbor_ipv4: 10.33.0.1
+                    peer_vrf: "{{ vl_vrf_name }}"
+      when:
+        - vl_vrf_name is defined
+        - vl_switch_ip is defined
+        - vl_interface is defined
+
+    - name: Delete VRF Lite attachments for the VRF
+      cisco.nd.nd_manage_vrf_lite:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - vrf_name: "{{ vl_vrf_name }}"
+      when:
+        - vl_vrf_name is defined
+        - vl_switch_ip is defined
+        - vl_interface is defined
+
+    - name: Delete the prerequisite VRF
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - vrf_name: "{{ vl_vrf_name }}"
+      when: vl_vrf_name is defined

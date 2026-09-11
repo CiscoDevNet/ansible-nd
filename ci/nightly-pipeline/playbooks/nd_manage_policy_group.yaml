@@ -1,0 +1,46 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_policy_group.
+# Gather (all active policy groups) is always safe. Set pg_switch_ids (a list of
+# switch serials) to exercise create + delete; otherwise those tasks are skipped.
+- name: cisco.nd nightly - nd_manage_policy_group
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_policy_group
+      fabric_types: [vxlanIbgp]
+      switch_count: 2
+      switch_roles: [leaf, leaf]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+    pg_switch_ids: [SERIAL00001, SERIAL00002]   # <-- set to enable create/delete
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Gather all active policy groups
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: gathered
+      register: nd_policy_groups
+
+    - name: Create a policy group (enable LACP)
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        config:
+          - name: feature_enable
+            description: ANSIBLE_NIGHTLY_PG
+            switch_ids: "{{ pg_switch_ids }}"
+            template_inputs:
+              featureName: lacp
+      when: pg_switch_ids is defined
+
+    - name: Delete the policy group
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - name: feature_enable
+            description: ANSIBLE_NIGHTLY_PG
+      when: pg_switch_ids is defined
