@@ -389,6 +389,9 @@ def test_ethernet_access_orchestrator_00430() -> None:
 # =============================================================================
 # Test: port-channel membership enforcement (create / update / create_bulk)
 # =============================================================================
+# NOTE: The legacy fixtures in 00500-00565 intentionally combine a host policy with a
+# positive operData portChannelId. They validate fail-closed handling of inconsistent
+# evidence; authentic member-policy behavior lives in test_ethernet_member_updates.py.
 
 
 def test_ethernet_access_orchestrator_00500() -> None:
@@ -422,7 +425,7 @@ def test_ethernet_access_orchestrator_00500() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"access_vlan": 100})
 
-    with pytest.raises(RuntimeError, match=r"Create failed for.*member of port-channel 10.*access_vlan"):
+    with pytest.raises(RuntimeError, match=r"Create failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.create(model)
 
     assert instance._pending_deploys == []
@@ -432,14 +435,14 @@ def test_ethernet_access_orchestrator_00510() -> None:
     """
     # Summary
 
-    Verify `create` succeeds on a port-channel member when only whitelisted policy fields are being changed.
+    Verify `create` rejects contradictory membership evidence even when only a safe field is requested.
 
     ## Test
 
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - interfaceList reports Ethernet1/1 as a member of port-channel 10
-    - The model changes only `description`, which is in `PORT_CHANNEL_MODIFIABLE_FIELDS`
-    - `create` does not raise; the POST is issued and a deploy is queued
+    - interfaceList reports `accessHost` while operData claims port-channel 10
+    - The model changes only the otherwise-safe `description` field
+    - `create` raises before POST and queues no deploy
 
     ## Classes and Methods
 
@@ -457,12 +460,12 @@ def test_ethernet_access_orchestrator_00510() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"description": "uplink to host"})
 
-    with does_not_raise():
+    with pytest.raises(RuntimeError, match=r"Create failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.create(model)
 
-    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.verb != HttpVerbEnum.POST.value
     assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces"
-    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == []
 
 
 def test_ethernet_access_orchestrator_00520() -> None:
@@ -531,7 +534,7 @@ def test_ethernet_access_orchestrator_00530() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"access_vlan": 100})
 
-    with pytest.raises(RuntimeError, match=r"Update failed for.*member of port-channel 10.*access_vlan"):
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.update(model)
 
     assert instance._pending_deploys == []
@@ -567,7 +570,7 @@ def test_ethernet_access_orchestrator_00540() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"access_vlan": 100})
 
-    with pytest.raises(RuntimeError, match=r"Bulk create failed.*member of port-channel 10.*access_vlan"):
+    with pytest.raises(RuntimeError, match=r"Bulk create failed.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.create_bulk([model])
 
     assert instance._pending_deploys == []
@@ -577,18 +580,18 @@ def test_ethernet_access_orchestrator_00550() -> None:
     """
     # Summary
 
-    Verify `update` succeeds on a port-channel member when the post-merge model carries non-whitelisted
-    wire-side values (e.g. `access_vlan`, `mtu`) that the user did NOT change. Regression test for the
-    state:merged path where the state machine merges the existing model into the proposed one before
-    calling `update`.
+    Verify `update` rejects contradictory membership evidence even when all carried host-policy values
+    match the wire except for a safe description. A host-policy record plus a positive operational
+    port-channel ID is stale or corrupt evidence, not an authentic member that may use the safe-update
+    path.
 
     ## Test
 
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - interfaceList reports Ethernet1/1 as a member of port-channel 10 with `accessVlan=10`, `mtu=jumbo`
-    - The model passed to `update` carries `description='new'` (the user-set field) AND the existing
-      `access_vlan=10` / `mtu=jumbo` carried over by the state machine's merge step
-    - Only `description` differs from the wire; `access_vlan` / `mtu` match -> no flag -> `update` succeeds
+    - interfaceList reports `accessHost` plus operational port-channel 10
+    - The proposed access values match the wire except for `description`
+    - The evidence mismatch takes precedence over field comparison
+    - `update` raises without PUT or deploy
 
     ## Classes and Methods
 
@@ -606,10 +609,10 @@ def test_ethernet_access_orchestrator_00550() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"description": "new", "access_vlan": 10, "mtu": "jumbo"})
 
-    with does_not_raise():
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.update(model)
 
-    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == []
 
 
 def test_ethernet_access_orchestrator_00560() -> None:
@@ -642,7 +645,7 @@ def test_ethernet_access_orchestrator_00560() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"access_vlan": 100})
 
-    with pytest.raises(RuntimeError, match=r"Update failed for.*member of port-channel 10.*access_vlan"):
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.update(model)
 
     assert instance._pending_deploys == []
@@ -652,17 +655,17 @@ def test_ethernet_access_orchestrator_00565() -> None:
     """
     # Summary
 
-    Verify `update` does NOT raise on a port-channel member when the wire echoes a non-whitelisted field
-    with a different scalar type than the model's coercion (ND returns `stormControlBroadcastLevel` as the
-    string `"50"` while the model carries float `50.0`). Regression for the float-vs-raw-wire comparison
-    that flagged an unchanged field as modified and wrongly blocked an idempotent re-run.
+    Verify scalar coercion cannot bypass contradictory membership evidence. The wire returns an
+    `accessHost` policy and positive operational port-channel ID while also echoing
+    `stormControlBroadcastLevel` as string `"50"`; the model carries the equivalent float `50.0`, but the
+    host/member mismatch must still fail closed.
 
     ## Test
 
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - interfaceList reports Ethernet1/1 as a port-channel member with `stormControlBroadcastLevel="50"` (str)
-    - The model carries `storm_control_broadcast_level=50.0` (float) — same logical value, different type
-    - Both sides are coerced through the model, so the field is NOT flagged -> `update` succeeds and deploys
+    - interfaceList reports `accessHost`, operational port-channel 10, and the string level `"50"`
+    - The model carries the logically equal float value `50.0`
+    - `update` rejects the evidence mismatch without PUT or deploy
 
     ## Classes and Methods
 
@@ -680,10 +683,10 @@ def test_ethernet_access_orchestrator_00565() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"storm_control_broadcast_level": 50.0})
 
-    with does_not_raise():
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.update(model)
 
-    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == []
 
 
 def test_ethernet_access_orchestrator_00570() -> None:

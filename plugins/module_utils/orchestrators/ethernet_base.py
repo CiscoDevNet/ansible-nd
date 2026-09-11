@@ -27,11 +27,18 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Sequence
-from typing import ClassVar
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import (
+    EpVpcPairGet,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
@@ -39,12 +46,41 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPost,
     EpManageInterfacesPut,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.interface_membership import (
+    EthernetMembershipIndex,
+    MissingPeerInventoryError,
+    MissingPeerIdentityError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_member_interface import (
+    MemberPolicyDisposition,
+    build_member_update_payload,
+    classify_member_policy,
+    get_member_policy_descriptor,
+    normalize_safe_member_updates,
+    parse_member_interface_response,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
+    InterfaceDefaultConfig,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    NDBaseInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 
 ModelType = NDBaseModel
+
+
+@dataclass(frozen=True)
+class MemberUpdateIntent:
+    """Original caller intent retained while the state machine merges a planning projection."""
+
+    requested_state: str
+    effective_state: str
+    requested_fields: frozenset[str]
+    requested_values: dict[str, Any]
 
 
 class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
@@ -92,7 +128,23 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     # template body (InterfaceDefaultConfig), which resets the interface and drops it from type-specific query filters.
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesNormalize
 
-    PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[set[str]] = {"description", "admin_state", "extra_config"}
+    PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[set[str]] = {
+        "description",
+        "admin_state",
+        "extra_config",
+    }
+    MEMBER_FAMILY: ClassVar[str] = ""
+    MEMBER_PLANNING_SHAPES: ClassVar[dict[tuple[str, str], tuple[str, str]]] = {
+        ("access", "nx-os"): ("access", "accessHost"),
+        ("trunk", "nx-os"): ("trunk", "trunkHost"),
+        ("routed", "nx-os"): ("routed", "routedHost"),
+        ("routed", "ios-xe"): ("routed", "iosXeRoutedHost"),
+    }
+    MEMBER_SAFE_FIELD_ALIASES: ClassVar[dict[str, str]] = {
+        "admin_state": "adminState",
+        "description": "description",
+        "extra_config": "extraConfig",
+    }
 
     # Policy types a create/update may OVERWRITE on an existing interface: the host-facing ethernet policy types a user can create
     # through the ND 4.2.1 create-side OpenAPI discriminators (`createInterfaceEthernet{Trunk,Access,Routed,Pvlan,Dot1qTunnel,
@@ -143,6 +195,12 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         super().model_post_init(__context)
         self._pending_normalizes: list[tuple[str, str]] = []
         self._pending_resets: list[tuple[str, str]] = []
+        self._member_records: dict[tuple[str, str], dict] = {}
+        self._member_intents: dict[tuple[str, str], MemberUpdateIntent] = {}
+        self._validated_member_ownership: dict[tuple[str, str], Any] = {}
+        self._membership_index_cache = None
+        self._membership_index_inventory_switches: frozenset[str] = frozenset()
+        self._member_peer_serial_cache: dict[str, str] = {}
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -226,6 +284,390 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         return self._switch_interfaces(switch_id).get(interface_name.lower())
 
+    def _canonical_task_interface_name(self, switch_ip: str, interface_name: str) -> str:
+        """Normalize a task interface name through the concrete host model.
+
+        Discovery runs before the state machine creates its proposed collection, but member
+        projections must still match abbreviations such as e1/24 and gi3 to the controller's
+        canonical names. Identifier-only construction invokes the same field validator used
+        later by planning.
+        """
+        try:
+            identity = self.model_class.from_config(
+                {"switch_ip": switch_ip, "interface_name": interface_name},
+                context={"state": "deleted"},
+            )
+            return identity.interface_name
+        except Exception:  # Invalid input is reported by normal proposed-model validation.
+            return interface_name
+
+    def _named_member_targets(self) -> set[tuple[str, str]]:
+        """Return canonical (switch_ip, lower_name) targets explicitly named by the task."""
+        targets: set[tuple[str, str]] = set()
+        params = self.rest_send.params if self.rest_send and self.rest_send.params else {}
+        for item in params.get("config") or []:
+            if not isinstance(item, dict):
+                continue
+            switch_ip = item.get("switch_ip")
+            interface_name = item.get("interface_name")
+            if not isinstance(switch_ip, str) or not isinstance(interface_name, str):
+                continue
+            canonical = self._canonical_task_interface_name(switch_ip, interface_name)
+            targets.add((switch_ip, canonical.lower()))
+        return targets
+
+    def _member_planning_projection(self, member_record: dict, switch_ip: str) -> dict:
+        """Return a host-shaped, read-only planning projection for one authentic member.
+
+        The state machine can only compare instances of the public host model. Projecting the
+        member's identity and three safe properties lets it classify a named member as UPDATE,
+        while the untouched authentic record remains in _member_records for payload
+        construction. Membership metadata is deliberately absent from this projection.
+        """
+        member = parse_member_interface_response(member_record)
+        descriptor = member.descriptor
+        shape = self.MEMBER_PLANNING_SHAPES.get((descriptor.family, descriptor.network_os))
+        if shape is None:
+            raise RuntimeError(
+                f"No host planning shape is registered for member policy '{descriptor.policy_type}' " f"({descriptor.family}/{descriptor.network_os})."
+            )
+        mode, projected_policy_type = shape
+        projected_policy: dict[str, Any] = {"policyType": projected_policy_type}
+        for field_name, alias in self.MEMBER_SAFE_FIELD_ALIASES.items():
+            value = getattr(member.policy, field_name, None)
+            # A defaults-only routed response may echo description as an empty string,
+            # while the public routed-host input model accepts only non-empty descriptions.
+            if descriptor.family == "routed" and field_name == "description" and value == "":
+                continue
+            if value is not None:
+                projected_policy[alias] = value
+        return {
+            "switchIp": switch_ip,
+            "interfaceName": member.interface_name,
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": mode,
+                "networkOS": {
+                    "networkOSType": descriptor.network_os,
+                    "policy": projected_policy,
+                },
+            },
+        }
+
+    def _append_named_member_projections(self, result: list[dict]) -> list[dict]:
+        """Append compatible real members explicitly named by a mutating task.
+
+        Omitted members never enter the public host-family scope, including under overridden.
+        Gathered remains host-only. Concrete orchestrators call this after their normal
+        default-interface filters so a safe-only projection is never discarded as a default.
+        """
+        params = self.rest_send.params if self.rest_send and self.rest_send.params else {}
+        if params.get("state") == "gathered" or not self.MEMBER_FAMILY:
+            return result
+        named = self._named_member_targets()
+        if not named:
+            return result
+
+        projected = list(result)
+        projected_keys = {(item.get("switchIp"), str(item.get("interfaceName", "")).lower()) for item in projected if isinstance(item, dict)}
+        for switch_ip, switch_id in self._switches_to_query().items():
+            for lower_name, record in self._switch_interfaces(switch_id).items():
+                task_key = (switch_ip, lower_name)
+                if task_key not in named or task_key in projected_keys:
+                    continue
+                policy_type = self._existing_policy_type(record)
+                disposition = classify_member_policy(policy_type)
+                descriptor = get_member_policy_descriptor(policy_type)
+                if descriptor is not None and descriptor.family == self.MEMBER_FAMILY:
+                    member_key = (switch_id, lower_name)
+                    self._member_records[member_key] = record
+                    projected.append(self._member_planning_projection(record, switch_ip))
+                    projected_keys.add(task_key)
+                    continue
+                # A delete cannot safely normalize any member policy, including a
+                # protected or wrong-family one. Add identity only so the generic
+                # delete planner routes it through preflight_delete, which inspects
+                # the authentic cached record and fails before a write.
+                if params.get("state") == "deleted" and disposition != MemberPolicyDisposition.NOT_MEMBER:
+                    projected.append(
+                        {
+                            "switchIp": switch_ip,
+                            "interfaceName": record.get("interfaceName"),
+                            "interfaceType": "ethernet",
+                        }
+                    )
+                    projected_keys.add(task_key)
+        return projected
+
+    @staticmethod
+    def _requested_member_updates(
+        model_instance: ModelType,
+    ) -> tuple[frozenset[str], dict[str, Any]]:
+        """Extract exactly the policy fields explicitly supplied by the caller."""
+        config_data = getattr(model_instance, "config_data", None)
+        network_os = getattr(config_data, "network_os", None)
+        policy = getattr(network_os, "policy", None)
+        if policy is None:
+            return frozenset(), {}
+        requested_fields = frozenset(field for field in policy.model_fields_set if field != "policy_type")
+        requested_values = {field: getattr(policy, field) for field in requested_fields}
+        return requested_fields, requested_values
+
+    @staticmethod
+    def _member_key(switch_id: str, interface_name: str) -> tuple[str, str]:
+        """Return the canonical key shared by member records, intents, and ownership."""
+        return switch_id, interface_name.lower()
+
+    def _cache_member_peer_switch_id(
+        self,
+        switch_id: str,
+        peer_switch_id: str,
+        *,
+        source: str,
+    ) -> str:
+        """Validate and cache one reciprocal vPC switch-pair relationship."""
+        if not isinstance(peer_switch_id, str) or not peer_switch_id:
+            raise RuntimeError(f"{source} for switch {switch_id!r} is missing a valid " f"peerSwitchId; received {peer_switch_id!r}.")
+        if peer_switch_id == switch_id:
+            raise RuntimeError(f"{source} for switch {switch_id!r} points to itself.")
+
+        cached_peer = self._member_peer_serial_cache.get(switch_id)
+        if cached_peer is not None and cached_peer != peer_switch_id:
+            raise RuntimeError(f"Conflicting vPC pair evidence for switch {switch_id!r}: " f"{cached_peer!r} and {peer_switch_id!r}.")
+        reciprocal = self._member_peer_serial_cache.get(peer_switch_id)
+        if reciprocal is not None and reciprocal != switch_id:
+            raise RuntimeError(f"Cached vPC pair evidence for peer {peer_switch_id!r} resolves " f"{reciprocal!r}, not {switch_id!r}.")
+        for owner, peer in self._member_peer_serial_cache.items():
+            if peer == peer_switch_id and owner != switch_id:
+                raise RuntimeError(f"Cached vPC pair evidence assigns peer {peer_switch_id!r} " f"to both {owner!r} and {switch_id!r}.")
+
+        self._member_peer_serial_cache[switch_id] = peer_switch_id
+        self._member_peer_serial_cache[peer_switch_id] = switch_id
+        return peer_switch_id
+
+    def _resolve_member_peer_switch_id(self, switch_id: str) -> str:
+        """Resolve one omitted vPC peer through the established cached pair endpoint."""
+
+        cached = self._member_peer_serial_cache.get(switch_id)
+        if cached is not None:
+            return cached
+        endpoint = EpVpcPairGet()
+        endpoint.fabric_name = self.fabric_name
+        endpoint.switch_id = switch_id
+        result = self._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            not_found_ok=True,
+        )
+        if not isinstance(result, dict) or not result:
+            raise RuntimeError(f"Cannot resolve the vPC peer for switch {switch_id!r}: the " "vpcPair endpoint returned no pair evidence.")
+        record_switch_id = result.get("switchId")
+        if record_switch_id not in (None, switch_id):
+            raise RuntimeError(f"vPC pair evidence requested for switch {switch_id!r} declares " f"switchId {record_switch_id!r}.")
+        peer_switch_id = result.get("peerSwitchId")
+        if not isinstance(peer_switch_id, str) or not peer_switch_id:
+            raise RuntimeError(f"vPC pair evidence for switch {switch_id!r} is missing a valid " f"peerSwitchId; received {result!r}.")
+        return self._cache_member_peer_switch_id(
+            switch_id,
+            peer_switch_id,
+            source="vPC pair endpoint evidence",
+        )
+
+    @staticmethod
+    def _interface_policy(record: dict[str, Any]) -> dict[str, Any] | None:
+        """Return one interface record's policy mapping when its envelope is valid."""
+        config_data = record.get("configData")
+        if not isinstance(config_data, dict):
+            return None
+        network_os = config_data.get("networkOS")
+        if not isinstance(network_os, dict):
+            return None
+        policy = network_os.get("policy")
+        return policy if isinstance(policy, dict) else None
+
+    def _pair_aware_member_parent(
+        self,
+        switch_id: str,
+        member_record: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+        """Return a compatible cached vPC parent for one named member routing hint."""
+        policy = self._interface_policy(member_record)
+        if policy is None:
+            return None
+        descriptor = get_member_policy_descriptor(policy.get("policyType"))
+        if descriptor is None or not descriptor.pair_aware:
+            return None
+        parent_name = policy.get("primaryInterface")
+        if not isinstance(parent_name, str) or not parent_name:
+            return None
+        parent_record = self._switch_interfaces_cache.get(switch_id, {}).get(parent_name.lower())
+        if not isinstance(parent_record, dict):
+            return None
+        parent_policy = self._interface_policy(parent_record)
+        parent_config = parent_record.get("configData")
+        parent_network_os = parent_config.get("networkOS") if isinstance(parent_config, dict) else None
+        if (
+            parent_record.get("interfaceType") != descriptor.parent_interface_type
+            or not isinstance(parent_policy, dict)
+            or parent_policy.get("policyType") not in descriptor.parent_policy_types
+            or not isinstance(parent_network_os, dict)
+            or parent_config.get("mode") != descriptor.parent_wire_mode
+            or parent_network_os.get("networkOSType") != descriptor.parent_network_os
+        ):
+            return None
+        return parent_name, parent_record, parent_policy
+
+    def _prefetch_named_member_peer_inventories(self) -> None:
+        """Prefetch every unique vPC peer needed by explicitly named members.
+
+        Pair relationships are all resolved and checked before any peer inventory
+        request. This lets one membership index validate arbitrarily many pairs and
+        also keeps conflicting or malformed pair evidence fail-closed before writes.
+        """
+        pairs: set[frozenset[str]] = set()
+        seen_parents: set[tuple[str, str]] = set()
+        for (switch_id, _member_name), member_record in sorted(self._member_records.items()):
+            parent = self._pair_aware_member_parent(switch_id, member_record)
+            if parent is None:
+                continue
+            parent_name, _parent_record, parent_policy = parent
+            parent_key = (switch_id, parent_name.lower())
+            if parent_key in seen_parents:
+                continue
+            seen_parents.add(parent_key)
+
+            peer_switch_id = parent_policy.get("peerSwitchId")
+            if peer_switch_id in (None, ""):
+                peer_switch_id = self._resolve_member_peer_switch_id(switch_id)
+            else:
+                peer_switch_id = self._cache_member_peer_switch_id(
+                    switch_id,
+                    peer_switch_id,
+                    source=f"vPC parent {parent_name!r}",
+                )
+            pairs.add(frozenset((switch_id, peer_switch_id)))
+
+        for pair in sorted(tuple(sorted(pair)) for pair in pairs):
+            for switch_id in pair:
+                if switch_id not in self._switch_interfaces_cache:
+                    self._switch_interfaces(switch_id)
+
+    def _membership_index(self) -> EthernetMembershipIndex:
+        """Return the index built from cached inventories and vPC pair evidence."""
+        inventory_switches = frozenset(self._switch_interfaces_cache)
+        if self._membership_index_cache is not None and inventory_switches != self._membership_index_inventory_switches:
+            # Direct orchestrator callers can load another switch after an earlier
+            # safe PUT. The PUT itself does not invalidate ownership, but an index
+            # predating a newly cached inventory cannot validate that switch.
+            self._membership_index_cache = None
+        if self._membership_index_cache is None:
+            self._prefetch_named_member_peer_inventories()
+            self._membership_index_cache = EthernetMembershipIndex(
+                self._switch_interfaces_cache,
+                peer_switch_ids=self._member_peer_serial_cache,
+            )
+            self._membership_index_inventory_switches = frozenset(self._switch_interfaces_cache)
+        return self._membership_index_cache
+
+    def _validate_member_ownership(self, switch_id: str, interface_name: str):
+        """Validate ownership with at most one cached pair and peer-inventory GET."""
+        try:
+            try:
+                return self._membership_index().validate(switch_id, interface_name)
+            except MissingPeerIdentityError as exc:
+                # A schema-valid parent echo may omit peerSwitchId. Reuse the
+                # vPC modules' authoritative per-switch vpcPair endpoint and
+                # retain both orientations so every member of the pair shares it.
+                self._resolve_member_peer_switch_id(exc.switch_id)
+                self._membership_index_cache = None
+                return self._membership_index().validate(switch_id, interface_name)
+        except MissingPeerInventoryError as exc:
+            # The per-switch interface cache guarantees one peer inventory GET,
+            # shared by every later member in the same module invocation.
+            self._switch_interfaces(exc.peer_switch_id)
+            self._membership_index_cache = None
+            return self._membership_index().validate(switch_id, interface_name)
+
+    @staticmethod
+    def _desired_network_os(model_instance: ModelType) -> str | None:
+        """Return the public host model's requested network OS discriminator."""
+        config_data = getattr(model_instance, "config_data", None)
+        network_os = getattr(config_data, "network_os", None)
+        return getattr(network_os, "network_os_type", None)
+
+    def _prepare_member_intent(self, model_instance: ModelType, existing_data: dict | None) -> bool:
+        """Validate a real member target and retain its original explicit safe-field intent.
+
+        Returns True only for an exact supported member policy. Unknown, protected,
+        wrong-family, replacement-state, and ambiguous ownership cases fail closed.
+        """
+        policy_type = self._existing_policy_type(existing_data)
+        disposition = classify_member_policy(policy_type)
+        if disposition == MemberPolicyDisposition.NOT_MEMBER:
+            return False
+        if existing_data is None:
+            raise AssertionError("Member classification requires an existing interface record")
+
+        descriptor = get_member_policy_descriptor(policy_type)
+        if descriptor is None:
+            raise RuntimeError(
+                f"Interface {model_instance.interface_name} on switch {model_instance.switch_ip} "
+                f"uses protected or unsupported member policy '{policy_type}'."
+            )
+        if descriptor.family != self.MEMBER_FAMILY:
+            raise RuntimeError(
+                f"Interface {model_instance.interface_name} uses member policy '{policy_type}' "
+                f"from the '{descriptor.family}' family; the '{self.MEMBER_FAMILY}' ethernet "
+                f"module cannot modify it."
+            )
+
+        desired_network_os = self._desired_network_os(model_instance)
+        if desired_network_os is not None and desired_network_os != descriptor.network_os:
+            raise RuntimeError(
+                f"Interface {model_instance.interface_name} uses member policy '{policy_type}' "
+                f"for network OS '{descriptor.network_os}', but the task requested "
+                f"'{desired_network_os}'."
+            )
+
+        state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
+        if state != "merged":
+            raise RuntimeError(
+                f"Interface {model_instance.interface_name} uses port-channel member policy "
+                f"'{policy_type}'. Standalone ethernet modules support member-safe updates only "
+                f"with state: merged; requested state: {state}."
+            )
+
+        requested_fields, requested_values = self._requested_member_updates(model_instance)
+        non_safe = requested_fields - self.PORT_CHANNEL_MODIFIABLE_FIELDS
+        if non_safe:
+            raise RuntimeError(
+                f"Interface {model_instance.interface_name} is a port-channel member. "
+                f"The following explicitly requested fields cannot be modified: "
+                f"{sorted(non_safe)}. Only these fields can be modified: "
+                f"{sorted(self.PORT_CHANNEL_MODIFIABLE_FIELDS)}."
+            )
+        # Performs value normalization and rejects membership-changing extra_config.
+        requested_values = normalize_safe_member_updates(requested_values)
+
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        key = self._member_key(switch_id, model_instance.interface_name)
+        # query_all() already records every named member for state-machine use.
+        # Direct update() callers reach this method without that discovery pass;
+        # register the authentic record now so peer prefetch precedes index build.
+        self._member_records[key] = existing_data
+        ownership = self._validate_member_ownership(switch_id, model_instance.interface_name)
+        if descriptor.pair_aware and not ownership.pair_validated:
+            raise RuntimeError(f"Pair-aware ownership validation did not complete for vPC member " f"{model_instance.interface_name}.")
+
+        self._validated_member_ownership[key] = ownership
+        self._member_intents[key] = MemberUpdateIntent(
+            requested_state=state,
+            effective_state="merged",
+            requested_fields=requested_fields,
+            requested_values=requested_values,
+        )
+        return True
+
     def _check_port_channel_restrictions(self, model_instance: ModelType, existing_data: dict | None = None) -> None:
         """
         # Summary
@@ -254,6 +696,14 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         port_channel_id = self._existing_port_channel_id(existing_data)
         if port_channel_id is None:
             return
+        policy_type = self._existing_policy_type(existing_data)
+        if classify_member_policy(policy_type) == MemberPolicyDisposition.NOT_MEMBER:
+            raise RuntimeError(
+                f"Interface {model_instance.interface_name} has operational port-channel "
+                f"membership {port_channel_id}, but its configured policy is "
+                f"'{policy_type}'. Refusing a host-policy write because membership evidence "
+                f"is inconsistent; reconcile the parent port-channel first."
+            )
 
         if model_instance.config_data is None:
             return
@@ -340,6 +790,24 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - If the existing wire policy type is not in `CONVERTIBLE_POLICY_TYPES`.
         """
         existing_type = self._existing_policy_type(existing_data)
+        disposition = classify_member_policy(existing_type)
+        if disposition != MemberPolicyDisposition.NOT_MEMBER:
+            if get_member_policy_descriptor(existing_type) is None:
+                raise RuntimeError(
+                    f"Interface {model_instance.interface_name} on switch {model_instance.switch_ip} is owned by the fabric "
+                    f"(system policy '{existing_type}'). Refusing to overwrite it with policy "
+                    f"'{self._desired_policy_type(model_instance)}'. Only explicitly supported user-owned member policies "
+                    f"can use the dedicated member-safe update path."
+                )
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            key = self._member_key(switch_id, model_instance.interface_name)
+            if key in self._validated_member_ownership:
+                return
+            raise RuntimeError(
+                f"Interface {model_instance.interface_name} on switch "
+                f"{model_instance.switch_ip} uses member policy '{existing_type}', but "
+                f"the dedicated member ownership and safe-field checks have not passed."
+            )
         if existing_type is None or existing_type in self.CONVERTIBLE_POLICY_TYPES:
             return
         raise RuntimeError(
@@ -390,8 +858,10 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = self._existing_interface(model_instance.interface_name, switch_id)
+            member_target = self._prepare_member_intent(model_instance, existing_data)
             self._check_fabric_ownership(model_instance, existing_data)
-            self._check_port_channel_restrictions(model_instance, existing_data)
+            if not member_target:
+                self._check_port_channel_restrictions(model_instance, existing_data)
 
     def preflight_delete(self, model_instances: Sequence[ModelType]) -> None:
         """
@@ -461,6 +931,21 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - If the existing wire state shows the interface is a port-channel member.
         """
+        policy_type = self._existing_policy_type(existing_data)
+        disposition = classify_member_policy(policy_type)
+        if disposition != MemberPolicyDisposition.NOT_MEMBER:
+            configured_id = None
+            if get_member_policy_descriptor(policy_type) is not None and existing_data is not None:
+                try:
+                    configured_id = parse_member_interface_response(existing_data).normalized_port_channel_id
+                except ValueError:
+                    configured_id = None
+            owner = f"port-channel {configured_id}" if configured_id is not None else f"member policy '{policy_type}'"
+            raise RuntimeError(
+                f"Interface {model_instance.interface_name} is a member of {owner}. "
+                f"Refusing to normalize a port-channel member (this would strip its "
+                f"channel-group membership). Remove it from the parent first."
+            )
         port_channel_id = self._existing_port_channel_id(existing_data)
         if port_channel_id is not None:
             raise RuntimeError(
@@ -684,6 +1169,13 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            existing_policy_type = self._existing_policy_type(existing_data)
+            if classify_member_policy(existing_policy_type) != MemberPolicyDisposition.NOT_MEMBER:
+                raise RuntimeError(
+                    f"Interface {model_instance.interface_name} already exists with member "
+                    f"policy '{existing_policy_type}'; a member must never be sent through "
+                    f"the create endpoint."
+                )
             self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_restrictions(model_instance, existing_data)
             api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
@@ -695,6 +1187,45 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return result
         except Exception as e:
             raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def _update_member(self, model_instance: ModelType, switch_id: str, existing_data: dict) -> ResponseType:
+        """PUT a validated member-policy payload without changing its membership.
+
+        The original explicit caller fields were captured in preflight before the state
+        machine merged its host-shaped planning projection. Direct orchestrator callers are
+        also safe: when no intent exists yet, the same validation is performed here.
+        """
+        key = self._member_key(switch_id, model_instance.interface_name)
+        if key not in self._member_intents:
+            self._prepare_member_intent(model_instance, existing_data)
+        self._check_fabric_ownership(model_instance, existing_data)
+
+        intent = self._member_intents.get(key)
+        ownership = self._validated_member_ownership.get(key)
+        if intent is None or ownership is None:
+            raise RuntimeError(f"Member-safe intent or ownership proof is missing for " f"{model_instance.interface_name} on switch {switch_id}.")
+        api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
+        api_endpoint.set_identifiers(model_instance.interface_name)
+        payload = build_member_update_payload(
+            existing_data,
+            intent.requested_values,
+            switch_id=switch_id,
+            pair_validated=bool(ownership.pair_validated),
+        )
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+
+        # Keep discovery coherent without a post-write GET. Only configData changed; retain
+        # operational evidence and other response metadata from the cached record.
+        updated_record = deepcopy(existing_data)
+        updated_record["switchId"] = switch_id
+        updated_record["configData"] = deepcopy(payload["configData"])
+        self._switch_interfaces_cache[switch_id][model_instance.interface_name.lower()] = updated_record
+        self._member_records[key] = updated_record
+        # The safe overlay cannot change member policy, primaryInterface, port-channel
+        # identity, or parent membership lists. Retain the cached ownership index and
+        # its proofs across later member PUTs in this invocation.
+        self._queue_deploy(model_instance.interface_name, switch_id)
+        return result
 
     def update(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """
@@ -718,6 +1249,11 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            existing_policy_type = self._existing_policy_type(existing_data)
+            if get_member_policy_descriptor(existing_policy_type) is not None:
+                if existing_data is None:
+                    raise AssertionError("Member update requires existing interface data")
+                return self._update_member(model_instance, switch_id, existing_data)
             self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_restrictions(model_instance, existing_data)
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
@@ -802,6 +1338,13 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             for model_instance in model_instances:
                 switch_id = self._resolve_switch_id(model_instance.switch_ip)
                 existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+                existing_policy_type = self._existing_policy_type(existing_data)
+                if classify_member_policy(existing_policy_type) != MemberPolicyDisposition.NOT_MEMBER:
+                    raise RuntimeError(
+                        f"Interface {model_instance.interface_name} already exists with member "
+                        f"policy '{existing_policy_type}'; a member must never be sent through "
+                        f"the bulk create endpoint."
+                    )
                 self._check_fabric_ownership(model_instance, existing_data)
                 self._check_port_channel_restrictions(model_instance, existing_data)
                 payload = model_instance.to_payload()
@@ -891,14 +1434,17 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            policy_type = self._existing_policy_type(existing_data)
+            member_disposition = classify_member_policy(policy_type)
             port_channel_id = self._existing_port_channel_id(existing_data)
-            if port_channel_id is not None:
+            if member_disposition != MemberPolicyDisposition.NOT_MEMBER or port_channel_id is not None:
                 if state == "overridden":
+                    owner = port_channel_id if port_channel_id is not None else policy_type
                     logger.info(
-                        "Skipping port-channel member %s on switch %s (member of port-channel %s) during state:overridden",
+                        "Skipping port-channel member %s on switch %s (owner %s) during state:overridden",
                         model_instance.interface_name,
                         model_instance.switch_ip,
-                        port_channel_id,
+                        owner,
                     )
                     continue
                 self._check_port_channel_delete_restriction(model_instance, existing_data)
@@ -938,9 +1484,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
         and limited to switches named in the user config for all other states.
 
-        Port-channel member interfaces are included in the results (they exist on the switch and need to be visible
-        for port-channel restriction checks in `create` / `update`). `delete_bulk` skips PC members when invoked
-        under `state: overridden` so fabric-wide convergence does not detach interfaces from their port-channels.
+        Compatible port-channel members are projected into mutating-state results only when explicitly named by
+        the task. Omitted members remain outside family and overridden scope, and gathered remains host-only.
+        `delete_bulk` also skips members so fabric-wide convergence cannot detach them from their port-channels.
 
         Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
 

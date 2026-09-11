@@ -648,8 +648,11 @@ def _user_nx_model(policy_kwargs: dict, interface_name: str = "Ethernet1/7", swi
     )
 
 
-def _pc_member_wire(policy: dict, interface_name: str = "Ethernet1/7", port_channel_id: int = 10) -> dict:
-    """Build the wire-state dict of a routed port-channel member carrying `policy` (policyType added)."""
+# This is deliberately not an authentic member record. It exercises the fail-closed
+# path for contradictory evidence; authentic routed member policies are covered in
+# test_ethernet_member_updates.py.
+def _inconsistent_routed_host_wire(policy: dict, interface_name: str = "Ethernet1/7", port_channel_id: int = 10) -> dict:
+    """Build stale evidence: routedHost policy plus an operational port-channel ID."""
     return {
         "interfaceName": interface_name,
         "interfaceType": "ethernet",
@@ -682,10 +685,10 @@ def test_ethernet_routed_orchestrator_00600() -> None:
         yield responses_ethernet_routed("test_update_pc_member_replaced_00600a")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "replaced"})
-    existing = _pc_member_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9000})
+    existing = _inconsistent_routed_host_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9000})
     model = _user_nx_model({"description": "New description"})
 
-    with pytest.raises(RuntimeError, match=r"Update failed for.*member of port-channel 10.*\['ip', 'mtu', 'prefix'\]"):
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'routedHost'.*inconsistent"):
         orchestrator.update(model, existing_data=existing)
     assert orchestrator._pending_deploys == []
 
@@ -694,15 +697,15 @@ def test_ethernet_routed_orchestrator_00610() -> None:
     """
     # Summary
 
-    Verify `update` under `state: replaced` allows a replacement of a port-channel member when every omitted field already sits
-    at its template default (clearing a default is a no-op, mirroring the reverse-diff scrub in `get_diff`) and the carried
-    fields are unchanged or whitelisted.
+    Verify `update` under `state: replaced` rejects contradictory membership evidence even when carried routed-host fields are
+    unchanged and omitted values sit at defaults. A `routedHost` policy with a positive operational port-channel ID is not an
+    authentic member and must fail closed before PUT.
 
     ## Test
 
-    - state is `replaced`; existing member carries ip/prefix, default mtu 9216, and an old description
-    - Proposed model carries the same ip/prefix and a new description (mtu omitted)
-    - `update` does not raise; the PUT is issued and a deploy is queued
+    - Existing state carries `routedHost`, ip/prefix/default MTU, and operational port-channel 10
+    - Proposed model carries the same ip/prefix and a new description
+    - `update` rejects the evidence mismatch without PUT or deploy
 
     ## Classes and Methods
 
@@ -715,27 +718,27 @@ def test_ethernet_routed_orchestrator_00610() -> None:
         yield responses_ethernet_routed("test_update_pc_member_replaced_00610b")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "replaced"})
-    existing = _pc_member_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9216})
+    existing = _inconsistent_routed_host_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9216})
     model = _user_nx_model({"description": "New description", "ip": "10.10.10.1", "prefix": 30})
 
-    with does_not_raise():
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'routedHost'.*inconsistent"):
         orchestrator.update(model, existing_data=existing)
-    assert orchestrator.rest_send.verb == HttpVerbEnum.PUT.value
-    assert orchestrator._pending_deploys == [("Ethernet1/7", "FDO11111AAA")]
+    assert orchestrator.rest_send.verb != HttpVerbEnum.PUT.value
+    assert orchestrator._pending_deploys == []
 
 
 def test_ethernet_routed_orchestrator_00620() -> None:
     """
     # Summary
 
-    Verify the removal-aware check does NOT apply under `state: merged`: an omitted field is not a removal there (the state
-    machine merges it from existing state), so a description-only merge on a member carrying ip/prefix/mtu is allowed.
+    Verify `state: merged` also rejects a `routedHost` record whose operData claims membership; merge semantics cannot make
+    contradictory ownership evidence safe.
 
     ## Test
 
-    - state is `merged`; existing member carries ip/prefix/mtu 9000
+    - Existing state carries `routedHost`, ip/prefix/MTU, and operational port-channel 10
     - Proposed model carries only a new description
-    - `update` does not raise; the PUT is issued and a deploy is queued
+    - `update` rejects the evidence mismatch without PUT or deploy
 
     ## Classes and Methods
 
@@ -748,12 +751,12 @@ def test_ethernet_routed_orchestrator_00620() -> None:
         yield responses_ethernet_routed("test_update_pc_member_merged_00620b")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
-    existing = _pc_member_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9000})
+    existing = _inconsistent_routed_host_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9000})
     model = _user_nx_model({"description": "New description"})
 
-    with does_not_raise():
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'routedHost'.*inconsistent"):
         orchestrator.update(model, existing_data=existing)
-    assert orchestrator._pending_deploys == [("Ethernet1/7", "FDO11111AAA")]
+    assert orchestrator._pending_deploys == []
 
 
 # =============================================================================
@@ -816,7 +819,7 @@ def test_ethernet_routed_orchestrator_00710() -> None:
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
     model = _user_nx_model({"mtu": 9000})
 
-    with pytest.raises(RuntimeError, match=r"member of port-channel 10.*\['mtu'\]"):
+    with pytest.raises(RuntimeError, match=r"operational port-channel membership 10.*configured policy is 'routedHost'.*inconsistent"):
         orchestrator.preflight([model])
 
 

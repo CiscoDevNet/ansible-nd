@@ -58,5 +58,14 @@
 
     - name: Run nd_interface_ethernet_access deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run nd_interface_ethernet_access port-channel member tests
+      ansible.builtin.include_tasks: port_channel_members.yaml
+
+    - name: Run opt-in nd_interface_ethernet_access vPC member test
+      ansible.builtin.include_tasks: vpc_member_case.yaml
+      when:
+        - access_vpc_member_case.interface_name | length > 0
+        - access_vpc_member_case.baseline_supplied | bool
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"

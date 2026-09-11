@@ -7,6 +7,32 @@
 test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
 
+# A separate interface and parent are reserved for authentic poMember tests.
+# Override these when the defaults are unavailable on the test switch.
+test_member_interface_name: "{{ nd_test_trunk_member_interface_name | default('Ethernet1/40') }}"
+test_member_port_channel_name: "{{ nd_test_trunk_member_port_channel_name | default('port-channel590') }}"
+
+# Pair-aware vpcMember coverage is opt-in. The selected interface must already
+# be an authentic member of a consistent vPC on both peers. Explicitly supply
+# all three current safe-field values; the scenario compares them to the
+# controller before its first write and restores them after an attempted update.
+# admin_state must be boolean; description and extra_config must be strings.
+trunk_vpc_member_case:
+  fabric_name: "{{ nd_test_trunk_vpc_member_fabric_name | default(test_fabric_name) }}"
+  switch_ip: "{{ nd_test_trunk_vpc_member_switch_ip | default(test_switch_ip) }}"
+  interface_name: "{{ nd_test_trunk_vpc_member_interface_name | default('') }}"
+  expected_policy_type: vpcMember
+  baseline_supplied: >-
+    {{ nd_test_trunk_vpc_member_baseline_admin_state is defined
+       and nd_test_trunk_vpc_member_baseline_description is defined
+       and nd_test_trunk_vpc_member_baseline_extra_config is defined }}
+  baseline_admin_state: "{{ nd_test_trunk_vpc_member_baseline_admin_state | default(none) }}"
+  baseline_description: "{{ nd_test_trunk_vpc_member_baseline_description | default(none) }}"
+  baseline_extra_config: "{{ nd_test_trunk_vpc_member_baseline_extra_config | default(none) }}"
+
+  updated_description: IFACE-004 trunk vPC member updated
+  updated_extra_config: logging event trunk-status
+
 # Ethernet interfaces used across tests.
 # Ethernet1/41 through Ethernet1/48 are reserved for these integration tests.
 # These interfaces must exist on the test switch and must NOT be port-channel members.

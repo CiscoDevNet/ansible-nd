@@ -15,13 +15,21 @@ from __future__ import annotations
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import TrunkHostPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
+    TrunkHostPolicyTypeEnum,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
     EthernetTrunkHostInterfaceModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
+    InterfaceDefaultConfig,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import (
+    EthernetBaseOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 
 
 class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
@@ -48,6 +56,7 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
     """
 
     model_class: ClassVar[type[NDBaseModel]] = EthernetTrunkHostInterfaceModel
+    MEMBER_FAMILY: ClassVar[str] = "trunk"
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -117,4 +126,5 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         result = super().query_all(model_instance=model_instance, **kwargs)
         if not isinstance(result, list):
             return result
-        return [iface for iface in result if not self._is_unconfigured_default(iface)]
+        filtered = [iface for iface in result if not self._is_unconfigured_default(iface)]
+        return self._append_named_member_projections(filtered)

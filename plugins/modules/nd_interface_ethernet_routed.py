@@ -6,7 +6,11 @@
 
 """Ansible module for managing routed-mode ethernet interfaces on Cisco Nexus Dashboard."""
 
-ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
+ANSIBLE_METADATA = {
+    "metadata_version": "1.1",
+    "status": ["preview"],
+    "supported_by": "community",
+}
 
 DOCUMENTATION = r"""
 ---
@@ -18,6 +22,8 @@ description:
 - It supports configuring, updating, and resetting routed ethernet interfaces on switches within a fabric.
 - Physical ethernet interfaces always exist on the switch; configuring one with this module changes its mode to
   C(routed) and applies the requested policy.
+- Existing C(l3PoMember) and C(iosXeL3PoMember) interfaces can be updated with O(state=merged) without changing their
+  routed port-channel membership, but only the documented member-safe properties may be supplied.
 author:
 - Allen Robel (@allenrobel)
 options:
@@ -79,6 +85,8 @@ options:
                       V(routedHost) for C(nx-os) and V(iosXeRoutedHost) for C(ios-xe).
                     - Use V(routedHost) for an NX-OS routed host interface.
                     - Use V(iosXeRoutedHost) for an IOS-XE routed host interface.
+                    - Do not specify a member policy as input. C(l3PoMember) and C(iosXeL3PoMember) are discovered
+                      from current controller intent when updating an existing member.
                     type: str
                     choices: [ routedHost, iosXeRoutedHost ]
                   admin_state:
@@ -96,6 +104,10 @@ options:
                     description:
                     - Additional CLI configuration commands to apply to the interface.
                     - Applies to all policy_type values.
+                    - For C(l3PoMember) and C(iosXeL3PoMember), membership-changing and interface-context commands
+                      are rejected. This includes C(channel-group), C(no channel-group), C(default interface),
+                      C(default-interface), C(interface), C(exit), C(end), and C(configure terminal), including
+                      their ordinary CLI abbreviations.
                     type: str
                   ip:
                     description:
@@ -217,16 +229,22 @@ options:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
     - Use O(state=merged) to create new resources and update existing ones as defined in your configuration.
       Resources on ND that are not specified in the configuration will be left unchanged.
-    - Use O(state=replaced) to replace the resources specified in the configuration.
+      For C(l3PoMember) and C(iosXeL3PoMember), this is the only supported state and only O(config[].config_data.network_os.policy.admin_state),
+      O(config[].config_data.network_os.policy.description), and O(config[].config_data.network_os.policy.extra_config)
+      may be supplied; the member policy, owning port-channel identifier, mode, and all other modeled configurable fields are preserved.
+    - Use O(state=replaced) to replace the resources specified in the configuration. An explicitly named
+      C(l3PoMember) or C(iosXeL3PoMember) is rejected; use O(state=merged) for its member-safe fields.
     - Use O(state=overridden) to enforce the configuration as the single source of truth. Named interfaces are
       modified to exactly match the configuration. For NX-OS, every C(routedHost) interface in the fabric that is not
       present in the configuration is reset to its fabric default (fabric-wide remove-omitted semantics); use with
       extra caution. IOS-XE interfaces are merge-only under this state, so named C(iosXeRoutedHost) interfaces converge
-      but omitted IOS-XE interfaces are left untouched and must be reset explicitly with O(state=deleted).
+      but omitted IOS-XE interfaces are left untouched and must be reset explicitly with O(state=deleted). Routed
+      port-channel members remain outside remove-omitted scope and are rejected when explicitly named.
     - Use O(state=deleted) to reset the specified interfaces to their fabric default configuration. Physical
       ethernet interfaces cannot be truly deleted from a switch. NX-OS interfaces reset to the fabric default
       C(trunkHost) policy, taking them out of routed mode; IOS-XE interfaces reset to a default routed
-      configuration with all policy fields cleared.
+      configuration with all policy fields cleared. An explicitly named C(l3PoMember) or C(iosXeL3PoMember) is
+      rejected because reset would change its port-channel membership.
     type: str
     default: merged
     choices: [ merged, replaced, overridden, deleted ]
@@ -237,15 +255,30 @@ notes:
 - This module is only supported on Nexus Dashboard.
 - This module supports both NX-OS and IOS-XE routed ethernet interfaces (interface_type C(ethernet), mode C(routed)),
   selected via O(config[].config_data.network_os.network_os_type).
-- This module manages the C(routedHost) (NX-OS) and C(iosXeRoutedHost) (IOS-XE) policy templates. System routed
-  policy types (fabric links, multi-site link members, VRF-Lite link members, and similar) are never read or modified
-  by this module, so O(state=overridden) cannot affect fabric underlay configuration.
+- This module manages the C(routedHost) (NX-OS) and C(iosXeRoutedHost) (IOS-XE) policy templates. An explicitly named
+  C(l3PoMember) or C(iosXeL3PoMember) is also supported under O(state=merged), but only for C(admin_state),
+  C(description), and C(extra_config). The update retains the member policy, owning port-channel identifier and mode,
+  and all other modeled configurable fields. Qualified controller response-only echoes are not replayed; any
+  unrecognized nested configuration field fails closed before mutation so a full PUT cannot silently discard future
+  intent.
+- System routed policy types (fabric links, multi-site link members, VRF-Lite link members, C(l3PoMemberInternal),
+  C(iosXeInternalL3PoMember), and similar) are never modified by this module, so O(state=overridden) cannot affect
+  fabric underlay configuration.
 - An interface named in O(config) that is currently owned by the fabric is rejected before any change is written,
   in check mode too. This covers an NX-OS interface carrying a system policy (fabric link, multi-site or VRF-Lite
   link member, vPC keep-alive, MPLS uplink, and similar) and an IOS-XE interface that is an endpoint of a fabric
   link, even when that interface reads as a plain C(iosXeRoutedHost). Converting a host-facing interface
   (for example a C(trunkHost) or C(accessHost) port) to routed remains allowed.
-- Interfaces that are port-channel members have restricted mutability.
+- The collection cannot create a routed port-channel parent. C(l3PoMember) and C(iosXeL3PoMember) updates therefore
+  apply only to an aggregate and membership that already exist in controller intent; this module never attaches,
+  detaches, or reparents the member.
+- A standalone routed member update proceeds only when current controller intent proves exactly one compatible routed
+  port-channel parent claim. The member's configured port-channel identity must match the parent; the parent's
+  configured policy, mode, and network OS must be compatible; and any present positive operational identity must
+  match both. Orphaned, multiply claimed, incompatible, conflicting, or otherwise ambiguous ownership evidence fails
+  closed in normal and check mode.
+- With O(config_actions.deploy=false), a successful member update remains staged on the controller. With
+  O(config_actions.deploy=true), the changed member is included in the module's final interface deployment call.
 - O(state=overridden) operates fabric-wide for NX-OS interfaces. An empty O(config) list resets every managed
   NX-OS routed interface in the fabric to its fabric default configuration.
 - IOS-XE interfaces are merge-only under O(state=overridden), they are converged when named in O(config) and
@@ -390,6 +423,25 @@ EXAMPLES = r"""
     config_actions:
       deploy: false
     state: merged
+
+- name: Update safe properties on an existing NX-OS routed port-channel member
+  # The routed aggregate and its Ethernet1/24 membership already exist in controller intent.
+  # Membership-changing commands are not permitted in extra_config.
+  cisco.nd.nd_interface_ethernet_routed:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: Ethernet1/24
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              admin_state: true
+              description: Routed port-channel member managed by Ansible
+              extra_config: "logging event link-status"
+    config_actions:
+      deploy: false
+    state: merged
 """
 
 RETURN = r"""
@@ -405,9 +457,19 @@ output_level:
   sample: normal
 before:
   description:
-  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
-  - An empty list when no matching routed interface configuration existed (for example, an interface still in trunk mode).
-  - Under O(state=overridden) it covers every managed NX-OS C(routedHost) interface in the fabric plus the IOS-XE interfaces named in O(config).
+  - The existing managed routed interface configurations before the module ran, normalized to one item per interface
+    with singular C(interface_name).
+  - For O(state=merged), O(state=replaced), and O(state=deleted), it includes all managed routed interfaces on every
+    switch named in O(config), not only the explicitly named interfaces. Unconfigured fabric-default records are
+    omitted unless explicitly named and relevant to the requested state.
+  - For O(state=overridden), it includes every managed NX-OS C(routedHost) interface in the fabric plus the IOS-XE
+    interfaces named in O(config).
+  - An empty list when no matching routed interface configuration existed in that query scope.
+  - For a supported C(l3PoMember) or C(iosXeL3PoMember) update, the entry is a host-shaped planning/reporting
+    projection containing the member identity and safe fields. It uses C(routedHost) or C(iosXeRoutedHost) as the
+    reporting policy and omits the authentic member discriminator, owning identifier, and membership metadata. It
+    does not represent a policy conversion. Each explicitly named member contributes one such entry to C(before) and
+    C(after); omitted members remain outside both lists.
   returned: always
   type: list
   elements: dict
@@ -427,9 +489,12 @@ before:
           description: L3 uplink to WAN edge
 after:
   description:
-  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
+  - The resulting managed routed interface configurations in the same per-interface query scope and singular
+    C(interface_name) format as C(before).
   - In check mode, the configuration that would result had the module run outside of check mode.
   - An interface reset to its fabric default by O(state=deleted) or O(state=overridden) leaves the managed scope and is absent from this list.
+  - For a supported member update, the entry is the resulting host-shaped safe-field projection. The authentic member
+    policy discriminator and parent membership remain unchanged on the controller but are not included in this output projection.
   returned: always
   type: list
   elements: dict
@@ -495,14 +560,30 @@ import logging
 import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import EthernetRoutedInterfaceModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator, finalize_accepted_intent
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import EthernetRoutedInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    require_pydantic,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import (
+    EthernetRoutedInterfaceModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import (
+    config_actions_spec,
+    nd_argument_spec,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+    NDStateMachine,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    NDBaseInterfaceOrchestrator,
+    finalize_accepted_intent,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import (
+    EthernetRoutedInterfaceOrchestrator,
+)
 
 
 def main():
@@ -563,7 +644,11 @@ def main():
         module_log.exception("NDStateMachineError during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module execution failed: {str(e)}"
-        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
+        error_msg += finalize_accepted_intent(
+            nd_state_machine.model_orchestrator if nd_state_machine else None,
+            module.check_mode,
+            module_log,
+        )
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
@@ -572,7 +657,11 @@ def main():
         module_log.exception("Unhandled exception during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module failed: {str(e)}"
-        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
+        error_msg += finalize_accepted_intent(
+            nd_state_machine.model_orchestrator if nd_state_machine else None,
+            module.check_mode,
+            module_log,
+        )
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
