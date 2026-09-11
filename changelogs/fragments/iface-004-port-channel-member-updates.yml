@@ -1,0 +1,18 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+bugfixes:
+  - >-
+    nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, and
+    nd_interface_ethernet_routed - recognize authentic accessPoMember,
+    accessVpcPoMember, poMember, vpcMember, l3PoMember, and iosXeL3PoMember
+    controller policies and safely update admin_state, description, and
+    extra_config with state=merged while preserving port-channel or vPC
+    membership. Member validation rejects abbreviated membership or
+    interface-context commands and requires a compatible parent policy, mode,
+    and network OS. vPC validation compares the literal shared peer
+    configuration returned in both parent echoes, validates both switches from
+    cached inventories, and uses one reusable pair proof without a GET per
+    member. Unrecognized nested member configuration fails closed instead of
+    being silently omitted from the full PUT
+    (https://github.com/CiscoDevNet/ansible-nd/issues/533#iface-004).
