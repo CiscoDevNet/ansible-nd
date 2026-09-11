@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar, Literal, Mapping
+from typing import ClassVar, Literal, Mapping, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -218,7 +218,13 @@ class AccessVpcPoMemberPolicyModel(AccessPoMemberPolicyModel):
     primary_interface: str | None = Field(default=None, alias="primaryInterface", description="Owning vPC interface")
 
 
-NexusMemberPolicyModel = PoMemberPolicyModel | AccessPoMemberPolicyModel | L3PoMemberPolicyModel | VpcMemberPolicyModel | AccessVpcPoMemberPolicyModel
+NexusMemberPolicyModel = Union[
+    PoMemberPolicyModel,
+    AccessPoMemberPolicyModel,
+    L3PoMemberPolicyModel,
+    VpcMemberPolicyModel,
+    AccessVpcPoMemberPolicyModel,
+]
 
 
 class NexusEthernetMemberNetworkOSModel(NDNestedModel):
