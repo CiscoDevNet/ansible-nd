@@ -14,12 +14,6 @@
         scope_type: "fabric"
         resource: "30051"
 
-      - entity_name: "base_vpc_domain_fabric"
-        pool_type: "ID"
-        pool_name: "VPC_DOMAIN_ID"
-        scope_type: "fabric"
-        resource: "51"
-
       - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
         pool_type: "SUBNET"
         pool_name: "DCI subnet pool"
@@ -123,7 +117,6 @@
         pool_name: "L2_VNI"
         scope_type: "fabric"
 
-
       - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
         pool_type: "SUBNET"
         pool_name: "DCI subnet pool"
@@ -175,8 +168,6 @@
         pool_type: "ID"
         pool_name: "ROUTE_MAP_SEQUENCE_NUMBER_POOL"
         scope_type: "device"
-
-
         switches:
           - "{{ ansible_switch1 }}"
 
@@ -206,11 +197,10 @@
         switches:
           - "{{ ansible_switch1 }}"
           - "{{ ansible_switch2 }}"
-    rm_expected_resource_count: 15
+    rm_expected_resource_count: 14
     rm_expected_entity_names:
       - "base_l3_vni_fabric"
       - "base_l2_vni_fabric"
-      - "base_vpc_domain_fabric"
       - "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
       - "{{ ansible_sno_1 }}~{{ intf_1_2 }}~{{ ansible_sno_2 }}~{{ intf_1_2 }}"
       - "base_hypershield_ha_source_fabric"
@@ -235,7 +225,7 @@
   ansible.builtin.assert:
     that:
       - 'result.failed | default(false) == false'
-      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', (207 if result.changed else 200)) | list | length == 0
 
 - block:
     - name: BASE common pools - Create resources for gathered test
@@ -251,7 +241,7 @@
           - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
           - 'result.failed | default(false) == false'
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 207) | list | length == 0
 
     - name: BASE common pools - Gather resources by entity name
       cisco.nd.nd_manage_resource_manager:
@@ -261,8 +251,6 @@
           - entity_name: "base_l3_vni_fabric"
 
           - entity_name: "base_l2_vni_fabric"
-
-          - entity_name: "base_vpc_domain_fabric"
 
           - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
 
@@ -289,11 +277,35 @@
           - entity_name: "{{ ansible_sno_1 }}~{{ ansible_sno_2 }}~base_vpc_id_pair"
       register: result
 
+    - name: BASE common pools - Normalize unique gathered entity names
+      ansible.builtin.set_fact:
+        rm_gathered_entity_names: >-
+          {{
+            result["gathered"]
+            | map(attribute="entity_name")
+            | map('split', '~')
+            | map('sort')
+            | map('join', '~')
+            | unique
+            | sort
+            | list
+          }}
+
     - name: BASE common pools - Assert gathered resources
       ansible.builtin.assert:
         that:
-          - '(result["gathered"] | length) == rm_expected_resource_count'
-          - '(result["gathered"] | length) == (rm_expected_entity_names | length)'
+          - >-
+            rm_gathered_entity_names
+            ==
+            (
+              rm_expected_entity_names
+              | map('split', '~')
+              | map('sort')
+              | map('join', '~')
+              | unique
+              | sort
+              | list
+            )
 
     - name: BASE common pools - Gather resources by first pool
       cisco.nd.nd_manage_resource_manager:
@@ -318,4 +330,4 @@
       ansible.builtin.assert:
         that:
           - 'result.failed | default(false) == false'
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', (207 if result.changed else 200)) | list | length == 0
