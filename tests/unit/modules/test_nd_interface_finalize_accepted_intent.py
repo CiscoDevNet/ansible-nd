@@ -38,26 +38,21 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
-# Modules carrying both the `NDStateMachineError` handler and the broad `Exception` fallback handler.
-TWO_HANDLER_MODULES = (
+# Every interface module carries both the `NDStateMachineError` handler and the broad `Exception` fallback handler (the svi and
+# subinterface modules gained the broad handler in PR #551, issue #379).
+INTERFACE_MODULES = (
     "nd_interface_ethernet_access",
     "nd_interface_ethernet_routed",
     "nd_interface_ethernet_trunk_host",
     "nd_interface_loopback",
     "nd_interface_port_channel_access",
     "nd_interface_port_channel_trunk_host",
-    "nd_interface_vpc_access",
-    "nd_interface_vpc_trunk_host",
-)
-
-# Modules carrying only the `NDStateMachineError` handler (the missing broad handler is tracked by issue #379).
-ONE_HANDLER_MODULES = (
     "nd_interface_subinterface_managed",
     "nd_interface_subinterface_unmanaged",
     "nd_interface_svi",
+    "nd_interface_vpc_access",
+    "nd_interface_vpc_trunk_host",
 )
-
-INTERFACE_MODULES = TWO_HANDLER_MODULES + ONE_HANDLER_MODULES
 
 ACCEPTED_PAIR = ("Ethernet1/1", "FDO12345ABC")
 ACCEPTED_NOTE = (
@@ -287,12 +282,12 @@ def test_nd_interface_finalize_accepted_intent_00000(monkeypatch: pytest.MonkeyP
     assert orchestrator._pending_deploys == []
 
 
-@pytest.mark.parametrize("module_name", TWO_HANDLER_MODULES)
+@pytest.mark.parametrize("module_name", INTERFACE_MODULES)
 def test_nd_interface_finalize_accepted_intent_00010(monkeypatch: pytest.MonkeyPatch, module_name: str) -> None:
     """
     # Summary
 
-    Verify the broad `Exception` handler of each two-handler interface module also deploys the controller-accepted pair and
+    Verify the broad `Exception` handler of each interface module also deploys the controller-accepted pair and
     names it in the failure message.
 
     ## Test
@@ -361,7 +356,7 @@ def test_nd_interface_finalize_accepted_intent_00030(monkeypatch: pytest.MonkeyP
     assert orchestrator._deployed == []
 
 
-@pytest.mark.parametrize("module_name", TWO_HANDLER_MODULES)
+@pytest.mark.parametrize("module_name", INTERFACE_MODULES)
 def test_nd_interface_finalize_accepted_intent_00040(monkeypatch: pytest.MonkeyPatch, module_name: str) -> None:
     """
     # Summary

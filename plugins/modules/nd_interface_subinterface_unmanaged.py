@@ -307,6 +307,7 @@ def main():
         module_log.exception("Unhandled exception during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module failed: {str(e)}"
+        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
