@@ -71,7 +71,8 @@ options:
         default: false
     verify:
         description:
-        - Verification controls for post-write refresh behavior.
+        - Verification controls for the controller-backed post-write snapshot.
+        - Unlike the generic verification fragment, vPC verification remains enabled by default for compatibility.
         type: dict
         suboptions:
             enabled:
@@ -79,14 +80,24 @@ options:
                 - Enable post-write verification refresh query.
                 type: bool
                 default: true
-            retries:
+            attempts:
                 description:
-                - Number of verification retry attempts.
+                - Maximum attempts for each eligible HTTP request, including the initial request.
                 type: int
                 default: 5
+            interval:
+                description:
+                - Delay, in seconds, between attempts. C(0) means no delay.
+                type: int
+                default: 1
+            retries:
+                description:
+                - Deprecated alias for O(verify.attempts).
+                - O(verify.retries) and O(verify.attempts) cannot be supplied together.
+                type: int
             timeout:
                 description:
-                - Per-query timeout in seconds.
+                - Deprecated timeout retained only for existing vPC query helper compatibility.
                 type: int
                 default: 10
     config:
@@ -197,8 +208,8 @@ EXAMPLES = """
       type: global
     verify:
       enabled: true
-      retries: 5
-      timeout: 10
+      attempts: 5
+      interval: 1
     config:
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
@@ -457,6 +468,30 @@ def _get_raw_module_args() -> dict[str, Any]:
         return {}
 
 
+def _handle_verify_compatibility(module: AnsibleModule, raw_module_args: dict[str, Any]) -> None:
+    """Reject ambiguous aliases and warn for released vPC verification fields."""
+    raw_verify = raw_module_args.get("verify")
+    if not isinstance(raw_verify, dict):
+        return
+    if "attempts" in raw_verify and "retries" in raw_verify:
+        module.fail_json(msg="verify.attempts and verify.retries cannot be used together")
+    if "retries" in raw_verify:
+        module.deprecate(
+            "verify.retries is deprecated; use verify.attempts instead",
+            version="2.0.0",
+            collection_name="cisco.nd",
+        )
+        normalized_verify = getattr(module, "params", {}).get("verify")
+        if isinstance(normalized_verify, dict):
+            normalized_verify["attempts"] = normalized_verify.get("retries", raw_verify["retries"])
+    if "timeout" in raw_verify:
+        module.deprecate(
+            "verify.timeout is deprecated and is retained only for existing vPC query helpers",
+            version="2.0.0",
+            collection_name="cisco.nd",
+        )
+
+
 def main() -> None:
     """
     Module entry point combining framework + RestSend.
@@ -478,6 +513,9 @@ def main() -> None:
 
     module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
     setup_logging(module)
+
+    raw_module_args = _get_raw_module_args()
+    _handle_verify_compatibility(module, raw_module_args)
 
     try:
         module_config = VpcPairPlaybookConfigModel.model_validate(module.params, by_alias=True, by_name=True)
@@ -502,7 +540,6 @@ def main() -> None:
     state = module_config.state
     config_actions = get_config_actions(module)
     verify_settings = get_verify_settings(module)
-    raw_module_args = _get_raw_module_args()
     raw_config_actions = raw_module_args.get("config_actions")
     explicit_config_actions = isinstance(raw_config_actions, dict)
 

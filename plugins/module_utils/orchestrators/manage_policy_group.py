@@ -258,6 +258,10 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         self._raw_cache = None
         self._policy_summary_cache = None
 
+    def invalidate_query_cache(self) -> None:
+        """Drop pre-write query data before the final controller snapshot."""
+        self._invalidate_cache()
+
     @staticmethod
     def _is_policy_group_summary(row: dict) -> bool:
         """Return True when a policySummary row represents a policy group."""

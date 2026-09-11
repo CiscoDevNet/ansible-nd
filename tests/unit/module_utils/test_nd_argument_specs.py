@@ -21,6 +21,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import 
     _select_options,
     config_actions_spec,
     nd_argument_spec,
+    verify_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import nd_argument_spec as nd_v2_argument_spec
 
@@ -190,3 +191,28 @@ def test_nd_argument_specs_00200() -> None:
     assert "save" in options
     assert _select_options(options, ("save",)) == {"save": {"type": "bool"}}
     assert _select_options(options, ()) == {}
+
+
+def test_nd_argument_specs_00300() -> None:
+    """Verify the generic post-write verification contract."""
+    spec = verify_spec()
+
+    assert set(spec) == {"verify"}
+    assert spec["verify"]["type"] == "dict"
+    assert "default" not in spec["verify"]
+    assert spec["verify"]["options"] == {
+        "enabled": {"type": "bool", "default": False},
+        "attempts": {"type": "int", "default": 5},
+        "interval": {"type": "int", "default": 1},
+    }
+
+
+def test_nd_argument_specs_00310() -> None:
+    """Verify each call returns a fresh verification fragment safe for module-local composition."""
+    first = verify_spec()
+    second = verify_spec()
+
+    assert first == second
+    assert first is not second
+    del first["verify"]["options"]["interval"]
+    assert "interval" in verify_spec()["verify"]["options"]

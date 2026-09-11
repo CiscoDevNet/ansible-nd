@@ -90,6 +90,26 @@ def config_actions_spec(include: Iterable[str] | None = None) -> dict[str, Any]:
     return {"config_actions": {"type": "dict", "options": _select_options(options, include)}}
 
 
+def verify_spec() -> dict[str, Any]:
+    """
+    Return the opt-in post-write verification argument fragment.
+
+    The top-level dictionary intentionally has no default. An omitted
+    ``verify`` option therefore preserves the historical predicted ``after``
+    state. Verification requires an explicit ``enabled: true`` selection.
+    """
+    return {
+        "verify": {
+            "type": "dict",
+            "options": {
+                "enabled": {"type": "bool", "default": False},
+                "attempts": {"type": "int", "default": 5},
+                "interval": {"type": "int", "default": 1},
+            },
+        }
+    }
+
+
 def ntp_server_spec():
     return dict(
         ntp_host=dict(type="str", required=True),

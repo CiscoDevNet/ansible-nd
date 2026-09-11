@@ -188,6 +188,7 @@ options:
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
+- cisco.nd.verification
 notes:
 - This module is only supported on Nexus Dashboard having version 4.1.1 or higher.
 - IPv4 and IPv6 ACLs share a single API namespace and are distinguished by O(config.type).
@@ -201,9 +202,9 @@ notes:
   O(config.entries.tcp_option) is only valid when O(config.entries.protocol) is C(tcp).
 - Port operators (O(config.entries.src_port_action) and O(config.entries.dst_port_action))
   are accepted in snake_case and stored/returned in the controller's native form.
-- The RV(after) return value reflects the module's predicted post-write state (the intended
-  configuration merged into the existing state), not a re-read from the controller after the
-  write. See the RETURN documentation for RV(after).
+- By default, RV(after) reflects the module's predicted post-write state. Set O(verify.enabled=true)
+  to replace it with a controller readback after all write actions complete. See the RETURN
+  documentation for RV(after).
 - On Nexus Dashboard 4.2.1, the single-object ACL GET endpoint returns IPv6 ACLs with
   C(type=ipv4) (a controller-side readback defect); the collection (list) endpoint used by this
   module returns the correct C(type=ipv6). Module output therefore reports the correct address
@@ -342,8 +343,8 @@ before:
 after:
   description:
   - The ACL configuration after the module ran, structured the same as the O(config) parameter.
-  - This reflects the module's predicted post-write state (the intended configuration merged into
-    the existing state); it is not re-read from the controller after the write.
+  - By default, this reflects the predicted post-write state. When O(verify.enabled=true), it is
+    replaced by a controller readback after all write actions complete.
   - In check mode, the configuration that would result had the module run outside of check mode.
   - For IPv6 ACLs, this echoes the requested C(type=ipv6); note that a direct single-object GET
     from the controller may report C(type=ipv4) on Nexus Dashboard 4.1.1 (see the module notes).
@@ -418,6 +419,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_l
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.acl.acl import AclModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import verify_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_acl import ManageAclOrchestrator
 
@@ -439,6 +441,7 @@ def main():
     None (catches all exceptions and calls `module.fail_json`).
     """
     argument_spec = nd_argument_spec()
+    argument_spec.update(verify_spec())
     argument_spec.update(AclModel.get_argument_spec())
 
     module = AnsibleModule(
@@ -459,6 +462,7 @@ def main():
         module_log.debug("manage_state begin state=%s check_mode=%s", module.params.get("state"), module.check_mode)
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
+        nd_state_machine.finalize_result()
 
         module.exit_json(**nd_state_machine.output.format())
 
