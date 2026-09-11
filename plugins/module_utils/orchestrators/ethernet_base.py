@@ -143,6 +143,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         super().model_post_init(__context)
         self._pending_normalizes: list[tuple[str, str]] = []
         self._pending_resets: list[tuple[str, str]] = []
+        # Flipped for the rest of the run once the controller rejects the template's empty `description` (ND 4.3.1); see
+        # `_post_normalize`.
+        self._normalize_omits_description: bool = False
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -551,7 +554,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         failure-path finalizer (`deploy_accepted_mutations`) must ship it rather than strand it staged, where a retry would filter
         the interface out (its intent is already `trunkHost`) and never deploy it (PR #550 review). Rejected, status-less, and
         unknown-status members stay queued as unsent. Fail-fast across groups: after a failed group the remaining groups are not
-        attempted and stay queued.
+        attempted and stay queued. Each group is sent by `_post_normalize`, which resends once without `description` when ND 4.3.1
+        rejects the template's empty string.
 
         ## Raises
 
@@ -565,9 +569,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         results: list[ResponseType] = []
         groups = self._normalize_groups()
         for index, group in enumerate(groups):
-            payload = InterfaceDefaultConfig.to_normalize_payload(group)
             try:
-                results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
+                results.append(self._post_normalize(api_endpoint, group))
             except Exception as e:
                 accepted = self._dequeue_accepted_normalizes(group)
                 rejected = [name for name, switch_id in group if (name, switch_id) in self._pending_normalizes]
@@ -583,6 +586,65 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             for pair in group:
                 self._pending_normalizes.remove(pair)
         return results
+
+    def _post_normalize(self, api_endpoint: EpManageInterfacesNormalize, group: list[tuple[str, str]]) -> ResponseType:
+        """
+        # Summary
+
+        POST one normalize group and return the response `DATA`. The first attempt of a run sends the full `int_trunk_host` template,
+        including `description: ""`, which is what ND 4.2.1 needs to clear a description (4.2.1 leaves an omitted field untouched).
+        ND 4.3.1 enforces the spec's `interfaceDescription` minLength 1 and rejects that body outright with HTTP 400
+        `Error at /configData/networkOS/policy/description: minimum string length is 1`, while it does reset an omitted field. On that
+        exact rejection the group is resent once without `description`, and `_normalize_omits_description` stays set so later groups
+        in the run skip the failing attempt. Lab-verified on 4.2.1.10 and 4.3.1.175 (2026-09-11); vault
+        `empty-interface-description-accepted`. Any other failure, and a failure of the resend, propagates unchanged so the caller's
+        partial-success bookkeeping is unaffected: a 400 rejects the whole request, so nothing in the group was accepted by the first
+        attempt.
+
+        ## Raises
+
+        ### Exception
+
+        - If the normalize request fails for any reason other than the ND 4.3.1 empty-description rejection, or if the resend fails.
+        """
+        payload = InterfaceDefaultConfig.to_normalize_payload(group, omit_description=self._normalize_omits_description)
+        response_count = len(self.rest_send.responses)
+        try:
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+        except Exception:
+            if not self._normalize_omits_description and self._rejected_empty_description(response_count):
+                self._normalize_omits_description = True
+                payload = InterfaceDefaultConfig.to_normalize_payload(group, omit_description=True)
+                return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+            raise
+
+    def _rejected_empty_description(self, response_count: int) -> bool:
+        """
+        # Summary
+
+        Return `True` if the most recent response is a fresh HTTP 400 whose schema errors name `/configData/networkOS/policy/description`
+        with `minimum string length`, i.e. ND 4.3.1 refusing the template's empty description. `response_count` is the length of
+        `rest_send.responses` before the request: `RestSend` keeps the previous `response_current` when the sender raises (issue #554),
+        so the response is only read when the count grew.
+
+        ## Raises
+
+        None
+        """
+        if len(self.rest_send.responses) <= response_count:
+            return False
+        response = self.rest_send.response_current
+        if response.get("RETURN_CODE") != 400:
+            return False
+        data = response.get("DATA")
+        errors = data.get("errors") if isinstance(data, dict) else None
+        if not isinstance(errors, list):
+            return False
+        for error in errors:
+            detail = str(error.get("description", "")) if isinstance(error, dict) else ""
+            if "/policy/description" in detail and "minimum string length" in detail:
+                return True
+        return False
 
     def _dequeue_accepted_normalizes(self, group: list[tuple[str, str]]) -> list[str]:
         """

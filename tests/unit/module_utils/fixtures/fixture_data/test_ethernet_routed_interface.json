@@ -2060,5 +2060,105 @@
                 }
             }
         }
+    },
+    "test_remove_pending_00990a": {
+        "TEST_NOTES": [
+            "00990/01000 (orchestrator): switch list resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_remove_pending_00990b": {
+        "TEST_NOTES": [
+            "00990 (orchestrator): ND 4.3.1 rejects the template body's description: \"\" (interfaceDescription minLength 1). Whole request rejected,",
+            "nothing accepted; the orchestrator must resend the same group once without description (00990c)."
+        ],
+        "RETURN_CODE": 400,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/normalize",
+        "MESSAGE": "Bad Request",
+        "DATA": {
+            "code": 400,
+            "description": "Request validation failed: the request does not match the API schema",
+            "message": "Request validation failed",
+            "errors": [
+                {
+                    "code": 0,
+                    "description": "Error at /configData/networkOS/policy/description: minimum string length is 1",
+                    "message": "Schema validation failed"
+                }
+            ]
+        }
+    },
+    "test_remove_pending_00990c": {
+        "TEST_NOTES": [
+            "00990 (orchestrator): the resend without description succeeds for both interfaces."
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/normalize",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface normalized successfully.",
+                    "name": "Ethernet1/31",
+                    "status": "success"
+                },
+                {
+                    "message": "Interface normalized successfully.",
+                    "name": "Ethernet1/32",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_remove_pending_01000a": {
+        "TEST_NOTES": [
+            "00990/01000 (orchestrator): switch list resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_remove_pending_01000b": {
+        "TEST_NOTES": [
+            "01000 (orchestrator): a 400 that is NOT the empty-description rejection must NOT trigger a resend (no fixture follows on purpose)."
+        ],
+        "RETURN_CODE": 400,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/normalize",
+        "MESSAGE": "Bad Request",
+        "DATA": {
+            "code": 400,
+            "description": "Request validation failed: the request does not match the API schema",
+            "message": "Request validation failed",
+            "errors": [
+                {
+                    "code": 0,
+                    "description": "Error at /configData/networkOS/policy/mtu: value is not one of the allowed values",
+                    "message": "Schema validation failed"
+                }
+            ]
+        }
     }
 }
