@@ -71,7 +71,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         Initialize mutable private state after Pydantic model construction. Pydantic disallows `Field()` on
         underscore-prefixed names, so these are set here to ensure each instance gets its own container: the
-        deploy/remove queues and the per-switch interface cache read by `_switch_interfaces`.
+        deploy/remove queues, the `_deploy_attempted` stage flag read by `deploy_accepted_mutations`, and the per-switch interface
+        cache read by `_switch_interfaces`.
 
         ## Raises
 
@@ -79,6 +80,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         self._pending_deploys: list[tuple[str, str]] = []
         self._pending_removes: list[tuple[str, str]] = []
+        self._deploy_attempted: bool = False
         self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
 
     def apply_config_actions(self, params: Mapping[str, Any]) -> bool:
@@ -409,14 +411,18 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         When `deploy` is `False`, returns `None` without making any API call.
 
+        Sets `_deploy_attempted` before sending so that, if this request fails, the failure-path finalizer
+        (`deploy_accepted_mutations`) does not resubmit the identical deployment (PR #547 review).
+
         ## Raises
 
         ### RuntimeError
 
-        - If the deploy API request fails.
+        - If the deploy API request fails. The queue is retained.
         """
         if not self.deploy or not self._pending_deploys:
             return None
+        self._deploy_attempted = True
         try:
             result = self._deploy_interfaces(self._pending_deploys)
             self._pending_deploys = []
@@ -442,8 +448,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         exactly one that was not accepted.
 
         Returns the deployed `(interface_name, switch_id)` pairs so the caller can name them in the failure report. Returns an
-        empty list without any API call when `deploy` is `False` (staged intent is the documented contract in that case) or when
-        no accepted-mutation pairs are queued.
+        empty list without any API call when `deploy` is `False` (staged intent is the documented contract in that case), when
+        the normal `deploy_pending` request was already attempted (a failed normal deploy is reported by its own error and must not
+        be resubmitted — PR #547 review), or when no accepted-mutation pairs are queued.
 
         ## Raises
 
@@ -451,7 +458,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         - If the failure-path deploy API request fails. The accepted pairs remain queued in that case.
         """
-        if not self.deploy:
+        if not self.deploy or self._deploy_attempted:
             return []
         unsent = self._unsent_delete_pairs()
         accepted = [pair for pair in self._pending_deploys if pair not in unsent]
@@ -528,6 +535,38 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in pairs]}
         return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
 
+    def _accepted_multistatus_pairs(self) -> set[tuple[str, str]]:
+        """
+        # Summary
+
+        Return the `(interface_name, switch_id)` pair (name lower-cased) of every `DATA.results[]` item in the most recent response
+        whose `status` is exactly `success` (case/whitespace-tolerant). The pair-keyed counterpart of `_accepted_multistatus_names`
+        for the bulk endpoints whose 207 items carry `interfaceName` and `switchId` (`interfaceActions/remove`), so the same name on
+        two switches is told apart. Only an exact `success` is trusted (vault: `multi-status-207-status-field-inconsistent`; issue
+        #397). Returns an empty set when the last response was not a 207 or carries no `results[]` envelope.
+
+        ## Raises
+
+        None
+        """
+        if self.rest_send.return_code != 207:
+            return set()
+        data = self.rest_send.response_current.get("DATA")
+        results = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(results, list):
+            return set()
+        accepted: set[tuple[str, str]] = set()
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("status") or "").strip().lower() != "success":
+                continue
+            name = item.get("interfaceName")
+            switch_id = item.get("switchId")
+            if isinstance(name, str) and name.strip() and isinstance(switch_id, str) and switch_id.strip():
+                accepted.add((name.strip().lower(), switch_id.strip()))
+        return accepted
+
     def remove_pending(self) -> ResponseType | None:
         """
         # Summary
@@ -536,20 +575,39 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         Returns `None` without making any API call if the queue is empty.
 
+        The endpoint answers HTTP 207 with an independent `results[]` status per interface, so one removal can succeed while another
+        is rejected. On a failed request, the pairs the response reports as an exact `success` (`_accepted_multistatus_pairs`) are
+        dequeued — their removal IS on the controller, and the module's failure-path finalizer (`deploy_accepted_mutations`) must
+        ship it rather than strand it staged, where a retry would no longer find the interface and never deploy it (PR #547 review).
+        Rejected, status-less, and unknown-status pairs stay queued as unsent. The response is consulted only when the request
+        recorded a new one: a sender exception leaves the previous response in place (issue #554), which must not be mistaken for
+        this request's result.
+
         ## Raises
 
         ### RuntimeError
 
-        - If the remove API request fails.
+        - If the remove API request fails. The message names the pairs the controller rejected and, for a mixed 207, the pairs it
+          accepted from the same request (whose deploy stays queued).
         """
         if not self._pending_removes:
             return None
+        submitted = list(self._pending_removes)
+        recorded = len(self.rest_send.responses)
         try:
             result = self._remove_interfaces()
             self._pending_removes = []
             return result
         except Exception as e:
-            raise RuntimeError(f"Bulk remove failed for interfaces {self._pending_removes}: {e}") from e
+            accepted: list[tuple[str, str]] = []
+            if len(self.rest_send.responses) > recorded:
+                accepted_pairs = self._accepted_multistatus_pairs()
+                accepted = [pair for pair in submitted if (pair[0].lower(), pair[1]) in accepted_pairs]
+                self._pending_removes = [pair for pair in self._pending_removes if pair not in accepted]
+            msg = f"Bulk remove failed for interfaces {self._pending_removes}: {e}"
+            if accepted:
+                msg += f" The controller accepted the removal of {accepted} from the same request; their deploy stays queued."
+            raise RuntimeError(msg) from e
 
     def _remove_interfaces(self) -> ResponseType:
         """
