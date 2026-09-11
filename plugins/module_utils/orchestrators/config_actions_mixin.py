@@ -64,6 +64,25 @@ class ConfigActionsMixin:
           ``{"switchIds": [...]}``.
     """
 
+    # --- Overridable endpoint hooks ---
+    # Default to the Manage surface. Subclasses (e.g. multi-cluster fabric group members)
+    # override these to route save/deploy to the OneManage surface when appropriate.
+    def _config_save_endpoint(self, fabric_name: str):
+        """Return the config-save endpoint for the resolved surface."""
+        return EpFabricConfigSavePost(fabric_name=fabric_name)
+
+    def _deploy_global_endpoint(self, fabric_name: str):
+        """Return the fabric-wide deploy endpoint for the resolved surface."""
+        return EpFabricDeployPost(fabric_name=fabric_name)
+
+    def _switches_endpoint(self, fabric_name: str):
+        """Return the switches GET endpoint for the resolved surface."""
+        return EpManageFabricsSwitchesGet(fabric_name=fabric_name)
+
+    def _switch_deploy_endpoint(self, fabric_name: str):
+        """Return the switch-level deploy endpoint for the resolved surface."""
+        return EpManageFabricsSwitchActionsDeployPost(fabric_name=fabric_name)
+
     def config_save(self, fabric_name: str) -> ResponseType:
         """Save fabric configuration.
 
@@ -79,7 +98,7 @@ class ConfigActionsMixin:
         Raises:
             Exception: If the save request fails.
         """
-        ep = EpFabricConfigSavePost(fabric_name=fabric_name)
+        ep = self._config_save_endpoint(fabric_name)
         return self._request(
             path=ep.path,
             verb=ep.verb,
@@ -94,7 +113,7 @@ class ConfigActionsMixin:
         empty. Fetched once per fabric per run and passed to the deploy path so the
         switches endpoint is queried at most once per fabric.
         """
-        ep = EpManageFabricsSwitchesGet(fabric_name=fabric_name)
+        ep = self._switches_endpoint(fabric_name)
         result = self._request(
             path=ep.path,
             verb=ep.verb,
@@ -131,7 +150,7 @@ class ConfigActionsMixin:
 
     def _deploy_global(self, fabric_name: str) -> ResponseType:
         """Deploy entire fabric configuration (no request body)."""
-        ep = EpFabricDeployPost(fabric_name=fabric_name)
+        ep = self._deploy_global_endpoint(fabric_name)
         return self._request(
             path=ep.path,
             verb=ep.verb,
@@ -153,7 +172,7 @@ class ConfigActionsMixin:
         if not switch_ids:
             return None
 
-        ep = EpManageFabricsSwitchActionsDeployPost(fabric_name=fabric_name)
+        ep = self._switch_deploy_endpoint(fabric_name)
         return self._request(
             path=ep.path,
             verb=ep.verb,

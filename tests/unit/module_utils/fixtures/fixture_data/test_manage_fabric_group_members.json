@@ -1,0 +1,139 @@
+{
+    "TEST_NOTES": [
+        "Fixture responses for test_manage_fabric_group_members orchestrator tests.",
+        "The GET /fabrics/{fabricName}/members response wraps members in a 'fabrics' array."
+    ],
+    "members_ok": {
+        "DATA": {
+            "fabrics": [
+                {"name": "member-fabric-1", "type": "vxlanIbgp"},
+                {"name": "member-fabric-2", "type": "vxlanEbgp"}
+            ]
+        },
+        "MESSAGE": "OK",
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/GROUP1/members",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": ["Two members returned from the fabric group members GET endpoint"]
+    },
+    "members_empty": {
+        "DATA": {"fabrics": []},
+        "MESSAGE": "OK",
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/GROUP1/members",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": ["Empty fabric group members response"]
+    },
+    "add_members_success": {
+        "DATA": {
+            "fabrics": [
+                {"name": "member-fabric-1", "type": "vxlanIbgp"}
+            ]
+        },
+        "MESSAGE": "OK",
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/GROUP1/actions/addMembers",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": ["Add members action succeeds"]
+    },
+    "remove_members_success": {
+        "DATA": {},
+        "MESSAGE": "OK",
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/GROUP1/actions/removeMembers",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": ["Remove members action succeeds"]
+    },
+    "probe_fabric_group": {
+        "DATA": {"name": "GROUP1", "category": "fabricGroup", "type": "MFD"},
+        "MESSAGE": "OK",
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/oneManage/manage/fabrics/GROUP1",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": [
+            "OneManage fabric probe for a plain fabric group; category is not multiClusterFabricGroup",
+            "so the orchestrator routes member operations to the Manage surface"
+        ]
+    },
+    "probe_multicluster": {
+        "DATA": {"name": "GROUP1", "category": "multiClusterFabricGroup", "type": "MCFG"},
+        "MESSAGE": "OK",
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/oneManage/manage/fabrics/GROUP1",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": [
+            "OneManage fabric probe for a multi-cluster fabric group; routes member operations",
+            "to the OneManage surface"
+        ]
+    },
+    "onemanage_members_ok": {
+        "DATA": {
+            "fabrics": [
+                {"clusterName": "cluster-a", "fabricGroupName": "GROUP1", "name": "member-fabric-1", "type": "vxlanIbgp"},
+                {"clusterName": "cluster-b", "fabricGroupName": "GROUP1", "name": "member-fabric-2", "type": "vxlanEbgp"}
+            ]
+        },
+        "MESSAGE": "OK",
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/oneManage/manage/fabrics/GROUP1/members",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": ["Two multi-cluster fabric group members, each identified by cluster and name"]
+    },
+    "onemanage_add_success": {
+        "DATA": {
+            "fabrics": [
+                {"clusterName": "cluster-a", "fabricGroupName": "GROUP1", "name": "member-fabric-1", "type": "vxlanIbgp"}
+            ]
+        },
+        "MESSAGE": "OK",
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/oneManage/manage/fabrics/GROUP1/actions/addMembers",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": ["Add multi-cluster fabric group member action succeeds"]
+    },
+    "onemanage_remove_success": {
+        "DATA": {},
+        "MESSAGE": "OK",
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/oneManage/manage/fabrics/GROUP1/actions/removeMembers",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": ["Remove multi-cluster fabric group member action succeeds"]
+    },
+    "config_save_success": {
+        "DATA": {"status": "Config save is completed"},
+        "MESSAGE": "OK",
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/GROUP1/actions/configSave",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": ["Fabric group config save action succeeds"]
+    },
+    "deploy_success": {
+        "DATA": {},
+        "MESSAGE": "OK",
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/GROUP1/actions/deploy",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": ["Fabric group global deploy action succeeds"]
+    },
+    "switches_out_of_sync": {
+        "DATA": {
+            "switches": [
+                {"serialNumber": "SN-INSYNC", "additionalData": {"configSyncStatus": "inSync"}},
+                {"serialNumber": "SN-DRIFT", "additionalData": {"configSyncStatus": "outOfSync"}}
+            ]
+        },
+        "MESSAGE": "OK",
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/GROUP1/switches",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": ["One in-sync switch and one out-of-sync switch; only the latter is deployed"]
+    },
+    "switch_deploy_success": {
+        "DATA": {},
+        "MESSAGE": "OK",
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/GROUP1/switchActions/deploy",
+        "RETURN_CODE": 200,
+        "TEST_NOTES": ["Switch-level deploy action succeeds"]
+    }
+}
