@@ -1,0 +1,2610 @@
+import groovy.transform.Field
+
+// ============================================================================
+// WEBEX NOTIFICATION TARGET - both Webex space room IDs live here so the
+// destination can be chosen from the top of the script. Select which one the
+// build notifier posts to in the environment{} block below by (un)commenting
+// the matching WEBEX_ROOM_ID line (PUBLIC vs PRIVATE).
+// ============================================================================
+@Field
+def WEBEX_ROOM_ID_PUBLIC  = "f73a5ae0-ab77-11f0-826f-25e86366ec8e"  // Public space
+@Field
+def WEBEX_ROOM_ID_PRIVATE = "61f7d4c0-9566-11f0-b070-451eba08616c"  // Private space
+
+// ============================================================================
+// CONSTANTS - Configuration values used throughout the pipeline
+// ============================================================================
+// Shared list of playbooks to process for each fabric.
+// Comment out any line to drop it from the nightly run.
+@Field
+def PLAYBOOK_FILES = [
+    // === SMOKE playbooks -- SLIMMED to gap-fillers only (no double-run) ===
+    // Only smoke tests NOT already covered by INTEGRATION_MODULES run here.
+    // The redundant ones stay commented so integration owns them exclusively.
+    // --- Fabric creation DROPPED: very slow (fabric_external ~13m) and fabric_external
+    //     fails ("remove all switches before deleting External_Connectivity_Fabric"). Re-enable
+    //     one at a time once the external-fabric teardown is sorted. ---
+    // 'nd_manage_fabric_external.yaml',
+    // 'nd_manage_fabric_ebgp_vxlan.yaml',
+    // 'nd_manage_fabric_ibgp_vxlan.yaml',
+    // 'nd_manage_fabric_ai_ebgp_vxlan.yaml',
+    // 'nd_manage_fabric_ai_ibgp_vxlan.yaml',
+    // --- Prefix-list (upstream target exists but is NOT in INTEGRATION_MODULES) ---
+    // 'nd_manage_prefix_list.yaml',
+    // --- Redundant with full integration runs: kept OFF to avoid the double-run ---
+    // 'nd_manage_switches.yaml',
+    // 'nd_manage_vpc_pair.yaml',
+    // 'nd_manage_resource_manager.yaml',
+    // 'nd_manage_vrfs.yaml',
+    // 'nd_manage_networks.yaml',
+    // 'nd_manage_route_map.yaml',
+    // 'nd_manage_policy.yaml',
+    // 'nd_manage_policy_group.yaml',
+    // 'nd_manage_l3out.yaml',
+    // 'nd_interface_vpc_access.yaml',
+    // 'nd_interface_vpc_trunk_host.yaml'
+    // NOTE: community_list / extended_community_list have no standalone module
+    // in this build, so no playbook exists for them yet.
+]
+
+// Integration-test modules. Each runs as its OWN ansible-playbook invocation
+// (run_integration_module.yaml with -e test_module=<name>), so every module gets
+// its own PLAY RECAP (passed/failed/skipped) and its own duration. Comment a line
+// out to drop it; uncomment the full list to run the entire suite.
+@Field
+def INTEGRATION_MODULES = [
+    // === FULL integration suite, RE-ORDERED by topology impact (2026-09-02) ===
+    // Rule: role-neutral config first; anything that changes switch roles or fabric
+    // membership runs LAST so the destructive nd_manage_switches (which wipes then
+    // re-adds fabric inventory) cannot starve the earlier role-neutral tests.
+    //
+    // --- Phase 1: role-neutral config (safe, run first) ---
+    'nd_manage_policy',
+    'nd_manage_policy_group',
+    'nd_manage_route_map',
+    'nd_manage_prefix_list',
+    'nd_manage_acl',
+    'nd_manage_l3out',
+    'nd_manage_vrfs',
+    'nd_manage_networks',
+    // nd_manage_links (ND 4.2) is intentionally NOT in this static list: it is gated
+    // behind the ND_LINKS_ENABLE parameter (default false) and appended to the
+    // effective run list AND the result parser at build time (see
+    // effectiveIntegrationModules below). Its numbered test assumes a dedicated
+    // fabric (nd_test_fabric_numbered, default 'ansible-fab-numbered') + switches
+    // n9k-z17-62/63 + Ethernet1/30-32 that the standing nightly fabric lacks, so it
+    // must stay opt-in — otherwise resultTargets fails on the missing output file.
+    // Disabled: vPC-pair substrate cannot form on the current nightly fabric
+    // (VXLAN_EVPN_Fabric / vxlanIbgp), same reason as standalone nd_vpc_pair below.
+    // - 'nd_manage_vpc_pair' is not a valid target name (that is the module name);
+    //   the integration target dir is nd_vpc_pair, which is standalone + disabled.
+    // - the two nd_interface_vpc_* targets require a vPC pair in SETUP; the module
+    //   rejects vpc_pair_details on iBGP/eBGP VXLAN fabrics (actions.py) and the
+    //   profile peer IPs are not injected (nd_prerequisite_enable=false at run time).
+    // Re-enable once the lab provides a supported vPC pair substrate.
+    // 'nd_manage_vpc_pair',
+    // 'nd_interface_vpc_access',
+    // 'nd_interface_vpc_trunk_host',
+    'nd_manage_fabric',
+    'nd_manage_switches',
+    'nd_resource_manager',
+]
+
+// Standalone integration targets cannot run through run_integration_module.yaml
+// because their tasks/main.yaml is a complete playbook (hosts:/gather_facts:),
+// not a role task file. Run these directly with ansible-playbook instead.
+@Field
+def STANDALONE_INTEGRATION_MODULES = [
+    // 'nd_vpc_pair', // Disabled: this device does not support the vPC pair test.
+]
+
+// ND 4.2 interface integration targets. Each is a role target run through
+// run_integration_module.yaml (like INTEGRATION_MODULES) via include_role, so its
+// vars/main.yaml auto-loads. They use their OWN nd_test_* variable namespace, so the
+// shell loop injects nd_test_fabric_name + nd_test_switch_ip (and the parent/member
+// overrides each needs). Opt-in via ND_INTERFACE_ENABLE (default false): appended to
+// the run AND the result parser only when the flag is set, so a lab that has not yet
+// provisioned the substrate is never failed by a missing test-output file.
+// Per-target prerequisites (NO cabling for any of the eight below):
+//   - loopback / svi                 : logical only; need just the target switch present.
+//   - ethernet_access / trunk_host   : need free physical ports Eth1/41-1/50 on the switch
+//                                      (must exist + NOT be port-channel members).
+//   - port_channel_access/trunk_host : need free member ports Eth1/10-1/13 (not in a PC).
+//   - subinterface_managed/unmanaged : need a ROUTED Ethernet parent (Eth1/3) AND an
+//                                      existing Port-channel parent (Port-channel10);
+//                                      setup does NOT create them (ND 207s on L2/absent).
+// The two nd_interface_vpc_* targets stay COMMENTED: their setup creates a vPC pair via
+// nd_manage_vpc_pair (virtual peer-link, so no physical peer-link cable), plus the
+// multi-pair case needs a SECOND vPC pair. The nightly VXLAN_EVPN_Fabric (vxlanIbgp)
+// REJECTS vpc_pair_details (actions.py), so the pair cannot form here. Re-enable once a
+// supported vPC substrate exists (peer IPs via nd_test_vpc_peer1_ip/peer2_ip + pair2).
+@Field
+def INTERFACE_INTEGRATION_MODULES = [
+    'nd_interface_loopback',
+    'nd_interface_svi',
+    'nd_interface_ethernet_access',
+    'nd_interface_ethernet_trunk_host',
+    'nd_interface_port_channel_access',
+    'nd_interface_port_channel_trunk_host',
+    'nd_interface_subinterface_managed',
+    'nd_interface_subinterface_unmanaged',
+    // 'nd_interface_vpc_access',      // needs a vPC-pair substrate (see note above)
+    // 'nd_interface_vpc_trunk_host',  // needs a vPC-pair substrate (see note above)
+]
+
+// Required Python version for the virtual environment
+@Field
+def REQUIRED_PYTHON_VERSION = '3.12.3'
+
+// Fabric reset wait time in seconds (360 = 6 minutes)
+@Field
+def FABRIC_RESET_WAIT_SECONDS = 360
+
+// List of configuration files to download from Consul KV store
+@Field
+def CONSUL_CONFIG_FILES = [
+    'requirements.txt',
+    'requirements.yaml',
+    'integration_config.yml',
+    'inventory.yaml',
+    'ansible.cfg',
+    'reset_fabric.yaml'
+]
+
+// Consul-sourced integration runner. It is downloaded and freshness-validated
+// together with each active playbook before anything can execute.
+@Field
+def CONSUL_RUNNER_FILES = ['run_integration_module.yaml']
+
+// Switch-membership pre-flight / self-heal playbook. Downloaded and installed only
+// when ND_SWITCH_PREFLIGHT is enabled; a missing Consul key is non-fatal (the
+// pre-flight is skipped, never failing the build).
+@Field
+def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml']
+
+@Field
+def CONSUL_PREREQUISITE_FILES = [
+    'nd_prerequisite/nd_prerequisite_wrapper.yaml',
+    'nd_prerequisite/nd_prerequisite_capture.yaml',
+    'nd_prerequisite/nd_prerequisite_reconcile.yaml',
+    'nd_prerequisite/nd_prerequisite_wait.yaml',
+    'nd_prerequisite/apply_change_role.yaml',
+    'nd_prerequisite/apply_ensure_switch_membership.yaml',
+    'nd_prerequisite/apply_ensure_bfd.yaml',
+    'nd_prerequisite/apply_ensure_interface.yaml',
+    'nd_prerequisite/apply_ensure_link.yaml',
+    'nd_prerequisite/apply_verify_resource.yaml',
+    'nd_prerequisite/apply_create_disposable_fabric.yaml',
+    'nd_prerequisite/apply_membership_move.yaml',
+    'nd_prerequisite/apply_ensure_virtual_vpc.yaml'
+]
+
+@Field
+def CONSUL_PREREQUISITE_SUPPORT_FILES = [
+    'nd_prerequisite_orchestrator.py',
+    'validate_nd_prerequisites.py',
+    'nd_prerequisite_profiles.yaml',
+    'fixtures/nd_prerequisite/valid_state.yaml'
+]
+
+// Legacy embedded fallback retained for reference only. The active pipeline no
+// longer materializes this content; the invocation is commented out below.
+@Field
+def RUN_INTEGRATION_MODULE_YAML = '''---
+# =============================================================================
+# Single-module integration-test runner for the cisco.nd collection.
+#
+# Runs the FULL integration suite (every test-case file, testcase='*') for ONE
+# module, selected via the extra var `test_module`. The Jenkins pipeline loops
+# over INTEGRATION_MODULES and invokes this playbook ONCE PER MODULE, so each
+# module produces its OWN PLAY RECAP (ok / failed / skipped) and its OWN
+# duration -- one failing module never hides another's results.
+#
+# HOW IT WORKS
+#   Every integration target (tests/integration/targets/<module>) is a role
+#   whose tasks/main.yaml discovers tests/<testcase>.yaml. With testcase='*' it
+#   runs the entire suite for that module; each test file self-cleans via the
+#   target's tasks/cleanup.yaml. A pre-clean and an always-cleanup keep the
+#   fabric baseline clean regardless of pass/fail.
+#
+# PREREQUISITES
+#   1. roles_path must include the collection's integration targets, e.g.
+#        .../cisco/nd/tests/integration/targets   (set in consul/ansible.cfg).
+#   2. Supply the standard integration vars (fabric_name, switch_serial_1..3)
+#      via Jenkins extra vars or edit the vars below.
+#   3. Inventory must define the `nd` group/host (reuse ../consul/inventory.yaml).
+#
+# RUN
+#   ansible-playbook -i inventory.yaml run_integration_module.yaml -e test_module=nd_manage_policy
+# =============================================================================
+
+- name: "cisco.nd - integration suite for {{ test_module }}"
+  hosts: nd
+  gather_facts: false
+  vars:
+    testcase: "*"                      # every test-case file in the target
+    # Select compatible upstream test directories for network/VRF roles.
+    # Keep MSD and MCFG absent from this list unless their fixtures exist.
+    test_groups: [standalone]
+    # Consumed by the integration tests (override via Jenkins -e variables):
+    fabric_name: VXLAN_EVPN_Fabric
+    # ansible-test normally defines this; alias it here since this harness bypasses ansible-test.
+    ansible_it_fabric: "{{ fabric_name }}"
+    ansible_switch1: 192.0.2.195
+    ansible_switch2: 192.0.2.196
+    ansible_network_interface1: Ethernet1/4
+    nd_network_test_topology: standalone
+    nd_vrf_test_topology: standalone
+    ansible_msd_parent_fabric: ""
+    ansible_msd_child_fabric: ""
+    ansible_msd_switch1: ""
+    ansible_mcfg_parent_fabric: ""
+    ansible_mcfg_child_fabric: ""
+    ansible_mcfg_switch1: ""
+    switch_serial_1: SERIAL00001
+    switch_serial_2: SERIAL00002
+    switch_serial_3: SERIAL00003 
+  tasks:
+    # -------------------------------------------------------------------------
+    # Not every target has tasks/cleanup.yaml, and include_role + tasks_from on
+    # a missing file raises an error that ignore_errors does NOT suppress (it
+    # aborts the play before RUN). Stat-guard the pre/post clean. stat runs on
+    # localhost because the play host `nd` is a network device with no local FS.
+    # -------------------------------------------------------------------------
+    - name: "[{{ test_module }}] discover optional cleanup.yaml"
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tasks/cleanup.yaml"
+      register: cleanup_file
+      delegate_to: localhost
+
+    # -------------------------------------------------------------------------
+    # SETUP: best-effort pre-clean of stale objects for this module, so a prior
+    # aborted run cannot leak state into this one. Skipped when no cleanup.yaml.
+    # -------------------------------------------------------------------------
+    - name: "[{{ test_module }}] SETUP - pre-clean stale objects (best effort)"
+      ansible.builtin.include_role:
+        name: "{{ test_module }}"
+        tasks_from: cleanup.yaml
+      when: cleanup_file.stat.exists
+      ignore_errors: true
+
+    # -------------------------------------------------------------------------
+    # RUN: the module's full suite. A failure here fails the PLAY (so the recap
+    # reports failed>0), while the always-cleanup still resets the fabric.
+    # -------------------------------------------------------------------------
+    - name: "[{{ test_module }}] RUN full integration suite (all test cases)"
+            block:
+                - name: "[{{ test_module }}] validate selected test groups"
+                    ansible.builtin.assert:
+                        that:
+                            - test_groups == ['standalone']
+                        fail_msg: "Only the standalone test group is enabled."
+                    when: test_module in ['nd_manage_networks', 'nd_manage_vrfs']
+
+                - name: "[{{ test_module }}] include selected network/VRF groups"
+                    ansible.builtin.include_role:
+                        name: "{{ test_module }}"
+                    vars:
+                        testcase: "*"
+                        nd_network_test_topology: "{{ test_group }}"
+                        nd_vrf_test_topology: "{{ test_group }}"
+                    loop: "{{ test_groups }}"
+                    loop_control:
+                        loop_var: test_group
+                    when: test_module in ['nd_manage_networks', 'nd_manage_vrfs']
+
+                - name: "[{{ test_module }}] include collection target (all configured cases)"
+                    ansible.builtin.include_role:
+                        name: "{{ test_module }}"
+                    when: test_module not in ['nd_manage_networks', 'nd_manage_vrfs']
+      always:
+        - name: "[{{ test_module }}] CLEANUP - post-clean (required)"
+          ansible.builtin.include_role:
+            name: "{{ test_module }}"
+            tasks_from: cleanup.yaml
+          when: cleanup_file.stat.exists
+'''
+
+pipeline {
+    agent {
+        docker {
+            image 'ansible_nd_setup'
+            args "--user root"
+        }
+    }
+
+    parameters {
+        booleanParam(name: 'DEBUG', defaultValue: false, description: 'Enable debug logging')
+        booleanParam(name: 'ND_PREREQUISITE_ENABLE', defaultValue: false, description: 'Check declared ND module prerequisites before integration tests')
+        booleanParam(name: 'ND_PREREQUISITE_APPLY', defaultValue: false, description: 'Allow live reconciliation of unmet ND prerequisites')
+        booleanParam(name: 'ND_PREREQUISITE_ONLY', defaultValue: false, description: 'Audit integration prerequisites without running module test roles')
+        booleanParam(name: 'ND_SWITCH_PREFLIGHT', defaultValue: true, description: 'Check fabric switch membership before the tests and re-add (onboard) any missing canonical switch so a dropped switch self-heals instead of stalling ~400s/module')
+        booleanParam(name: 'ND_SWITCH_AUTO_ONBOARD', defaultValue: true, description: 'Re-add missing switches automatically (additive, preserve_config); on by default. Disable for audit-only — the pre-flight never fails merely because a switch is missing')
+        booleanParam(name: 'ND_LINKS_ENABLE', defaultValue: true, description: 'Run the ND 4.2 nd_manage_links integration target (appended to the integration run + result parser only when true). ON by default: its numbered test assumes a dedicated fabric (nd_test_fabric_numbered, default "ansible-fab-numbered") with switches n9k-z17-62/63 and interfaces Ethernet1/30-32. Enable only after provisioning that substrate, or pass nd_test_fabric*/nd_test_switch_* overrides. Requires ND 4.2+.')
+        booleanParam(name: 'ND_INTERFACE_ENABLE', defaultValue: false, description: 'Run the ND 4.2 nd_interface_* integration targets (loopback, svi, ethernet_access/trunk_host, port_channel_access/trunk_host, subinterface_managed/unmanaged) through run_integration_module.yaml; appended to the run + result parser only when true. OFF by default because each needs per-testbed substrate: loopback/svi need only the target switch; ethernet/port_channel need free ports (Eth1/41-1/50 and Eth1/10-1/13, NO cabling); subinterface needs a ROUTED Eth parent (Eth1/3) + an existing Port-channel10 (setup does NOT create parents). The two nd_interface_vpc_* targets are intentionally NOT included (need a vPC-pair substrate the vxlanIbgp fabric rejects). Target switch is set by ND_INTERFACE_TEST_SWITCH_IP. Requires ND 4.2+.')
+        string(name: 'ND_INTERFACE_TEST_SWITCH_IP', defaultValue: '192.0.2.195', description: 'Management IP of the fabric switch the nd_interface_* targets configure (default 192.0.2.195 = vxlan_leaf_1 / serial SERIAL00001 in VXLAN_EVPN_Fabric). Used only when ND_INTERFACE_ENABLE is true.')
+    }
+
+    environment {
+        WEBEX_TOKEN = credentials('ANSIBLE_WEBEX_TOKEN')
+        WEBEX_ROOM_ID = "${WEBEX_ROOM_ID_PUBLIC}"   // Public space
+        // WEBEX_ROOM_ID = "${WEBEX_ROOM_ID_PRIVATE}"     // Private space (active)
+        NDFC_USER = credentials('ANSIBLE_NDFC_USERNAME')
+        NDFC_PASSWORD = credentials('ANSIBLE_NDFC_41_117_PASSWORD') //NDFC_32_PASSWORD
+        // ANSIBLE_NXOS_SWITCH_CREDENTIALS = credentials('ANSIBLE_NXOS_SWITCH_CREDENTIALS')
+        ANSIBLE_HOST = "192.0.2.117"
+        CONSUL_URL = "http://198.51.100.155:8500"
+        BASE_DIRECTORY = "$HOME/ansible"
+        COLLECTIONS_DIRECTORY = "$HOME/ansible/collections/ansible_collections/cisco/nd"
+        COLL_DIR = "$HOME/ansible/collections/ansible_collections/cisco"
+        ND_GIT_BRANCH = 'develop'
+        FABRIC_NAME = 'VXLAN_EVPN_Fabric'
+        MESSAGE = "ND NIGHTLY NOTIFICATION \n"
+    }
+    
+    options {
+        disableConcurrentBuilds(abortPrevious: true)
+        timeout(time: 10, unit: 'HOURS')
+    }
+
+    stages {
+        //Environment setup stage
+        stage('Set environment') {
+            steps {
+                echo "⏱ Stage 'Set environment' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+                sh '''#!/bin/bash
+                set -e
+                cd ${BASE_DIRECTORY}
+                export PATH=${BASE_DIRECTORY}:$PATH
+
+                REQUIRED_PYTHON_VERSION="3.12.3"
+
+                # Check if venv exists and verify Python version
+                if [ -d "$HOME/ansible/venv" ]; then
+                    echo "📍 Found existing venv, checking Python version..."
+                    VENV_PYTHON_VERSION=$($HOME/ansible/venv/bin/python --version 2>&1 | awk '{print $2}')
+
+                    if [ "$VENV_PYTHON_VERSION" == "$REQUIRED_PYTHON_VERSION" ]; then
+                        echo "✅ Venv Python version matches: $VENV_PYTHON_VERSION"
+                    else
+                        echo "⚠️  Venv Python version mismatch: $VENV_PYTHON_VERSION (expected: $REQUIRED_PYTHON_VERSION)"
+                        echo "🗑️  Removing old venv and recreating..."
+                        rm -rf $HOME/ansible/venv
+                        python3.12 -m venv $HOME/ansible/venv
+                        echo "✅ Recreated venv with Python $REQUIRED_PYTHON_VERSION"
+                    fi
+                else
+                    echo "🆕 Creating new venv with Python $REQUIRED_PYTHON_VERSION..."
+                    python3.12 -m venv $HOME/ansible/venv
+                    echo "✅ Venv created successfully"
+                fi
+
+                # Activate venv
+                source $HOME/ansible/venv/bin/activate
+
+                # Verify Ansible is using correct Python version
+                if command -v ansible-playbook &> /dev/null; then
+                    ANSIBLE_PYTHON=$(ansible-playbook --version | grep "python version" | awk '{print $4}')
+                    echo "🔍 Ansible is using Python: $ANSIBLE_PYTHON"
+
+                    if [[ "$ANSIBLE_PYTHON" == "$REQUIRED_PYTHON_VERSION"* ]]; then
+                        echo "✅ Ansible Python version matches requirements"
+                    else
+                        echo "❌ ERROR: Ansible Python version mismatch!"
+                        echo "   Expected: $REQUIRED_PYTHON_VERSION"
+                        echo "   Found: $ANSIBLE_PYTHON"
+                        exit 1
+                    fi
+                else
+                    echo "⚠️  ansible-playbook not found in venv (will be installed later)"
+                fi
+
+                echo ""
+                echo "=========================================="
+                echo "📦 PACKAGE VERSIONS"
+                echo "=========================================="
+
+                # Display Ansible version
+                if command -v ansible &> /dev/null; then
+                    ANSIBLE_VERSION=$(ansible --version 2>/dev/null | head -n 1)
+                    echo "✓ Ansible:      $ANSIBLE_VERSION"
+                else
+                    echo "⚠ Ansible:      Not installed (will be installed later)"
+                fi
+
+                # Display ansible-core version
+                if command -v ansible-core &> /dev/null; then
+                    ANSIBLE_CORE_VERSION=$(ansible-core --version 2>/dev/null | head -n 1)
+                    echo "✓ Ansible-core: $ANSIBLE_CORE_VERSION"
+                elif python -c "import ansible; print(ansible.__version__)" 2>/dev/null; then
+                    CORE_VERSION=$(python -c "import ansible; print(ansible.__version__)" 2>/dev/null)
+                    echo "✓ Ansible-core: $CORE_VERSION"
+                else
+                    echo "⚠ Ansible-core: Not installed (will be installed later)"
+                fi
+
+                # Display pydantic version
+                if python -c "import pydantic" 2>/dev/null; then
+                    PYDANTIC_VERSION=$(python -c "import pydantic; print(pydantic.__version__)" 2>/dev/null)
+                    echo "✓ Pydantic:     $PYDANTIC_VERSION"
+                else
+                    echo "⚠ Pydantic:     Not installed"
+                fi
+
+                # Display deepdiff version
+                if python -c "import deepdiff" 2>/dev/null; then
+                    DEEPDIFF_VERSION=$(python -c "import deepdiff; print(deepdiff.__version__)" 2>/dev/null)
+                    echo "✓ DeepDiff:     $DEEPDIFF_VERSION"
+                else
+                    echo "⚠ DeepDiff:     Not installed"
+                fi
+
+                # Display jinja2 version
+                if python -c "import jinja2" 2>/dev/null; then
+                    JINJA2_VERSION=$(python -c "import jinja2; print(jinja2.__version__)" 2>/dev/null)
+                    echo "✓ Jinja2:       $JINJA2_VERSION"
+                else
+                    echo "⚠ Jinja2:       Not installed"
+                fi
+
+                echo "=========================================="
+                echo ""
+
+                cd ${COLL_DIR}
+                echo "📍 Current working directory: $(pwd)"
+                echo "✅ Environment validation complete"
+                
+                '''
+            }
+        }
+
+        //Clone repository stage
+        stage('Clone Repository') {
+            steps {
+                // echo timestamp when stage starts
+                echo "⏱ Stage 'Clone Repository' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+                sh '''#!/bin/bash
+                set -euo pipefail
+                export GIT_DISCOVERY_ACROSS_FILESYSTEM=1
+
+                : "${COLL_DIR:?COLL_DIR must be set}"
+                : "${BASE_DIRECTORY:?BASE_DIRECTORY must be set}"
+                : "${ND_GIT_BRANCH:?ND_GIT_BRANCH must be set}"
+
+                REPO_URL="https://github.com/CiscoDevNet/ansible-nd.git"
+                TARGET_DIR="${COLL_DIR}/nd"
+                BACKUP_ROOT="${COLL_DIR}/.nd-backups"
+                STAGING_DIR=""
+                BACKUP_DIR=""
+
+                fail() {
+                    echo "❌ $*" >&2
+                    exit 1
+                }
+
+                rollback_backup_or_fail() {
+                    local ROLLBACK_REASON=$1
+                    if [ -n "${BACKUP_DIR}" ] && [ -e "${BACKUP_DIR}" ] && [ ! -e "${TARGET_DIR}" ]; then
+                        if mv -- "${BACKUP_DIR}" "${TARGET_DIR}"; then
+                            BACKUP_DIR=""
+                            fail "${ROLLBACK_REASON}; original checkout restored"
+                        fi
+                    fi
+                    fail "${ROLLBACK_REASON}; automatic rollback could not restore the checkout"
+                }
+
+                rollback_installed_checkout_or_fail() {
+                    local ROLLBACK_REASON=$1
+                    local FAILED_INSTALL_DIR
+                    if [ -n "${BACKUP_DIR}" ] && [ -d "${BACKUP_DIR}" ] && [ -d "${TARGET_DIR}" ]; then
+                        FAILED_INSTALL_DIR="${COLL_DIR}/.nd-staging-rollback-${RUN_STAMP}-${RUN_ID}-$$"
+                        [ ! -e "${FAILED_INSTALL_DIR}" ] || \
+                            fail "${ROLLBACK_REASON}; rollback staging path already exists"
+                        cd "${COLL_DIR}"
+                        if mv -- "${TARGET_DIR}" "${FAILED_INSTALL_DIR}"; then
+                            STAGING_DIR="${FAILED_INSTALL_DIR}"
+                            if mv -- "${BACKUP_DIR}" "${TARGET_DIR}"; then
+                                BACKUP_DIR=""
+                                fail "${ROLLBACK_REASON}; original checkout restored"
+                            fi
+                            if [ ! -e "${TARGET_DIR}" ] && mv -- "${FAILED_INSTALL_DIR}" "${TARGET_DIR}"; then
+                                STAGING_DIR=""
+                            fi
+                        fi
+                    fi
+                    fail "${ROLLBACK_REASON}; automatic rollback could not restore the checkout"
+                }
+
+                cleanup_staging() {
+                    if [ -n "${STAGING_DIR}" ] && [ -e "${STAGING_DIR}" ]; then
+                        case "${STAGING_DIR}" in
+                            "${COLL_DIR}"/.nd-staging-*) rm -rf -- "${STAGING_DIR}" ;;
+                            *)
+                                echo "❌ Refusing to clean unexpected staging path: ${STAGING_DIR}" >&2
+                                return 1
+                                ;;
+                        esac
+                    fi
+                }
+
+                sanitize_backup_dir() {
+                    local backup_path=$1
+                    case "${backup_path}" in
+                        "${BACKUP_ROOT}"/nd-*) ;;
+                        *) return 1 ;;
+                    esac
+                    [ -d "${backup_path}" ] && [ ! -L "${backup_path}" ] || return 1
+                    chmod 700 "${backup_path}" || return 1
+                    find "${backup_path}" -mindepth 1 -maxdepth 1 \
+                        \\( -type f -o -type l \\) \
+                        \\( -name 'inventory*.yaml' -o -name 'inventory*.yml' -o \
+                           -name 'test_output*' -o -name 'deploy_output*' \\) -delete
+                }
+
+                prune_backups() {
+                    local requested_keep=${1:-}
+                    local selected_keep="${requested_keep}"
+                    local backup_list
+                    local candidate
+
+                    [ -e "${BACKUP_ROOT}" ] || return 0
+                    [ -d "${BACKUP_ROOT}" ] && [ ! -L "${BACKUP_ROOT}" ] || \
+                        fail "Backup root is not a safe directory: ${BACKUP_ROOT}"
+                    chmod 700 "${BACKUP_ROOT}"
+                    if [ -n "${selected_keep}" ]; then
+                        sanitize_backup_dir "${selected_keep}" || fail "Could not sanitize retained backup"
+                    fi
+
+                    backup_list=$(find "${BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d -name 'nd-*' -print | LC_ALL=C sort -r)
+                    while IFS= read -r candidate; do
+                        [ -n "${candidate}" ] || continue
+                        case "${candidate}" in
+                            "${BACKUP_ROOT}"/nd-*) ;;
+                            *) fail "Refusing to prune unexpected backup path: ${candidate}" ;;
+                        esac
+                        if [ -z "${selected_keep}" ]; then
+                            selected_keep="${candidate}"
+                            sanitize_backup_dir "${selected_keep}" || fail "Could not sanitize retained backup"
+                            continue
+                        fi
+                        [ "${candidate}" = "${selected_keep}" ] && continue
+                        rm -rf -- "${candidate}"
+                    done <<< "${backup_list}"
+                }
+                trap cleanup_staging EXIT
+
+                [ -d "${COLL_DIR}" ] || fail "Collections parent does not exist: ${COLL_DIR}"
+                [ -r "${BASE_DIRECTORY}/venv/bin/activate" ] || fail "Virtual environment is not available"
+                git check-ref-format --branch "${ND_GIT_BRANCH}" >/dev/null 2>&1 || \
+                    fail "Invalid Git branch name: ${ND_GIT_BRANCH}"
+
+                # Resolve and validate the requested branch before modifying the checkout.
+                if ! REMOTE_OUTPUT=$(git ls-remote --exit-code --refs "${REPO_URL}" "refs/heads/${ND_GIT_BRANCH}"); then
+                    fail "Unable to resolve remote branch ${ND_GIT_BRANCH}; existing checkout was not replaced"
+                fi
+                REMOTE_LINE_COUNT=$(printf '%s\n' "${REMOTE_OUTPUT}" | awk 'NF { count++ } END { print count + 0 }')
+                [ "${REMOTE_LINE_COUNT}" -eq 1 ] || \
+                    fail "Remote branch lookup returned ${REMOTE_LINE_COUNT} records; expected exactly one"
+                read -r REMOTE_COMMIT REMOTE_REF REMOTE_EXTRA <<< "${REMOTE_OUTPUT}"
+                [ -z "${REMOTE_EXTRA:-}" ] || fail "Remote branch lookup returned unexpected fields"
+                [ "${REMOTE_REF}" = "refs/heads/${ND_GIT_BRANCH}" ] || \
+                    fail "Remote branch lookup returned unexpected ref: ${REMOTE_REF}"
+                if ! [[ "${REMOTE_COMMIT}" =~ ^[0-9a-fA-F]{40}$ || "${REMOTE_COMMIT}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+                    fail "Remote branch lookup returned an invalid object ID"
+                fi
+                echo "🔍 Validated remote branch ${REMOTE_REF} at ${REMOTE_COMMIT}"
+
+                LOCAL_COMMIT="missing"
+                LOCAL_TREE="missing"
+                LOCAL_BRANCH="missing"
+                LOCAL_ORIGIN="missing"
+                REMOTE_TREE=""
+                TRACKED_STATUS=""
+                UNTRACKED_FILES=""
+                EXISTING_REPOSITORY=false
+                REUSE_CHECKOUT=false
+
+                [ ! -L "${TARGET_DIR}" ] || fail "Refusing to replace symlinked checkout: ${TARGET_DIR}"
+                if [ -e "${TARGET_DIR}" ] && [ ! -d "${TARGET_DIR}" ]; then
+                    fail "Checkout path exists but is not a directory: ${TARGET_DIR}"
+                fi
+
+                if [ -d "${TARGET_DIR}" ] && \
+                   git -C "${TARGET_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1 && \
+                   LOCAL_COMMIT=$(git -C "${TARGET_DIR}" rev-parse --verify HEAD 2>/dev/null); then
+                    TOPLEVEL=$(git -C "${TARGET_DIR}" rev-parse --show-toplevel)
+                    TOPLEVEL_PHYSICAL=$(cd "${TOPLEVEL}" && pwd -P)
+                    TARGET_PHYSICAL=$(cd "${TARGET_DIR}" && pwd -P)
+                    [ "${TOPLEVEL_PHYSICAL}" != "${TARGET_PHYSICAL}" ] || EXISTING_REPOSITORY=true
+                fi
+
+                if [ "${EXISTING_REPOSITORY}" = true ]; then
+                    echo "📍 Found existing nd repository; fetching validated branch for comparison..."
+                    git -C "${TARGET_DIR}" fetch --no-tags "${REPO_URL}" \
+                        "+refs/heads/${ND_GIT_BRANCH}:refs/remotes/origin/${ND_GIT_BRANCH}"
+
+                    FETCHED_COMMIT=$(git -C "${TARGET_DIR}" rev-parse --verify \
+                        "refs/remotes/origin/${ND_GIT_BRANCH}^{commit}")
+                    [ "${FETCHED_COMMIT}" = "${REMOTE_COMMIT}" ] || \
+                        fail "Remote branch changed during validation; retry with a fresh remote snapshot"
+                    git -C "${TARGET_DIR}" cat-file -e "${REMOTE_COMMIT}^{commit}"
+                    LOCAL_TREE=$(git -C "${TARGET_DIR}" rev-parse --verify "${LOCAL_COMMIT}^{tree}")
+                    REMOTE_TREE=$(git -C "${TARGET_DIR}" rev-parse --verify "${REMOTE_COMMIT}^{tree}")
+                    LOCAL_BRANCH=$(git -C "${TARGET_DIR}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+                    LOCAL_ORIGIN=$(git -C "${TARGET_DIR}" remote get-url origin 2>/dev/null || true)
+                    TRACKED_STATUS=$(git -C "${TARGET_DIR}" status --porcelain=v1 --untracked-files=no)
+                    UNTRACKED_FILES=$(git -C "${TARGET_DIR}" ls-files --others --exclude-standard)
+
+                    echo "🔍 Local commit: ${LOCAL_COMMIT}; Remote commit: ${REMOTE_COMMIT}"
+                    echo "🔍 Local tree: ${LOCAL_TREE}; Remote tree: ${REMOTE_TREE}"
+                    echo "🔍 Local branch: ${LOCAL_BRANCH:-detached}; Expected branch: ${ND_GIT_BRANCH}"
+                    if [ "${LOCAL_ORIGIN}" = "${REPO_URL}" ]; then
+                        echo "✅ Local origin matches the canonical repository"
+                    else
+                        echo "⚠️ Local origin does not match the canonical repository (URL withheld)"
+                    fi
+
+                    if [ -n "${TRACKED_STATUS}" ]; then
+                        echo "⚠️ Tracked working-tree changes require a clean replacement:"
+                        printf '%s\n' "${TRACKED_STATUS}"
+                    else
+                        echo "✅ No tracked working-tree changes"
+                    fi
+
+                    if [ -n "${UNTRACKED_FILES}" ]; then
+                        echo "ℹ️ Untracked files are excluded from source equality and reported separately:"
+                        while IFS= read -r untracked_file; do
+                            [ -n "${untracked_file}" ] || continue
+                            case "${untracked_file}" in
+                                ansible.cfg|requirements.txt|requirements.yaml|reset_fabric.yaml|run_integration_module.yaml|inventory*.yaml|inventory*.yml|test_output*|deploy_output*|nd_*.yaml)
+                                    echo "   runtime-generated untracked: ${untracked_file}"
+                                    ;;
+                                *) echo "   other untracked: ${untracked_file}" ;;
+                            esac
+                        done <<< "${UNTRACKED_FILES}"
+                    else
+                        echo "ℹ️ No untracked files"
+                    fi
+
+                    if [ "${LOCAL_COMMIT}" = "${REMOTE_COMMIT}" ] && \
+                       [ "${LOCAL_TREE}" = "${REMOTE_TREE}" ] && \
+                       [ "${LOCAL_BRANCH}" = "${ND_GIT_BRANCH}" ] && \
+                       [ "${LOCAL_ORIGIN}" = "${REPO_URL}" ] && \
+                       [ -z "${TRACKED_STATUS}" ]; then
+                        REUSE_CHECKOUT=true
+                    fi
+                elif [ -d "${TARGET_DIR}" ]; then
+                    echo "⚠️ Existing nd directory is not the expected Git repository; it will be backed up only after staging verifies"
+                else
+                    echo "📍 No existing nd checkout found"
+                fi
+
+                if [ "${REUSE_CHECKOUT}" = true ]; then
+                    echo "✅ Local repository commit, tree, branch, origin, and tracked state match; reusing checkout"
+                    prune_backups ""
+                    cd "${TARGET_DIR}"
+                    source "${BASE_DIRECTORY}/venv/bin/activate"
+                    trap - EXIT
+                    echo "✅ Using verified repository and virtual environment"
+                    exit 0
+                fi
+
+                RUN_STAMP=$(date +%Y%m%dT%H%M%S)
+                if [[ "${BUILD_NUMBER:-}" =~ ^[0-9]+$ ]]; then
+                    RUN_ID="${BUILD_NUMBER}"
+                else
+                    RUN_ID="manual"
+                fi
+                STAGING_DIR="${COLL_DIR}/.nd-staging-${RUN_STAMP}-${RUN_ID}-$$"
+                [ ! -e "${STAGING_DIR}" ] || fail "Staging path already exists: ${STAGING_DIR}"
+
+                echo "🚀 Cloning ${ND_GIT_BRANCH} into staging: ${STAGING_DIR}"
+                git clone --branch "${ND_GIT_BRANCH}" --single-branch --no-tags "${REPO_URL}" "${STAGING_DIR}"
+
+                STAGED_COMMIT=$(git -C "${STAGING_DIR}" rev-parse --verify HEAD)
+                STAGED_TREE=$(git -C "${STAGING_DIR}" rev-parse --verify "HEAD^{tree}")
+                STAGED_REMOTE_TREE=$(git -C "${STAGING_DIR}" rev-parse --verify "${REMOTE_COMMIT}^{tree}")
+                STAGED_BRANCH=$(git -C "${STAGING_DIR}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+                STAGED_ORIGIN=$(git -C "${STAGING_DIR}" remote get-url origin)
+                STAGED_TRACKED_STATUS=$(git -C "${STAGING_DIR}" status --porcelain=v1 --untracked-files=no)
+
+                [ "${STAGED_COMMIT}" = "${REMOTE_COMMIT}" ] || fail "Staged clone commit does not match validated remote commit"
+                [ "${STAGED_TREE}" = "${STAGED_REMOTE_TREE}" ] || fail "Staged clone tree does not match validated remote tree"
+                if [ -n "${REMOTE_TREE}" ]; then
+                    [ "${STAGED_TREE}" = "${REMOTE_TREE}" ] || fail "Staged clone tree differs from fetched remote tree"
+                fi
+                [ "${STAGED_BRANCH}" = "${ND_GIT_BRANCH}" ] || fail "Staged clone is on the wrong branch"
+                [ "${STAGED_ORIGIN}" = "${REPO_URL}" ] || fail "Staged clone has an unexpected origin"
+                [ -z "${STAGED_TRACKED_STATUS}" ] || fail "Staged clone contains tracked working-tree changes"
+                echo "✅ Staged clone verified at commit ${STAGED_COMMIT}, tree ${STAGED_TREE}"
+
+                if [ -d "${TARGET_DIR}" ]; then
+                    [ ! -L "${BACKUP_ROOT}" ] || fail "Refusing to use symlinked backup root: ${BACKUP_ROOT}"
+                    ORIGINAL_UMASK=$(umask)
+                    umask 077
+                    mkdir -p "${BACKUP_ROOT}"
+                    umask "${ORIGINAL_UMASK}"
+                    chmod 700 "${BACKUP_ROOT}"
+
+                    BACKUP_DIR="${BACKUP_ROOT}/nd-${RUN_STAMP}-${RUN_ID}-$$"
+                    [ ! -e "${BACKUP_DIR}" ] || fail "Backup path already exists: ${BACKUP_DIR}"
+                    mv -- "${TARGET_DIR}" "${BACKUP_DIR}"
+                    if ! sanitize_backup_dir "${BACKUP_DIR}"; then
+                        rollback_backup_or_fail "Backup sanitization failed"
+                    fi
+
+                    if mv -- "${STAGING_DIR}" "${TARGET_DIR}"; then
+                        STAGING_DIR=""
+                    else
+                        rollback_backup_or_fail "Atomic install failed"
+                    fi
+
+                    prune_backups "${BACKUP_DIR}"
+                    echo "🛡️ Previous checkout retained at ${BACKUP_DIR} (mode 700, generated inventories/output excluded)"
+                else
+                    if mv -- "${STAGING_DIR}" "${TARGET_DIR}"; then
+                        STAGING_DIR=""
+                    else
+                        fail "Atomic install of the verified staged checkout failed"
+                    fi
+                fi
+
+                cd "${TARGET_DIR}"
+                if ! INSTALLED_COMMIT=$(git rev-parse --verify HEAD); then
+                    rollback_installed_checkout_or_fail "Installed checkout commit could not be read"
+                fi
+                if ! INSTALLED_TREE=$(git rev-parse --verify "HEAD^{tree}"); then
+                    rollback_installed_checkout_or_fail "Installed checkout tree could not be read"
+                fi
+                [ "${INSTALLED_COMMIT}" = "${REMOTE_COMMIT}" ] || \
+                    rollback_installed_checkout_or_fail "Installed checkout commit verification failed"
+                [ "${INSTALLED_TREE}" = "${STAGED_TREE}" ] || \
+                    rollback_installed_checkout_or_fail "Installed checkout tree verification failed"
+                if [ -z "${BACKUP_DIR}" ]; then
+                    prune_backups ""
+                fi
+                source "${BASE_DIRECTORY}/venv/bin/activate"
+                trap - EXIT
+                echo "✅ Installed verified repository at commit ${INSTALLED_COMMIT}, tree ${INSTALLED_TREE}"
+                '''
+            }
+        }
+
+        //stage('Fix Ansible Compatibility') {
+            // steps {
+            //     echo "⏱ Stage 'Fix Ansible Compatibility' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+            //     sh '''#!/bin/bash
+            //     set -e
+            //     cd ${COLLECTIONS_DIRECTORY}
+
+            //     echo "🔧 Fixing deprecated Ansible 'include' directives..."
+
+            //     # Find and fix deprecated include syntax in YAML files
+            //     find . -name "*.yaml" -o -name "*.yml" | while read file; do
+            //         if grep -q "^[[:space:]]*- { include:" "$file" 2>/dev/null; then
+            //             echo "  Fixing: $file"
+            //             # Replace old syntax with include_tasks
+            //             sed -i.bak 's/^\\([[:space:]]*\\)- { include: \\(.*\\), tags: \\[\\(.*\\)\\] }/\\1- include_tasks: \\2\\n\\1  tags: [\\3]/' "$file"
+            //             rm -f "$file.bak"
+            //         fi
+            //     done
+
+            //     echo "✅ Ansible compatibility fixes applied"
+            //     '''
+            // }
+        //}
+
+        stage('Test NDFC/ND Versions Sequentially') {
+            steps {
+                script {
+                    // echo timestamp when stage starts
+                    echo "⏱ Stage 'Test ND' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+                    
+                    
+                    def ndfcVersions = [
+                        // [
+                        //     version: '3.2',
+                        //     versionId: 'NDFC32',
+                        //     host: 'NDFC_HOST_32',
+                        //     server: '198.51.100.187',
+                        //     credentials: 'NDFC_CREDENTIALS_32',
+                        //     fabric_name: '${FABRIC_NAME}',
+                        // ],
+                        [
+                            version: '4.3', 
+                            versionId: 'ND43',
+                            host: 'ND_HOST_43',
+                            server: 'ANSIBLE_HOST',
+                            credentials: 'ND_CREDENTIALS_112',
+                            fabric_name: 'VXLAN_EVPN_Fabric',
+                            fabric_name_2: 'External_Connectivity_Fabric',   // maps to nd_test_fabric2_name (l3out)
+                            switches: [
+                                [name: 'vxlan_leaf_1', ip: '192.0.2.195', serial: 'SERIAL00001', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
+                                [name: 'vxlan_leaf_2', ip: '192.0.2.196', serial: 'SERIAL00002', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
+                                [name: 'vxlan_spine_1', ip: '192.0.2.194', serial: 'SERIAL00003', fabric: 'VXLAN_EVPN_Fabric', role: 'spine'],
+                                [name: 'vxlan_border_1', ip: '192.0.2.88', serial: 'SERIAL00004', fabric: 'VXLAN_EVPN_Fabric', role: 'border'],
+                                [name: 'external_edge_1', ip: '192.0.2.89', serial: 'SERIAL00005', fabric: 'External_Connectivity_Fabric', role: 'edge_router'],
+                                [name: 'external_edge_2', ip: '192.0.2.90', serial: 'SERIAL00006', fabric: 'External_Connectivity_Fabric', role: 'edge_router'],
+                            ],
+                            vpc_pair_switch1_serial: 'SERIAL00001',   // vxlan_leaf_1
+                            vpc_pair_switch2_serial: 'SERIAL00002',   // vxlan_leaf_2
+                            vpc_pair_fabric_type: 'vxlanIbgp',
+                        ]
+                    ]
+
+                    // Set environment variable with active ND versions for build start notification
+                    def activeVersions = ndfcVersions.collect { it.version }.join(', ')
+                    // DEBUG: Used for sample testing. def pb = 'dcnm_policy.yaml'
+                    env.ACTIVE_DCNM_VERSIONS = activeVersions
+                    echo "🎯 Active ND versions for this run: ${activeVersions}"
+
+                    // Initialize global failure tracking
+                    env.PIPELINE_FAILED = 'false'
+                    env.TEST_RESULT_SUMMARY = ''
+                    env.SKIPLIST_FILES = ''
+                    env.BUILD_FAILURE_REASON = ''
+                    env.TOTAL_PASSED_COUNT = '0'
+                    env.TOTAL_FAILED_COUNT = '0'
+
+                    // Declarative parameters can be registered with false defaults
+                    // before callers can submit values. DEBUG safely bootstraps one
+                    // read-only audit only while all dedicated controls are false.
+                    def prerequisiteBootstrapAudit = params.DEBUG &&
+                        !(params.ND_PREREQUISITE_ENABLE ?: false) &&
+                        !(params.ND_PREREQUISITE_APPLY ?: false) &&
+                        !(params.ND_PREREQUISITE_ONLY ?: false)
+                    def prerequisiteEnable = prerequisiteBootstrapAudit || (params.ND_PREREQUISITE_ENABLE ?: false)
+                    def prerequisiteApply = prerequisiteBootstrapAudit ? false : (params.ND_PREREQUISITE_APPLY ?: false)
+                    def prerequisiteOnly = prerequisiteBootstrapAudit || (params.ND_PREREQUISITE_ONLY ?: false)
+                    env.ND_PREREQUISITE_ENABLE_EFFECTIVE = prerequisiteEnable.toString()
+                    env.ND_PREREQUISITE_APPLY_EFFECTIVE = prerequisiteApply.toString()
+                    env.ND_PREREQUISITE_ONLY_EFFECTIVE = prerequisiteOnly.toString()
+                    if (prerequisiteBootstrapAudit) {
+                        echo "ℹ️ DEBUG bootstrap: running a prerequisite-only audit to register dedicated parameters"
+                    }
+
+                    // Run lint on the freshly cloned collection BEFORE the version
+                    // loop injects Consul operational files (reset_fabric.yaml, the
+                    // per-module smoke playbooks, nd_prerequisite/*, and
+                    // run_integration_module.yaml) into the collection root. Those
+                    // injected runtime files are not part of the shipped collection and
+                    // are not covered by its .ansible-lint, so linting after injection
+                    // produced false failures that flipped the build to FAILURE.
+                    // Best effort: never block the Webex notification.
+                    try {
+                        runLintCheck()
+                    } catch (Exception e) {
+                        rethrowIfInterrupt(e)
+                        echo "⚠️ runLintCheck() failed but will not stop pipeline: ${e.getMessage()}"
+                        env.PIPELINE_FAILED = 'true'
+                    }
+
+                    // Loop through each ND version sequentially
+                    for (ndfcConfig in ndfcVersions) {
+                        // Define failure flag for this NDFC version
+                        def failureFlagName = "NDFC_${ndfcConfig.versionId}_FAILED"
+                        setFailureFlag(failureFlagName, false)
+                        env.CONSUL_SYNC_FAILED = 'false'
+                        env.REQUIRED_FILES_READY = 'false'
+                        
+                        try {
+                            echo "🚀 Starting tests for Nexus Dashboard/NDFC ${ndfcConfig.version}"
+                            runNDFCVersionTests(ndfcConfig)
+                            //DEBUG: Used for sample testing. parseTestResults(ndfcConfig, failureFlagName, pb)
+                            echo "✅ Completed tests for Nexus Dashboard/NDFC ${ndfcConfig.version}"
+                            
+                            // Check if this version failed
+                            if (isFailureFlagSet(failureFlagName)) {
+                                env.PIPELINE_FAILED = 'true'
+                            }
+                        } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
+                            throw e
+                        } catch (Exception e) {
+                            echo "❌ NDFC ${ndfcConfig.version} testing failed: ${e.getMessage()}"
+                            setFailureFlag(failureFlagName, true)
+                            env.PIPELINE_FAILED = 'true'
+                            if (env.CONSUL_SYNC_FAILED == 'true' || env.REQUIRED_FILES_READY != 'true') {
+                                echo "🛑 Required runtime files were not freshly synchronized; aborting before reset or further tests"
+                                throw e
+                            }
+                            echo "🔄 Continuing to next NDFC version..."
+                        }
+
+                        // A prerequisite-only audit performs controller GETs only; do not
+                        // mutate the lab with the normal reset after that audit.
+                        if (env.ND_PREREQUISITE_ONLY_EFFECTIVE == 'true') {
+                            echo "ℹ️ Skipping fabric reset during prerequisite-only audit"
+                        } else {
+                            // Reset fabric after each ND version (including the last one) - best effort
+                            try {
+                                resetFabricBetweenVersions()
+                            } catch (Exception e) {
+                                echo "❌ resetFabricBetweenVersions() failed: ${e.getMessage()}"
+                                env.PIPELINE_FAILED = 'true'
+                                throw e
+                            }
+                        }
+                    }
+
+                    // Bundle every log this build produced (per-module console output,
+                    // skip summaries, lint + consolidated summary) into ONE build-numbered
+                    // zip and archive it BEFORE cleanWs() removes the workspace copy.
+                    bundleAllLogs()
+
+                    // Clean workspace - best effort
+                    try {
+                        cleanWs()
+                    } catch (Exception e) {
+                        rethrowIfInterrupt(e)
+                        echo "⚠️ cleanWs() failed but will not stop pipeline: ${e.getMessage()}"
+                        env.PIPELINE_FAILED = 'true'
+                    }
+
+                    // The per-target runner intentionally continues after failures so
+                    // every result can be collected. Convert the accumulated flag into
+                    // the real Jenkins result after all versions and best-effort steps.
+                    if (env.PIPELINE_FAILED == 'true') {
+                        echo "❌ One or more required pipeline checks failed; marking the Jenkins build as FAILURE"
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                try {
+                    echo "⏱ Post-build Webex notification block started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+
+                    // Build the message in Groovy (avoid doing Groovy inside shell)
+                    def message = "ND NIGHTLY NOTIFICATION \n"
+                    message += "📊 Pipeline completed for the ND Nightly run - Build ${BUILD_NUMBER} \n"
+                    message += "\n"
+
+                    // Add grand total summary
+                    def totalPassed = env.TOTAL_PASSED_COUNT ?: '0'
+                    def totalFailed = env.TOTAL_FAILED_COUNT ?: '0'
+                    //message += "\n📊 GRAND TOTAL ACROSS ALL TESTS:\n"
+                    message += "Total Passed: ${totalPassed}\n"
+                    message += "Total Failed: ${totalFailed}\n"
+                    message += "\n📝 DETAILED TEST RESULTS:\n"
+                    message += "${env.TEST_RESULT_SUMMARY} \n"
+
+                    // Lint summary is captured into env during the in-container lint stage
+                    // because the Docker-agent workspace/FilePath is gone here in post{}.
+                    def lintSummary = (env.LINT_SUMMARY ?: '').trim()
+                    if (lintSummary) {
+                        // Webex renders markdown; <small> shrinks the block, <br> keeps line breaks inside it
+                        def lintSmall = lintSummary.replace('\n', '<br>')
+                        message += "\n─────────\n"
+                        message += "<small>🧹 Ansible-lint Results:<br>${lintSmall}</small>\n"
+                    }
+
+                    // Collapse per-module failure reasons to a single count; the per-module
+                    // detail is already in DETAILED TEST RESULTS above and in the console log.
+                    if (env.BUILD_FAILURE_REASON) {
+                        def failCount = env.BUILD_FAILURE_REASON.split('\n').findAll { it.trim() }.size()
+                        message += "\n─────────\n"
+                        message += "❌ ${failCount} module failure(s) — see DETAILED TEST RESULTS above / console\n"
+                    }
+
+                    message += "🔗 Results: ${JOB_URL}${BUILD_NUMBER}/console"
+                    // Link the archived module-wise skipped-tests summary artifact(s).
+                    def skipFiles = (env.SKIPLIST_FILES ?: '').split('\n').findAll { it.trim() }
+                    skipFiles.each { sf ->
+                        message += "\n📋 Skipped tests: ${JOB_URL}${BUILD_NUMBER}/artifact/${sf}"
+                    }
+                    // Link the full build-numbered log bundle (all per-module console
+                    // output, skip summaries, lint + consolidated summary in one zip).
+                    if ((env.LOG_BUNDLE_FILE ?: '').trim()) {
+                        message += "\n📦 All logs (zip): ${JOB_URL}${BUILD_NUMBER}/artifact/${env.LOG_BUNDLE_FILE}"
+                    }
+
+                    // Send directly to the Webex REST API with httpRequest (the same step
+                    // used for Consul). No workspace/pwd/python needed, so this works from
+                    // post{} even though the Docker agent's FilePath context is gone.
+                    def markdownJson = message
+                        .replace('\\', '\\\\')
+                        .replace('"', '\\"')
+                        .replace('\r', '\\r')
+                        .replace('\n', '\\n')
+                        .replace('\t', '\\t')
+                    // Emojis reach the console fine but Webex showed '?' because the httpRequest
+                    // client encodes the body as ISO-8859-1. Escape every non-ASCII char to a JSON
+                    // unicode escape so the payload is pure ASCII and the wire charset cannot matter.
+                    def asciiSafe = new StringBuilder()
+                    for (int i = 0; i < markdownJson.length(); i++) {
+                        char ch = markdownJson.charAt(i)
+                        if (ch > 0x7E || ch < 0x20) {
+                            asciiSafe.append(String.format('\\u%04x', (int) ch))
+                        } else {
+                            asciiSafe.append(ch)
+                        }
+                    }
+                    def payload = '{"roomId":"' + env.WEBEX_ROOM_ID + '","markdown":"' + asciiSafe.toString() + '"}'
+
+                    withCredentials([string(credentialsId: 'ANSIBLE_WEBEX_TOKEN', variable: 'WEBEX_TOKEN')]) {
+                        def resp = httpRequest(
+                            url: 'https://webexapis.com/v1/messages',
+                            httpMode: 'POST',
+                            contentType: 'APPLICATION_JSON_UTF8',
+                            customHeaders: [[name: 'Authorization', value: "Bearer ${WEBEX_TOKEN}", maskValue: true]],
+                            requestBody: payload,
+                            validResponseCodes: '100:599'
+                        )
+                        if (resp.status == 200) {
+                            echo "📊 Pipeline summary notification sent to Webex (HTTP ${resp.status})"
+                        } else {
+                            echo "⚠️ Webex notification returned HTTP ${resp.status} (ignored to keep pipeline running): ${resp.content}"
+                        }
+                    }
+                } catch (Exception e) {
+                    rethrowIfInterrupt(e)
+                    // Absolutely never let Webex notification break the pipeline
+                    echo "⚠️ Webex notification post-build block encountered an error but will be ignored: ${e.getMessage()}"
+                }
+            }
+        }
+        cleanup {
+            script {
+                // Also runs after early fail-closed Consul errors, when the normal
+                // end-of-stage cleanup is bypassed. This prevents partially
+                // downloaded inventories or other required files from persisting.
+                // cleanWs() needs a workspace/FilePath; under the Docker agent that
+                // context is gone in post{}, so keep it best-effort.
+                try {
+                    echo "🧹 Final workspace cleanup (including partial Consul downloads)"
+                    cleanWs()
+                } catch (Exception e) {
+                    rethrowIfInterrupt(e)
+                    echo "⚠️ Final cleanup skipped (no workspace context in post): ${e.getMessage()}"
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Runs ansible-lint with production profile and reports results
+ */
+def runLintCheck() {
+    stage('Run Lint Check') {
+            echo "⏱ Running lint check..."
+            try {
+            sh '''#!/bin/bash
+            set -e
+            cd ${COLLECTIONS_DIRECTORY}
+            
+            # Activate venv
+            source $HOME/ansible/venv/bin/activate
+            
+            # Run ansible-lint with production profile and capture output
+            echo "🔍 Running ansible-lint with production profile..."
+            LINT_OUTPUT=$(ansible-lint --profile=production 2>&1) || LINT_STATUS=$?
+            
+            # Process the output to extract and format the summary
+            if [ -n "$LINT_STATUS" ]; then
+                # Full rule-violation table -> keep in the console log for debugging.
+                SUMMARY_BLOCK=$(echo "$LINT_OUTPUT" | awk '/^# Rule Violation Summary/{f=1;next} /^Failed:/{print;exit} f')
+                echo "# Rule Violation Summary"
+                echo "$SUMMARY_BLOCK"
+
+                # Single totals line, without the trailing "Profile ... required." text.
+                FAILED_LINE=$(echo "$LINT_OUTPUT" | grep '^Failed:' | head -1 | sed 's/ Profile.*$//')
+                FAILURE_COUNT=$(echo "$LINT_OUTPUT" | grep '^Failed:' | awk '{print $2}')
+                echo ""
+                echo "❌ Lint check failed with $FAILURE_COUNT violations"
+
+                # Notification gets ONLY the single totals line (kept minimal); the full
+                # rule table stays in the console log above for debugging.
+                echo "$FAILED_LINE" > "${BASE_DIRECTORY}/lint_summary.txt"
+                exit 1
+            else
+                echo "✅ ansible-lint check passed with no violations"
+                echo "✅ ansible-lint check passed with no violations" > "${BASE_DIRECTORY}/lint_summary.txt"
+            fi
+            '''
+            } finally {
+                // Capture the lint summary (pass OR fail) into env so the post{} Webex
+                // notification can include it; the Docker-agent workspace is gone by
+                // post time, so it cannot be read from a file there.
+                try {
+                    def lintFilePath = "${BASE_DIRECTORY}/lint_summary.txt"
+                    if (fileExists(lintFilePath)) {
+                        env.LINT_SUMMARY = readFile(lintFilePath).trim()
+                    }
+                } catch (Exception e) {
+                    rethrowIfInterrupt(e)
+                    echo "⚠️ Could not capture lint summary into env: ${e.getMessage()}"
+                }
+            }
+    }
+}
+
+/**
+ * Sets a failure flag in the Jenkins environment.
+ * @param flagName The name of the failure flag.
+ * @param value Boolean indicating failure (true) or success (false).
+ */
+def setFailureFlag(flagName, value) {
+    // Use Jenkins environment variables to track failure flags
+    env."${flagName}" = value.toString()
+}
+
+/**
+ * Checks if a failure flag is set in the Jenkins environment.
+ * @param flagName The name of the failure flag.
+ * @return true if failure flag is set to 'true', false otherwise.
+ */
+def isFailureFlagSet(flagName) {
+    return env."${flagName}"?.toBoolean() ?: false
+}
+
+/**
+ * Re-throw pipeline aborts/timeouts (build timeout or user abort) so a broad
+ * catch (Exception e) can never swallow an interrupt and let a wedged build run on.
+ */
+def rethrowIfInterrupt(e) {
+    if (e instanceof org.jenkinsci.plugins.workflow.steps.FlowInterruptedException ||
+        e instanceof InterruptedException) {
+        throw e
+    }
+}
+
+/**
+ * Verifies that an inventory file exists and provides helpful error messages if not.
+ * @param inventoryPath The full path to the inventory file to verify.
+ * @return true if file exists, throws error if not found.
+ */
+def verifyInventoryFile(inventoryPath) {
+    def fileExists = sh(
+        script: """
+            if [ -f "${inventoryPath}" ]; then
+                echo "✅ Inventory file verified: ${inventoryPath}"
+                exit 0
+            else
+                echo "⚠️ Inventory file not found: ${inventoryPath}"
+                echo "📂 Available inventory files in ${COLLECTIONS_DIRECTORY}:"
+                ls -l ${COLLECTIONS_DIRECTORY}/inventory*.yaml 2>/dev/null || echo "No inventory files found"
+                exit 1
+            fi
+        """,
+        returnStatus: true
+    )
+
+    if (fileExists != 0) {
+        error("Inventory file not found: ${inventoryPath}")
+    }
+    return true
+}
+
+/**
+ * Archives test output file with timestamp and cleans up workspace.
+ * @param ndfcConfig The NDFC configuration object.
+ * @param playbookName The name of the playbook (e.g., 'dcnm_policy.yaml').
+ */
+def archiveTestOutput(ndfcConfig, playbookName) {
+    def timestamp = new Date().format('yyyyMMdd_HHmmss')
+    def baseFileName = "test_output_${ndfcConfig.fabric_name}_${ndfcConfig.versionId}_${playbookName}"
+    def archivedFileName = "${baseFileName}_${timestamp}.txt"
+
+    echo "📦 Archiving test output: ${archivedFileName}"
+
+    try {
+        sh """
+            cd ${COLLECTIONS_DIRECTORY}
+            if [ -f "${baseFileName}.txt" ]; then
+                # Rename with timestamp
+                mv "${baseFileName}.txt" "${archivedFileName}"
+                echo "✅ Renamed to ${archivedFileName}"
+
+                # Copy to workspace for archiving, then make it world-readable.
+                # The container writes as root with a restrictive umask, so the
+                # non-root Jenkins controller cannot read it in archiveArtifacts
+                # and the archive fails with AccessDeniedException (build #14: 11/11).
+                cp "${archivedFileName}" "${env.WORKSPACE}/${archivedFileName}"
+                chmod 0644 "${env.WORKSPACE}/${archivedFileName}"
+                echo "📋 Copied to workspace for archiving"
+            else
+                echo "⚠️ Base file not found: ${baseFileName}.txt"
+                exit 1
+            fi
+        """
+
+        // Archive the file from workspace
+        archiveArtifacts artifacts: "${archivedFileName}", allowEmptyArchive: true, fingerprint: true
+        echo "✅ Archived: ${archivedFileName}"
+
+        // Clean up workspace copy after archiving
+        sh "rm -f ${env.WORKSPACE}/${archivedFileName}"
+        echo "🧹 Cleaned up workspace copy"
+    } catch (Exception e) {
+        echo "⚠️ Failed to archive ${baseFileName}: ${e.getMessage()}"
+    }
+}
+
+/**
+ * Archives the module-wise skipped-tests summary for a fabric/version and records
+ * its artifact filename so the post{} Webex block can link it. Best-effort.
+ */
+def archiveSkipList(ndfcConfig) {
+    def skipFileName = "skipped_tests_${ndfcConfig.fabric_name}_${ndfcConfig.versionId}.txt"
+    try {
+        // The summary is written into COLLECTIONS_DIRECTORY by the test-run shell.
+        def present = sh(script: "cd ${COLLECTIONS_DIRECTORY} && [ -s '${skipFileName}' ]", returnStatus: true) == 0
+        if (!present) {
+            echo "ℹ️ No skipped-tests summary to archive: ${skipFileName}"
+            return
+        }
+        sh """
+            cd ${COLLECTIONS_DIRECTORY}
+            cp "${skipFileName}" "${env.WORKSPACE}/${skipFileName}"
+            chmod 0644 "${env.WORKSPACE}/${skipFileName}"
+        """
+        archiveArtifacts artifacts: "${skipFileName}", allowEmptyArchive: true, fingerprint: true
+        sh "rm -f ${env.WORKSPACE}/${skipFileName}"
+        // Accumulate one filename per fabric/version for the Webex link.
+        env.SKIPLIST_FILES = (env.SKIPLIST_FILES ?: '').trim() ? "${env.SKIPLIST_FILES}\n${skipFileName}" : skipFileName
+        echo "📦 Archived skipped-tests summary: ${skipFileName}"
+    } catch (Exception e) {
+        echo "⚠️ Failed to archive skipped-tests summary ${skipFileName}: ${e.getMessage()}"
+    }
+}
+
+/**
+ * Bundles every log this build produced — per-module test/console output, the
+ * module-wise skip summaries, the ansible-lint result and a consolidated run
+ * summary — into ONE build-numbered zip, archives it (so it shows in the build's
+ * artifact/file list) and records its name for the post{} Webex link. Runs on the
+ * agent (COLLECTIONS_DIRECTORY + workspace exist here) and never fails the build.
+ */
+def bundleAllLogs() {
+    def zipName = "nd_nightly_logs_build_${BUILD_NUMBER}.zip"
+    try {
+        // Consolidated, human-readable run view, built from the same env the Webex
+        // block uses, so the zip is self-contained even when the raw Jenkins console
+        // needs a login to fetch.
+        def summary = """ND NIGHTLY RUN - Build ${BUILD_NUMBER}
+Generated: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+Console: ${JOB_URL}${BUILD_NUMBER}/console
+
+Total Passed: ${env.TOTAL_PASSED_COUNT ?: '0'}
+Total Failed: ${env.TOTAL_FAILED_COUNT ?: '0'}
+
+DETAILED TEST RESULTS:
+${env.TEST_RESULT_SUMMARY ?: ''}
+"""
+        if ((env.LINT_SUMMARY ?: '').trim()) {
+            summary += """
+ANSIBLE-LINT RESULTS:
+${env.LINT_SUMMARY}
+"""
+        }
+        if ((env.BUILD_FAILURE_REASON ?: '').trim()) {
+            summary += """
+MODULE FAILURE REASONS:
+${env.BUILD_FAILURE_REASON}
+"""
+        }
+        writeFile file: "pipeline_summary_build_${BUILD_NUMBER}.txt", text: summary
+
+        // Stage every on-disk log (they live under COLLECTIONS_DIRECTORY / BASE_DIRECTORY
+        // and survive cleanWs() because those are under $HOME, not the workspace), grab a
+        // best-effort copy of the live console, then zip with python (the agent is a
+        // python:3.12 image; the `zip` binary is not installed, zipfile always is).
+        withEnv(["LOG_ZIP=${zipName}"]) {
+            sh '''
+                set -u
+                STAGE="${WORKSPACE}/nd_logs_build_${BUILD_NUMBER}"
+                rm -rf "${STAGE}"; mkdir -p "${STAGE}"
+
+                cp "${COLLECTIONS_DIRECTORY}"/test_output_*.txt   "${STAGE}/" 2>/dev/null || true
+                cp "${COLLECTIONS_DIRECTORY}"/skipped_tests_*.txt "${STAGE}/" 2>/dev/null || true
+                cp "${BASE_DIRECTORY}/lint_summary.txt"           "${STAGE}/" 2>/dev/null || true
+                cp "${WORKSPACE}/pipeline_summary_build_${BUILD_NUMBER}.txt" "${STAGE}/" 2>/dev/null || true
+
+                # Full live Jenkins console needs Overall/Read; on a locked-down controller
+                # this 403s -> drop a pointer so the zip always says where it lives.
+                if [ -n "${BUILD_URL:-}" ] && curl -fsS --max-time 30 "${BUILD_URL}consoleText" -o "${STAGE}/console_build_${BUILD_NUMBER}.log" 2>/dev/null; then
+                    :
+                else
+                    echo "Full live console (Jenkins login required): ${BUILD_URL}consoleText" > "${STAGE}/console_build_${BUILD_NUMBER}.README.txt"
+                fi
+
+                cd "${WORKSPACE}"
+                python3 - "$LOG_ZIP" "$STAGE" <<'PY'
+import os, sys, zipfile
+zip_path, stage = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+    for root, _, files in os.walk(stage):
+        for name in sorted(files):
+            full = os.path.join(root, name)
+            z.write(full, os.path.relpath(full, stage))
+print("wrote", zip_path)
+PY
+                chmod 0644 "${WORKSPACE}/${LOG_ZIP}" 2>/dev/null || true
+                rm -rf "${STAGE}"
+            '''
+        }
+
+        archiveArtifacts artifacts: zipName, allowEmptyArchive: true, fingerprint: true
+        env.LOG_BUNDLE_FILE = zipName
+        echo "📦 Archived full log bundle: ${zipName}"
+    } catch (Exception e) {
+        rethrowIfInterrupt(e)
+        echo "⚠️ Failed to bundle logs into ${zipName}: ${e.getMessage()}"
+    }
+}
+
+/**
+ * Downloads a file from Consul KV store and writes it to the workspace.
+ * @param fileName The name of the file in Consul KV (e.g., 'requirements.txt').
+ * @param localFileName Optional local filename (defaults to same as fileName).
+ * @return true if the required download succeeded; otherwise aborts the build.
+ */
+def downloadFromConsul(fileName, localFileName = null) {
+    def targetFileName = localFileName ?: fileName
+    try {
+        echo "📥 Downloading ${fileName} from Consul..."
+        def response = httpRequest(
+            url: "${CONSUL_URL}/v1/kv/ansible-nd/${fileName}?raw",
+            validResponseCodes: '200'
+        )
+        if (response.content == null || response.content.isEmpty()) {
+            error("Required Consul key returned empty content: ${fileName}")
+        }
+        def lastSeparator = targetFileName.lastIndexOf('/')
+        def stagingFileName = "${targetFileName.replace('/', '_')}.consul-download"
+        writeFile file: stagingFileName, text: response.content
+        if (lastSeparator > 0) {
+            def parentDirectory = targetFileName.substring(0, lastSeparator)
+            sh "mkdir -p -- '${parentDirectory}'"
+        }
+        sh "mv -- '${stagingFileName}' '${targetFileName}'"
+        echo "✅ Downloaded: ${fileName}"
+        return true
+    } catch (Exception e) {
+        env.CONSUL_SYNC_FAILED = 'true'
+        error("Required Consul download failed for ${fileName}: ${e.getMessage()}")
+    }
+}
+
+/**
+ * Legacy fallback for the integration runner. The active pipeline downloads the
+ * runner from Consul; its former invocation remains commented out below.
+ */
+def materializeEmbeddedTests() {
+    writeFile file: 'run_integration_module.yaml', text: RUN_INTEGRATION_MODULE_YAML
+    echo "📝 Wrote embedded integration runner: run_integration_module.yaml"
+}
+
+/**
+ * Parses deployment results from the deployment output.
+ * Sets failure flag if deployment errors are detected.
+ * @param ndfcConfig The NDFC configuration object.
+ * @param failureFlagName The failure flag to set on failure.
+ * Yet to be used
+ */
+def parseDeploymentResults(ndfcConfig, failureFlagName) {
+    // Example: parse deploy_output_<fabric>_<versionId>.txt for errors
+    def deployOutputFile = "deploy_output_${ndfcConfig.fabric_name}_${ndfcConfig.versionId}.txt"
+    def deployOutput
+    try {
+        deployOutput = readFile(deployOutputFile)
+    } catch (Exception e) {
+        echo "⚠️  Deployment output file not found: ${deployOutputFile} -> marking ${failureFlagName} = true"
+        // If no output file is present, treat as a failure to surface the issue
+        setFailureFlag(failureFlagName, true)
+        return
+    }
+
+    if (deployOutput.contains("FAILED") || deployOutput.contains("ERROR") || !deployOutput.contains("failed=0")) {
+        echo "❌ Deployment errors detected in ${deployOutputFile}"
+        setFailureFlag(failureFlagName, true)
+    } else {
+        setFailureFlag(failureFlagName, false)
+    }
+}
+
+/**
+ * Parses test results from the test output.
+ * Sets failure flag if test failures are detected.
+ * @param ndfcConfig The NDFC configuration object.
+ * @param failureFlagName The failure flag to set on failure.
+ */
+def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expectedRunMarker = '') {
+    echo "⏱ Function 'parseTestResults' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+
+    // DEBUG: Used for sample test. def testOutputFileResponse = httpRequest(url: "http://198.51.100.155:8500/v1/kv/ansible-nd/sample_output.txt?raw")
+    // def testOutputFileName = "sample_output.txt"
+    def testOutputFileName = "${env.COLLECTIONS_DIRECTORY}/test_output_${ndfcConfig.fabric_name}_${ndfcConfig.versionId}_${pb}.txt"
+    def totalFailedCount = 0
+
+    try {
+        // Read the test output file (already created by the test run shell script).
+        // It lives under COLLECTIONS_DIRECTORY (outside the Jenkins workspace) and was
+        // written by `tee` inside the container. On the docker agent readFile() throws
+        // NoSuchFileException for that out-of-workspace absolute path even though
+        // fileExists() sees it, which mislabeled every passing module as
+        // "could not parse test output". Read it the same way it was written: a
+        // container-side cat via sh.
+        def testOutput = sh(script: "cat -- '${testOutputFileName}'", returnStdout: true)
+        echo "📊 Parsing test results from: ${testOutputFileName}"
+
+        // A previous build's successful recap must never satisfy this run. Every
+        // execution writes the marker before Ansible starts, and parsing fails
+        // closed unless the output contains this run's exact marker.
+        if (!expectedRunMarker || !testOutput.contains("[RUN_MARKER: ${expectedRunMarker}]")) {
+            setFailureFlag(failureFlagName, true)
+            error("Test stage failed: output for ${pb} is missing the current-run marker")
+        }
+
+        // The shell records a nonzero ansible-playbook exit after tee completes.
+        // Parse it independently of PLAY RECAP so unreachable/parser failures
+        // cannot be mistaken for success merely because failed=0.
+        def ansibleExitStatus = 0
+        def exitStatusMarker = '[ANSIBLE_EXIT_STATUS:'
+        if (testOutput.contains(exitStatusMarker)) {
+            def outputLines = testOutput.split('\n')
+            for (int i = 0; i < outputLines.size(); i++) {
+                def line = outputLines[i]
+                def markerIdx = line.indexOf(exitStatusMarker)
+                if (markerIdx >= 0) {
+                    def afterMarker = line.substring(markerIdx + exitStatusMarker.length())
+                    def endIdx = afterMarker.indexOf(']')
+                    if (endIdx > 0) {
+                        def statusValue = afterMarker.substring(0, endIdx).trim().replaceAll('[^0-9]', '')
+                        if (statusValue.length() > 0) {
+                            def parsedStatus = statusValue as Integer
+                            if (parsedStatus > ansibleExitStatus) {
+                                ansibleExitStatus = parsedStatus
+                            }
+                        }
+                    }
+                }
+            }
+            echo "📍 Recorded ansible-playbook exit status: ${ansibleExitStatus}"
+        }
+
+        // Extract duration from test output
+        def durationSeconds = 0
+        def durationStr = "N/A"
+        if (testOutput.contains('[DURATION_SECONDS:')) {
+            def durationIdx = testOutput.indexOf('[DURATION_SECONDS:')
+            if (durationIdx >= 0) {
+                def afterDuration = testOutput.substring(durationIdx + 19) // "[DURATION_SECONDS: ".length() = 19
+                def endIdx = afterDuration.indexOf(']')
+                if (endIdx > 0) {
+                    def durationValue = afterDuration.substring(0, endIdx).trim()
+                    try {
+                        durationSeconds = durationValue as Integer
+                        def minutes = durationSeconds / 60
+                        def seconds = durationSeconds % 60
+                        durationStr = String.format("%dm %ds", minutes as Integer, seconds as Integer)
+                        echo "⏱️ Test duration: ${durationStr} (${durationSeconds}s)"
+                    } catch (Exception e) {
+                        echo "⚠️ Could not parse duration: ${durationValue}"
+                        durationStr = "N/A"
+                    }
+                }
+            }
+        }
+
+        // Pattern 1: Check for Ansible PLAY RECAP failures using simple string operations
+        // Example: "leaf1 : ok=5 changed=3 unreachable=0 failed=2 skipped=1"
+        def failedCount = 0
+        def okCount = 0
+        def skippedCount = 0
+        def hasRecap = testOutput.contains('PLAY RECAP')
+        
+        if (hasRecap) {
+            echo "✅ Found PLAY RECAP in output"
+            // Use simple string matching instead of regex to avoid CPS issues
+            def lines = testOutput.split('\n')
+            for (int i = 0; i < lines.size(); i++) {
+                def line = lines[i]
+                // Look for "failed=" pattern
+                if (line.contains('failed=')) {
+                    // Extract the number after "failed="
+                    def failedIdx = line.indexOf('failed=')
+                    if (failedIdx >= 0) {
+                        def afterFailed = line.substring(failedIdx + 7) // "failed=".length() = 7
+                        // Find the next space or end of string
+                        def endIdx = afterFailed.indexOf(' ')
+                        def failedStr = (endIdx > 0) ? afterFailed.substring(0, endIdx) : afterFailed
+                        // Remove any non-digit characters
+                        failedStr = failedStr.replaceAll('[^0-9]', '')
+                        if (failedStr.length() > 0) {
+                            def failed = failedStr as Integer
+                            failedCount += failed
+                            echo " Found failed=${failed} in line: ${line.trim()}"
+                        }
+                    }
+                }
+                // Look for "ok=" pattern
+                if (line.contains('ok=')) {
+                    // Extract the number after "ok="
+                    def okIdx = line.indexOf('ok=')
+                    if (okIdx >= 0) {
+                        def afterOk = line.substring(okIdx + 3) // "ok=".length() = 3
+                        // Find the next space or end of string
+                        def endIdx = afterOk.indexOf(' ')
+                        def okStr = (endIdx > 0) ? afterOk.substring(0, endIdx) : afterOk
+                        // Remove any non-digit characters
+                        okStr = okStr.replaceAll('[^0-9]', '')
+                        if (okStr.length() > 0) {
+                            def ok = okStr as Integer
+                            okCount += ok
+                            echo " Found ok=${ok} in line: ${line.trim()}"
+                        }
+                    }
+                }
+                // Look for "skipped=" pattern
+                if (line.contains('skipped=')) {
+                    def skipIdx = line.indexOf('skipped=')
+                    if (skipIdx >= 0) {
+                        def afterSkip = line.substring(skipIdx + 8) // "skipped=".length() = 8
+                        def endIdx = afterSkip.indexOf(' ')
+                        def skipStr = (endIdx > 0) ? afterSkip.substring(0, endIdx) : afterSkip
+                        skipStr = skipStr.replaceAll('[^0-9]', '')
+                        if (skipStr.length() > 0) {
+                            def skipped = skipStr as Integer
+                            skippedCount += skipped
+                            echo " Found skipped=${skipped} in line: ${line.trim()}"
+                        }
+                    }
+                }
+            }
+
+            // Every run gates the build and is counted in both totals (smoke included).
+            totalFailedCount += failedCount
+            def currentTotalFailed = env.TOTAL_FAILED_COUNT as Integer
+            env.TOTAL_FAILED_COUNT = (currentTotalFailed + failedCount).toString()
+            def currentTotalPassed = env.TOTAL_PASSED_COUNT as Integer
+            env.TOTAL_PASSED_COUNT = (currentTotalPassed + okCount).toString()
+
+            echo "📊 Playbook failed count: ${failedCount} | Total accumulated failures: ${env.TOTAL_FAILED_COUNT} | Duration: ${durationStr} | Playbook: ${pb} | Fabric: ${ndfcConfig.fabric_name}"
+
+            // Per-module result line (DCNM-style) from this module's OWN PLAY RECAP.
+            // All runs are shown; smoke playbooks are tagged "(smoke)".
+            def pbLabel = (testType == 'smoke') ? "${pb} (smoke)" : pb
+            env.TEST_RESULT_SUMMARY += "\n 📋 Playbook: ${pbLabel} | Fabric: ${ndfcConfig.fabric_name} | ND: ${ndfcConfig.version} | Passed: ${okCount} | Failed: ${failedCount} | Skipped: ${skippedCount} | Duration: ${durationStr}"
+        }
+        
+        // Check for failures
+        if (ansibleExitStatus > 0) {
+            setFailureFlag(failureFlagName, true)
+            echo "❌ ${ndfcConfig.fabric_name} Ansible execution exited with status ${ansibleExitStatus}"
+            error("Test stage failed: Ansible exited with status ${ansibleExitStatus}")
+        } else if (hasRecap && failedCount > 0) {
+            setFailureFlag(failureFlagName, true)
+            //env.BUILD_FAILURE_REASON += "❌ ${ndfcConfig.fabric_name} tests failed on ND ${ndfcConfig.version}: ${failedCount} tasks failed (Playbook: ${pb})"
+            echo "❌ ${ndfcConfig.fabric_name} test parsing: ${failedCount} tasks failed"
+            error("Test stage failed: ${failedCount} tasks failed")
+        } else if (hasRecap) {
+            echo "✅ ${ndfcConfig.fabric_name} test parsing completed - All tasks passed (0 failed)"
+        } else {
+            // Pattern 2: Fallback - check for generic test pattern using string operations
+            echo "⚠️ No PLAY RECAP found, checking for generic test pattern"
+            if (testOutput.contains(' tests, ') && testOutput.contains(' failed, ')) {
+                // Try to extract test counts using string operations
+                def lines = testOutput.split('\n')
+                for (int i = 0; i < lines.size(); i++) {
+                    def line = lines[i]
+                    if (line.contains(' tests, ') && line.contains(' passed, ') && line.contains(' failed, ')) {
+                        echo "Found test summary line: ${line}"
+                        // Simple parsing without regex
+                        def parts = line.split(',')
+                        def failedTests = 0
+                        for (int j = 0; j < parts.size(); j++) {
+                            if (parts[j].contains(' failed')) {
+                                def failedPart = parts[j].trim().split(' ')[0]
+                                failedTests = failedPart as Integer
+                                break
+                            }
+                        }
+                        
+                        if (failedTests > 0) {
+                            setFailureFlag(failureFlagName, true)
+                            if (env.BUILD_FAILURE_REASON) {
+                                env.BUILD_FAILURE_REASON += "\n"
+                            }
+                            env.BUILD_FAILURE_REASON += "❌ ${ndfcConfig.fabric_name} tests failed on ND ${ndfcConfig.version}: ${failedTests} tests failed (Playbook: ${pb})"
+                            echo "❌ ${ndfcConfig.fabric_name} test parsing: ${failedTests} tests failed"
+                            error("Test stage failed: ${failedTests} tests failed")
+                        } else {
+                            echo "✅ ${ndfcConfig.fabric_name} test parsing completed - 0 tests failed"
+                        }
+                        break
+                    }
+                }
+            } else {
+                echo "⚠️ Could not parse test results for ${ndfcConfig.fabric_name} - no standard pattern found"
+                echo "📄 Output preview: ${testOutput.substring(0, Math.min(300, testOutput.length()))}"
+                // No PLAY RECAP and no generic pattern -> the target errored before
+                // any task ran (e.g. a playbook-style target run via include_role, or
+                // a parse error). Surface it instead of silently dropping the module.
+                def pbLabelErr = (testType == 'smoke') ? "${pb} (smoke)" : pb
+                env.TEST_RESULT_SUMMARY += "\n ⚠️ Playbook: ${pbLabelErr} | Fabric: ${ndfcConfig.fabric_name} | ND: ${ndfcConfig.version} | ERROR: did not run (no PLAY RECAP -- see console)"
+                setFailureFlag(failureFlagName, true)
+            }
+        }
+        
+    } catch (FileNotFoundException e) {
+        echo "⚠️ Test output file not found: ${testOutputFileName}"
+        setFailureFlag(failureFlagName, true)
+        // Keep the DETAILED table consistent: show this module as an ERROR row
+        // (same shape as the pass/fail rows) instead of leaving the section empty.
+        env.TEST_RESULT_SUMMARY += "\n ⚠️ Playbook: ${pb} | Fabric: ${ndfcConfig.fabric_name} | ND: ${ndfcConfig.version} | ERROR: no test output (see console)"
+        if (env.BUILD_FAILURE_REASON) {
+            env.BUILD_FAILURE_REASON += "\n"
+        }
+        env.BUILD_FAILURE_REASON += "❌ ${ndfcConfig.fabric_name} test output file not found on ND ${ndfcConfig.version} (Playbook: ${pb})"
+        error("Test output file not found: ${testOutputFileName}")
+    } catch (Exception e) {
+        if (e.getMessage().contains("Test stage failed")) {
+            // Re-throw test errors
+            throw e
+        } else {
+            // Handle file reading or parsing errors
+            echo "⚠️ Error parsing test results for ${ndfcConfig.fabric_name}: ${e.getMessage()}"
+            setFailureFlag(failureFlagName, true)
+            // Keep the DETAILED table consistent: show this module as an ERROR row
+            // (same shape as the pass/fail rows) instead of leaving the section empty.
+            env.TEST_RESULT_SUMMARY += "\n ⚠️ Playbook: ${pb} | Fabric: ${ndfcConfig.fabric_name} | ND: ${ndfcConfig.version} | ERROR: could not parse test output (see console)"
+            if (env.BUILD_FAILURE_REASON) {
+                env.BUILD_FAILURE_REASON += "\n"
+            }
+            env.BUILD_FAILURE_REASON += "❌ ${ndfcConfig.fabric_name} ${pb} on ND ${ndfcConfig.version}: test output missing/unreadable"
+            error("${ndfcConfig.fabric_name} test result parsing failed: ${e.getMessage()}")
+        }
+    }
+}
+
+/**
+ * Resets the network fabric between NDFC versions.
+ * Runs ansible-playbook to reset specified fabrics.
+ */
+def resetFabricBetweenVersions() {
+    stage('Reset Fabric Between NDFC Versions') {
+        // echo timestamp when stage starts
+        echo "⏱ Stage 'Reset Fabric Between NDFC Versions' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+        try {
+            // Use dynamic inventory if available, otherwise fallback to default inventory in collections dir
+            def currentInventory = env.CURRENT_NDFC_INVENTORY ?: "${COLLECTIONS_DIRECTORY}/inventory.yaml"
+            def resetFabricYaml = """${COLLECTIONS_DIRECTORY}/reset_fabric.yaml"""
+
+            echo "📍 Using inventory for reset: ${currentInventory}"
+            echo "📍 Using reset fabric yaml: ${resetFabricYaml}"
+
+            // Verify inventory file exists using reusable function
+            verifyInventoryFile(currentInventory)
+
+            // List of fabrics to reset
+            ['${FABRIC_NAME}'].each { fabric ->
+                try {
+                    echo "🔄 Resetting fabric: ${fabric}"
+                    // IMPORTANT: cd into the collection dir and activate the venv in the
+                    // SAME shell as ansible-playbook so the collection's ansible.cfg
+                    // (collections_path/roles_path) is auto-loaded. A standalone
+                    // `sh "cd ..."` runs in its own shell and has no effect, which made
+                    // ansible run from the Jenkins workspace and fail to resolve
+                    // cisco.nd.* modules (e.g. nd_manage_l3out).
+                    // #!/bin/bash is required: the default /bin/sh (dash) has no
+                    // `source` builtin, so this exited 127 and skipped the reset.
+                    sh """#!/bin/bash
+                        set -e
+                        cd ${COLLECTIONS_DIRECTORY}
+                        source \$HOME/ansible/venv/bin/activate
+                        ansible-playbook -i ${currentInventory} ${resetFabricYaml}
+                    """
+                    echo "✅ Reset ${fabric} successfully"
+                } catch (Exception e) {
+                    echo "⚠️  Failed to reset ${fabric}: ${e.getMessage()}"
+                    throw e
+                }
+            }
+
+            echo "⏳ Waiting 3 minutes for fabric reset to complete..."
+            //sleep(180) // Wait 3 minutes to ensure fabric reset completes
+            echo "✅ Fabric reset completed, ready for next ND version"
+
+        } catch (Exception e) {
+            echo "⚠️  Fabric reset encountered issues: ${e.getMessage()}"
+            throw e
+        }
+    }
+}
+
+def runNDFCVersionTests(ndfcConfig) {
+    stage(" NDFC ${ndfcConfig.version} - Run NDFCVersion Tests") {
+        // echo timestamp when stage starts
+        echo "⏱ Stage 'NDFC ${ndfcConfig.version} - Run NDFCVersion Tests' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+        env.NDFC_HOST = env.NDFC_HOST_CURRENT
+        script {
+            echo "📥 Downloading configuration files from Consul..."
+
+            // Download all configuration files using helper function
+            CONSUL_CONFIG_FILES.each { file ->
+                downloadFromConsul(file)
+            }
+
+            sh 'mkdir -p nd_prerequisite'
+            CONSUL_PREREQUISITE_FILES.each { file ->
+                downloadFromConsul(file, file)
+            }
+            sh 'mkdir -p fixtures/nd_prerequisite'
+            CONSUL_PREREQUISITE_SUPPORT_FILES.each { file ->
+                downloadFromConsul(file, file)
+            }
+
+            // Download every active individual playbook and the integration runner
+            // from Consul. Nothing is materialized from the embedded common code.
+            def consulPlaybookFiles = (PLAYBOOK_FILES + CONSUL_RUNNER_FILES).unique()
+            consulPlaybookFiles.each { pb ->
+                downloadFromConsul(pb)
+            }
+
+            // Optional switch-membership pre-flight playbook. Non-required: if the
+            // Consul key is absent (not yet synced) the pre-flight is skipped rather
+            // than failing the build, so clear the fail-closed flag the loop guard reads.
+            env.ND_SWITCH_PREFLIGHT_READY = 'false'
+            if (params.ND_SWITCH_PREFLIGHT) {
+                try {
+                    CONSUL_PREFLIGHT_FILES.each { pb -> downloadFromConsul(pb) }
+                    env.ND_SWITCH_PREFLIGHT_READY = 'true'
+                } catch (Exception e) {
+                    env.CONSUL_SYNC_FAILED = 'false'
+                    echo "⚠️ Switch pre-flight playbook unavailable in Consul; skipping pre-flight: ${e.getMessage()}"
+                }
+            }
+
+            // Legacy common-code fallback intentionally disabled. Keep this line
+            // commented so Consul remains the only active playbook source.
+            // materializeEmbeddedTests()
+
+            echo "✅ Config, individual playbooks, and integration runner downloaded from Consul"
+        }
+    }
+
+    // Install version-specific dependencies
+    stage("NDFC ${ndfcConfig.version} - Install version-specific Dependencies") {
+        // echo timestamp when stage starts
+        echo "⏱ Stage 'NDFC ${ndfcConfig.version} - Install version-specific Dependencies' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+        // Install every Consul-sourced playbook into the collection. The list is
+        // derived from the active playbooks plus the required integration runner.
+        def preflightInstallFiles = (env.ND_SWITCH_PREFLIGHT_READY == 'true') ? CONSUL_PREFLIGHT_FILES : []
+        def moveFiles = (PLAYBOOK_FILES + CONSUL_RUNNER_FILES + CONSUL_PREREQUISITE_FILES + CONSUL_PREREQUISITE_SUPPORT_FILES + preflightInstallFiles).unique().join(' ')
+        withEnv(["MOVE_FILES=${moveFiles}"]) {
+            sh '''#!/bin/bash
+                set -euo pipefail
+
+                install_required_file() {
+                    required_file=$1
+                    destination="${COLLECTIONS_DIRECTORY}/${required_file}"
+                    [ -f "${required_file}" ] && [ ! -L "${required_file}" ] || {
+                        echo "❌ Required freshly downloaded file is missing or unsafe: ${required_file}" >&2
+                        exit 1
+                    }
+                    [ -s "${required_file}" ] || {
+                        echo "❌ Required freshly downloaded file is empty: ${required_file}" >&2
+                        exit 1
+                    }
+                    mkdir -p "$(dirname "${destination}")"
+                    [ ! -d "${destination}" ] || {
+                        echo "❌ Required file destination is unexpectedly a directory: ${destination}" >&2
+                        exit 1
+                    }
+                    mv -- "${required_file}" "${destination}"
+                    [ -f "${destination}" ] || {
+                        echo "❌ Required file was not installed: ${destination}" >&2
+                        exit 1
+                    }
+                }
+
+                install_required_file requirements.txt
+                install_required_file requirements.yaml
+                install_required_file integration_config.yml
+                install_required_file inventory.yaml
+                install_required_file ansible.cfg
+                install_required_file reset_fabric.yaml
+
+                # Install every required Consul-sourced playbook.
+                for p in ${MOVE_FILES}; do
+                    install_required_file "$p"
+                done
+                cd ${COLLECTIONS_DIRECTORY}
+            '''
+        }
+        env.REQUIRED_FILES_READY = 'true'
+        // Use inventory.yaml and requirements.yaml files from Jenkins workspace
+        ndfcConfig.requirementsFile = "${COLLECTIONS_DIRECTORY}/requirements.txt"  // Adjust if Jenkins uses a different filename
+        ndfcConfig.requirementsYamlFile = "${COLLECTIONS_DIRECTORY}/requirements.yaml"  // Use Jenkins-provided requirements.yaml
+
+        echo "pwd: ${pwd}"
+        echo "ls -l: ${sh(script: 'ls -l', returnStdout: true)}"
+        echo "ls -l ${COLLECTIONS_DIRECTORY}: ${sh(script: 'ls -l ${COLLECTIONS_DIRECTORY}', returnStdout: true)}"
+
+        // echo "📦 Installing dependencies for NDFC ${ndfcConfig.version}"
+        // echo "Using requirements file: ${ndfcConfig.requirementsFile}"
+        // echo "Using requirements yaml file: ${ndfcConfig.requirementsYamlFile}"
+        // echo "${sh(script: 'ansible-galaxy collection list', returnStdout: true)}"
+
+        // TODO
+        // ---- ND 4.2.1 upstream-test workarounds (items 8 & 9) ----
+        // Patch the freshly cloned CiscoDevNet/ansible-nd integration tests in
+        // place for ND 4.2.1 behavior changes. Each edit is idempotent and
+        // NON-FATAL: a missing target is logged and skipped so a stale patch can
+        // never break the pipeline. Remove once upstream ships equivalents.
+        sh '''#!/bin/bash
+            set -uo pipefail
+
+            patch_test_file() {
+                _f="$1"; _sed="$2"; _verify="$3"; _desc="$4"
+                if [ ! -f "${_f}" ]; then echo "⚠️  ND-4.2.1 patch skipped (missing): ${_desc} -> ${_f}"; return 0; fi
+                if ! sed -i.bak -e "${_sed}" "${_f}"; then echo "⚠️  ND-4.2.1 patch sed failed (non-fatal): ${_desc}"; rm -f "${_f}.bak"; return 0; fi
+                if grep -qF "${_verify}" "${_f}"; then echo "✅ ND-4.2.1 patch applied: ${_desc}"; else echo "⚠️  ND-4.2.1 patch matched nothing (non-fatal): ${_desc}"; fi
+                rm -f "${_f}.bak"
+            }
+
+            ACL_IPV6="${COLLECTIONS_DIRECTORY}/tests/integration/targets/nd_manage_acl/tasks/acl_ipv6.yaml"
+            FABRIC_VARS="${COLLECTIONS_DIRECTORY}/tests/integration/targets/nd_manage_fabric/vars/main.yaml"
+
+            # Item 8: ND 4.2.1 now stores/returns IPv6 ACLs as type "ipv6" (the module
+            # 'after' already asserts "ipv6"); only the direct-wire assert still expects
+            # pre-4.2.1 "ipv4". Align the wire assert to "ipv6".
+            patch_test_file "${ACL_IPV6}" 's/ipv6_acl_wire\\.type == "ipv4"/ipv6_acl_wire.type == "ipv6"/' 'ipv6_acl_wire.type == "ipv6"' "item8: nd_manage_acl IPv6 wire type ipv4->ipv6"
+
+            # Item 9: ND 4.2.1 rejects the asdot iBGP bgp_asn "65001.55" on create
+            # (generic 400); asplain is accepted. Downstream validations assert the
+            # post-update ASN "65002", not this create-time value, so asdot->asplain
+            # "65001" (matches site_id "65001") is safe.
+            patch_test_file "${FABRIC_VARS}" 's/bgp_asn: "65001\\.55"/bgp_asn: "65001"/g' 'bgp_asn: "65001"' "item9: nd_manage_fabric iBGP asdot->asplain"
+        '''
+    }
+    
+    echo "⏱ Stage 'NDFC ${ndfcConfig.version} - Fabric Tests' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+    generateDynamicInventory(ndfcConfig)
+    // Switch availability is confirmed at three points so no module ever runs on a
+    // fabric that is missing a canonical switch: (1) an ENFORCED pre-flight here that
+    // FAILS the build if the full 4+2 topology cannot be added/confirmed before the
+    // suite starts; (2) a per-module guard inside runFabricTest that re-confirms and
+    // re-adds any switch a prior destructive module removed, before EVERY module; and
+    // (3) a post-suite restore in the finally below that re-adds + confirms at the end.
+    runSwitchPreflight(ndfcConfig)
+    try {
+        runFabricTest(ndfcConfig)
+    } finally {
+        // nd_manage_switches is destructive against the real VXLAN_EVPN_Fabric
+        // (its base "Clean Up Existing Devices" deletes every switch, and the
+        // overridden/deleted test cases remove the rest) and ships no
+        // cleanup.yaml, so the suite leaves the fabric emptied -- most visibly
+        // 192.0.2.196 / vxlan_leaf_2. Re-onboard the canonical switches after
+        // the suite (same self-healing path as the pre-flight) so a dropped
+        // switch is restored at the end of the run instead of staying missing
+        // until the next night's pre-flight. In a finally so it runs even if the
+        // suite threw.
+        runSwitchPostRestore(ndfcConfig)
+    }
+}
+
+/**
+ * Enforced switch-membership pre-flight. Before the module suite runs it confirms
+ * every canonical fabric switch is present in ND and, for any that are missing,
+ * adds them (additive, preserve_config) then recalculates & deploys the fabric,
+ * and finally REQUIRES the full 4+2 topology to be confirmed present. A failure
+ * FAILS the build so the suite never starts on a broken topology. Audit-only (no
+ * mutation) during a prerequisite-only run.
+ */
+def runSwitchPreflight(ndfcConfig) {
+    runSwitchMembershipSync(ndfcConfig, 'pre')
+}
+
+/**
+ * Post-suite switch-membership restore. The nd_manage_switches integration
+ * target is destructive against the real VXLAN_EVPN_Fabric — its base "Clean Up
+ * Existing Devices" deletes every switch and the overridden/deleted test cases
+ * remove the rest — and it ships no cleanup.yaml, so the suite leaves the fabric
+ * emptied (most visibly 192.0.2.196 / vxlan_leaf_2). Re-run the same
+ * self-healing onboard AFTER the suite so the canonical switches are restored at
+ * the end of the run instead of staying missing until the next night's
+ * pre-flight. Always onboards (that is the whole point) and never fails the build.
+ */
+def runSwitchPostRestore(ndfcConfig) {
+    runSwitchMembershipSync(ndfcConfig, 'post')
+}
+
+/**
+ * Shared switch-membership sync used by both the pre-flight and the post-suite
+ * restore. phase 'pre' is an ENFORCED gate: it adds every missing canonical
+ * switch, recalculates & deploys its fabric, then requires the full 4+2 topology
+ * to be confirmed present — a failure here FAILS the build so the suite never
+ * starts on a broken topology. phase 'post' restores switches a destructive module
+ * removed and stays best-effort (a failure only warns). Never mutates during a
+ * prerequisite-only audit.
+ */
+def runSwitchMembershipSync(ndfcConfig, phase) {
+    def isPost = (phase == 'post')
+    def label = isPost ? 'restore' : 'pre-flight'
+    if (!params.ND_SWITCH_PREFLIGHT) {
+        echo "ℹ️ Switch membership ${label} disabled (ND_SWITCH_PREFLIGHT=false)"
+        return
+    }
+    if (env.ND_SWITCH_PREFLIGHT_READY != 'true') {
+        echo "⚠️ Skipping switch ${label}: nd_ensure_switches.yaml is not synced to Consul yet"
+        return
+    }
+    def stageName = isPost ? "Switch Restore on NDFC ${ndfcConfig.version}" : "Switch Pre-flight on NDFC ${ndfcConfig.version}"
+    stage(stageName) {
+        echo "⏱ Stage '${stageName}' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+        def inventoryFile = env.CURRENT_NDFC_INVENTORY ?: "${COLLECTIONS_DIRECTORY}/inventory.yaml"
+        // Both phases onboard: pre-flight now ENFORCES add + recalculate & deploy +
+        // confirm the full 4+2 topology, and post restores what a destructive module
+        // removed. Only a prerequisite-only audit stays read-only.
+        def autoOnboard = (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true')
+        try {
+            withEnv(["PREFLIGHT_INVENTORY=${inventoryFile}",
+                     "PREFLIGHT_APPLY=${autoOnboard}",
+                     "PREFLIGHT_FAIL_ON_MISSING=false",
+                     "PREFLIGHT_TIMEOUT=${env.ND_SWITCH_SYNC_TIMEOUT ?: '3600'}"]) {
+                sh '''#!/bin/bash
+                    set -e
+                    cd ${COLLECTIONS_DIRECTORY}
+                    source $HOME/ansible/venv/bin/activate
+                    PLAYBOOK="${COLLECTIONS_DIRECTORY}/nd_ensure_switches.yaml"
+                    if [ ! -f "${PREFLIGHT_INVENTORY}" ] || [ -L "${PREFLIGHT_INVENTORY}" ] || [ ! -s "${PREFLIGHT_INVENTORY}" ]; then
+                        echo "❌ Pre-flight inventory not found or unsafe: ${PREFLIGHT_INVENTORY}" >&2
+                        exit 1
+                    fi
+                    if [ ! -f "${PLAYBOOK}" ] || [ -L "${PLAYBOOK}" ] || [ ! -s "${PLAYBOOK}" ]; then
+                        echo "❌ Pre-flight playbook missing or unsafe: ${PLAYBOOK}" >&2
+                        exit 1
+                    fi
+                    echo "🔎 Switch membership sync (apply=${PREFLIGHT_APPLY}, timeout=${PREFLIGHT_TIMEOUT}s) against ${PREFLIGHT_INVENTORY}"
+                    # Switch discovery creds resolve from the inventory group vars
+                    # (switch_username/switch_password); no secret is passed on the CLI.
+                    # Bound the onboard: a switch that will not become manageable can
+                    # otherwise hang here for hours (the module's internal manageability
+                    # wait is ~175 min and un-tunable). Default 3600s (60 min) lets a
+                    # switch mid-reload/rediscovery converge; 1200s (20 min) was too
+                    # tight and cut a recovering switch off (build #17 -> exit 124). On
+                    # the pre-flight a timeout (124) or a confirm failure FAILS the build
+                    # (see the catch below) so the suite never starts on a broken topology.
+                    timeout "${PREFLIGHT_TIMEOUT}" ansible-playbook -i "${PREFLIGHT_INVENTORY}" "${PLAYBOOK}" \
+                        -e "nd_switch_roster_file=${COLLECTIONS_DIRECTORY}/integration_config.yml" \
+                        -e "nd_switch_apply=${PREFLIGHT_APPLY}" \
+                        -e "nd_switch_deploy=true" \
+                        -e "nd_switch_require_full_roster=true" \
+                        -e "nd_switch_fail_on_missing=${PREFLIGHT_FAIL_ON_MISSING}"
+                '''
+            }
+            echo "✅ Switch membership ${label} passed for ND ${ndfcConfig.version}"
+        } catch (Exception e) {
+            rethrowIfInterrupt(e)
+            if (!isPost) {
+                // Pre-flight is a HARD GATE: the suite must not start unless the full
+                // canonical 4+2 topology was added, recalculated & deployed, and
+                // confirmed present. A timeout (exit 124) or NDP_SWITCH_CONFIRM_FAIL
+                // fails the build on purpose.
+                echo "❌ Switch membership pre-flight FAILED for ND ${ndfcConfig.version} within ${env.ND_SWITCH_SYNC_TIMEOUT ?: '3600'}s: the full 4+2 topology could not be confirmed, so the suite will not start. If this was a timeout (exit 124) the switch never became manageable in the window - check device power/reachability and grep the log for NDP_SWITCH_PREFLIGHT_MISSING / NDP_SWITCH_CONFIRM_FAIL. Cause: ${e.getMessage()}"
+                throw e
+            }
+            // Post-suite restore stays best-effort: warn and continue.
+            echo "⚠️ Switch membership restore could not complete for ND ${ndfcConfig.version} within ${env.ND_SWITCH_SYNC_TIMEOUT ?: '3600'}s; continuing best-effort (post-suite). Check device power/reachability and grep the log for NDP_SWITCH_PREFLIGHT_MISSING / NDP_SWITCH_CONFIRM_FAIL. Cause: ${e.getMessage()}"
+        }
+    }
+}
+
+def runFabricTest(ndfcConfig) {
+    stage("${ndfcConfig.fabric_name} on NDFC ${ndfcConfig.version}") {
+        script {
+            echo "⏱ Stage '${ndfcConfig.fabric_name} on NDFC ${ndfcConfig.version}' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+            // PLAYBOOK_FILES is a @Field, so it is always in scope here -- no fallback list needed.
+            def playbookFiles = PLAYBOOK_FILES
+
+            // Active playbooks were already downloaded from Consul and installed
+            // atomically by runNDFCVersionTests(). Keep this hook commented for
+            // future per-playbook handling; a second download here would be unused.
+            // playbookFiles.each { playbookName ->
+            //     downloadFromConsul(playbookName)
+            // }
+            sh '''#!/bin/bash
+                cd ${COLLECTIONS_DIRECTORY}
+                echo "pwd: $(pwd)"
+            '''
+
+            // Prepare Groovy-side variables and call shell with them passed via environment
+            // Use dynamic inventory if available, otherwise fallback to default inventory in collections dir
+            def inventory_file = env.CURRENT_NDFC_INVENTORY ?: "${COLLECTIONS_DIRECTORY}/inventory.yaml"
+            def inventoryVarsFile = "${inventory_file}.runtime-vars.json"
+            // Must match the flag the version loop checks (NDFC_<versionId>_FAILED),
+            // otherwise parseTestResults' failures never flip env.PIPELINE_FAILED.
+            def failureFlagName = "NDFC_${ndfcConfig.versionId}_FAILED"
+            def playbooksForShell = playbookFiles.join(' ')
+            // nd_manage_links (ND 4.2) is opt-in: append it only when ND_LINKS_ENABLE
+            // is set, so a lab without its dedicated test fabric/switches is not failed
+            // by a missing test-output file (resultTargets errors on absent output).
+            // The nd_interface_* targets are opt-in the same way, behind ND_INTERFACE_ENABLE.
+            def effectiveIntegrationModules = INTEGRATION_MODULES + ((params.ND_LINKS_ENABLE) ? ['nd_manage_links'] : []) + ((params.ND_INTERFACE_ENABLE) ? INTERFACE_INTEGRATION_MODULES : [])
+            def integrationForShell = effectiveIntegrationModules.join(' ')
+            def standaloneIntegrationForShell = STANDALONE_INTEGRATION_MODULES.join(' ')
+            def vpcPairSwitch1Serial = "${ndfcConfig.vpc_pair_switch1_serial ?: ''}".trim()
+            def vpcPairSwitch2Serial = "${ndfcConfig.vpc_pair_switch2_serial ?: ''}".trim()
+            def vpcPairFabricType = "${ndfcConfig.vpc_pair_fabric_type ?: ''}".trim()
+            def secondaryFabricName = "${ndfcConfig.fabric_name_2 ?: 'External_Connectivity_Fabric'}".trim()
+            def networkFabricName = 'VXLAN_EVPN_Fabric_eBGP'
+            def testRunMarker = "${env.BUILD_TAG ?: 'manual'}-${ndfcConfig.versionId}-${new Date().format('yyyyMMddHHmmssSSS')}"
+
+            def duplicateIntegrationTargets = []
+            INTEGRATION_MODULES.each { moduleName ->
+                if (STANDALONE_INTEGRATION_MODULES.contains(moduleName)) {
+                    duplicateIntegrationTargets.add(moduleName)
+                }
+            }
+            if (!duplicateIntegrationTargets.isEmpty()) {
+                error("Integration target(s) configured in both runners: ${duplicateIntegrationTargets.join(', ')}")
+            }
+            if (STANDALONE_INTEGRATION_MODULES.contains('nd_vpc_pair') &&
+                (!vpcPairSwitch1Serial || !vpcPairSwitch2Serial || !vpcPairFabricType)) {
+                error('nd_vpc_pair requires vpc_pair_switch1_serial, vpc_pair_switch2_serial, and vpc_pair_fabric_type')
+            }
+
+            echo "📍 Using inventory file: ${inventory_file}"
+            // Reset failure flag using Groovy function (not in shell)
+            setFailureFlag(failureFlagName, false)
+            echo "DEBUG: Reset ${failureFlagName} to false"
+            echo "pwd: ${pwd()}"
+            echo "ls -l: ${sh(script: 'ls -l', returnStdout: true)}"
+            try {
+                // Deploy
+                stage("Tests Run ${ndfcConfig.fabric_name}") {
+                    // echo timestamp when stage starts
+                    echo "⏱ Stage 'Tests Run ${ndfcConfig.fabric_name}' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE', catchInterruptions: false) {
+                        echo "🚀 Beginning of function - Deploying ${ndfcConfig.fabric_name}"
+                        echo "Using inventory file: ${inventory_file}"
+                        //echo "Using playbook file: ${playbook_file}"
+                        echo "Tests Run starts for ${ndfcConfig.fabric_name} to NDFC version: ${ndfcConfig.version}"
+                        withEnv(["PLAYBOOK_LIST=${playbooksForShell}",
+                                 "INTEGRATION_LIST=${integrationForShell}",
+                                 "STANDALONE_INTEGRATION_LIST=${standaloneIntegrationForShell}",
+                                 "VPC_PAIR_SWITCH1_SERIAL=${vpcPairSwitch1Serial}",
+                                 "VPC_PAIR_SWITCH2_SERIAL=${vpcPairSwitch2Serial}",
+                                 "VPC_PAIR_FABRIC_TYPE=${vpcPairFabricType}",
+                                 "NETWORK_FABRIC_NAME=${networkFabricName}",
+                                 "TEST_RUN_MARKER=${testRunMarker}",
+                                 "FABRIC_NAME=${ndfcConfig.fabric_name}",
+                                 "SECONDARY_FABRIC_NAME=${secondaryFabricName}",
+                                 "VERSION_ID=${ndfcConfig.versionId}",
+                                 "INVENTORY_FILE=${inventory_file}",
+                                 "INVENTORY_VARS_FILE=${inventoryVarsFile}",
+                                 "WORKSPACE=${pwd()}"]) {
+                            sh '''#!/bin/bash
+                                # Keep running independent module/playbook pipelines after
+                                # one Ansible failure; explicit prerequisite checks still exit.
+                                set -e
+
+                                if [ "${ND_PREREQUISITE_ONLY_EFFECTIVE:-false}" = "true" ]; then
+                                    echo "🔎 Prerequisite-only audit: skipping standalone and smoke playbooks"
+                                    STANDALONE_INTEGRATION_LIST=""
+                                    PLAYBOOK_LIST=""
+                                fi
+
+                                # Clear every exact output expected from this run before any
+                                # prerequisite can fail. The run marker below is the second
+                                # fail-closed guard against parsing output from an older build.
+                                for target in ${INTEGRATION_LIST} ${STANDALONE_INTEGRATION_LIST} ${PLAYBOOK_LIST}; do
+                                    EXPECTED_OUTPUT="${COLLECTIONS_DIRECTORY}/test_output_${FABRIC_NAME}_${VERSION_ID}_${target}.txt"
+                                    if [ -e "${EXPECTED_OUTPUT}" ] || [ -L "${EXPECTED_OUTPUT}" ]; then
+                                        rm -f -- "${EXPECTED_OUTPUT}"
+                                    fi
+                                done
+
+                                cd \${COLLECTIONS_DIRECTORY}
+                                source \$HOME/ansible/venv/bin/activate
+                                if ! command -v ansible-playbook &> /dev/null; then
+                                    echo 'Error: ansible-playbook is not installed or not in PATH. Exiting.'
+                                    exit 1
+                                fi
+
+                                # Verify inventory file exists
+                                if [ ! -f "${INVENTORY_FILE}" ] || [ -L "${INVENTORY_FILE}" ] || [ ! -s "${INVENTORY_FILE}" ]; then
+                                    echo "⚠️ Inventory file not found: ${INVENTORY_FILE}"
+                                    echo "📂 Available inventory files in \${COLLECTIONS_DIRECTORY}:"
+                                    ls -l \${COLLECTIONS_DIRECTORY}/inventory*.yaml || echo "No inventory files found"
+                                    exit 1
+                                fi
+                                echo "✅ Using inventory file: ${INVENTORY_FILE}"
+
+                                INVENTORY_VARS_TMP="${INVENTORY_VARS_FILE}.tmp"
+                                cleanup_inventory_vars() {
+                                    rm -f -- "${INVENTORY_VARS_TMP}" "${INVENTORY_VARS_FILE}"
+                                }
+                                trap cleanup_inventory_vars EXIT
+                                umask 077
+                                ansible-inventory -i "${INVENTORY_FILE}" --host nd_controller > "${INVENTORY_VARS_TMP}"
+                                [ -s "${INVENTORY_VARS_TMP}" ] || {
+                                    echo "❌ Failed to resolve runtime variables from ${INVENTORY_FILE}" >&2
+                                    exit 1
+                                }
+                                mv -- "${INVENTORY_VARS_TMP}" "${INVENTORY_VARS_FILE}"
+                                chmod 600 "${INVENTORY_VARS_FILE}"
+                                echo "✅ Resolved protected runtime variables from dynamic inventory"
+                                RUN_FAILURE=0
+                                # Cap each module/playbook run so a hung ND call can't wedge the build for hours.
+                                MODULE_TIMEOUT="${MODULE_TIMEOUT:-2400}"
+                                # GreenField switch bring-up (nd_manage_switches) legitimately needs
+                                # longer than lightweight modules; #16 was killed at 2400s mid switch-prep.
+                                SWITCHES_MODULE_TIMEOUT="${SWITCHES_MODULE_TIMEOUT:-5400}"
+                                TIMEOUT_CMD="$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 60 ${MODULE_TIMEOUT}" || true)"
+
+                                # Clean up old timestamped test output files from previous runs
+                                echo "🧹 Cleaning up old test output files..."
+                                OLD_FILES=$(find . -maxdepth 1 -name "test_output_${FABRIC_NAME}_${VERSION_ID}_*_[0-9]*.txt" 2>/dev/null || true)
+                                if [ -n "$OLD_FILES" ]; then
+                                    echo "$OLD_FILES" | while read file; do
+                                        if [ -f "$file" ]; then
+                                            echo "  🗑️  Removing: $file"
+                                            rm -f "$file"
+                                        fi
+                                    done
+                                    echo "✅ Cleanup completed"
+                                else
+                                    echo "  ℹ️  No old test output files found"
+                                fi
+
+                                echo ""
+                                echo "📂 Directory contents after cleanup:"
+                                ls -lh test_output*.txt 2>/dev/null || echo "  ℹ️  No test_output files in directory"
+                                echo ""
+
+                                # --- Per-module switch-availability guard -------------------------
+                                # Confirm the canonical 4+2 switches are present before EVERY module and
+                                # re-add any a prior destructive module (e.g. nd_manage_switches) removed,
+                                # then recalculate & deploy, so a module never runs on a fabric that is
+                                # missing a switch ("ND Error 400: Switch id <serial> not found"). Enforced
+                                # add (apply=true) except during a prerequisite-only audit. Bounded by
+                                # ND_SWITCH_GUARD_TIMEOUT (default 900s) so one truly-down switch cannot hang
+                                # the whole suite -- the enforced pre-flight already gates the suite start and
+                                # the post-suite restore re-confirms at the end; this is the mid-suite heal.
+                                # Non-fatal to the loop (the module still runs) but a heal failure sets
+                                # RUN_FAILURE so the run is never silently green.
+                                SWITCH_GUARD_PLAYBOOK="${COLLECTIONS_DIRECTORY}/nd_ensure_switches.yaml"
+                                SWITCH_GUARD_ROSTER="${COLLECTIONS_DIRECTORY}/integration_config.yml"
+                                SWITCH_GUARD_TIMEOUT="${ND_SWITCH_GUARD_TIMEOUT:-900}"
+                                SWITCH_GUARD_APPLY="true"
+                                if [ "${ND_PREREQUISITE_ONLY_EFFECTIVE:-false}" = "true" ]; then
+                                    SWITCH_GUARD_APPLY="false"
+                                fi
+                                ensure_switches_ready() {
+                                    local _label="$1"
+                                    if [ "${ND_SWITCH_PREFLIGHT_READY:-false}" != "true" ]; then
+                                        return 0
+                                    fi
+                                    if [ ! -f "${SWITCH_GUARD_PLAYBOOK}" ] || [ -L "${SWITCH_GUARD_PLAYBOOK}" ] || [ ! -s "${SWITCH_GUARD_PLAYBOOK}" ]; then
+                                        echo "⚠️ [switch-guard] playbook missing/unsafe; skipping switch confirm before ${_label}" >&2
+                                        return 0
+                                    fi
+                                    local _gt
+                                    _gt="$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 30 ${SWITCH_GUARD_TIMEOUT}" || true)"
+                                    echo "🔎 [switch-guard] Confirming canonical 4+2 switches before ${_label} (apply=${SWITCH_GUARD_APPLY}, timeout=${SWITCH_GUARD_TIMEOUT}s)"
+                                    if ${_gt} ansible-playbook -i "${INVENTORY_FILE}" "${SWITCH_GUARD_PLAYBOOK}" \
+                                            -e "nd_switch_roster_file=${SWITCH_GUARD_ROSTER}" \
+                                            -e "nd_switch_apply=${SWITCH_GUARD_APPLY}" \
+                                            -e "nd_switch_deploy=true" \
+                                            -e "nd_switch_require_full_roster=true" \
+                                            -e "nd_switch_fail_on_missing=false"; then
+                                        echo "✅ [switch-guard] Canonical switches confirmed before ${_label}"
+                                    else
+                                        echo "❌ [switch-guard] Could not confirm/restore the full canonical topology before ${_label}; the module will still run but the run is marked FAILED. Grep NDP_SWITCH_PREFLIGHT_MISSING / NDP_SWITCH_CONFIRM_FAIL and check device power/reachability." >&2
+                                        RUN_FAILURE=1
+                                    fi
+                                }
+
+                                echo "==========Running Standalone Integration Modules============="
+
+                                # Run nd_vpc_pair before role-based targets such as
+                                # nd_manage_switches that can rebuild the fabric inventory.
+                                # It is a complete playbook rather than a role, so execute it
+                                # directly instead of using run_integration_module.yaml.
+                                for m in ${STANDALONE_INTEGRATION_LIST}; do
+                                    echo "🚀 Starting standalone integration test for $m"
+                                    ensure_switches_ready "standalone module $m"
+                                    TARGET_PLAYBOOK="${COLLECTIONS_DIRECTORY}/tests/integration/targets/${m}/tasks/main.yaml"
+                                    OUTPUT_FILE="test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
+
+                                    if [ ! -f "${TARGET_PLAYBOOK}" ] || [ -L "${TARGET_PLAYBOOK}" ] || [ ! -s "${TARGET_PLAYBOOK}" ]; then
+                                        echo "❌ Required standalone integration playbook is missing, empty, or unsafe: ${TARGET_PLAYBOOK}" >&2
+                                        exit 1
+                                    fi
+
+                                    if [ -f "${OUTPUT_FILE}" ]; then
+                                        echo "🗑️  Deleting existing test output file: ${OUTPUT_FILE}"
+                                        rm -f "${OUTPUT_FILE}"
+                                    fi
+
+                                    echo "[MODULE: $m] Starting execution..." | tee -a "${OUTPUT_FILE}"
+                                    echo "[RUN_MARKER: ${TEST_RUN_MARKER}]" | tee -a "${OUTPUT_FILE}"
+                                    START_TIME=$(date +%s)
+                                    echo "[TIMESTAMP_START: ${START_TIME}]" | tee -a "${OUTPUT_FILE}"
+                                    ${TIMEOUT_CMD} ansible-playbook -vvvv -i "${INVENTORY_FILE}" "${TARGET_PLAYBOOK}" \
+                                        -e "@${INVENTORY_VARS_FILE}" \
+                                        -e "fabric_name=${FABRIC_NAME}" \
+                                        -e "switch1_serial=${VPC_PAIR_SWITCH1_SERIAL}" \
+                                        -e "switch2_serial=${VPC_PAIR_SWITCH2_SERIAL}" \
+                                        -e "fabric_type=${VPC_PAIR_FABRIC_TYPE}" \
+                                        2>&1 | tee -a "${OUTPUT_FILE}"
+                                    ANSIBLE_STATUS=${PIPESTATUS[0]}
+                                    if [ "${ANSIBLE_STATUS}" -ne 0 ]; then
+                                        echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a "${OUTPUT_FILE}"
+                                        RUN_FAILURE=1
+                                    fi
+                                    END_TIME=$(date +%s)
+                                    DURATION=$((END_TIME - START_TIME))
+                                    echo "[TIMESTAMP_END: ${END_TIME}]" | tee -a "${OUTPUT_FILE}"
+                                    echo "[DURATION_SECONDS: ${DURATION}]" | tee -a "${OUTPUT_FILE}"
+                                    echo "[MODULE: $m] Execution completed." | tee -a "${OUTPUT_FILE}"
+                                done
+
+                                echo "==========Running Integration Modules============="
+
+                                # Run each integration module as its OWN playbook so each
+                                # gets its own PLAY RECAP (passed/failed/skipped) + duration.
+                                for m in ${INTEGRATION_LIST}; do
+                                    echo "🚀 Starting integ test for $m module"
+                                    echo "========================================"
+                                    echo "Running integration module: $m, pwd: $(pwd)"
+                                    echo "========================================"
+                                    ensure_switches_ready "integration module $m"
+                                    if [ -f "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" ] && \
+                                       [ ! -L "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" ] && \
+                                       [ -s "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" ]; then
+                                        if [ -f "test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt" ]; then
+                                            echo "🗑️  Deleting existing test output file: test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
+                                            rm -f "test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
+                                        fi
+                                        echo "[MODULE: $m] Starting execution..." | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt
+                                        echo "[RUN_MARKER: ${TEST_RUN_MARKER}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt
+                                        START_TIME=$(date +%s)
+                                        echo "[TIMESTAMP_START: ${START_TIME}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt
+                                        NETWORK_EXTRA_VARS=""
+                                        if [ "${m}" = "nd_manage_networks" ]; then
+                                            NETWORK_EXTRA_VARS="-e ansible_it_fabric=${NETWORK_FABRIC_NAME} -e nd_network_standalone_fabric=${NETWORK_FABRIC_NAME}"
+                                        fi
+                                        MODULE_TOPOLOGY_VARS=""
+                                        if [ "${m}" = "nd_manage_switches" ]; then
+                                            # The upstream switch target rebuilds exactly leaf/spine/border.
+                                            MODULE_TOPOLOGY_VARS="-e ansible_switch1=192.0.2.195 -e ansible_switch2=192.0.2.194 -e ansible_switch3=192.0.2.88"
+                                        elif [ "${m}" = "nd_manage_l3out" ]; then
+                                            # L3Out switch1 = vxlan_leaf_1 (SERIAL00001 / .195): the ONLY VXLAN-side
+                                            # switch with a physical inter-fabric cable to external_edge_1 (leaf_1
+                                            # Eth1/1 <-> edge_1 Eth1/1). border_1 has no DCI cable, so the ext_l3_dci_link
+                                            # BGP L3Out 207'd there (#build25). switch2 stays external_edge_1 (.89).
+                                            MODULE_TOPOLOGY_VARS="-e nd_test_switch1_id=SERIAL00001 -e nd_test_switch1_mgmt_ip=192.0.2.195 -e nd_test_switch2_id=SERIAL00005 -e nd_test_switch2_mgmt_ip=192.0.2.89"
+                                        fi
+                                        # ND 4.2 interface targets use their own nd_test_* vars (not the nd_manage_*
+                                        # fabric/serial vars), so point them at THIS run's fabric + a real switch and
+                                        # add the parent/member overrides each one needs. Both vars default to empty
+                                        # for non-interface modules, so the command line stays unchanged for them.
+                                        INTERFACE_TEST_VARS=""
+                                        case "${m}" in
+                                            nd_interface_*)
+                                                IFACE_SW="${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195}"
+                                                INTERFACE_TEST_VARS="-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${IFACE_SW}"
+                                                ;;
+                                        esac
+                                        case "${m}" in
+                                            nd_interface_subinterface_managed|nd_interface_subinterface_unmanaged)
+                                                # Parents must PRE-EXIST: Eth1/3 routed + Port-channel10 (setup never
+                                                # creates them; ND 207s on L2/absent parents).
+                                                INTERFACE_TEST_VARS="${INTERFACE_TEST_VARS} -e nd_test_ethernet_parent=Ethernet1/3 -e nd_test_port_channel_parent=Port-channel10"
+                                                ;;
+                                            nd_interface_port_channel_access|nd_interface_port_channel_trunk_host)
+                                                INTERFACE_TEST_VARS="${INTERFACE_TEST_VARS} -e nd_test_pc_member_a=Ethernet1/10 -e nd_test_pc_member_b=Ethernet1/11 -e nd_test_pc_member_c=Ethernet1/12 -e nd_test_pc_member_d=Ethernet1/13"
+                                                ;;
+                                        esac
+                                        # Switch prep gets a longer cap than lightweight modules (see #16).
+                                        if [ "${m}" = "nd_manage_switches" ]; then
+                                            MOD_TIMEOUT="${SWITCHES_MODULE_TIMEOUT}"
+                                        else
+                                            MOD_TIMEOUT="${MODULE_TIMEOUT}"
+                                        fi
+                                        MOD_TIMEOUT_CMD="$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 60 ${MOD_TIMEOUT}" || true)"
+                                        ${MOD_TIMEOUT_CMD} ansible-playbook -vvvv -i "${INVENTORY_FILE}" "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" \
+                                            -e "@${INVENTORY_VARS_FILE}" \
+                                            -e "test_module=$m" \
+                                            -e "fabric_name=${FABRIC_NAME}" \
+                                            -e "nd_test_fabric2_name=${SECONDARY_FABRIC_NAME}" \
+                                            -e "nd_prerequisite_enable=${ND_PREREQUISITE_ENABLE_EFFECTIVE}" \
+                                            -e "nd_prerequisite_apply=${ND_PREREQUISITE_APPLY_EFFECTIVE}" \
+                                            -e "nd_prerequisite_only=${ND_PREREQUISITE_ONLY_EFFECTIVE}" \
+                                            -e "nd_prerequisite_mode=live" \
+                                            -e "nd_prerequisite_run_id=${TEST_RUN_MARKER}_${m}" \
+                                            ${NETWORK_EXTRA_VARS} ${MODULE_TOPOLOGY_VARS} ${INTERFACE_TEST_VARS} 2>&1 | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt
+                                        ANSIBLE_STATUS=${PIPESTATUS[0]}
+                                        if [ "${ANSIBLE_STATUS}" -ne 0 ]; then
+                                            echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt
+                                            RUN_FAILURE=1
+                                        fi
+                                        END_TIME=$(date +%s)
+                                        DURATION=$((END_TIME - START_TIME))
+                                        echo "[TIMESTAMP_END: ${END_TIME}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt
+                                        echo "[DURATION_SECONDS: ${DURATION}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt
+                                        echo "[MODULE: $m] Execution completed." | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt
+                                    else
+                                        echo "❌ Required Consul runner is missing, empty, or unsafe: run_integration_module.yaml" >&2
+                                        exit 1
+                                    fi
+                                done
+
+                                echo "==========Running Smoke Playbooks============="
+
+                                # Run each smoke playbook if present
+                                for pb in ${PLAYBOOK_LIST}; do
+                                    ls -lrt
+
+                                    echo "========================================"
+                                    echo "Running playbook: \$pb, pwd: $(pwd)"
+                                    echo "========================================"
+                                    ensure_switches_ready "smoke playbook $pb"
+                                    if [ -f "\${COLLECTIONS_DIRECTORY}/\$pb" ] && \
+                                       [ ! -L "\${COLLECTIONS_DIRECTORY}/\$pb" ] && \
+                                       [ -s "\${COLLECTIONS_DIRECTORY}/\$pb" ]; then
+                                        # Check and delete existing test output file (without timestamp) before running
+                                        if [ -f "test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt" ]; then
+                                            echo "🗑️  Deleting existing test output file: test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt"
+                                            rm -f "test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt"
+                                            echo "✅ Deleted old test output file"
+                                        fi
+
+                                        echo "[PLAYBOOK: \$pb] Starting execution..." | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
+                                        echo "[RUN_MARKER: ${TEST_RUN_MARKER}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
+                                        START_TIME=$(date +%s)
+                                        echo "[TIMESTAMP_START: ${START_TIME}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
+                                        echo "=============="
+                                        echo "\$pb: ${pb}"
+                                        echo "INVENTORY_FILE: ${INVENTORY_FILE}"
+                                        ${TIMEOUT_CMD} ansible-playbook -vvvv -i "${INVENTORY_FILE}" "${COLLECTIONS_DIRECTORY}/${pb}" \
+                                            -e "@${INVENTORY_VARS_FILE}" \
+                                            2>&1 | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
+                                        ANSIBLE_STATUS=${PIPESTATUS[0]}
+                                        if [ "${ANSIBLE_STATUS}" -ne 0 ]; then
+                                            echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
+                                            RUN_FAILURE=1
+                                        fi
+                                        END_TIME=$(date +%s)
+                                        DURATION=$((END_TIME - START_TIME))
+                                        echo "=============="
+                                        echo "[TIMESTAMP_END: ${END_TIME}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
+                                        echo "[DURATION_SECONDS: ${DURATION}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
+                                        echo "[PLAYBOOK: \$pb] Execution completed." | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
+                                    else
+                                        echo "❌ Required Consul playbook is missing, empty, or unsafe: \$pb" >&2
+                                        exit 1
+                                    fi
+                                done
+
+                                # Module-wise SKIPPED-test summary from each per-module log (fully-skipped
+                                # tasks only: 'skipping:' with no ok/changed/failed). Combined file + console.
+                                echo "======== SKIPPED TESTS (module-wise) ========"
+                                SKIP_SUMMARY="skipped_tests_${FABRIC_NAME}_${VERSION_ID}.txt"
+                                : > "${SKIP_SUMMARY}"
+                                for sm in ${INTEGRATION_LIST} ${STANDALONE_INTEGRATION_LIST}; do
+                                    smlog="test_output_${FABRIC_NAME}_${VERSION_ID}_${sm}.txt"
+                                    [ -f "${smlog}" ] || continue
+                                    {
+                                        echo "===== ${sm} ====="
+                                        awk '
+                                          function flush(){ if (t!="" && sk>0 && ran==0) print "  - " t }
+                                          index($0,"TASK [")==1 { flush(); s=substr($0,7); rb=index(s,"]"); t=(rb>0)?substr(s,1,rb-1):s; sk=0; ran=0; next }
+                                          index($0,"skipping: [")==1 { sk++; next }
+                                          index($0,"ok: [")==1 || index($0,"changed: [")==1 || index($0,"failed: [")==1 || index($0,"fatal: [")==1 { ran++; next }
+                                          index($0,"PLAY RECAP")==1 { flush(); t="" }
+                                          END { flush() }' "${smlog}"
+                                        echo ""
+                                    } | tee -a "${SKIP_SUMMARY}"
+                                done
+                                echo "======== END SKIPPED TESTS -> ${SKIP_SUMMARY} ========"
+
+                                if [ "${RUN_FAILURE}" -ne 0 ]; then
+                                    echo "❌ One or more Ansible runs failed; all independent runs were attempted" >&2
+                                    exit "${RUN_FAILURE}"
+                                fi
+                            '''
+                        }
+                        echo "🚀 End of function - ${ndfcConfig.fabric_name}"
+                        //parseDeploymentResults(ndfcConfig, failureFlagName)
+                    }
+                }
+
+                stage("Test ${ndfcConfig.fabric_name}") {
+                    // echo timestamp when stage starts
+                    echo "⏱ Stage 'Test ${ndfcConfig.fabric_name}' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+                    // Parse results: integration modules first (each has its own PLAY
+                    // RECAP + duration), then smoke playbooks.
+                    def resultTargets = []
+                    // Mirror the ND_LINKS_ENABLE / ND_INTERFACE_ENABLE gates used for
+                    // integrationForShell so the parser only expects a target's output when
+                    // it was actually run (recomputed from the global params to avoid
+                    // cross-block scoping).
+                    def effectiveIntegrationModulesForResults = INTEGRATION_MODULES + ((params.ND_LINKS_ENABLE) ? ['nd_manage_links'] : []) + ((params.ND_INTERFACE_ENABLE) ? INTERFACE_INTEGRATION_MODULES : [])
+                    effectiveIntegrationModulesForResults.each { m -> resultTargets.add([m, 'integration']) }
+                    if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {
+                        STANDALONE_INTEGRATION_MODULES.each { m -> resultTargets.add([m, 'integration']) }
+                        PLAYBOOK_FILES.each { pb -> resultTargets.add([pb, 'smoke']) }
+                    }
+                    resultTargets.each { t ->
+                        def token = t[0]
+                        def testType = t[1]
+                        def testOutputFile = "${COLLECTIONS_DIRECTORY}/test_output_${ndfcConfig.fabric_name}_${ndfcConfig.versionId}_${token}.txt"
+                        echo "🔍 Checking for test output file: ${testOutputFile}"
+                        if (fileExists(testOutputFile)) {
+                            echo "📊 Parsing ${testType} results for: ${token}"
+                            try {
+                                parseTestResults(ndfcConfig, failureFlagName, token, testType, testRunMarker)
+                            } catch (Exception e) {
+                                // Log the error but continue processing the other targets
+                                echo "⚠️ Error parsing results for ${token}: ${e.getMessage()}"
+                                echo "🔄 Continuing with next target..."
+                            }
+
+                            // Archive test output using reusable function
+                            archiveTestOutput(ndfcConfig, token)
+                        } else {
+                            setFailureFlag(failureFlagName, true)
+                            error("Required test output file not found: ${testOutputFile}")
+                        }
+                    }
+                    // Archive the module-wise skipped-tests summary and record its link.
+                    archiveSkipList(ndfcConfig)
+                }
+            } catch (Exception e) {
+                setFailureFlag(failureFlagName, true)
+                echo "❌ ${ndfcConfig.fabric_name} failed on ND ${ndfcConfig.version}: ${e.getMessage()}"
+                throw e
+            }
+        }
+    }
+}
+
+
+def generateDynamicInventory(ndfcConfig) {
+    env.CURRENT_NDFC_INVENTORY = ''
+    def inventoryFileName = "inventory_${ndfcConfig.versionId}.yaml"
+    def inventoryDestination = "${COLLECTIONS_DIRECTORY}/${inventoryFileName}"
+    def switchesByName = ndfcConfig.switches.collectEntries { [(it.name): it] }
+    ['vxlan_leaf_1', 'vxlan_leaf_2', 'vxlan_spine_1', 'vxlan_border_1', 'external_edge_1', 'external_edge_2'].each { switchName ->
+        if (!switchesByName[switchName]?.ip || !switchesByName[switchName]?.serial ||
+            !switchesByName[switchName]?.fabric || !switchesByName[switchName]?.role) {
+            error("Incomplete switch topology for ${switchName} in ND ${ndfcConfig.version}")
+        }
+    }
+    // pipeline-utility-steps (writeJSON) is not installed and groovy.json.JsonOutput
+    // is blocked by the Groovy script-security sandbox (RejectedAccessException),
+    // so build the JSON with sandbox-whitelisted collect/join. Each switch map has a
+    // fixed {name, ip, serial, fabric, role} shape of plain-string lab constants, so
+    // simple concatenation yields valid JSON (verified to parse identically).
+    def switchesJson = '[' + ndfcConfig.switches.collect { s ->
+        '{"name":"' + s.name + '","ip":"' + s.ip + '","serial":"' + s.serial +
+        '","fabric":"' + s.fabric + '","role":"' + s.role + '"}'
+    }.join(',') + ']'
+        withEnv(["INVENTORY_FILE_NAME=${inventoryFileName}",
+                         "INVENTORY_HOST=${env.ANSIBLE_HOST}",
+                         "INVENTORY_PRIMARY_FABRIC=${ndfcConfig.fabric_name}",
+                         "INVENTORY_SECONDARY_FABRIC=${ndfcConfig.fabric_name_2}",
+                         "INVENTORY_SWITCHES_JSON=${switchesJson}"]) {
+                sh '''#!/bin/bash
+                        set -euo pipefail
+                        umask 077
+                        python - <<'PY'
+import json
+import os
+
+import yaml
+
+switches = json.loads(os.environ["INVENTORY_SWITCHES_JSON"])
+by_name = {switch["name"]: switch for switch in switches}
+primary_fabric = os.environ["INVENTORY_PRIMARY_FABRIC"]
+secondary_fabric = os.environ["INVENTORY_SECONDARY_FABRIC"]
+
+inventory = {
+    "all": {
+        "vars": {
+            "ansible_user": os.environ["NDFC_USER"],
+            "ansible_password": os.environ["NDFC_PASSWORD"],
+            "ansible_python_interpreter": "python",
+            "ansible_httpapi_validate_certs": False,
+            "ansible_httpapi_use_ssl": True,
+            "ansible_httpapi_login_domain": "local",
+            "switch_username": os.environ["NDFC_USER"],
+            "switch_password": os.environ["NDFC_PASSWORD"],
+            "fabric_name": primary_fabric,
+            "ansible_it_fabric": primary_fabric,
+            "acl_test_fabric": primary_fabric,
+            "nd_test_fabric_name": primary_fabric,
+            "nd_test_fabric1_name": primary_fabric,
+            "nd_test_fabric2_name": secondary_fabric,
+            "nd_fabric_names": [primary_fabric, secondary_fabric],
+            "nd_switches": switches,
+            "ansible_switch1": by_name["vxlan_leaf_1"]["ip"],
+            "ansible_switch2": by_name["vxlan_leaf_2"]["ip"],
+            "ansible_sno_1": by_name["vxlan_leaf_1"]["serial"],
+            "ansible_sno_2": by_name["vxlan_leaf_2"]["serial"],
+            "switch_serial_1": by_name["vxlan_leaf_1"]["serial"],
+            "switch_serial_2": by_name["vxlan_leaf_2"]["serial"],
+            "switch_serial_3": by_name["vxlan_spine_1"]["serial"],
+            "nd_test_switch1_id": by_name["vxlan_border_1"]["serial"],
+            "nd_test_switch2_id": by_name["external_edge_1"]["serial"],
+            "nd_test_switch1_mgmt_ip": by_name["vxlan_border_1"]["ip"],
+            "nd_test_switch2_mgmt_ip": by_name["external_edge_1"]["ip"],
+            "intf_1_2": "Ethernet1/2",
+            "intf_1_3": "Ethernet1/3",
+            "intf_1_10": "Ethernet1/10",
+            "ansible_network_interface1": "Ethernet1/4",
+            "nd_test_switch1_interface": "Ethernet1/1",
+            "nd_test_switch2_interface": "Ethernet1/1",
+            "nd_test_switch1_subif": "Ethernet1/2",
+            "nd_test_switch2_subif": "Ethernet1/2",
+            "test_groups": ["standalone"],
+            "nd_network_test_topology": "standalone",
+            "nd_vrf_test_topology": "standalone",
+            "ansible_msd_parent_fabric": "",
+            "ansible_msd_child_fabric": "",
+            "ansible_msd_switch1": "",
+            "ansible_mcfg_parent_fabric": "",
+            "ansible_mcfg_child_fabric": "",
+            "ansible_mcfg_switch1": "",
+            "save": True,
+            "deploy": True,
+            "config_actions_type": "switch",
+        },
+        "children": {
+            "nd": {
+                "vars": {
+                    "ansible_connection": "ansible.netcommon.httpapi",
+                    "ansible_network_os": "cisco.nd.nd",
+                },
+                "hosts": {
+                    "nd_controller": {
+                        "ansible_host": os.environ["INVENTORY_HOST"],
+                    }
+                },
+            }
+        },
+    }
+}
+
+with open(os.environ["INVENTORY_FILE_NAME"], "w", encoding="utf-8") as inventory_file:
+    yaml.safe_dump(inventory, inventory_file, sort_keys=False)
+PY
+                '''
+        }
+    echo "✅ Generated dynamic inventory for NDFC ${ndfcConfig.version} -> ${inventoryFileName}"
+    sh """#!/bin/bash
+        set -euo pipefail
+        [ -f '${inventoryFileName}' ] && [ ! -L '${inventoryFileName}' ] || {
+            echo 'Required dynamic inventory is missing or unsafe' >&2
+            exit 1
+        }
+        chmod 600 '${inventoryFileName}'
+        [ -s '${inventoryFileName}' ] || {
+            echo 'Required dynamic inventory is empty' >&2
+            exit 1
+        }
+        [ ! -d '${inventoryDestination}' ] || {
+            echo 'Dynamic inventory destination is unexpectedly a directory' >&2
+            exit 1
+        }
+        mv -- '${inventoryFileName}' '${inventoryDestination}'
+        [ -f '${inventoryDestination}' ] && [ ! -L '${inventoryDestination}' ] && [ -s '${inventoryDestination}' ] || {
+            echo 'Dynamic inventory installation verification failed' >&2
+            exit 1
+        }
+        chmod 600 '${inventoryDestination}'
+    """
+    env.CURRENT_NDFC_INVENTORY = inventoryDestination
+    echo "Set CURRENT_NDFC_INVENTORY to ${env.CURRENT_NDFC_INVENTORY}"
+    sh "ls -l ${env.CURRENT_NDFC_INVENTORY}"
+}

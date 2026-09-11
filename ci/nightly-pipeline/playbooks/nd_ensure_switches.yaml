@@ -1,0 +1,270 @@
+---
+# Ensure every canonical lab switch is a member of its fabric, and onboard any
+# that ND reports missing (the "ND Error 400: Switch id <serial> not found" and
+# "/switchActions/deploy 400" class of failures caused by a switch dropping out
+# of the fabric inventory at runtime).
+#
+# The roster is data-driven from tests/integration_config.yml
+# (nd_test_fabric_switches), so this self-heals a missing switch for ANY
+# fabric/role in that roster - not just one specific serial.
+#
+# Two modes:
+#   * AUDIT (default, nd_switch_apply=false): gather + report only, changes nothing.
+#     For a fail-fast audit add -e nd_switch_fail_on_missing=true so a missing switch
+#     exits non-zero with a greppable NDP_SWITCH_PREFLIGHT_FAIL line.
+#   * ENFORCE (nd_switch_apply=true): add every missing canonical switch (state:
+#     merged, additive - never deletes), then RECALCULATE & DEPLOY its fabric
+#     (config_actions save + deploy), then re-gather and REQUIRE the full canonical
+#     roster to be present before returning. This is a hard gate, not a best-effort
+#     self-heal: a switch that will not onboard/deploy fails the play (no
+#     ignore_errors), and deploy is ON by default (nd_switch_deploy=true) so a switch
+#     is never left a member with un-pushed config. The Jenkins pre-flight uses this
+#     to confirm the original topology (4 VXLAN + 2 External switches) is present and
+#     deployed before the suite starts.
+#
+#   ansible-playbook -i inventory.yaml playbooks/nd_ensure_switches.yaml \
+#     -e nd_switch_apply=true -e switch_username=admin -e switch_password=***
+- name: Ensure cisco.nd fabric switch membership (self-heal missing switches)
+  hosts: nd
+  gather_facts: false
+  vars:
+    # Explicit roster override; empty means auto-discover from the candidates below.
+    nd_switch_roster_file: ""
+    # Roster search order (first existing wins). Covers the source layout (playbook
+    # in playbooks/, roster in ../tests/) and the flattened Jenkins install where the
+    # playbook and integration_config.yml sit together at the collection root.
+    nd_switch_roster_candidates:
+      - "{{ playbook_dir }}/integration_config.yml"
+      - "{{ playbook_dir }}/../tests/integration_config.yml"
+      - "{{ playbook_dir }}/tests/integration_config.yml"
+      - "{{ playbook_dir }}/tests/integration/integration_config.yml"
+    # Gate live mutation. false = audit only; true = onboard missing switches.
+    nd_switch_apply: false
+    # AUDIT-mode fail-fast only (nd_switch_apply=false): when true a missing switch
+    # exits non-zero (NDP_SWITCH_PREFLIGHT_FAIL). In ENFORCE mode (apply=true) the
+    # mandatory full-roster confirmation gate below is what fails the run, regardless
+    # of this flag.
+    nd_switch_fail_on_missing: false
+    # Brownfield re-add (keep the switch's existing running config) by default.
+    nd_switch_preserve_config: true
+    # Recalculate & deploy after adding a switch. true (default) = config_actions
+    # save (recalculate) + deploy, so the added switch AND its fabric peers converge
+    # instead of the switch being left a member with un-pushed config. This is the
+    # behaviour the pipeline requires; deploy=false would half-restore the switch and
+    # is deliberately NOT the default. The deploy-convergence wait can be long, which
+    # is why the caller bounds it with a wall-clock timeout (ND_SWITCH_SYNC_TIMEOUT).
+    nd_switch_deploy: true
+    # ENFORCE-mode confirmation gate. true (default) = after add + recalculate &
+    # deploy, re-gather ground truth and FAIL unless the full canonical roster is
+    # present, so the pipeline never starts on a partial topology. Set false only for
+    # a deploy-without-final-assert dry run.
+    nd_switch_require_full_roster: true
+
+  tasks:
+    - name: Locate the canonical roster file across both layouts
+      ansible.builtin.set_fact:
+        nd_switch_roster_resolved: "{{ lookup('ansible.builtin.first_found', _ff) }}"
+      vars:
+        _ff:
+          files: "{{ ([nd_switch_roster_file] if (nd_switch_roster_file | length > 0) else []) + nd_switch_roster_candidates }}"
+          skip: true
+
+    - name: Load the canonical roster when a roster file was found
+      ansible.builtin.include_vars:
+        file: "{{ nd_switch_roster_resolved }}"
+      when: nd_switch_roster_resolved | length > 0
+
+    - name: Decide whether a usable roster is present
+      ansible.builtin.set_fact:
+        nd_switch_roster_ok: "{{ (nd_switch_roster_resolved | length > 0) and (nd_test_fabric_switches is defined) and (nd_test_fabric_switches | default([]) | length > 0) }}"
+
+    # A missing/empty roster is a no-op, not an error: skip instead of failing the play.
+    - name: Report the switch pre-flight skip (no usable roster)
+      ansible.builtin.debug:
+        msg: >-
+          NDP_SWITCH_PREFLIGHT_SKIP no usable nd_test_fabric_switches roster found
+          (searched {{ ([nd_switch_roster_file] if (nd_switch_roster_file | length > 0) else []) + nd_switch_roster_candidates }});
+          skipping switch membership pre-flight.
+      when: not (nd_switch_roster_ok | bool)
+
+    - name: End the play without failing when the roster is missing
+      ansible.builtin.meta: end_play
+      when: not (nd_switch_roster_ok | bool)
+
+    - name: Gather current inventory for each fabric in the roster
+      cisco.nd.nd_manage_switches:
+        fabric: "{{ _fab.key }}"
+        state: gathered
+      loop: "{{ nd_test_fabric_switches | dict2items }}"
+      loop_control:
+        loop_var: _fab
+        label: "{{ _fab.key }}"
+      register: nd_gathered
+
+    - name: Map each fabric to the seed IPs currently present in ND
+      ansible.builtin.set_fact:
+        nd_present_seed_ips: >-
+          {{
+            dict((nd_test_fabric_switches.keys() | list)
+                 | zip(nd_gathered.results
+                       | map(attribute='gathered')
+                       | map('map', attribute='seed_ip')
+                       | map('list') | list))
+          }}
+
+    - name: Compute the switches ND is missing (desired minus present)
+      ansible.builtin.set_fact:
+        nd_missing_switches: >-
+          {{ nd_missing_switches | default([]) + (
+               _fab.value
+               | rejectattr('seed_ip', 'in', nd_present_seed_ips[_fab.key])
+               | map('combine', {'fabric': _fab.key})
+               | list
+             ) }}
+      loop: "{{ nd_test_fabric_switches | dict2items }}"
+      loop_control:
+        loop_var: _fab
+        label: "{{ _fab.key }}"
+
+    - name: Report fabric switch membership status
+      ansible.builtin.debug:
+        msg: >-
+          {{ ('NDP_SWITCH_PREFLIGHT_MISSING ' ~ (nd_missing_switches | length)
+              ~ ' switch(es): ' ~ (nd_missing_switches | map(attribute='serial') | list)
+              ~ ' fabrics: ' ~ (nd_missing_switches | map(attribute='fabric') | list))
+             if (nd_missing_switches | length > 0)
+             else ('NDP_SWITCH_PREFLIGHT_OK all ' ~ (nd_test_fabric_switches | dict2items
+                             | map(attribute='value') | map('length') | sum)
+                   ~ ' canonical switches present in ND') }}
+
+    - name: Fail fast when switches are missing and onboarding is not requested
+      ansible.builtin.assert:
+        that:
+          - nd_missing_switches | length == 0
+        fail_msg: >-
+          NDP_SWITCH_PREFLIGHT_FAIL: {{ nd_missing_switches | length }} switch(es) missing
+          from ND: {{ nd_missing_switches | map(attribute='serial') | list }}. Re-run with
+          -e nd_switch_apply=true plus switch_username / switch_password to onboard them.
+        success_msg: "NDP_SWITCH_PREFLIGHT_OK: all canonical switches present in ND."
+      when:
+        - nd_switch_fail_on_missing | bool
+        - not (nd_switch_apply | bool)
+
+    - name: Onboard the missing switches (add, then recalculate & deploy - ENFORCED)
+      when:
+        - nd_missing_switches | length > 0
+        - nd_switch_apply | bool
+      block:
+        - name: Require switch discovery credentials before onboarding
+          ansible.builtin.assert:
+            that:
+              - (nd_switch_username | default(switch_username | default(''))) | length > 0
+              - (nd_switch_password | default(switch_password | default(''))) | length > 0
+            fail_msg: >-
+              Onboarding needs switch credentials. Pass -e switch_username=... and
+              -e switch_password=... (or nd_switch_username / nd_switch_password).
+
+        # Add each missing switch and RECALCULATE & DEPLOY its fabric. state: merged
+        # adds the switch to fabric membership (the durable fix for "ND Error 400:
+        # Switch id <serial> not found"); config_actions.save recalculates and
+        # config_actions.deploy deploys, so the switch AND its fabric peers converge.
+        # This is an ENFORCED restore, not a best-effort self-heal: there is
+        # deliberately no ignore_errors, so a switch that will not onboard or deploy
+        # fails the play right here rather than letting the suite start half-restored.
+        - name: Add each missing switch, then recalculate and deploy its fabric
+          cisco.nd.nd_manage_switches:
+            fabric: "{{ _sw.fabric }}"
+            state: merged
+            config_actions:
+              save: true
+              deploy: "{{ nd_switch_deploy | bool }}"
+            config:
+              - seed_ip: "{{ _sw.seed_ip }}"
+                role: "{{ _sw.role }}"
+                username: "{{ nd_switch_username | default(switch_username) }}"
+                password: "{{ nd_switch_password | default(switch_password) }}"
+                preserve_config: "{{ nd_switch_preserve_config | bool }}"
+          loop: "{{ nd_missing_switches }}"
+          loop_control:
+            loop_var: _sw
+            label: "{{ _sw.name | default(_sw.serial) }} -> {{ _sw.fabric }}"
+          register: nd_onboard_results
+          no_log: true
+
+    # ENFORCED CONFIRMATION GATE. Runs on every apply run (even when the initial audit
+    # found nothing missing) so the pipeline never starts without proof. Re-gather the
+    # ground truth from ND and REQUIRE the full canonical roster (the 4 VXLAN + 2
+    # External switches) to be present; fail hard otherwise.
+    - name: Confirm the full canonical roster is present after onboarding
+      when: nd_switch_apply | bool
+      block:
+        - name: Re-gather every fabric to establish ground truth
+          cisco.nd.nd_manage_switches:
+            fabric: "{{ _fab.key }}"
+            state: gathered
+          loop: "{{ nd_test_fabric_switches | dict2items }}"
+          loop_control:
+            loop_var: _fab
+            label: "{{ _fab.key }}"
+          register: nd_gathered_confirm
+
+        - name: Map each fabric to the seed IPs present after onboarding
+          ansible.builtin.set_fact:
+            nd_present_confirm: >-
+              {{
+                dict((nd_test_fabric_switches.keys() | list)
+                     | zip(nd_gathered_confirm.results
+                           | map(attribute='gathered')
+                           | map('map', attribute='seed_ip')
+                           | map('list') | list))
+              }}
+
+        - name: Compute any canonical switch still absent across the full roster
+          ansible.builtin.set_fact:
+            nd_absent_final: >-
+              {{ nd_absent_final | default([]) + (
+                   _fab.value
+                   | rejectattr('seed_ip', 'in', nd_present_confirm[_fab.key] | default([]))
+                   | map('combine', {'fabric': _fab.key})
+                   | list
+                 ) }}
+          loop: "{{ nd_test_fabric_switches | dict2items }}"
+          loop_control:
+            loop_var: _fab
+            label: "{{ _fab.key }}"
+
+        - name: Report the full-roster confirmation result
+          ansible.builtin.debug:
+            msg: >-
+              {{ ('NDP_SWITCH_CONFIRM_FAIL ' ~ ((nd_absent_final | default([])) | length)
+                  ~ ' of ' ~ (nd_test_fabric_switches | dict2items | map(attribute='value') | map('length') | sum)
+                  ~ ' canonical switch(es) still absent after add + recalculate & deploy: '
+                  ~ ((nd_absent_final | default([])) | map(attribute='serial') | list)
+                  ~ ' fabrics: ' ~ ((nd_absent_final | default([])) | map(attribute='fabric') | list))
+                 if ((nd_absent_final | default([])) | length > 0)
+                 else ('NDP_SWITCH_CONFIRM_OK full canonical roster present ('
+                       ~ (nd_test_fabric_switches | dict2items | map(attribute='value') | map('length') | sum)
+                       ~ ' switches across ' ~ (nd_test_fabric_switches | length) ~ ' fabrics)') }}
+
+        - name: Require the full canonical roster before the pipeline may start
+          ansible.builtin.assert:
+            that:
+              - ((nd_absent_final | default([])) | length) == 0
+            fail_msg: >-
+              NDP_SWITCH_CONFIRM_FAIL: {{ (nd_absent_final | default([])) | map(attribute='serial') | list }}
+              still absent from {{ (nd_absent_final | default([])) | map(attribute='fabric') | list }} after
+              add + recalculate & deploy. Refusing to start the pipeline without the full topology; check the
+              switch(es) power / reachability / discovery and re-run.
+            success_msg: >-
+              NDP_SWITCH_CONFIRM_OK: full canonical roster present and deployed; safe to start the pipeline.
+          when: nd_switch_require_full_roster | bool
+
+    - name: Audit-only notice when switches are missing but apply is off
+      ansible.builtin.debug:
+        msg: >-
+          AUDIT ONLY: {{ nd_missing_switches | length }} switch(es) would be onboarded
+          ({{ nd_missing_switches | map(attribute='serial') | list }}). Re-run with
+          -e nd_switch_apply=true plus switch_username / switch_password to add them.
+      when:
+        - nd_missing_switches | length > 0
+        - not (nd_switch_apply | bool)

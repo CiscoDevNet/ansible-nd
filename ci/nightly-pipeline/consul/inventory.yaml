@@ -1,0 +1,74 @@
+---
+# Static FALLBACK inventory for the cisco.nd nightly pipeline.
+#
+# The Jenkins pipeline normally builds a dynamic inventory at runtime
+# (generateDynamicInventory -> CURRENT_NDFC_INVENTORY) and only falls back to
+# this file if that step is skipped. Its structure mirrors the generated one.
+#
+# No secrets are stored here: user/password are read from the environment
+# (the same NDFC_USER / NDFC_PASSWORD that Jenkins injects as credentials).
+all:
+  vars:
+    ansible_user: "{{ lookup('env', 'NDFC_USER') | default('admin', true) }}"
+    ansible_password: "{{ lookup('env', 'NDFC_PASSWORD') }}"
+    ansible_python_interpreter: python
+    ansible_httpapi_validate_certs: false
+    ansible_httpapi_use_ssl: true
+    ansible_httpapi_login_domain: "local"
+    switch_username: "{{ ansible_user }}"
+    switch_password: "{{ ansible_password }}"
+    fabric_name: VXLAN_EVPN_Fabric
+    ansible_it_fabric: VXLAN_EVPN_Fabric
+    nd_test_fabric_name: VXLAN_EVPN_Fabric
+    nd_test_fabric1_name: VXLAN_EVPN_Fabric
+    nd_test_fabric2_name: External_Connectivity_Fabric
+    nd_fabric_names: [VXLAN_EVPN_Fabric, External_Connectivity_Fabric]
+    nd_test_fabric_switches:
+      VXLAN_EVPN_Fabric:
+        - {name: vxlan_leaf_1, seed_ip: 192.0.2.195, serial: SERIAL00001, role: leaf}
+        - {name: vxlan_leaf_2, seed_ip: 192.0.2.196, serial: SERIAL00002, role: leaf}
+        - {name: vxlan_spine_1, seed_ip: 192.0.2.194, serial: SERIAL00003, role: spine}
+        - {name: vxlan_border_1, seed_ip: 192.0.2.88, serial: SERIAL00004, role: border}
+      External_Connectivity_Fabric:
+        - {name: external_edge_1, seed_ip: 192.0.2.89, serial: SERIAL00005, role: edge_router}
+        - {name: external_edge_2, seed_ip: 192.0.2.90, serial: SERIAL00006, role: edge_router}
+    nd_switches:
+      - {name: vxlan_leaf_1, ip: 192.0.2.195, serial: SERIAL00001, fabric: VXLAN_EVPN_Fabric, role: leaf}
+      - {name: vxlan_leaf_2, ip: 192.0.2.196, serial: SERIAL00002, fabric: VXLAN_EVPN_Fabric, role: leaf}
+      - {name: vxlan_spine_1, ip: 192.0.2.194, serial: SERIAL00003, fabric: VXLAN_EVPN_Fabric, role: spine}
+      - {name: vxlan_border_1, ip: 192.0.2.88, serial: SERIAL00004, fabric: VXLAN_EVPN_Fabric, role: border}
+      - {name: external_edge_1, ip: 192.0.2.89, serial: SERIAL00005, fabric: External_Connectivity_Fabric, role: edge_router}
+      - {name: external_edge_2, ip: 192.0.2.90, serial: SERIAL00006, fabric: External_Connectivity_Fabric, role: edge_router}
+    # Positional module-slot aliases (NOT the switch registry). The COMPLETE six-switch
+    # inventory is nd_test_fabric_switches + nd_switches above (4 VXLAN + 2 External).
+    # The scalars below only re-expose specific switches under the fixed names individual
+    # upstream tests read; they are a subset by design. vxlan_spine_1's IP and external_edge_2
+    # are consumed via the lists above, so they intentionally have no scalar alias here.
+    ansible_switch1: 192.0.2.195         # vxlan_leaf_1  seed IP  (VXLAN_EVPN_Fabric)
+    ansible_switch2: 192.0.2.196         # vxlan_leaf_2  seed IP  (VXLAN_EVPN_Fabric)
+    ansible_sno_1: SERIAL00001             # vxlan_leaf_1  serial
+    ansible_sno_2: SERIAL00002             # vxlan_leaf_2  serial
+    switch_serial_1: SERIAL00001           # vxlan_leaf_1  serial (nd_manage_policy_group)
+    switch_serial_2: SERIAL00002           # vxlan_leaf_2  serial (nd_manage_policy_group)
+    switch_serial_3: SERIAL00003           # vxlan_spine_1 serial (nd_manage_policy_group)
+    nd_test_switch1_id: SERIAL00004        # vxlan_border_1 serial
+    nd_test_switch2_id: SERIAL00005        # external_edge_1 serial (L3Out endpoint, not a switch-add target)
+    nd_test_switch1_mgmt_ip: 192.0.2.88  # vxlan_border_1  mgmt IP
+    nd_test_switch2_mgmt_ip: 192.0.2.89  # external_edge_1 mgmt IP
+    test_groups: [standalone]
+    nd_network_test_topology: standalone
+    nd_vrf_test_topology: standalone
+    ansible_msd_parent_fabric: ""
+    ansible_msd_child_fabric: ""
+    ansible_msd_switch1: ""
+    ansible_mcfg_parent_fabric: ""
+    ansible_mcfg_child_fabric: ""
+    ansible_mcfg_switch1: ""
+  children:
+    nd:
+      vars:
+        ansible_connection: ansible.netcommon.httpapi
+        ansible_network_os: cisco.nd.nd
+      hosts:
+        nd_controller:
+          ansible_host: 192.0.2.117

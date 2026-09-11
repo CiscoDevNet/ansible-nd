@@ -1,0 +1,7 @@
+# Python dependencies for the cisco.nd collection (mirrors the collection's
+# own requirements.txt). Installed by the nightly pipeline before running the
+# playbooks.
+requests_toolbelt
+jsonpath-ng
+lxml
+pydantic==2.12.5

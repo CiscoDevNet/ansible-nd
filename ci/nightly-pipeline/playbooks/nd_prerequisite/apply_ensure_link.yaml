@@ -1,0 +1,166 @@
+---
+# ensure_link: ensure a module's prerequisite inter-fabric link exists.
+#
+# Two provisioning modes (per-operation `provisioning`):
+#   * api            (default) -- POST the link to the native NDFC lan-fabric links API.
+#                    Use for templates that can be created standalone.
+#   * module_managed          -- the link is an IFC whose L3 addressing is "Input from
+#                    l3out" / ReadOnly (e.g. ext_l3_dci_link) and is populated by the
+#                    owning module's L3Out/VRF-Lite workflow. A raw link POST fails
+#                    template execution, so this file only VERIFIES the physical
+#                    prerequisite and lets the owning module create the IFC.
+#
+# Every logical IFC needs an underlying discovered (ethisl) physical link between the two
+# switches first; when `requires_physical` is true (default) this file asserts that
+# adjacency exists and, if not, fails with the exact cabling instruction (which two
+# switches/ports to connect). ext_l3_dci_link additionally requires the SOURCE switch to
+# hold a BORDER-type role -- a plain leaf cannot host an L3Out DCI IFC.
+#
+# CREATE endpoint (api mode): native single-object camelCase payload
+#   POST /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/links
+#   { sourceFabric, destinationFabric, sourceDevice(serial), destinationDevice(serial),
+#     sourceSwitchName, destinationSwitchName, sourceInterface, destinationInterface,
+#     templateName, nvPairs }
+# (The ND manage-API /api/v1/manage/links is READ-ONLY for links -- its GET is used below
+# for the idempotency/adjacency checks, but POSTing to it returns 500 "problem proxying".)
+#
+# Idempotent: GET the source fabric's links first and only act when NO link of the
+# requested template already spans the two endpoints. The discovered physical link
+# (linkType 'ethisl') is deliberately NOT treated as satisfying the template requirement.
+# `_ndp_operation` is self-contained (the offline planner already resolved fabric names,
+# serials, switch names and interfaces), so this file needs no reconcile reference maps.
+- name: "ensure_link GET current links on {{ _ndp_operation.src.fabric_name }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/links?fabricName={{ _ndp_operation.src.fabric_name }}"
+    method: get
+  register: _ndp_link_current
+  run_once: true
+  no_log: true
+
+- name: "ensure_link find any existing link on the requested endpoints"
+  ansible.builtin.set_fact:
+    _ndp_link_endpoint_matches: >-
+      {{
+        (_ndp_link_current.current.links | default([]))
+        | selectattr('srcSwitchId', 'equalto', _ndp_operation.src.serial)
+        | selectattr('srcInterfaceName', 'equalto', _ndp_operation.src.interface)
+        | selectattr('dstSwitchId', 'equalto', _ndp_operation.dst.serial)
+        | selectattr('dstInterfaceName', 'equalto', _ndp_operation.dst.interface)
+        | list
+      }}
+  run_once: true
+
+- name: "ensure_link determine whether a {{ _ndp_operation.template }} link already exists"
+  ansible.builtin.set_fact:
+    _ndp_link_exists: >-
+      {{
+        (_ndp_link_endpoint_matches
+         | selectattr('linkType', 'defined')
+         | selectattr('linkType', 'equalto', _ndp_operation.template)
+         | list | length) > 0
+        or
+        (_ndp_link_endpoint_matches
+         | selectattr('templateName', 'defined')
+         | selectattr('templateName', 'equalto', _ndp_operation.template)
+         | list | length) > 0
+      }}
+  run_once: true
+
+- name: "ensure_link detect discovered physical (ethisl) adjacency between the two switches"
+  ansible.builtin.set_fact:
+    _ndp_phys_exists: >-
+      {{
+        ((_ndp_link_current.current.links | default([]))
+         | selectattr('linkType', 'defined')
+         | selectattr('linkType', 'equalto', 'ethisl')
+         | selectattr('srcSwitchId', 'equalto', _ndp_operation.src.serial)
+         | selectattr('dstSwitchId', 'equalto', _ndp_operation.dst.serial)
+         | list | length) > 0
+        or
+        ((_ndp_link_current.current.links | default([]))
+         | selectattr('linkType', 'defined')
+         | selectattr('linkType', 'equalto', 'ethisl')
+         | selectattr('srcSwitchId', 'equalto', _ndp_operation.dst.serial)
+         | selectattr('dstSwitchId', 'equalto', _ndp_operation.src.serial)
+         | list | length) > 0
+      }}
+  run_once: true
+
+- name: "ensure_link provision {{ _ndp_operation.template }}: {{ _ndp_operation.src.switch_name }}/{{ _ndp_operation.src.interface }} <-> {{ _ndp_operation.dst.switch_name }}/{{ _ndp_operation.dst.interface }}"
+  when: not (_ndp_link_exists | bool)
+  run_once: true
+  block:
+    - name: "ensure_link require the underlying physical link to be cabled/discovered first"
+      ansible.builtin.assert:
+        that:
+          - _ndp_phys_exists | bool
+        fail_msg: >-
+          PHYSICAL CONNECTIVITY MISSING: no discovered (ethisl) link exists between
+          {{ _ndp_operation.src.switch_name }} ({{ _ndp_operation.src.serial }}) in
+          {{ _ndp_operation.src.fabric_name }} and
+          {{ _ndp_operation.dst.switch_name }} ({{ _ndp_operation.dst.serial }}) in
+          {{ _ndp_operation.dst.fabric_name }}. The {{ _ndp_operation.template }} IFC cannot
+          be provisioned until these two switches are cabled and discovered. Connect
+          {{ _ndp_operation.src.switch_name }}/{{ _ndp_operation.src.interface }} to
+          {{ _ndp_operation.dst.switch_name }}/{{ _ndp_operation.dst.interface }} (or any
+          free ports) and re-run. NB {{ _ndp_operation.template }} requires the source
+          switch to hold a BORDER-type role -- a plain leaf cannot host an L3Out DCI IFC.
+        success_msg: >-
+          Physical adjacency between {{ _ndp_operation.src.switch_name }} and
+          {{ _ndp_operation.dst.switch_name }} is present.
+      when: _ndp_operation.requires_physical | default(true) | bool
+
+    - name: "ensure_link {{ _ndp_operation.template }} is provisioned by its owning module workflow -- no standalone create"
+      ansible.builtin.debug:
+        msg: >-
+          {{ _ndp_operation.template }} is a module-managed IFC (its L3 addressing is
+          'Input from l3out' / ReadOnly and is populated by the owning module's
+          L3Out/VRF-Lite workflow). The physical prerequisite is satisfied; no raw link
+          POST is issued for this template.
+      when: (_ndp_operation.provisioning | default('api')) == 'module_managed'
+
+    - name: "ensure_link create {{ _ndp_operation.template }} via the native lan-fabric links API"
+      when: (_ndp_operation.provisioning | default('api')) == 'api'
+      block:
+        - name: "ensure_link POST native lan-fabric links create"
+          cisco.nd.nd_rest:
+            path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/links"
+            method: post
+            content:
+              sourceFabric: "{{ _ndp_operation.src.fabric_name }}"
+              destinationFabric: "{{ _ndp_operation.dst.fabric_name }}"
+              sourceDevice: "{{ _ndp_operation.src.serial }}"
+              destinationDevice: "{{ _ndp_operation.dst.serial }}"
+              sourceSwitchName: "{{ _ndp_operation.src.switch_name }}"
+              destinationSwitchName: "{{ _ndp_operation.dst.switch_name }}"
+              sourceInterface: "{{ _ndp_operation.src.interface }}"
+              destinationInterface: "{{ _ndp_operation.dst.interface }}"
+              templateName: "{{ _ndp_operation.template }}"
+              nvPairs: "{{ _ndp_operation.nvpairs | default({}) }}"
+          register: _ndp_link_post
+
+        - name: "ensure_link verify the create was accepted"
+          ansible.builtin.assert:
+            that:
+              - not (_ndp_link_post.failed | default(false))
+              - (_ndp_link_post.status | default(200) | int) not in [207, 400, 500]
+            fail_msg: >-
+              ND rejected the {{ _ndp_operation.template }} link create between
+              {{ _ndp_operation.src.fabric_name }}/{{ _ndp_operation.src.switch_name }}/{{ _ndp_operation.src.interface }}
+              and {{ _ndp_operation.dst.fabric_name }}/{{ _ndp_operation.dst.switch_name }}/{{ _ndp_operation.dst.interface }}
+              (status {{ _ndp_link_post.status | default('n/a') }}). A template-execution
+              500 usually means the template is module-managed (set
+              provisioning=module_managed) or needs additional nvPairs.
+            success_msg: >-
+              Created {{ _ndp_operation.template }} link
+              {{ _ndp_operation.src.switch_name }}/{{ _ndp_operation.src.interface }} <->
+              {{ _ndp_operation.dst.switch_name }}/{{ _ndp_operation.dst.interface }}.
+
+- name: "ensure_link already present -- nothing to do"
+  ansible.builtin.debug:
+    msg: >-
+      {{ _ndp_operation.template }} link
+      {{ _ndp_operation.src.switch_name }}/{{ _ndp_operation.src.interface }} <->
+      {{ _ndp_operation.dst.switch_name }}/{{ _ndp_operation.dst.interface }} already exists; skipping create.
+  when: _ndp_link_exists | bool
+  run_once: true

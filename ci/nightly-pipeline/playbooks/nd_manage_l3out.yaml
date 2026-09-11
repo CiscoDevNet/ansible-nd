@@ -1,0 +1,123 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_l3out.
+# Self-contained: pre-cleans, then creates its VRF prerequisites (VRF1 on fabric1
+# + VRF2 on the retained external fabric2), creates and deletes ANSIBLE_NIGHTLY_L3OUT,
+# then deletes the VRFs. The advanced + external fabrics are retained (orchestrated).
+- name: cisco.nd nightly - nd_manage_l3out
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_l3out
+      fabric_types: [vxlanIbgp, externalConnectivity]
+      switch_count: 2
+      switch_roles: [border, edge_router]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    # --- Pre-clean leftovers from a previous failed run (ignore if absent) ---
+    - name: Pre-clean the L3Out
+      cisco.nd.nd_manage_l3out:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - name: ANSIBLE_NIGHTLY_L3OUT
+      ignore_errors: true
+
+    - name: Pre-clean L3Out VRF1 on fabric1
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: VXLAN_EVPN_Fabric
+        state: deleted
+        config:
+          - vrf_name: ANSIBLE_L3OUT_VRF1
+      ignore_errors: true
+
+    - name: Pre-clean L3Out VRF2 on fabric2
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: External_Connectivity_Fabric
+        state: deleted
+        config:
+          - vrf_name: ANSIBLE_L3OUT_VRF2
+      ignore_errors: true
+
+    # --- Prerequisites: both VRFs the L3Out depends on (fabrics are retained) ---
+    - name: Create L3Out VRF1 on fabric1
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: VXLAN_EVPN_Fabric
+        state: merged
+        config:
+          - vrf_name: ANSIBLE_L3OUT_VRF1
+            vrf_id: 51801
+            vlan_id: 2801
+            vrf_vlan_name: ANSIBLE_L3OUT_VRF1_VLAN
+            vrf_description: "cisco.nd nightly L3Out VRF1"
+
+    - name: Create L3Out VRF2 on fabric2
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: External_Connectivity_Fabric
+        state: merged
+        config:
+          - vrf_name: ANSIBLE_L3OUT_VRF2
+            vrf_id: 51802
+            vlan_id: 2802
+            vrf_vlan_name: ANSIBLE_L3OUT_VRF2_VLAN
+            vrf_description: "cisco.nd nightly L3Out VRF2"
+
+    # --- Test: create then delete the L3Out ---
+    - name: Create L3Out with routed interfaces and BGP
+      cisco.nd.nd_manage_l3out:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        config:
+          - name: ANSIBLE_NIGHTLY_L3OUT
+            fabric1_name: VXLAN_EVPN_Fabric
+            fabric2_name: External_Connectivity_Fabric
+            vrf1_name: ANSIBLE_L3OUT_VRF1
+            vrf2_name: ANSIBLE_L3OUT_VRF2
+            configured_fabrics: both
+            ip_version: ipv4
+            connectivity_details:
+              routing_interface_type: routed
+              links:
+                - mtu: 9216
+                  ipv4_mask_length: 30
+                  switch1_details:
+                    switch_id: SERIAL00001
+                    interface_name: Ethernet1/1
+                    interface_ipv4_address: 10.0.0.1
+                  switch2_details:
+                    switch_id: SERIAL00005
+                    interface_name: Ethernet1/1
+                    interface_ipv4_address: 10.0.0.2
+            routing_details:
+              routing_protocol: bgp
+              bgp:
+                fabric1_details:
+                  local_asn: "65001"
+                fabric2_details:
+                  local_asn: "65099"
+
+    - name: Delete the L3Out
+      cisco.nd.nd_manage_l3out:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - name: ANSIBLE_NIGHTLY_L3OUT
+
+    # --- Cleanup prerequisites (reverse order, nothing left behind) ---
+    - name: Delete L3Out VRF1 on fabric1
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: VXLAN_EVPN_Fabric
+        state: deleted
+        config:
+          - vrf_name: ANSIBLE_L3OUT_VRF1
+
+    - name: Delete L3Out VRF2 on fabric2
+      cisco.nd.nd_manage_vrfs:
+        fabric_name: External_Connectivity_Fabric
+        state: deleted
+        config:
+          - vrf_name: ANSIBLE_L3OUT_VRF2

@@ -1,0 +1,48 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_switches.
+# NOTE: this module uses `fabric:` (not `fabric_name:`).
+# Adding/removing switches is destructive to the fabric, so the nightly only
+# GATHERS by default. Uncomment the merged/deleted tasks (and set seed_ip /
+# switch_password) to exercise discovery in a lab you control.
+- name: cisco.nd nightly - nd_manage_switches
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_switches
+      fabric_types: [vxlanIbgp]
+      switch_count: 2
+      switch_roles: [preserve, preserve]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Gather all switches in the fabric
+      cisco.nd.nd_manage_switches:
+        fabric: "{{ nd_fabric_name }}"
+        state: gathered
+      register: nd_switches
+
+    - name: Show that the gather succeeded
+      ansible.builtin.debug:
+        msg: "Gathered switches from {{ nd_fabric_name }}"
+
+    # - name: Add a switch (DESTRUCTIVE - lab only)
+    #   cisco.nd.nd_manage_switches:
+    #     fabric: "{{ nd_fabric_name }}"
+    #     state: merged
+    #     config:
+    #       - seed_ip: 192.0.2.195
+    #         username: admin
+    #         password: "{{ switch_password }}"
+    #         role: leaf
+    #         preserve_config: false
+    #
+    # - name: Remove the switch (DESTRUCTIVE - lab only)
+    #   cisco.nd.nd_manage_switches:
+    #     fabric: "{{ nd_fabric_name }}"
+    #     state: deleted
+    #     config:
+    #       - seed_ip: 192.0.2.195

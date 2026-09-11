@@ -1,0 +1,106 @@
+---
+# nd_readonly_diagnostic.yaml
+#
+# READ-ONLY diagnostic. Makes NO changes to ND or the fabrics.
+# Explains "Selected switches are in read-only mode. No configuration deployment
+# is permitted" by reporting, for each fabric:
+#   * fabric monitor / read-only mode  (fabric-level cause)
+#   * every switch's mode + role       (switch-level cause: Migration/Maintenance
+#                                        or role drift, e.g. external_edge_1)
+#
+# HOW TO RUN
+#   # 1. Get the runtime inventory the nightly uses (host nd_controller = 192.0.2.117):
+#   curl -sS "http://198.51.100.155:8500/v1/kv/ansible-nd/inventory.yaml?raw" -o inventory.yaml
+#   # 2. Prefer supplying creds via env (do NOT commit them):
+#   export NDFC_USER=admin
+#   export NDFC_PASSWORD='********'
+#   # 3. Run from anywhere the cisco.nd collection is installed:
+#   ansible-playbook -i inventory.yaml nd_readonly_diagnostic.yaml
+#
+# If NDFC_USER/NDFC_PASSWORD are exported they override the inventory fallback creds.
+
+- name: ND read-only / topology diagnostic (no changes)
+  hosts: nd
+  gather_facts: false
+  # Credentials come from the inventory (which already applies NDFC_USER/NDFC_PASSWORD
+  # env precedence over its plaintext fallback). Do NOT redefine ansible_user/
+  # ansible_password here as play vars referencing themselves -> infinite recursive
+  # templating ("An unhandled exception occurred while templating ...").
+  vars:
+    fabrics_to_check:
+      - VXLAN_EVPN_Fabric
+      - External_Connectivity_Fabric
+    focus_serials:
+      # --- VXLAN_EVPN_Fabric ---
+      - SERIAL00001   # vxlan_leaf_1   192.0.2.195  leaf    (read-only in build #9)
+      - SERIAL00002   # vxlan_leaf_2   192.0.2.196  leaf    (read-only in build #9)
+      - SERIAL00003   # vxlan_spine_1  192.0.2.194  spine
+      - SERIAL00004   # vxlan_border_1 192.0.2.88   border
+      # --- External_Connectivity_Fabric ---
+      - SERIAL00005   # external_edge_1 192.0.2.89  edge_router (l3out planner: refusing role change / drift)
+      - SERIAL00006   # external_edge_2 192.0.2.90  edge_router
+  tasks:
+    # ---- [1] Proven, non-destructive: gather the live inventory per fabric ----
+    - name: "[1] Gather live switch inventory per fabric (read-only)"
+      cisco.nd.nd_manage_switches:
+        fabric: "{{ item }}"
+        state: gathered
+      loop: "{{ fabrics_to_check }}"
+      register: gathered_sw
+
+    - name: "[1] Full gathered inventory (inspect 'role' / 'mode' / 'serial' fields)"
+      ansible.builtin.debug:
+        var: gathered_sw.results
+
+    # ---- [2] Authoritative fabric-level monitor/read-only flag via REST ----
+    - name: "[2] Query fabric attributes via REST (monitor / read-only)"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/fabrics/{{ item }}"
+      loop: "{{ fabrics_to_check }}"
+      register: fabric_rest
+      ignore_errors: true
+
+    - name: "[2] Raw fabric REST response (look for IS_READ_ONLY / monitor mode in nvPairs)"
+      ansible.builtin.debug:
+        var: fabric_rest.results
+
+    # ---- [3] Authoritative per-switch mode via REST ----
+    - name: "[3] Query per-switch mode via REST (switchesByFabric)"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/inventory/switchesByFabric/{{ item }}"
+      loop: "{{ fabrics_to_check }}"
+      register: switches_rest
+      ignore_errors: true
+
+    - name: "[3] Raw per-switch REST response (look for 'mode' + 'switchRole' per serialNumber)"
+      ansible.builtin.debug:
+        var: switches_rest.results
+
+    - name: "[4] Reminder: interpreting the results"
+      ansible.builtin.debug:
+        msg:
+          - "Fabric monitor/read-only  -> [2] nvPairs.IS_READ_ONLY == true  => whole fabric is read-only."
+          - "Switch mode (per serial)   -> [3] 'mode' != Normal (Migration/Maintenance) blocks deployment."
+          - "Role drift (external_edge_1)-> [5] switch_role for SERIAL00005 must be edgeRouter in External_Connectivity_Fabric (asserted below)."
+          - "Focus serials to grep in the output above: {{ focus_serials | join(', ') }}"
+
+    # ---- [5] Explicit gate: external_edge_1 role must be edgeRouter (l3out blocker) ----
+    - name: "[5] Focus switch roles (serial -> switch_role, from live [1] gather)"
+      vars:
+        _all_switches: "{{ gathered_sw.results | map(attribute='after', default=[]) | flatten }}"
+      ansible.builtin.debug:
+        msg: "{{ _all_switches | selectattr('serial_number', 'in', focus_serials) | items2dict(key_name='serial_number', value_name='switch_role') }}"
+
+    - name: "[5] ASSERT external_edge_1 (SERIAL00005) role == edgeRouter"
+      vars:
+        _all_switches: "{{ gathered_sw.results | map(attribute='after', default=[]) | flatten }}"
+        _edge1: "{{ _all_switches | selectattr('serial_number', 'equalto', 'SERIAL00005') | list }}"
+        _edge1_role: "{{ _edge1[0].switch_role if (_edge1 | length > 0) else 'NOT_FOUND' }}"
+      ansible.builtin.assert:
+        that:
+          - "_edge1 | length > 0"
+          - "_edge1_role == 'edgeRouter'"
+        success_msg: "NDP_ROLE_CHECK_OK: external_edge_1 (SERIAL00005) switch_role=edgeRouter in External_Connectivity_Fabric."
+        fail_msg: "NDP_ROLE_CHECK_FAIL: external_edge_1 (SERIAL00005) switch_role={{ _edge1_role }} (expected edgeRouter). Fix on ND: set role -> Edge Router in External_Connectivity_Fabric, then Recalculate & Deploy."

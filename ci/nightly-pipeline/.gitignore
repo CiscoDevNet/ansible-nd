@@ -1,0 +1,31 @@
+# logs & run artifacts
+logs/
+integ_logs/
+run_logs/
+*.log
+*.retry
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# os / editor
+.DS_Store
+*.swp
+
+# local backups, dated snapshots, ad-hoc probes
+_*/
+_*.yaml
+*_copy_*
+*.bak
+*.orig
+
+# secrets — never commit
+*.pem
+*.key
+*.p12
+.env

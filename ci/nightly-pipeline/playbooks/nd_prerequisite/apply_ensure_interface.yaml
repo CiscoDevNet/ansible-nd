@@ -1,0 +1,17 @@
+---
+# ensure_interface: admin-up readiness for an allowlisted physical interface.
+# There is no safe generic "admin state only" module, so we assert the interface
+# is allowlisted and surface the intended change; the operator wires the concrete
+# interface module for the lab once validated against the controller.
+- name: "ensure_interface guard {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"
+  ansible.builtin.assert:
+    that:
+      - _ndp_operation.interface is match('^Ethernet[0-9]+/[0-9]+$')
+      - _ndp_operation.admin_state | bool
+    fail_msg: "Refusing to touch a non-allowlisted interface: {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"
+  run_once: true
+
+- name: "ensure_interface intended admin-up {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"
+  ansible.builtin.debug:
+    msg: "Ensure {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }} is admin-up before the module runs."
+  run_once: true
