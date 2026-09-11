@@ -103,7 +103,13 @@ class ConfigActionsMixin:
         )
         return result.get("switches", []) if result else []
 
-    def config_deploy(self, fabric_name: str, deploy_type: str = "global", switches: list[dict] | None = None) -> ResponseType:
+    def config_deploy(
+        self,
+        fabric_name: str,
+        deploy_type: str = "global",
+        switches: list[dict] | None = None,
+        only_switch_ids: set[str] | None = None,
+    ) -> ResponseType:
         """Deploy fabric configuration.
 
         Args:
@@ -113,6 +119,10 @@ class ConfigActionsMixin:
             switches: Optional pre-fetched switch list (from
                 ``_get_fabric_switches``) reused for switch-level deploy to avoid a
                 redundant switches query. Fetched on demand when None.
+            only_switch_ids: Optional serial-number allowlist. When set, a
+                switch-level deploy is restricted to the intersection of
+                out-of-sync switches and these serials. None deploys every
+                out-of-sync switch (fabric-wide). Ignored for ``"global"``.
 
         Returns:
             API response data, or None if no switches need deployment
@@ -125,7 +135,7 @@ class ConfigActionsMixin:
         if deploy_type == "global":
             return self._deploy_global(fabric_name)
         elif deploy_type == "switch":
-            return self._deploy_switches(fabric_name, switches)
+            return self._deploy_switches(fabric_name, switches, only_switch_ids)
         else:
             raise ValueError(f"Invalid deploy_type '{deploy_type}'. Must be 'global' or 'switch'.")
 
@@ -138,18 +148,25 @@ class ConfigActionsMixin:
             operation_type=OperationType.UPDATE,
         )
 
-    def _deploy_switches(self, fabric_name: str, switches: list[dict] | None = None) -> ResponseType:
+    def _deploy_switches(
+        self,
+        fabric_name: str,
+        switches: list[dict] | None = None,
+        only_switch_ids: set[str] | None = None,
+    ) -> ResponseType:
         """Deploy to switches that need configuration deployment.
 
         Identifies switches with a ``configSyncStatus`` that is not ``inSync`` and
         deploys to them via the switchActions/deploy endpoint. When ``switches`` is
-        provided it is reused; otherwise the switch list is fetched.
+        provided it is reused; otherwise the switch list is fetched. When
+        ``only_switch_ids`` is set, the deploy is restricted to the intersection
+        of out-of-sync switches and those serials.
 
-        Returns None if all switches are already in sync.
+        Returns None if no in-scope switch needs deployment.
         """
         if switches is None:
             switches = self._get_fabric_switches(fabric_name)
-        switch_ids = self._filter_switches_needing_deploy(switches)
+        switch_ids = self._filter_switches_needing_deploy(switches, only_switch_ids)
         if not switch_ids:
             return None
 
@@ -169,8 +186,12 @@ class ConfigActionsMixin:
         return self._filter_switches_needing_deploy(self._get_fabric_switches(fabric_name))
 
     @staticmethod
-    def _filter_switches_needing_deploy(switches: list[dict]) -> list[str]:
-        """Return serial numbers of switches whose ``configSyncStatus`` is not ``inSync``."""
+    def _filter_switches_needing_deploy(switches: list[dict], only_switch_ids: set[str] | None = None) -> list[str]:
+        """Return serials whose ``configSyncStatus`` is not ``inSync``.
+
+        When ``only_switch_ids`` is provided, the result is restricted to those
+        serials (intersection). None returns every out-of-sync serial.
+        """
         switch_ids = []
         for switch in switches:
             additional_data = switch.get("additionalData", {})
@@ -179,7 +200,7 @@ class ConfigActionsMixin:
             # deployment. An unknown status must not silently skip the switch.
             if config_status != "inSync":
                 serial_number = switch.get("serialNumber", "")
-                if serial_number:
+                if serial_number and (only_switch_ids is None or serial_number in only_switch_ids):
                     switch_ids.append(serial_number)
         return switch_ids
 
@@ -215,6 +236,7 @@ class ConfigActionsMixin:
         save: bool = False,
         deploy: bool = False,
         deploy_type: str = "global",
+        only_switch_ids: set[str] | None = None,
     ) -> None:
         """Execute config save and/or deploy for a list of fabrics.
 
@@ -230,6 +252,9 @@ class ConfigActionsMixin:
             save: Whether to save configuration.
             deploy: Whether to deploy configuration (requires save=True).
             deploy_type: ``"global"`` or ``"switch"`` (default: "global").
+            only_switch_ids: Optional serial-number allowlist scoping a
+                switch-level deploy to specific switches. None (the default)
+                deploys every out-of-sync switch; ignored for ``"global"``.
 
         Raises:
             ValueError: If deploy=True but save=False.
@@ -250,4 +275,4 @@ class ConfigActionsMixin:
             if save:
                 self.config_save(fabric_name)
             if deploy:
-                self.config_deploy(fabric_name, deploy_type, switches=switches)
+                self.config_deploy(fabric_name, deploy_type, switches=switches, only_switch_ids=only_switch_ids)

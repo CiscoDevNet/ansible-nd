@@ -301,6 +301,11 @@ class NDStateMachine:
             if (existing_item := self.existing.get(identifier)) is not None and not getattr(existing_item, "is_unsupported_policy", False)
         ]
         self._delete_items(items_to_delete)
+        # Record removals as sent so save/deploy gates that fire on len(sent)
+        # trigger when an overridden run only removes items (a disassociate
+        # stages config that must be pushed), mirroring _manage_delete_state.
+        if items_to_delete:
+            self.sent.add_many(items_to_delete)
 
     def _manage_delete_state(self) -> None:
         """Handle deleted state."""
@@ -324,6 +329,11 @@ class NDStateMachine:
         except Exception as e:
             raise NDStateMachineError(f"Preflight failed: {e}") from e
         self._delete_items(items_to_delete)
+        # Record removals as sent so save/deploy gates that fire on len(sent)
+        # trigger for deletes too (a disassociate stages config that must be
+        # pushed). Scoped to the deleted state; override deletions are unchanged.
+        if items_to_delete:
+            self.sent.add_many(items_to_delete)
 
     def _delete_items(self, items: list[NDBaseModel]) -> None:
         """Delete a list of items individually or in bulk."""

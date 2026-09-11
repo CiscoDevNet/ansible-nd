@@ -535,6 +535,86 @@ class TestConfigDeploySwitch:
         # Empty and missing statuses are treated as needing deploy; inSync excluded
         assert rest_send.committed_payload == {"switchIds": ["FOC111AAA", "FOC222BBB"]}
 
+    def test_deploy_switch_scoped_to_only_switch_ids(self):
+        """
+        # Summary
+
+        Verify config_deploy(deploy_type='switch', only_switch_ids=...) deploys
+        only the intersection of out-of-sync switches and the allowlist.
+
+        ## Test
+
+        - Fabric has three out-of-sync switches
+        - only_switch_ids allows two of them
+        - POST body contains only the two allowed, out-of-sync serials
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.config_deploy()
+        - ConfigActionsMixin._deploy_switches()
+        - ConfigActionsMixin._filter_switches_needing_deploy()
+        """
+        switches_response = {
+            "switches": [
+                {"serialNumber": "FOC111AAA", "additionalData": {"configSyncStatus": "outOfSync"}},
+                {"serialNumber": "FOC222BBB", "additionalData": {"configSyncStatus": "outOfSync"}},
+                {"serialNumber": "FOC333CCC", "additionalData": {"configSyncStatus": "outOfSync"}},
+            ]
+        }
+        rest_send = _make_rest_send(
+            [
+                _success_response(data=switches_response, method="GET"),
+                _success_response(data={"switchIds": []}),
+            ]
+        )
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+
+        orch.config_deploy("test-fabric", deploy_type="switch", only_switch_ids={"FOC111AAA", "FOC333CCC"})
+
+        assert len(results._tasks) == 2
+        assert "switchActions/deploy" in rest_send.path
+        # FOC222BBB is out-of-sync but not in the allowlist, so it is excluded
+        assert rest_send.committed_payload == {"switchIds": ["FOC111AAA", "FOC333CCC"]}
+
+    def test_deploy_switch_scoped_skips_when_allowlist_all_in_sync(self):
+        """
+        # Summary
+
+        Verify a scoped switch deploy makes no deploy call when every allowlisted
+        switch is already inSync, even if other fabric switches are out-of-sync.
+
+        ## Test
+
+        - Allowlisted switch is inSync; a different switch is out-of-sync
+        - Only the GET switches query is made; no switchActions/deploy
+        - Returns None
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.config_deploy()
+        - ConfigActionsMixin._deploy_switches()
+        - ConfigActionsMixin._filter_switches_needing_deploy()
+        """
+        switches_response = {
+            "switches": [
+                {"serialNumber": "FOC111AAA", "additionalData": {"configSyncStatus": "inSync"}},
+                {"serialNumber": "FOC999ZZZ", "additionalData": {"configSyncStatus": "outOfSync"}},
+            ]
+        }
+        rest_send = _make_rest_send(
+            [
+                _success_response(data=switches_response, method="GET"),
+            ]
+        )
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+
+        result = orch.config_deploy("test-fabric", deploy_type="switch", only_switch_ids={"FOC111AAA"})
+
+        assert len(results._tasks) == 1
+        assert result is None
+
 
 # =============================================================================
 # Test: config_deploy — invalid deploy_type

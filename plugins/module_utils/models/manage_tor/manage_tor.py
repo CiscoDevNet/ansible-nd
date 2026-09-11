@@ -1,0 +1,168 @@
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+from __future__ import absolute_import, division, print_function
+
+from typing import List, Dict, Any, Optional, ClassVar, Literal, Set, Tuple
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+    model_validator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+
+
+class ManageTorModel(NDBaseModel):
+    """
+    Access/ToR switch association configuration for Nexus Dashboard.
+
+    Identifier: composite (fabric_name, access_or_tor_switch_id, aggregation_or_leaf_switch_id)
+
+    Serialization notes:
+        - fabric_name is excluded from API payload (path parameter only).
+        - Port channel and VPC ID fields are nested under "resources" in
+          payload mode but remain flat in config mode.
+    """
+
+    # --- Identifier Configuration ---
+
+    identifiers: ClassVar[Optional[List[str]]] = [
+        "fabric_name",
+        "access_or_tor_switch_id",
+        "aggregation_or_leaf_switch_id",
+    ]
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "composite"
+
+    # --- Serialization Configuration ---
+
+    # fabric_name is a path parameter; hostname fields are read-only from API responses
+    payload_exclude_fields: ClassVar[Set[str]] = {
+        "fabric_name",
+        "access_or_tor_switch_name",
+        "access_or_tor_peer_switch_name",
+    }
+    exclude_from_diff: ClassVar[Set[str]] = {
+        "access_or_tor_switch_name",
+        "access_or_tor_peer_switch_name",
+    }
+
+    # In payload mode, nest these fields under "resources"
+    payload_nested_fields: ClassVar[Dict[str, List[str]]] = {
+        "resources": [
+            "access_or_tor_port_channel_id",
+            "aggregation_or_leaf_port_channel_id",
+            "access_or_tor_peer_port_channel_id",
+            "access_or_tor_vpc_id",
+            "aggregation_or_leaf_peer_port_channel_id",
+            "aggregation_or_leaf_vpc_id",
+        ],
+    }
+
+    # --- Fields ---
+
+    # Path parameter / scope
+    fabric_name: str = Field(alias="fabricName")
+
+    # Required switch identifiers
+    access_or_tor_switch_id: str = Field(alias="accessOrTorSwitchId")
+    aggregation_or_leaf_switch_id: str = Field(alias="aggregationOrLeafSwitchId")
+
+    # Optional VPC peer switch identifiers
+    access_or_tor_peer_switch_id: Optional[str] = Field(default=None, alias="accessOrTorPeerSwitchId")
+    aggregation_or_leaf_peer_switch_id: Optional[str] = Field(default=None, alias="aggregationOrLeafPeerSwitchId")
+
+    # Read-only hostname fields (returned by API, never sent in payloads)
+    access_or_tor_switch_name: Optional[str] = Field(default=None, alias="accessOrTorSwitchName")
+    access_or_tor_peer_switch_name: Optional[str] = Field(default=None, alias="accessOrTorPeerSwitchName")
+
+    # Resource fields (nested under "resources" in API payload)
+    access_or_tor_port_channel_id: Optional[int] = Field(default=None, alias="accessOrTorPortChannelId")
+    aggregation_or_leaf_port_channel_id: Optional[int] = Field(default=None, alias="aggregationOrLeafPortChannelId")
+    access_or_tor_peer_port_channel_id: Optional[int] = Field(default=None, alias="accessOrTorPeerPortChannelId")
+    access_or_tor_vpc_id: Optional[int] = Field(default=None, alias="accessOrTorVpcId")
+    aggregation_or_leaf_peer_port_channel_id: Optional[int] = Field(default=None, alias="aggregationOrLeafPeerPortChannelId")
+    aggregation_or_leaf_vpc_id: Optional[int] = Field(default=None, alias="aggregationOrLeafVpcId")
+
+    # --- Validators (Deserialization) ---
+
+    @model_validator(mode="before")
+    @classmethod
+    def flatten_resources(cls, data: Any) -> Any:
+        """
+        Flatten nested resources from API response into top-level fields.
+        This is the inverse of the payload_nested_fields nesting.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        resources = data.pop("resources", None)
+        if isinstance(resources, dict):
+            for key, val in resources.items():
+                data.setdefault(key, val)
+
+        return data
+
+    # --- Identity ---
+
+    def get_identifier_value(self) -> Tuple[Any, ...]:
+        # ND treats the access and aggregation vPC pair members as unordered and
+        # may store a different primary/peer than the user supplied. Sort each
+        # pair so user config and the ND response yield the same key, keeping
+        # delete and idempotency matching order-independent.
+        access_pair = tuple(sorted(v for v in (self.access_or_tor_switch_id, self.access_or_tor_peer_switch_id) if v is not None))
+        aggregation_pair = tuple(sorted(v for v in (self.aggregation_or_leaf_switch_id, self.aggregation_or_leaf_peer_switch_id) if v is not None))
+        return (self.fabric_name, access_pair, aggregation_pair)
+
+    def affected_switch_ids(self) -> Set[str]:
+        """Serials this association references, for scoping a switch-level deploy."""
+        return {
+            switch_id
+            for switch_id in (
+                self.access_or_tor_switch_id,
+                self.aggregation_or_leaf_switch_id,
+                self.access_or_tor_peer_switch_id,
+                self.aggregation_or_leaf_peer_switch_id,
+            )
+            if switch_id is not None
+        }
+
+    # --- Argument Spec ---
+
+    @classmethod
+    def get_argument_spec(cls) -> Dict:
+        # The switch suboptions accept a serial number OR a management IP; the
+        # module resolves an IP to its serial and remaps these keys onto the
+        # ``*_switch_id`` model fields before the proposed collection is built.
+        return dict(
+            fabric_name=dict(type="str", required=True),
+            config=dict(
+                type="list",
+                elements="dict",
+                options=dict(
+                    access_or_tor_switch=dict(type="str"),
+                    aggregation_or_leaf_switch=dict(type="str", required=True),
+                    access_or_tor_peer_switch=dict(type="str"),
+                    aggregation_or_leaf_peer_switch=dict(type="str"),
+                    access_or_tor_port_channel_id=dict(type="int"),
+                    aggregation_or_leaf_port_channel_id=dict(type="int"),
+                    access_or_tor_peer_port_channel_id=dict(type="int"),
+                    access_or_tor_vpc_id=dict(type="int"),
+                    aggregation_or_leaf_peer_port_channel_id=dict(type="int"),
+                    aggregation_or_leaf_vpc_id=dict(type="int"),
+                ),
+            ),
+            state=dict(
+                type="str",
+                default="merged",
+                choices=["merged", "overridden", "deleted", "gathered"],
+            ),
+            config_actions=dict(
+                type="dict",
+                options=dict(
+                    save=dict(type="bool", default=False),
+                    deploy=dict(type="bool", default=False),
+                    type=dict(type="str", default="switch", choices=["switch", "global"]),
+                ),
+            ),
+        )
