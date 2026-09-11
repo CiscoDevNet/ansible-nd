@@ -1,0 +1,8 @@
+---
+bugfixes:
+  - nd httpapi plugin - remove the ``get_version(platform="nd")`` branch that queried the legacy
+    ``/version.json`` endpoint, which the unified Nexus Dashboard (4.2+) no longer exposes. The NDFC
+    version path used by cisco.dcnm modules is unchanged.
+minor_changes:
+  - NDModule - remove the unused ``version`` property, which relied on the legacy ``/version.json``
+    endpoint that is not available on the unified Nexus Dashboard (4.2+).
