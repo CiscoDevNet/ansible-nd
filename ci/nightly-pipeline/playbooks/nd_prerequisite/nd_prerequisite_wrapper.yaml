@@ -1,0 +1,228 @@
+---
+# ND prerequisite gate. Imported from each playbook's pre_tasks and active only
+# when nd_prerequisite_enable is true. It plans and CONFIRMS the fabric, switch,
+# role, interface, vPC, and resource contract for this module before the play
+# runs. Planning is offline and controller-local; ND mutation is gated behind
+# nd_prerequisite_apply and delegated to nd_prerequisite_reconcile.yaml.
+
+- name: Resolve ND prerequisite identifiers
+  ansible.builtin.set_fact:
+    _ndp_execution_id: "{{ nd_prerequisite.profile }}"
+    _ndp_run_id: "{{ nd_prerequisite_run_id | default('local-' ~ nd_prerequisite.profile, true) }}"
+    _ndp_phase_baseline_id: "{{ nd_prerequisite_phase_baseline_id | default('phase-' ~ nd_prerequisite.profile, true) }}"
+    _ndp_assets_dir: "{{ nd_prerequisite_assets_dir | default(playbook_dir ~ '/../tests', true) }}"
+    _ndp_state_dir: "{{ nd_prerequisite_state_dir | default('/tmp/.nd-prerequisite-recovery/' ~ (nd_prerequisite_run_id | default('local-' ~ nd_prerequisite.profile, true)), true) }}"
+    _ndp_state_file: "{{ nd_prerequisite_state_dir | default('/tmp/.nd-prerequisite-recovery/' ~ (nd_prerequisite_run_id | default('local-' ~ nd_prerequisite.profile, true)), true) }}/current-state.yaml"
+  run_once: true
+
+- name: Load the canonical prerequisite registry
+  ansible.builtin.command:
+    argv:
+      - "{{ nd_prerequisite_python | default(ansible_playbook_python) }}"
+      - "{{ nd_prerequisite_orchestrator | default(_ndp_assets_dir ~ '/nd_prerequisite_orchestrator.py') }}"
+      - registry
+      - --registry
+      - "{{ nd_prerequisite_registry | default(_ndp_assets_dir ~ '/nd_prerequisite_profiles.yaml') }}"
+  delegate_to: localhost
+  changed_when: false
+  check_mode: false
+  register: _ndp_registry_command
+  run_once: true
+
+- name: Decode the canonical prerequisite registry
+  ansible.builtin.set_fact:
+    _ndp_registry: "{{ _ndp_registry_command.stdout | from_json }}"
+  run_once: true
+
+- name: Resolve the selected prerequisite profile
+  ansible.builtin.set_fact:
+    _ndp_profile: >-
+      {{
+        _ndp_registry.profiles | dict2items
+        | selectattr('key', 'equalto', _ndp_execution_id)
+        | map(attribute='value') | list | first | default({})
+      }}
+  run_once: true
+
+- name: Confirm the selected prerequisite profile exists
+  ansible.builtin.assert:
+    that:
+      - _ndp_profile.profile_id | default('') == _ndp_execution_id
+    fail_msg: "Unknown prerequisite profile: {{ _ndp_execution_id }}"
+  run_once: true
+
+- name: Capture the current prerequisite state before planning
+  ansible.builtin.include_tasks: nd_prerequisite_capture.yaml
+
+- name: Assemble the offline ND prerequisite planner command
+  ansible.builtin.set_fact:
+    _ndp_argv: >-
+      {{
+        [nd_prerequisite_python | default(ansible_playbook_python),
+         nd_prerequisite_orchestrator | default(_ndp_assets_dir ~ '/nd_prerequisite_orchestrator.py'),
+         'plan',
+         '--registry', nd_prerequisite_registry | default(_ndp_assets_dir ~ '/nd_prerequisite_profiles.yaml'),
+         '--execution-id', _ndp_execution_id,
+         '--state', _ndp_state_file,
+         '--run-id', _ndp_run_id,
+         '--phase-baseline-id', _ndp_phase_baseline_id]
+        + (['--allow-auto-confirm'] if (nd_prerequisite_allow_auto_confirm | default(true) | bool) else [])
+      }}
+  run_once: true
+
+- name: Plan the ND prerequisite topology delta (offline, controller-local)
+  ansible.builtin.command:
+    argv: "{{ _ndp_argv }}"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  check_mode: false
+  register: _ndp_plan
+  failed_when:
+    - not (nd_prerequisite_only | default(false) | bool)
+    - _ndp_plan.rc != 0
+
+- name: Decode the confirmed ND prerequisite plan
+  ansible.builtin.set_fact:
+    _ndp_result: "{{ _ndp_plan.stdout | from_json }}"
+  run_once: true
+  when: (_ndp_plan.stdout | default('') | trim | length) > 0
+
+# In audit-only mode a planner OrchestrationError is a finding, not a build
+# failure; represent it as an empty delta that carries the error text.
+- name: Represent an audit planning error as an empty reportable delta
+  ansible.builtin.set_fact:
+    _ndp_result:
+      resolved:
+        execution_id: "{{ _ndp_execution_id }}"
+        profile_id: ""
+        phase: ""
+        execution_style: ""
+      operations: []
+      runtime_vars: {}
+      audit_error: "{{ _ndp_plan.stderr | default('planner produced no output') | trim }}"
+  run_once: true
+  when:
+    - nd_prerequisite_only | default(false) | bool
+    - (_ndp_plan.stdout | default('') | trim | length) == 0
+
+- name: Confirm the prepared topology before invoking the module
+  ansible.builtin.assert:
+    that:
+      - _ndp_result.resolved.execution_id == _ndp_execution_id
+      - (_ndp_result.operations | map(attribute='operation') | list | difference(_ndp_allowed_operations)) | length == 0
+    fail_msg: "ND prerequisite contract for {{ _ndp_execution_id }} is unconfirmed or plans an unsupported operation."
+    success_msg: "ND prerequisite contract confirmed for {{ _ndp_execution_id }}: {{ _ndp_result.operations | length }} change(s) planned."
+  run_once: true
+  vars:
+    _ndp_allowed_operations:
+      - create_disposable_fabric
+      - ensure_switch_membership
+      - membership_move
+      - change_role
+      - ensure_interface
+      - ensure_virtual_vpc
+      - ensure_bfd
+      - ensure_link
+      - verify_resource
+
+- name: Show the confirmed ND prerequisite operations
+  ansible.builtin.debug:
+    msg: "ND prerequisite plan for {{ _ndp_execution_id }}: {{ _ndp_result.operations }}"
+  run_once: true
+
+- name: Summarize the ND prerequisite audit finding
+  ansible.builtin.debug:
+    msg: >-
+      AUDIT {{ _ndp_execution_id }}: {{ _ndp_result.operations | length }} planned change(s){{
+      ' | PLANNER ERROR: ' ~ _ndp_result.audit_error if (_ndp_result.audit_error is defined) else '' }}
+  run_once: true
+  when: nd_prerequisite_only | default(false) | bool
+
+- name: Require live reconciliation when prerequisites are not met
+  ansible.builtin.assert:
+    that:
+      - _ndp_result.operations | length == 0 or (nd_prerequisite_mode | default('fixture') == 'live' and nd_prerequisite_apply | default(false) | bool) or (nd_prerequisite_only | default(false) | bool)
+    fail_msg: >-
+      {{ _ndp_execution_id }} has unmet prerequisites. Refusing to publish a
+      prepared marker or run its module test until live reconciliation is enabled.
+      Run with nd_prerequisite_only=true to audit the required changes without mutating the lab.
+  run_once: true
+
+- name: Reconcile the prepared topology on the controller (gated live mutation)
+  ansible.builtin.include_tasks: nd_prerequisite_reconcile.yaml
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - nd_prerequisite_apply | default(false) | bool
+    - _ndp_result.operations | length > 0
+
+- name: Wait for reconciled ND prerequisites to converge
+  ansible.builtin.include_tasks: nd_prerequisite_wait.yaml
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - nd_prerequisite_apply | default(false) | bool
+    - _ndp_result.operations | length > 0
+
+- name: Recapture live state after prerequisite reconciliation
+  ansible.builtin.include_tasks: nd_prerequisite_capture.yaml
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - nd_prerequisite_apply | default(false) | bool
+    - _ndp_result.operations | length > 0
+
+- name: Publish verified ND prerequisite runtime variables as facts
+  ansible.builtin.set_fact:
+    "{{ _ndp_item.key }}": "{{ _ndp_item.value }}"
+  loop: "{{ _ndp_result.runtime_vars | default({}) | dict2items }}"
+  loop_control:
+    loop_var: _ndp_item
+    label: "{{ _ndp_item.key }}"
+  run_once: true
+
+- name: Ensure the verified prerequisite marker directory exists (0700)
+  ansible.builtin.file:
+    path: "{{ nd_prerequisite_marker_dir | default(playbook_dir ~ '/nd_prerequisite/.runtime') }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+  when: not (nd_prerequisite_only | default(false) | bool)
+
+- name: Record the verified prerequisite runtime marker (0600)
+  ansible.builtin.copy:
+    dest: "{{ nd_prerequisite_marker_dir | default(playbook_dir ~ '/nd_prerequisite/.runtime') }}/{{ _ndp_execution_id }}.yaml"
+    content: "{{ _ndp_result.runtime_vars | default({}) | to_nice_yaml }}"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  when: not (nd_prerequisite_only | default(false) | bool)
+
+- name: Replan prerequisites from the reconciled live state
+  ansible.builtin.command:
+    argv: "{{ _ndp_argv }}"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  check_mode: false
+  register: _ndp_reconciled_plan
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - nd_prerequisite_apply | default(false) | bool
+    - _ndp_result.operations | length > 0
+
+- name: Confirm reconciled prerequisites have no remaining topology delta
+  ansible.builtin.assert:
+    that:
+      # verify_resource / ensure_interface are non-mutating stubs that never converge.
+      # ensure_link is mutating but self-verifying: apply_ensure_link.yaml is GET-first
+      # (skips when the link already exists) and asserts the create was accepted, so a
+      # failed create already fails the run before this gate. Its post-create GET shape
+      # is controller-version-dependent, so it is trusted to that apply-time assert
+      # rather than re-verified by this offline replan.
+      - (_ndp_reconciled_plan.stdout | from_json).operations | rejectattr('operation', 'in', ['verify_resource', 'ensure_interface', 'ensure_link']) | list | length == 0
+    fail_msg: "ND prerequisite reconciliation completed with remaining topology operations; refusing to run {{ _ndp_execution_id }}."
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - nd_prerequisite_apply | default(false) | bool
+    - _ndp_result.operations | length > 0

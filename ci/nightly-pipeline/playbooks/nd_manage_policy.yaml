@@ -1,0 +1,66 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_policy.
+# Policies are switch-scoped, so this test only runs when `switch1` (a switch
+# serial number) is provided, e.g. -e switch1=SERIAL00007. Without it the play
+# is skipped (nightly stays green). The created policy is idempotent
+# (create_additional_policy: false + use_description_as_key).
+- name: cisco.nd nightly - nd_manage_policy
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_policy
+      fabric_types: [vxlanIbgp]
+      switch_count: 1
+      switch_roles: [leaf]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+    nd_policy_template: switch_freeform
+    switch1: SERIAL00001   # <-- set to a real switch serial to enable this test
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Notice when switch1 is not set
+      ansible.builtin.debug:
+        msg: "Set 'switch1' (a switch serial) to exercise nd_manage_policy. Skipping."
+      when: switch1 is not defined
+
+    - name: Gather policies on the target switch
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ switch1 }}"
+      when: switch1 is defined
+
+    - name: Create a switch_freeform policy (idempotent, additive)
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        deploy: true
+        use_description_as_key: true
+        config:
+          - name: "{{ nd_policy_template }}"
+            create_additional_policy: false
+            description: "ANSIBLE_NIGHTLY_POLICY"
+            template_inputs:
+              CONF: |
+                feature lacp
+          - switch:
+              - serial_number: "{{ switch1 }}"
+      when: switch1 is defined
+
+    # Cleanup: use_description_as_key ensures only the nightly policy is removed.
+    - name: Delete the nightly policy (by description key)
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        use_description_as_key: true
+        config:
+          - name: "{{ nd_policy_template }}"
+            description: "ANSIBLE_NIGHTLY_POLICY"
+          - switch:
+              - serial_number: "{{ switch1 }}"
+      when: switch1 is defined

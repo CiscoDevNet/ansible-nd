@@ -1,0 +1,30 @@
+---
+# ensure_virtual_vpc: create the confirmed virtual (no physical peer-link) vPC
+# pair when it is absent. peer_refs are resolved to serial numbers.
+- name: "ensure_virtual_vpc {{ _ndp_operation.peer_refs | join('/') }} in {{ _ndp_operation.fabric_ref }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}/switches/{{ _ndp_switch_serial[_ndp_operation.peer_refs[0]] }}/vpcPair"
+    method: put
+    content:
+      vpcAction: pair
+      switchId: "{{ _ndp_switch_serial[_ndp_operation.peer_refs[0]] }}"
+      peerSwitchId: "{{ _ndp_switch_serial[_ndp_operation.peer_refs[1]] }}"
+      useVirtualPeerLink: true
+  run_once: true
+  no_log: true
+
+- name: "ensure_virtual_vpc save {{ _ndp_operation.fabric_ref }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}/actions/configSave"
+    method: post
+    content: {}
+  run_once: true
+  no_log: true
+
+- name: "ensure_virtual_vpc deploy {{ _ndp_operation.fabric_ref }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}/actions/deploy?forceShowRun=true"
+    method: post
+    content: {}
+  run_once: true
+  no_log: true

@@ -1,0 +1,333 @@
+---
+# Prepare the planner input in a run-scoped location. Fixture mode exists only
+# for offline validation; live mode must supply captured controller data and
+# never fall back to the fixture.
+- name: Validate prerequisite capture mode and state directory
+  ansible.builtin.assert:
+    that:
+      - nd_prerequisite_mode | default('fixture') in ['fixture', 'live']
+      - _ndp_state_dir is match('^/.+')
+    fail_msg: "ND prerequisite capture requires fixture/live mode and an absolute state directory."
+  run_once: true
+
+- name: Create the prerequisite state directory (0700)
+  ansible.builtin.file:
+    path: "{{ _ndp_state_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+
+- name: Capture the offline fixture state for planning
+  ansible.builtin.copy:
+    src: "{{ nd_prerequisite_fixture_file | default(_ndp_assets_dir ~ '/fixtures/nd_prerequisite/valid_state.yaml') }}"
+    dest: "{{ _ndp_state_file }}"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: nd_prerequisite_mode | default('fixture') == 'fixture'
+
+- name: Discover declared fabrics from the live controller
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_fabric.name }}"
+    method: get
+  loop: "{{ _ndp_profile.fabrics }}"
+  loop_control:
+    loop_var: _ndp_fabric
+    label: "{{ _ndp_fabric.name }}"
+  register: _ndp_live_fabric_results
+  no_log: true
+  check_mode: false
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Validate every declared fabric was captured from the live controller
+  ansible.builtin.assert:
+    that:
+      - not (_ndp_fabric_result.failed | default(false))
+      - _ndp_fabric_result.current.management.type is defined
+      - _ndp_fabric_result.current.management.type == _ndp_fabric_result._ndp_fabric.type
+    fail_msg: "Failed to capture the expected live fabric {{ _ndp_fabric_result._ndp_fabric.name }}."
+  loop: "{{ _ndp_live_fabric_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_fabric_result
+    label: "{{ _ndp_fabric_result._ndp_fabric.name }}"
+  run_once: true
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Initialize normalized live prerequisite state
+  ansible.builtin.set_fact:
+    _ndp_live_state:
+      fabrics: {}
+      switches: {}
+      interfaces: {}
+      vpc_pairs: []
+      links: []
+      resources: []
+      managed_domains: {}
+  run_once: true
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Normalize captured live fabrics for the planner
+  ansible.builtin.set_fact:
+    _ndp_live_state: >-
+      {{
+        _ndp_live_state | combine({
+          'fabrics': _ndp_live_state.fabrics | combine({
+            _ndp_fabric_result._ndp_fabric.ref: {
+              'name': _ndp_fabric_result._ndp_fabric.name,
+              'type': _ndp_fabric_result.current.management.type,
+              'lifecycle': _ndp_fabric_result._ndp_fabric.lifecycle,
+              'bfd_enabled': _ndp_fabric_result.current.management.bfd | default(false) | bool
+            }
+          })
+        })
+      }}
+  loop: "{{ _ndp_live_fabric_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_fabric_result
+    label: "{{ _ndp_fabric_result._ndp_fabric.name }}"
+  run_once: true
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Discover required switch memberships across profile fabrics
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_membership_query.0.name }}/switches"
+    method: get
+  loop: "{{ _ndp_profile.fabrics | product(_ndp_profile.switches.members) | list }}"
+  loop_control:
+    loop_var: _ndp_membership_query
+    label: "{{ _ndp_membership_query.0.ref }}/{{ _ndp_membership_query.1.ref }}"
+  register: _ndp_live_membership_results
+  no_log: true
+  check_mode: false
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Normalize each discovered switch membership for the planner
+  ansible.builtin.set_fact:
+    _ndp_live_state: >-
+      {{
+        _ndp_live_state | combine({
+          'switches': _ndp_live_state.switches | combine({
+            _ndp_membership_result._ndp_membership_query.1.ref: {
+              'fabric_ref': _ndp_membership_result._ndp_membership_query.0.ref,
+              'serial': _ndp_expected_switch.serial,
+              'seed_ip': _ndp_discovered_switch.fabricManagementIp,
+              'role': _ndp_discovered_switch.switchRole | lower | regex_replace('edgerouter', 'edge_router'),
+              'intended_system_mode': _ndp_discovered_switch.additionalData.intendedSystemMode | default(''),
+              'sync_status': _ndp_discovered_switch.additionalData.configSyncStatus | default('')
+            }
+          })
+        })
+      }}
+  vars:
+    _ndp_expected_switch: "{{ _ndp_registry.lab.switches[_ndp_membership_result._ndp_membership_query.1.ref] }}"
+    _ndp_discovered_switch: "{{ _ndp_membership_result.current.switches | default([]) | selectattr('switchId', 'equalto', _ndp_expected_switch.serial) | list | first | default({}) }}"
+  loop: "{{ _ndp_live_membership_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_membership_result
+    label: "{{ _ndp_membership_result._ndp_membership_query.0.ref }}/{{ _ndp_membership_result._ndp_membership_query.1.ref }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_discovered_switch.switchId is defined
+
+- name: Validate each required switch was discovered in a profile fabric
+  ansible.builtin.assert:
+    that:
+      - _ndp_live_switch.serial is defined
+      - _ndp_live_switch.seed_ip is defined
+      - _ndp_live_switch.role is defined
+    fail_msg: "Required switch {{ _ndp_required_member.ref }} is absent or incomplete in live prerequisite discovery."
+  vars:
+    _ndp_live_switch: "{{ _ndp_live_state.switches[_ndp_required_member.ref] | default({}) }}"
+  loop: "{{ _ndp_profile.switches.members }}"
+  loop_control:
+    loop_var: _ndp_required_member
+    label: "{{ _ndp_required_member.ref }}"
+  run_once: true
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Discover profile link interfaces from the live controller
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ _ndp_registry.lab.fabrics[_ndp_link_member.desired_fabric_ref].name
+      }}/switches/{{ _ndp_registry.lab.switches[_ndp_link_item.0.switch_ref].serial
+      }}/interfaces/{{ _ndp_link_item.1 | replace('/', '%2F') }}
+    method: get
+  vars:
+    _ndp_link_member: "{{ _ndp_profile.switches.members | selectattr('ref', 'equalto', _ndp_link_item.0.switch_ref) | list | first }}"
+  loop: "{{ _ndp_profile.links | subelements('interfaces') }}"
+  loop_control:
+    loop_var: _ndp_link_item
+    label: "{{ _ndp_link_item.0.switch_ref }}/{{ _ndp_link_item.1 }}"
+  register: _ndp_live_link_results
+  no_log: true
+  check_mode: false
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_profile.links | length > 0
+
+- name: Validate captured profile link interfaces
+  ansible.builtin.assert:
+    that:
+      - not (_ndp_interface_result.failed | default(false))
+      - _ndp_interface_result.current.interfaceName is defined
+      - >-
+        (_ndp_interface_result.current.configData.networkOS.policy.adminState | default(false) | bool)
+        or (_ndp_interface_result.current.operData.adminStatus | default('') | lower == 'up')
+    fail_msg: "Required physical interface {{ _ndp_interface_result._ndp_link_item.0.switch_ref }}/{{ _ndp_interface_result._ndp_link_item.1 }} could not be captured."
+  loop: "{{ _ndp_live_link_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_interface_result
+    label: "{{ _ndp_interface_result._ndp_link_item.0.switch_ref }}/{{ _ndp_interface_result._ndp_link_item.1 }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_profile.links | length > 0
+
+- name: Normalize captured profile link interfaces for the planner
+  ansible.builtin.set_fact:
+    _ndp_live_state: >-
+      {{
+        _ndp_live_state | combine({
+          'interfaces': _ndp_live_state.interfaces | combine({
+            _ndp_interface_result._ndp_link_item.0.switch_ref:
+              (_ndp_live_state.interfaces[_ndp_interface_result._ndp_link_item.0.switch_ref] | default({})) | combine({
+                _ndp_interface_result._ndp_link_item.1: {
+                  'admin_state': _ndp_interface_result.current.configData.networkOS.policy.adminState | default(_ndp_interface_result.current.operData.adminStatus | default('') | lower == 'up') | bool,
+                  'operational_state': _ndp_interface_result.current.operData.operationalStatus | default(None) | lower
+                }
+              })
+          })
+        })
+      }}
+  loop: "{{ _ndp_live_link_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_interface_result
+    label: "{{ _ndp_interface_result._ndp_link_item.0.switch_ref }}/{{ _ndp_interface_result._ndp_link_item.1 }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_profile.links | length > 0
+
+- name: Discover configured vPC pairs from the live controller
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ _ndp_registry.lab.fabrics[_ndp_vpc_pair.fabric_ref].name }}"
+    state: query
+    config:
+      - peer1_switch_id: "{{ _ndp_registry.lab.switches[_ndp_vpc_pair.peer_refs[0]].serial }}"
+        peer2_switch_id: "{{ _ndp_registry.lab.switches[_ndp_vpc_pair.peer_refs[1]].serial }}"
+  loop: "{{ _ndp_profile.vpc_pairs }}"
+  loop_control:
+    loop_var: _ndp_vpc_pair
+    label: "{{ _ndp_vpc_pair.fabric_ref }}"
+  register: _ndp_live_vpc_results
+  no_log: true
+  check_mode: false
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_profile.vpc_pairs | length > 0
+
+- name: Validate live vPC discovery responses
+  ansible.builtin.assert:
+    that:
+      - not (_ndp_vpc_result.failed | default(false))
+      - _ndp_vpc_result.query.vpc_pairs is defined
+    fail_msg: "Unable to query vPC state for {{ _ndp_vpc_result._ndp_vpc_pair.fabric_ref }}."
+  loop: "{{ _ndp_live_vpc_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_vpc_result
+    label: "{{ _ndp_vpc_result._ndp_vpc_pair.fabric_ref }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_profile.vpc_pairs | length > 0
+
+- name: Normalize captured live vPC pairs for the planner
+  ansible.builtin.set_fact:
+    _ndp_live_state: >-
+      {{
+        _ndp_live_state | combine({
+          'vpc_pairs': _ndp_live_state.vpc_pairs
+            + [{
+              'fabric_ref': _ndp_vpc_result._ndp_vpc_pair.fabric_ref,
+              'peer_refs': _ndp_vpc_result._ndp_vpc_pair.peer_refs,
+              'mode': 'virtual' if (_ndp_vpc_result.query.vpc_pairs | first).use_virtual_peer_link | bool else 'physical'
+            }]
+        })
+      }}
+  loop: "{{ _ndp_live_vpc_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_vpc_result
+    label: "{{ _ndp_vpc_result._ndp_vpc_pair.fabric_ref }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_profile.vpc_pairs | length > 0
+    - _ndp_vpc_result.query.vpc_pairs | length > 0
+
+- name: Discover declared inter-fabric links from the live controller
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/links?fabricName={{
+        _ndp_registry.lab.fabrics[_ndp_registry.lab.switches[_ndp_ifl.src.switch_ref].baseline_fabric_ref].name
+      }}
+    method: get
+  loop: "{{ _ndp_profile.interfabric_links | default([]) }}"
+  loop_control:
+    loop_var: _ndp_ifl
+    label: "{{ _ndp_ifl.template }} {{ _ndp_ifl.src.switch_ref }}<->{{ _ndp_ifl.dst.switch_ref }}"
+  register: _ndp_live_interfabric_link_results
+  no_log: true
+  check_mode: false
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_profile.interfabric_links | default([]) | length > 0
+
+- name: Normalize captured inter-fabric links for the planner
+  ansible.builtin.set_fact:
+    _ndp_live_state: >-
+      {{
+        _ndp_live_state | combine({
+          'links': _ndp_live_state.links + [
+            {
+              'srcSwitchId': _ndp_link.srcSwitchId | default(''),
+              'srcInterfaceName': _ndp_link.srcInterfaceName | default(''),
+              'dstSwitchId': _ndp_link.dstSwitchId | default(''),
+              'dstInterfaceName': _ndp_link.dstInterfaceName | default(''),
+              'templateName': _ndp_link.templateName | default(''),
+              'linkType': _ndp_link.linkType | default('')
+            }
+            for _ndp_link in (_ndp_link_result.current.links | default([]))
+          ]
+        })
+      }}
+  loop: "{{ _ndp_live_interfabric_link_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_link_result
+    label: "{{ _ndp_link_result._ndp_ifl.template | default('link') }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_profile.interfabric_links | default([]) | length > 0
+
+- name: Persist normalized live prerequisite state for planning
+  ansible.builtin.copy:
+    dest: "{{ _ndp_state_file }}"
+    content: "{{ _ndp_live_state | to_nice_yaml }}"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Confirm normalized live controller capture is available
+  ansible.builtin.assert:
+    that:
+      - _ndp_live_state.fabrics | length == _ndp_profile.fabrics | length
+      - _ndp_live_state.switches | length == _ndp_profile.switches.required_count
+    fail_msg: "Live prerequisite capture is incomplete; refusing to plan or mutate ND topology."
+  run_once: true
+  when: nd_prerequisite_mode | default('fixture') == 'live'
