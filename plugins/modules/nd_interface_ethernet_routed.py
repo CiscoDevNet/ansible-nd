@@ -492,16 +492,15 @@ msg:
 # pylint: disable=wrong-import-position
 
 import logging
-import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import EthernetRoutedInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator, finalize_accepted_intent
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import EthernetRoutedInterfaceOrchestrator
 
 
@@ -559,23 +558,8 @@ def main():
 
         module.exit_json(**nd_state_machine.output.format())
 
-    except NDStateMachineError as e:
-        module_log.exception("NDStateMachineError during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
-        error_msg = f"Module execution failed: {str(e)}"
-        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
-        if module.params.get("output_level") == "debug":
-            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
-        module.fail_json(msg=error_msg, **output)
-
     except Exception as e:  # pylint: disable=broad-except
-        module_log.exception("Unhandled exception during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
-        error_msg = f"Module failed: {str(e)}"
-        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
-        if module.params.get("output_level") == "debug":
-            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
-        module.fail_json(msg=error_msg, **output)
+        fail_from_exception(module, module_log, nd_state_machine, e)
 
 
 if __name__ == "__main__":
