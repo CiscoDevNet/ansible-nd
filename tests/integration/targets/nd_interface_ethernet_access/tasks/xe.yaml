@@ -87,7 +87,7 @@
       - cm_xe_merged_update is changed
       - nm_xe_merged_update is changed
       - xe_after.config_data.network_os.policy.access_vlan == 150
-      - xe_after.config_data.network_os.policy.mtu == 9000
+      - xe_after.config_data.network_os.policy.mtu == 8000
       - xe_after.config_data.network_os.policy.description == "Updated XE access description"
 
 - name: "XE MERGED UPDATE: Re-apply for idempotency"
