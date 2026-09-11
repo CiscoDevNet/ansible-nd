@@ -100,7 +100,7 @@ def test_nd_argument_specs_00100() -> None:
     """
     # Summary
 
-    Verify `config_actions_spec()` with no allowlist returns the full fragment: `save`, `deploy`, and `type` options.
+    Verify `config_actions_spec()` with no allowlist returns the legacy fragment defaults.
 
     ## Test
 
@@ -125,7 +125,7 @@ def test_nd_argument_specs_00101() -> None:
     """
     # Summary
 
-    Verify `config_actions_spec(include=("deploy",))` reproduces the deploy-only block hand-written in the `nd_interface_*` modules today.
+    Verify `config_actions_spec(include=("deploy",))` preserves opt-in deployment.
 
     ## Test
 
