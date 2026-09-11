@@ -41,8 +41,10 @@ options:
       - V(deleted) removes specified VRFs (or all if config is empty).
       - V(gathered) returns current VRF state (the only state allowed on child
         fabrics when targeted directly).
+      - V(staged) creates or updates VRFs and reconciles attachments without
+        deploying changes; omitted VRFs are detached but not removed.
     type: str
-    choices: [ merged, replaced, overridden, deleted, gathered ]
+    choices: [ merged, replaced, overridden, deleted, gathered, staged ]
     default: merged
   config:
     description:
@@ -627,6 +629,17 @@ EXAMPLES = r"""
         vrf_description: "Updated Blue VRF"
         max_bgp_paths: 4
         max_ibgp_paths: 4
+
+# ── Stage VRF changes without deployment ───────────────────────────────────
+- name: Stage VRF attachment changes
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: fab1
+    state: staged
+    config:
+      - vrf_name: VRF_BLUE
+        vrf_id: 50010
+        attach:
+          - ip_address: 192.0.2.10
 """
 
 RETURN = r"""
@@ -736,7 +749,7 @@ def main():
         state=dict(
             type="str",
             default="merged",
-            choices=["merged", "replaced", "overridden", "deleted", "gathered"],
+            choices=["merged", "replaced", "overridden", "deleted", "gathered", "staged"],
         ),
         config=dict(
             type="list",

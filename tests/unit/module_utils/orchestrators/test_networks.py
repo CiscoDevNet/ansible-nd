@@ -57,6 +57,24 @@ class _Module:
         raise AssertionError(kwargs)
 
 
+class _NetworkAttachmentCoordinator:
+    def __init__(self):
+        self.traces = []
+
+    def _trace(self, event, **details):
+        self.traces.append((event, details))
+
+
+class _RecordingNetworkAttachmentManager(NetworkAttachmentManager):
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self.posts = []
+
+    def post_network_attachments(self, _module_args, _strategy, payloads, deploy_targets, operation_type):
+        self.posts.append((payloads, deploy_targets, operation_type))
+        return {"changed": True, "payloads": payloads, "deploy_targets": deploy_targets}
+
+
 class _ParentStrategy:
     config_model_cls = NetworkParentConfigModel
     fabric_data = {"members": [{"fabricName": "child1"}]}
@@ -92,11 +110,18 @@ class _ParentStrategy:
 class _FakeStateMachine:
     existing = []
 
-    def __init__(self, calls):
+    def __init__(self, calls, existing=None):
         self.calls = calls
+        self.existing = existing or []
+        self.state = None
 
     def manage_state(self):
-        self.calls.append(("manage_state",))
+        self.calls.append(("manage_state", self.state))
+
+
+class _ExistingNetwork:
+    def __init__(self, network_name):
+        self.network_name = network_name
 
 
 class _ReplacedNetworkCoordinator:
@@ -131,7 +156,8 @@ class _ReplacedNetworkCoordinator:
     def _deploy_enabled_by_network(_config):
         return {"BLUE_NET": True}
 
-    def _new_state_machine(self, _module_args, _strategy):
+    def _new_state_machine(self, module_args, _strategy):
+        self.state_machine.state = module_args["state"]
         self.calls.append(("new_state_machine",))
         return self.state_machine, "original-config", "original-state"
 
@@ -202,6 +228,122 @@ class _ReplacedNetworkCoordinator:
         self.calls.append(("trace", event))
 
 
+class _StagedNetworkCoordinator:
+    def __init__(self):
+        self.module = _Module({"state": "staged"})
+        self.calls = []
+        self.state_machine = _FakeStateMachine(self.calls, existing=[_ExistingNetwork("BLUE_NET"), _ExistingNetwork("OMIT_NET")])
+        self.current_attachment_details = [
+            {"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": True},
+            {"networkName": "BLUE_NET", "switchId": "SERIAL2", "attach": True},
+            {"networkName": "OMIT_NET", "switchId": "SERIAL3", "attach": True},
+        ]
+
+    @staticmethod
+    def _desired_attachment_map(_module_args, _strategy):
+        return {("BLUE_NET", "SERIAL1"): {"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": True}}
+
+    @staticmethod
+    def _configured_network_names(config):
+        return [network["network_name"] for network in config]
+
+    @staticmethod
+    def _deploy_enabled_by_network(config):
+        return {network["network_name"]: network.get("deploy", True) for network in config}
+
+    def _new_state_machine(self, module_args, _strategy):
+        self.state_machine.state = module_args["state"]
+        self.calls.append(("new_state_machine", module_args["state"], list(module_args.get("config") or [])))
+        return self.state_machine, "original-config", "original-state"
+
+    def _current_attachment_details_ignore_missing(self, _module_args, _strategy, network_names):
+        self.calls.append(("attachment_query", network_names))
+        return list(self.current_attachment_details)
+
+    @staticmethod
+    def _attachment_map_from_details(attachments, network_names=None):
+        return NetworkAttachmentManager.attachment_map_from_details(attachments, network_names)
+
+    @staticmethod
+    def _filter_attachment_details_by_network(attachments, network_names):
+        return NetworkAttachmentManager.filter_attachment_details_by_network(attachments, network_names)
+
+    def _ensure_networks_have_no_networks(self, _module_args, _strategy, network_names):
+        raise AssertionError(f"staged must not run Network deletion dependency checks: {network_names}")
+
+    def _apply_deleted_attachment_phase(self, _module_args, _strategy, network_names, attachment_details=None):
+        self.calls.append(("omitted_detach", network_names, attachment_details))
+        return {"changed": True, "payloads": [{"networkName": network_names[0], "switchId": "SERIAL3", "attach": False}], "deploy_targets": {}}
+
+    def _apply_attachment_phase(
+        self,
+        module_args,
+        _strategy,
+        phase,
+        desired=None,
+        current_network_names=None,
+        current=None,
+        attachment_details=None,
+    ):
+        self.calls.append(("attachment_phase", phase, module_args["state"], current_network_names, current, attachment_details))
+        if phase == "pre":
+            return {
+                "changed": True,
+                "payloads": NetworkAttachmentManager(self).planned_detach_payloads(
+                    module_args["state"],
+                    module_args.get("config") or [],
+                    current,
+                    desired,
+                ),
+                "current": current,
+                "desired": desired,
+                "deploy_targets": {},
+            }
+        return {"changed": False, "payloads": [], "current": current, "desired": desired, "deploy_targets": {}}
+
+    @staticmethod
+    def _attachment_map_after_detach(current, payloads):
+        return NetworkAttachmentManager.attachment_map_after_detach(current, payloads)
+
+    @staticmethod
+    def _format_state_machine_output(_state_machine):
+        return {"changed": True, "failed": False, "after": [{"network_name": "BLUE_NET"}]}
+
+    @staticmethod
+    def _merge_api_trace(result, trace, prepend=False):
+        if prepend:
+            result.setdefault("prepended", []).append(trace)
+        if trace.get("changed"):
+            result["changed"] = True
+
+    @staticmethod
+    def _build_delete_deploy_payloads(_config, *_target_maps):
+        raise AssertionError("staged must not build delete deploy payloads")
+
+    @staticmethod
+    def _build_deploy_payloads(_config, *_target_maps):
+        raise AssertionError("staged must not build deploy payloads")
+
+    @staticmethod
+    def _build_pending_network_deploy_payloads(_result, _config, _module_args, _strategy):
+        raise AssertionError("staged must not build pending deploy payloads")
+
+    def _query_current_networks_with_trace(self, *_args):
+        raise AssertionError("staged test should not need the fallback pending Network query")
+
+    def _wait_for_network_attachments_delete_ready(self, _module_args, _strategy, network_names):
+        raise AssertionError(f"staged must not wait for attachment delete readiness: {network_names}")
+
+    def _wait_for_networks_delete_ready(self, _module_args, _strategy, network_names):
+        raise AssertionError(f"staged must not wait for Network delete readiness: {network_names}")
+
+    def _restore_state_machine_params(self, original_config, original_state):
+        self.calls.append(("restore", original_config, original_state))
+
+    def _trace(self, event, **_details):
+        self.calls.append(("trace", event))
+
+
 def _orchestrator():
     strategy = StandaloneNetworkStrategy(
         fabric_name="fab1",
@@ -211,6 +353,87 @@ def _orchestrator():
         rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}),
         strategy=strategy,
     )
+
+
+def test_network_attachment_manager_staged_detaches_like_overridden():
+    manager = NetworkAttachmentManager(coordinator=object())
+    current = {
+        ("BLUE_NET", "SERIAL1"): {"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": True},
+        ("BLUE_NET", "SERIAL2"): {"networkName": "BLUE_NET", "switchId": "SERIAL2", "attach": True},
+    }
+    desired = {("BLUE_NET", "SERIAL1"): {"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": True}}
+
+    assert manager.planned_detach_payloads("staged", [{"network_name": "BLUE_NET"}], current, desired) == [
+        {"networkName": "BLUE_NET", "switchId": "SERIAL2", "attach": False}
+    ]
+
+
+def test_network_attachment_manager_staged_pre_phase_posts_detach():
+    coordinator = _NetworkAttachmentCoordinator()
+    manager = _RecordingNetworkAttachmentManager(coordinator)
+
+    trace = manager.apply_phase(
+        {"state": "staged", "config": [{"network_name": "BLUE_NET"}]},
+        StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}),
+        phase="pre",
+        desired={},
+        current_network_names=["BLUE_NET"],
+        current={("BLUE_NET", "SERIAL1"): {"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": True, "vlanId": 100}},
+        attachment_details=[{"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": True, "vlanId": 100}],
+    )
+
+    assert trace["payloads"] == [{"networkName": "BLUE_NET", "switchId": "SERIAL1", "vlanId": 100, "attach": False}]
+    assert manager.posts[0][0] == trace["payloads"]
+    assert ("network_attachment_phase_skip", {"phase": "pre", "reason": "state_not_pre_detach"}) not in coordinator.traces
+
+
+def test_network_attachment_manager_staged_post_phase_posts_attach():
+    coordinator = _NetworkAttachmentCoordinator()
+    manager = _RecordingNetworkAttachmentManager(coordinator)
+    desired = {
+        ("BLUE_NET", "SERIAL1"): {
+            "networkName": "BLUE_NET",
+            "switchId": "SERIAL1",
+            "interfaces": [{"interfaceRange": "Ethernet1/1", "mode": "trunk"}],
+            "attach": True,
+        }
+    }
+
+    trace = manager.apply_phase(
+        {"state": "staged", "config": [{"network_name": "BLUE_NET", "attach": [{"switch_id": "SERIAL1"}]}]},
+        StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}),
+        phase="post",
+        desired=desired,
+        current_network_names=["BLUE_NET"],
+        current={},
+        attachment_details=[{"networkName": "BLUE_NET", "switchId": "SERIAL1", "attach": False}],
+    )
+
+    assert trace["payloads"] == [desired[("BLUE_NET", "SERIAL1")]]
+    assert manager.posts[0][0] == trace["payloads"]
+    assert ("network_attachment_phase_skip", {"phase": "post", "reason": "state_not_post_attach"}) not in coordinator.traces
+
+
+def test_network_staged_detaches_omitted_networks_without_running_overridden_crud_delete():
+    coordinator = _StagedNetworkCoordinator()
+    state_machine = NetworkStateMachine(coordinator)
+
+    config = [{"network_name": "BLUE_NET", "attach": [{"switch_id": "SERIAL1"}]}]
+
+    result = state_machine.run(
+        {"state": "staged", "config": config}, StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    )
+
+    assert result["changed"] is True
+    assert ("new_state_machine", "overridden", []) in coordinator.calls
+    assert ("new_state_machine", "replaced", config) in coordinator.calls
+    assert ("manage_state", "replaced") in coordinator.calls
+    assert ("attachment_query", ["BLUE_NET", "OMIT_NET"]) in coordinator.calls
+    assert (
+        "omitted_detach",
+        ["OMIT_NET"],
+        [{"networkName": "OMIT_NET", "switchId": "SERIAL3", "attach": True}],
+    ) in coordinator.calls
 
 
 def test_network_replaced_first_create_with_attachment_skips_missing_pre_query():
@@ -243,7 +466,7 @@ def test_network_replaced_first_create_with_attachment_skips_missing_pre_query()
 
     assert result["changed"] is True
     assert ("pre", [], {}, []) in coordinator.calls
-    assert ("manage_state",) in coordinator.calls
+    assert ("manage_state", "replaced") in coordinator.calls
     assert ("post_query", ["BLUE_NET"]) in coordinator.calls
     assert ("post", ["BLUE_NET"], {}, coordinator.post_attachment_details) in coordinator.calls
 

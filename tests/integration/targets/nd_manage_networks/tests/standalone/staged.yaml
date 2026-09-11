@@ -1,0 +1,385 @@
+---
+- name: Test Entry Point - [nd_manage_networks - staged]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Staged Tests - [nd_manage_networks]              +"
+      - "----------------------------------------------------------------"
+  tags: staged
+
+- name: Staged - Build Standalone Attachment Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_standalone_fabric }}"
+    target_network_names:
+      - ndnetstgcreate
+      - ndnetstgadd
+      - ndnetstgremove
+      - ndnetstgdetach
+      - ndnetstgomit
+    target_network_delete_config:
+      - network_name: ndnetstgcreate
+        is_l2only: true
+      - network_name: ndnetstgadd
+        is_l2only: true
+      - network_name: ndnetstgremove
+        is_l2only: true
+      - network_name: ndnetstgdetach
+        is_l2only: true
+      - network_name: ndnetstgomit
+        is_l2only: true
+    nd_network_staged_primary_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_network_standalone_switch,
+            'interfaces': [
+              {
+                'mode': 'trunk',
+                'interface_range': nd_network_standalone_interface
+              }
+            ],
+            'deploy': true
+          }
+        ] if nd_network_run_attach | bool else []
+      }}
+    nd_network_staged_secondary_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_network_standalone_switch2,
+            'interfaces': [
+              {
+                'mode': 'trunk',
+                'interface_range': nd_network_standalone_interface2
+              }
+            ],
+            'deploy': true
+          }
+        ] if nd_network_standalone_switch2 | length > 0 and nd_network_standalone_interface2 | length > 0 else []
+      }}
+    nd_network_staged_create_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_network_standalone_switch2,
+            'interfaces': [
+              {
+                'mode': 'trunk',
+                'interface_range': nd_network_standalone_interface2
+              }
+            ],
+            'deploy': true
+          }
+        ] if nd_network_standalone_switch2 | length > 0 and nd_network_standalone_interface2 | length > 0 else [
+          {
+            'ip_address': nd_network_standalone_switch,
+            'interfaces': [
+              {
+                'mode': 'trunk',
+                'interface_range': nd_network_standalone_interface
+              }
+            ],
+            'deploy': true
+          }
+        ]
+      }}
+    nd_network_staged_both_attach_count: "{{ 2 if nd_network_standalone_switch2 | length > 0 and nd_network_standalone_interface2 | length > 0 else 1 }}"
+  delegate_to: localhost
+  tags: staged
+
+- name: Staged - Build Standalone Test Data
+  ansible.builtin.set_fact:
+    nd_network_staged_seed:
+      - network_name: ndnetstgadd
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 70 }}"
+        vlan_id: "{{ nd_network_base_vlan + 70 }}"
+        vlan_name: ndnetstgadd_vlan
+        attach: "{{ nd_network_staged_primary_attach_block }}"
+        deploy: false
+      - network_name: ndnetstgremove
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 71 }}"
+        vlan_id: "{{ nd_network_base_vlan + 71 }}"
+        vlan_name: ndnetstgremove_vlan
+        attach: "{{ nd_network_staged_primary_attach_block + nd_network_staged_secondary_attach_block }}"
+        deploy: false
+      - network_name: ndnetstgdetach
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 74 }}"
+        vlan_id: "{{ nd_network_base_vlan + 74 }}"
+        vlan_name: ndnetstgdetach_vlan
+        attach: "{{ nd_network_staged_primary_attach_block }}"
+        deploy: false
+      - network_name: ndnetstgomit
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 72 }}"
+        vlan_id: "{{ nd_network_base_vlan + 72 }}"
+        vlan_name: ndnetstgomit_vlan
+        attach: "{{ nd_network_staged_primary_attach_block }}"
+        deploy: false
+    nd_network_staged_create_config:
+      - network_name: ndnetstgcreate
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 73 }}"
+        vlan_id: "{{ nd_network_base_vlan + 73 }}"
+        vlan_name: ndnetstgcreate_vlan
+        attach: "{{ nd_network_staged_create_attach_block }}"
+        deploy: true
+    nd_network_staged_config:
+      - network_name: ndnetstgcreate
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 73 }}"
+        vlan_id: "{{ nd_network_base_vlan + 73 }}"
+        vlan_name: ndnetstgcreate_vlan
+        attach: "{{ nd_network_staged_create_attach_block }}"
+        deploy: true
+      - network_name: ndnetstgadd
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 70 }}"
+        vlan_id: "{{ nd_network_base_vlan + 70 }}"
+        vlan_name: ndnetstgadd_vlan
+        attach: "{{ nd_network_staged_primary_attach_block + nd_network_staged_secondary_attach_block }}"
+        deploy: true
+      - network_name: ndnetstgremove
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 71 }}"
+        vlan_id: "{{ nd_network_base_vlan + 71 }}"
+        vlan_name: ndnetstgremove_vlan
+        attach: "{{ nd_network_staged_primary_attach_block }}"
+        deploy: true
+      - network_name: ndnetstgdetach
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 74 }}"
+        vlan_id: "{{ nd_network_base_vlan + 74 }}"
+        vlan_name: ndnetstgdetach_vlan
+        attach: []
+        deploy: true
+  delegate_to: localhost
+  tags: staged
+
+- name: Staged - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged - Prepare Seed Configuration
+  vars:
+    file: standalone_staged_seed
+    network_conf: "{{ nd_network_staged_seed }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged - Prepare Create Configuration
+  vars:
+    file: standalone_staged_create
+    network_conf: "{{ nd_network_staged_create_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged - Prepare Configuration
+  vars:
+    file: standalone_staged
+    network_conf: "{{ nd_network_staged_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC1 - Create Network With Attachment
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_network_standalone_staged_create_conf }}"
+    output_level: debug
+  register: staged_create_result
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC1 - Assert Staged Create Reported Change
+  ansible.builtin.assert:
+    that:
+      - staged_create_result.changed == true
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC1 - Query Created Network Attachment
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ target_fabric }}/networkAttachments/query?includeAll=true&max=10000&offset=0"
+    method: post
+    content:
+      networkNames:
+        - ndnetstgcreate
+  register: staged_create_attachment_query
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC1 - Normalize Created Network Attachment Rows
+  ansible.builtin.set_fact:
+    staged_create_attachment_rows: >-
+      {{
+        staged_create_attachment_query.current.attachments
+        | default(staged_create_attachment_query.current.items | default([]))
+      }}
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC1 - Assert Created Network Attachment State
+  ansible.builtin.assert:
+    that:
+      - >-
+        staged_create_attachment_rows
+        | selectattr("networkName", "equalto", "ndnetstgcreate")
+        | selectattr("attach", "equalto", true)
+        | list | length > 0
+      - >-
+        staged_create_attachment_rows
+        | selectattr("networkName", "equalto", "ndnetstgcreate")
+        | selectattr("attach", "equalto", true)
+        | rejectattr("status", "equalto", "pending")
+        | list | length == 0
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC2 - Seed Existing Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_standalone_staged_seed_conf }}"
+    output_level: debug
+  register: staged_seed_result
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC3 - Reconcile Attachments Without Deploy Or Definition Delete
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_network_standalone_staged_conf }}"
+    output_level: debug
+  register: staged_result
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC3 - Assert Staged Reconcile Reported Change
+  ansible.builtin.assert:
+    that:
+      - staged_result.changed == true
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC3 - Repeat Reconcile For Controller-State Idempotency
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_network_standalone_staged_conf }}"
+    output_level: debug
+  register: staged_repeat_result
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC4 - Query Network Attachments
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ target_fabric }}/networkAttachments/query?includeAll=true&max=10000&offset=0"
+    method: post
+    content:
+      networkNames: "{{ target_network_names }}"
+  register: staged_attachment_query
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC4 - Normalize Network Attachment Rows
+  ansible.builtin.set_fact:
+    staged_attachment_rows: >-
+      {{
+        staged_attachment_query.current.attachments
+        | default(staged_attachment_query.current.items | default([]))
+      }}
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC4 - Gather Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ target_network_delete_config }}"
+  register: staged_gather_result
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
+
+- name: Staged TC4 - Assert Omitted Network Definition Remains
+  ansible.builtin.assert:
+    that:
+      - (staged_gather_result.after | default([]) | to_json) is search("ndnetstgomit")
+      - staged_attachment_rows | selectattr("networkName", "equalto", "ndnetstgcreate") | selectattr("attach", "equalto", true) | list | length > 0
+      - >-
+        (
+          staged_attachment_rows
+          | selectattr("networkName", "equalto", "ndnetstgadd")
+          | selectattr("attach", "equalto", true)
+          | list
+          | length
+        ) == (nd_network_staged_both_attach_count | int)
+      - staged_attachment_rows | selectattr("networkName", "equalto", "ndnetstgremove") | selectattr("attach", "equalto", true) | list | length == 1
+      - staged_attachment_rows | selectattr("networkName", "equalto", "ndnetstgdetach") | selectattr("attach", "equalto", true) | list | length == 0
+      - staged_attachment_rows | selectattr("networkName", "equalto", "ndnetstgomit") | selectattr("attach", "equalto", true) | list | length == 0
+      - staged_repeat_result.changed == false
+      - >-
+        staged_attachment_rows
+        | selectattr("networkName", "in", target_network_names)
+        | rejectattr("status", "equalto", "pending")
+        | list | length == 0
+  when:
+    - nd_network_run_standalone | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_attach | bool
+  tags: staged
