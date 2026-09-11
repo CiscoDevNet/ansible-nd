@@ -1,0 +1,60 @@
+---
+# Test code for the nd_interface_ethernet_routed module
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
+# --- Usage ---
+#
+# Run the test suite with ansible-test:
+#
+#   ansible-test integration nd_interface_ethernet_routed
+#
+# --- Optional test variables ---
+#
+# Set the variables below in the [nd:vars] section of tests/integration/inventory.networking
+#
+# nd_logging_config (str, default: "")
+#   Path to a JSON file conforming to logging.config.dictConfig (see
+#   plugins/module_utils/common/log.py for an example). When set, the path is
+#   forwarded to the module subprocess via the ND_LOGGING_CONFIG environment
+#   variable, enabling file-based logging from the nd collection. Empty (the
+#   default) disables logging. ansible-test strips the controller's shell env,
+#   so the variable cannot be inherited from the user's shell. Add to
+#   inventory.networking [nd:vars]:
+#     nd_logging_config=/absolute/path/to/logging_config.json
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+- name: Run nd_interface_ethernet_routed state tests with optional logging env
+  block:
+    - name: Pre-test cleanup
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: Run nd_interface_ethernet_routed merged state tests
+      ansible.builtin.include_tasks: merged.yaml
+
+    - name: Run nd_interface_ethernet_routed replaced state tests
+      ansible.builtin.include_tasks: replaced.yaml
+
+    - name: Run nd_interface_ethernet_routed overridden state tests
+      ansible.builtin.include_tasks: overridden.yaml
+
+    - name: Run nd_interface_ethernet_routed deleted state tests
+      ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run IOS-XE routed tests (requires nd_test_xe_switch_ip)
+      ansible.builtin.include_tasks: xe.yaml
+      when: nd_test_xe_switch_ip is defined and nd_test_xe_switch_ip | length > 0
+  vars:
+    ansible_command_timeout: 300
+  environment:
+    ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"

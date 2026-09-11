@@ -282,8 +282,9 @@ options:
           execution via the C(interfaceActions/deploy) API. Only the vPC interfaces modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
+        - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
-        default: true
+        default: false
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -309,6 +310,12 @@ notes:
 - The primary switch supplied in O(config[].switch_ip) must already be in a vPC pair (managed by
   M(cisco.nd.nd_manage_vpc_pair)). The peer serial is auto-resolved from the pair record.
 - C(peer1) refers to the switch supplied in O(config[].switch_ip); C(peer2) refers to the auto-resolved peer.
+- A vPC interface is identified by the combination of O(config[].switch_ip) and O(config[].interface_name). Two different vPC
+  pairs in the same fabric may reuse the same vPC id (for example C(vpc100) on two pairs); list each under its own pair's
+  O(config[].switch_ip).
+- For states C(merged), C(replaced), and C(overridden), listing the same O(config[].interface_name) under both peers of the same
+  vPC pair is rejected; list each vPC interface once, under either peer. For state C(deleted) this guard does not run; duplicate
+  entries simply resolve to the same vPC interface.
 """
 
 EXAMPLES = r"""
@@ -333,6 +340,8 @@ EXAMPLES = r"""
               lacp_rate: fast
               peer1_port_channel_description: Server-A on peer1
               peer2_port_channel_description: Server-A on peer2
+    config_actions:
+      deploy: true
     state: merged
   register: result
 
@@ -348,6 +357,8 @@ EXAMPLES = r"""
               peer1_member_ports:
                 - Ethernet1/1
                 - Ethernet1/2
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Replace the configuration of a specific vPC interface
@@ -370,6 +381,8 @@ EXAMPLES = r"""
               port_channel_mode: active
               peer1_port_channel_description: Reprovisioned Server-A on peer1
               peer2_port_channel_description: Reprovisioned Server-A on peer2
+    config_actions:
+      deploy: true
     state: replaced
 
 # state=overridden is fabric-wide: every vPC interface in the fabric that is managed by this module and is NOT
@@ -392,6 +405,8 @@ EXAMPLES = r"""
               peer2_member_ports:
                 - Ethernet1/1
               port_channel_mode: active
+    config_actions:
+      deploy: true
     state: overridden
 
 - name: Delete a vPC interface
@@ -400,6 +415,8 @@ EXAMPLES = r"""
     config:
       - switch_ip: 192.168.1.1
         interface_name: vpc100
+    config_actions:
+      deploy: true
     state: deleted
 
 - name: Stage vPC interface changes without deploying
@@ -524,7 +541,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_access_interface import (
     AccessVpcHostInterfaceModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_access_interface import (
@@ -545,14 +562,7 @@ def main():
     """
     argument_spec = nd_argument_spec()
     argument_spec.update(AccessVpcHostInterfaceModel.get_argument_spec())
-    argument_spec.update(
-        config_actions={
-            "type": "dict",
-            "options": {
-                "deploy": {"type": "bool", "default": True},
-            },
-        },
-    )
+    argument_spec.update(config_actions_spec(include=("deploy",)))
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -571,9 +581,7 @@ def main():
         )
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
-        config_actions = module.params.get("config_actions") or {}
-        deploy = config_actions.get("deploy", True)
-        nd_state_machine.model_orchestrator.deploy = deploy
+        deploy = nd_state_machine.model_orchestrator.apply_config_actions(module.params)
 
         module_log.debug(
             "manage_state begin state=%s check_mode=%s deploy=%s",

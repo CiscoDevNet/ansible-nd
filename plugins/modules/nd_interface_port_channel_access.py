@@ -12,14 +12,16 @@ DOCUMENTATION = r"""
 ---
 module: nd_interface_port_channel_access
 version_added: "2.0.0"
-short_description: Manage port-channel accessPoHost interfaces on Cisco Nexus Dashboard
+short_description: Manage port-channel (accessPoHost) interfaces on Cisco Nexus Dashboard
 description:
-- Manage port-channel accessPoHost interfaces on Cisco Nexus Dashboard.
-- It supports creating, updating, querying, and deleting accessPoHost port-channel configurations on switches within a fabric.
+- Manage port-channel (accessPoHost) interfaces on Cisco Nexus Dashboard.
+- It supports creating, updating, and deleting (accessPoHost) port-channel configurations on switches within a fabric.
 - Each config item represents one port-channel interface. Member ethernet interfaces are listed in
   O(config[].config_data.network_os.policy.ports) and inherit access-mode configuration from the port-channel policy.
 - Member interface field mutability is restricted while members of a port-channel; only description, admin_state, and
   extra_config can be modified on members via the C(nd_interface_ethernet_access) module.
+- A port-channel that lists a member ethernet already belonging to a different port-channel is rejected before any
+  change is made (also in check mode); remove the member from its current port-channel first.
 author:
 - Allen Robel (@allenrobel)
 options:
@@ -30,7 +32,7 @@ options:
     required: true
   config:
     description:
-    - The list of port-channel accessPoHost interfaces to configure.
+    - The list of port-channel (accessPoHost) interfaces to configure.
     - Each item specifies the target switch, the port-channel interface name, and its configuration.
     - Multiple switches can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
@@ -61,7 +63,7 @@ options:
             suboptions:
               policy:
                 description:
-                - The policy configuration for the accessPoHost port-channel.
+                - The policy configuration for the (accessPoHost) port-channel.
                 type: dict
                 suboptions:
                   admin_state:
@@ -136,6 +138,7 @@ options:
                   netflow_monitor:
                     description:
                     - The netflow Layer-2 monitor name for the port-channel.
+                    - Required when O(config[].config_data.network_os.policy.netflow=true).
                     type: str
                   netflow_sampler:
                     description:
@@ -222,8 +225,9 @@ options:
           execution via the C(interfaceActions/deploy) API. Only the port-channels modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
+        - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
-        default: true
+        default: false
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -266,6 +270,8 @@ EXAMPLES = r"""
               port_channel_mode: active
               lacp_rate: fast
               description: Server bundle
+    config_actions:
+      deploy: true
     state: merged
   register: result
 
@@ -282,6 +288,8 @@ EXAMPLES = r"""
                 - Ethernet1/1
                 - Ethernet1/2
                 - Ethernet1/3
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Delete a port-channel
@@ -290,6 +298,8 @@ EXAMPLES = r"""
     config:
       - switch_ip: 192.168.1.1
         interface_name: port-channel501
+    config_actions:
+      deploy: true
     state: deleted
 
 - name: Stage port-channel changes without deploying
@@ -327,6 +337,8 @@ EXAMPLES = r"""
               ports:
                 - Ethernet1/1
               port_channel_mode: active
+    config_actions:
+      deploy: true
     state: replaced
 
 # WARNING: state=overridden is FABRIC-WIDE. Every accessPoHost port-channel on
@@ -348,6 +360,8 @@ EXAMPLES = r"""
                 - Ethernet1/1
                 - Ethernet1/2
               port_channel_mode: active
+    config_actions:
+      deploy: true
     state: overridden
 """
 
@@ -449,7 +463,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_access_interface import (
     PortChannelAccessInterfaceModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_access_interface import (
@@ -470,14 +484,7 @@ def main():
     """
     argument_spec = nd_argument_spec()
     argument_spec.update(PortChannelAccessInterfaceModel.get_argument_spec())
-    argument_spec.update(
-        config_actions={
-            "type": "dict",
-            "options": {
-                "deploy": {"type": "bool", "default": True},
-            },
-        },
-    )
+    argument_spec.update(config_actions_spec(include=("deploy",)))
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -496,9 +503,7 @@ def main():
         )
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
-        config_actions = module.params.get("config_actions") or {}
-        deploy = config_actions.get("deploy", True)
-        nd_state_machine.model_orchestrator.deploy = deploy
+        deploy = nd_state_machine.model_orchestrator.apply_config_actions(module.params)
 
         module_log.debug(
             "manage_state begin state=%s check_mode=%s deploy=%s",

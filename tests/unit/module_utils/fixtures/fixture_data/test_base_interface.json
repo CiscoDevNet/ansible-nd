@@ -201,5 +201,66 @@
         "DATA": {
             "switches": []
         }
+    },
+
+    "test_base_interface_00640a": {
+        "TEST_NOTES": [
+            "deploy_accepted_mutations happy: POST interfaceActions/deploy succeeds for the two mutation-backed pairs (delete-queued pair excluded)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "ok"
+        }
+    },
+
+    "test_base_interface_00670a": {
+        "TEST_NOTES": [
+            "deploy_accepted_mutations failure: POST interfaceActions/deploy returns 500; queue must be retained"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "error": "boom"
+        }
+    },
+    "test_base_interface_00970a": {
+        "TEST_NOTES": [
+            "PR #550 review: switches list resolves only 192.168.12.151; preflight on an opted-out orchestrator must still",
+            "raise for the unknown 10.1.1.99 without contacting the capability endpoint."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_base_interface_00980a": {
+        "TEST_NOTES": [
+            "PR #550 review: switches list resolves 192.168.12.151; preflight on an opted-out orchestrator passes without a capability GET."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
     }
 }

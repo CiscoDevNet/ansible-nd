@@ -31,7 +31,10 @@ import inspect
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_trunk_host_interface import (
+    PortChannelTrunkHostConfigDataModel,
     PortChannelTrunkHostInterfaceModel,
+    PortChannelTrunkHostNetworkOSModel,
+    PortChannelTrunkHostPolicyModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_trunk_host_interface import (
     PortChannelTrunkHostInterfaceOrchestrator,
@@ -379,3 +382,81 @@ def test_port_channel_trunk_host_orchestrator_00440() -> None:
     assert len(result) == 1
     assert result[0]["interfaceName"] == "port-channel501"
     assert result[0]["switchIp"] == "192.168.1.1"
+
+
+# =============================================================================
+# Test: preflight -- member-already-in-use (issue #369)
+#
+# The full case matrix lives in test_port_channel_access_interface.py (00900-00970); the check is implemented once in
+# PortChannelBaseOrchestrator. These two tests confirm the trunk-host orchestrator inherits it.
+# =============================================================================
+
+
+def _build_trunk_model(interface_name: str, ports: list[str], switch_ip: str = "192.168.1.1") -> PortChannelTrunkHostInterfaceModel:
+    """Build a minimal `PortChannelTrunkHostInterfaceModel` claiming `ports` as members."""
+    return PortChannelTrunkHostInterfaceModel(
+        switch_ip=switch_ip,
+        interface_name=interface_name,
+        config_data=PortChannelTrunkHostConfigDataModel(
+            network_os=PortChannelTrunkHostNetworkOSModel(
+                policy=PortChannelTrunkHostPolicyModel(admin_state=True, allowed_vlans="1-100", port_channel_mode="active", ports=ports),
+            ),
+        ),
+    )
+
+
+def _preflight_orchestrator(method_name: str) -> PortChannelTrunkHostInterfaceOrchestrator:
+    """Build an orchestrator whose responses are the switches list (a) then the member-conflict inventory (b)."""
+
+    def responses():
+        yield responses_pc_trunk_host(f"{method_name}a")
+        yield responses_pc_trunk_host(f"{method_name}b")
+
+    return _build_orchestrator(ResponseGenerator(responses()), state="merged")
+
+
+def test_port_channel_trunk_host_orchestrator_00900() -> None:
+    """
+    # Summary
+
+    Verify the inherited `preflight` passes when every proposed member is free.
+
+    ## Test
+
+    - Proposed port-channel701 claims Ethernet1/35 (free trunkHost)
+    - `preflight` does not raise
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.preflight()
+    - PortChannelBaseOrchestrator._validate_members_available()
+    """
+    method_name = inspect.stack()[0][3]
+    instance = _preflight_orchestrator(method_name)
+
+    with does_not_raise():
+        instance.preflight([_build_trunk_model("port-channel701", ["Ethernet1/35"])])
+
+
+def test_port_channel_trunk_host_orchestrator_00910() -> None:
+    """
+    # Summary
+
+    Verify the inherited `preflight` rejects a member owned by a different port-channel, including one of the access flavor
+    this orchestrator does not manage, naming the member and its owner.
+
+    ## Test
+
+    - Proposed port-channel702 claims Ethernet1/1 (owned by port-channel501/accessPoHost)
+    - `preflight` raises RuntimeError naming Ethernet1/1 and port-channel501
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.preflight()
+    - PortChannelBaseOrchestrator._validate_members_available()
+    """
+    method_name = inspect.stack()[0][3]
+    instance = _preflight_orchestrator(method_name)
+
+    with pytest.raises(RuntimeError, match=r"Ethernet1/1.*port-channel501"):
+        instance.preflight([_build_trunk_model("port-channel702", ["Ethernet1/1"])])

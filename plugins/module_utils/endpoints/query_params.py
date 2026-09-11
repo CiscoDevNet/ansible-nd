@@ -140,6 +140,30 @@ class EndpointQueryParams(BaseModel):
         return len(self.model_dump(exclude_none=True, exclude_defaults=True)) == 0
 
 
+class UrlEncodedEndpointQueryParams(EndpointQueryParams):
+    """EndpointQueryParams whose ``to_query_string`` percent-encodes values.
+
+    The base class emits raw values; this variant URL-encodes each value so an
+    identifier containing reserved characters (for example a ticket id, fabric,
+    cluster or switch name with ``&``, ``=``, ``+``, ``#`` or a space) cannot
+    alter how the controller parses the query string. Field names are still
+    converted snake_case -> camelCase.
+    """
+
+    def to_query_string(self) -> str:
+        params = []
+        for field_name, field_value in self.model_dump(exclude_none=True).items():
+            api_key = self._to_camel_case(field_name)
+            if isinstance(field_value, bool):
+                api_value = str(field_value).lower()
+            elif isinstance(field_value, Enum):
+                api_value = field_value.value
+            else:
+                api_value = str(field_value)
+            params.append("{0}={1}".format(api_key, quote(api_value, safe="")))
+        return "&".join(params)
+
+
 class LuceneQueryParams(BaseModel):
     """
     # Summary

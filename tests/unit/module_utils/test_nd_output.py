@@ -17,6 +17,7 @@ from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 
+import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -213,6 +214,181 @@ class TestNDOutputFormat:
         output = NDOutput("normal")
         output.assign(before=before, after=after)
         assert output.format()["changed"] is True
+
+
+class TestNDOutputGatheredState:
+    """Tests for the read-only gathered state output convention."""
+
+    def test_gathered_uses_gathered_key(self):
+        """state='gathered' surfaces fetched objects under a 'gathered' key."""
+        output = NDOutput("normal", state="gathered")
+        output._after = [{"name": "link1"}]
+        result = output.format()
+        assert result["gathered"] == [{"name": "link1"}]
+
+    def test_gathered_keeps_empty_snapshots_and_omits_diff_and_proposed(self):
+        """state='gathered' keeps the common snapshot keys empty."""
+        output = NDOutput("info", state="gathered")
+        result = output.format()
+        assert result["before"] == []
+        assert result["after"] == []
+        for key in ("diff", "proposed"):
+            assert key not in result
+
+    @pytest.mark.parametrize(
+        "policy_type",
+        [
+            "numbered",
+            "unnumbered",
+            "ipv6LinkLocal",
+            "ebgpVrfLite",
+            "iosXeNumbered",
+            "layer2Dci",
+            "layer3DciVrfLite",
+            "multisiteOverlay",
+            "multisiteUnderlay",
+            "mplsOverlay",
+            "mplsUnderlay",
+            "preprovision",
+            "userDefined",
+            "vpcPeerKeepalive",
+        ],
+    )
+    def test_every_link_template_gathered_result_has_empty_snapshots(self, policy_type):
+        """Every supported link template follows the same gathered shape."""
+        from ansible_collections.cisco.nd.plugins.module_utils.models.links.links import NDLinkModel
+        from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+
+        item = NDLinkModel.from_response(
+            {
+                "srcClusterName": "c1",
+                "dstClusterName": "c1",
+                "srcFabricName": "f1",
+                "dstFabricName": "f2",
+                "srcSwitchName": "a",
+                "dstSwitchName": "b",
+                "srcInterfaceName": "Ethernet1/1",
+                "dstInterfaceName": "Ethernet1/1",
+                "configData": {"policyType": policy_type, "templateInputs": {}},
+            }
+        )
+        output = NDOutput("normal", state="gathered")
+        output.assign(after=NDConfigCollection(model_class=NDLinkModel, items=[item]))
+
+        result = output.format()
+
+        assert "before" in result
+        assert result["before"] == []
+        assert "after" in result
+        assert result["after"] == []
+        assert result["gathered"][0]["config_data"]["policy_type"] == policy_type
+
+    def test_gathered_is_not_changed(self):
+        """gathered is read-only, so changed is always False."""
+        output = NDOutput("normal", state="gathered")
+        result = output.format()
+        assert result["changed"] is False
+
+    def test_gathered_debug_includes_logs(self):
+        """Debug output_level still surfaces logs under gathered."""
+        output = NDOutput("debug", state="gathered")
+        output.assign(logs=["l1"])
+        result = output.format()
+        assert result["logs"] == ["l1"]
+
+    def test_non_gathered_state_keeps_classic_shape(self):
+        """Non-gathered states retain the before/after/diff shape and no gathered key."""
+        output = NDOutput("normal", state="merged")
+        result = output.format()
+        assert "gathered" not in result
+        assert "after" in result and "before" in result and "diff" in result
+
+    def test_gathered_prunes_to_argument_spec(self):
+        """gathered_spec drops response-only keys so output round-trips as config."""
+        output = NDOutput("normal", state="gathered")
+        output._after = [{"src_switch_name": "leaf1", "link_id": "UUID-123"}]
+        output.assign(gathered_spec={"src_switch_name": {"type": "str"}})
+        result = output.format()
+        assert result["gathered"] == [{"src_switch_name": "leaf1"}]
+
+    def test_gathered_prunes_nested_but_keeps_free_form(self):
+        """Pruning recurses into modeled dicts but leaves free-form dicts intact."""
+        output = NDOutput("normal", state="gathered")
+        output._after = [
+            {
+                "src_switch_name": "leaf1",
+                "config_data": {
+                    "policy_type": "numbered",
+                    "template_inputs": {"anyKey": 1},
+                    "server_only": "drop-me",
+                },
+            }
+        ]
+        output.assign(
+            gathered_spec={
+                "src_switch_name": {"type": "str"},
+                "config_data": {
+                    "type": "dict",
+                    "options": {
+                        "policy_type": {"type": "str"},
+                        "template_inputs": {"type": "dict"},
+                    },
+                },
+            }
+        )
+        result = output.format()
+        assert result["gathered"] == [
+            {
+                "src_switch_name": "leaf1",
+                "config_data": {"policy_type": "numbered", "template_inputs": {"anyKey": 1}},
+            }
+        ]
+
+    def test_gathered_without_spec_is_unpruned(self):
+        """No gathered_spec means no pruning (backward compatible)."""
+        output = NDOutput("normal", state="gathered")
+        output._after = [{"src_switch_name": "leaf1", "link_id": "UUID-123"}]
+        result = output.format()
+        assert result["gathered"] == [{"src_switch_name": "leaf1", "link_id": "UUID-123"}]
+
+    def test_gathered_collection_uses_replay_safe_model_serialization(self):
+        """Write-only link secrets are omitted from reusable gathered config."""
+        from ansible_collections.cisco.nd.plugins.module_utils.models.links.links import NDLinkModel
+        from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+
+        item = NDLinkModel.from_response(
+            {
+                "srcClusterName": "c1",
+                "dstClusterName": "c1",
+                "srcFabricName": "VRFLite-A",
+                "dstFabricName": "VRFLite-B",
+                "srcSwitchName": "VRFLite-A-Border-1",
+                "dstSwitchName": "VRFLite-B-Border-1",
+                "srcInterfaceName": "Ethernet1/30",
+                "dstInterfaceName": "Ethernet1/30",
+                "configData": {
+                    "policyType": "ebgpVrfLite",
+                    "templateInputs": {
+                        "srcEbgpAsn": "65001",
+                        "dstEbgpAsn": "65002",
+                        "linkMtu": 9216,
+                        "defaultVrfEbgpNeighborPassword": "",
+                        "macsecPrimaryKeyString": "",
+                    },
+                },
+            }
+        )
+        collection = NDConfigCollection(model_class=NDLinkModel, items=[item])
+        output = NDOutput("normal", state="gathered")
+        output.assign(after=collection)
+
+        result = output.format()
+        gathered_inputs = result["gathered"][0]["config_data"]["template_inputs"]
+
+        assert gathered_inputs["link_mtu"] == 9216
+        assert "default_vrf_ebgp_neighbor_password" not in gathered_inputs
+        assert "macsec_primary_key_string" not in gathered_inputs
+        assert item.to_config()["config_data"]["template_inputs"]["default_vrf_ebgp_neighbor_password"] == ("VALUE_SPECIFIED_IN_NO_LOG_PARAMETER")
 
 
 # =============================================================================
