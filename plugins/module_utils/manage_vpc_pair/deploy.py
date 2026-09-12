@@ -34,6 +34,11 @@ except Exception:
     from ansible_collections.cisco.nd.plugins.module_utils.results import Results
 
 
+# Per-switch ``status`` values in a 207 switchActions/deploy body that count as a
+# failure. Anything else (e.g. "success", "notExecuted") is not a failure.
+_SWITCH_DEPLOY_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
+
+
 def _needs_deployment(result: dict[str, Any], nrm: Any) -> bool:
     """
     Determine if save/deploy actions are needed based on changes/signals.
@@ -134,6 +139,40 @@ def _get_switches_needing_deploy(nd_v2: Any, fabric_name: str) -> list[str]:
     switches = _validate_fabric_switches(nd_v2, fabric_name)
     switch_ids = [serial_number for serial_number, switch_data in switches.items() if _is_switch_config_in_sync(switch_data) is not True]
     return sorted(set(switch_ids))
+
+
+def _switch_deploy_failures(response_data: Any) -> list[str]:
+    """
+    Extract per-switch failures from a switchActions/deploy 207 response body.
+
+    The controller returns a per-switch status array shaped like
+    ``{"switchIds": [{"switchId": "<sn>", "status": "<s>", "message": "<m>"}]}``.
+    Some success paths return None or a bare list; those yield no failures.
+
+    Args:
+        response_data: Unwrapped DATA body from FabricUtils.deploy_switches.
+
+    Returns:
+        List of "<sn>: status=... message=..." strings for switches whose
+        status is an explicit failure. Empty when nothing failed.
+    """
+    if isinstance(response_data, dict):
+        per_switch = response_data.get("switchIds") or []
+    elif isinstance(response_data, list):
+        per_switch = response_data
+    else:
+        per_switch = []
+
+    failures: list[str] = []
+    for entry in per_switch:
+        if not isinstance(entry, dict):
+            continue
+        status = str(entry.get("status", "")).lower()
+        if status in _SWITCH_DEPLOY_FAILURE_STATUSES:
+            switch_id = entry.get("switchId") or entry.get("switchSn") or "?"
+            message = entry.get("message") or ""
+            failures.append(f"{switch_id}: status={status!r} message={message!r}")
+    return failures
 
 
 def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -240,6 +279,14 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
     if save_enabled:
         save_path = fabric_utils.config_save_path
 
+        # A bare configSave (Recalculate & Save) does not push to the switches:
+        # on a merely-pending pair it recomputes the identical config and leaves
+        # the switches pending. It is therefore idempotent and must not, by
+        # itself, drive module-level changed (otherwise repeated save=true,
+        # deploy=false runs report changed=true forever). Only a declarative
+        # delta (create/update/delete) or an actual deploy (Step 2) is a change.
+        save_changed = _has_explicit_diff_changes(result) or bool(nrm.module.params.get("_pending_create")) or bool(nrm.module.params.get("_pending_delete"))
+
         try:
             response = fabric_utils.save_config(action_payload)
             register_action_api_call(
@@ -249,7 +296,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 return_code=response.get("status"),
                 message="Config saved successfully",
                 success=True,
-                changed=True,
+                changed=save_changed,
             )
 
         except NDModuleError as error:
@@ -302,6 +349,24 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 deploy_payload = {"switchIds": switch_ids}
                 if switch_ids:
                     response = fabric_utils.deploy_switches(switch_ids)
+                    # A 2xx (including 207 Multi-Status) can still carry per-switch
+                    # failures; do not report a clean changed=true when one vPC peer
+                    # deployed and the other failed.
+                    switch_failures = _switch_deploy_failures(response.get("response_data"))
+                    if switch_failures:
+                        register_action_api_call(
+                            results=results,
+                            request_path=deploy_path,
+                            payload=deploy_payload,
+                            return_code=response.get("status"),
+                            message="Switch deployment reported per-switch failures: " + "; ".join(switch_failures),
+                            success=False,
+                            changed=False,
+                        )
+                        results.build_final_result()
+                        final_result = dict(results.final_result)
+                        final_msg = final_result.pop("msg", "Fabric switch deployment failed")
+                        _raise_vpc_error(msg=final_msg, **final_result)
                     register_action_api_call(
                         results=results,
                         request_path=deploy_path,

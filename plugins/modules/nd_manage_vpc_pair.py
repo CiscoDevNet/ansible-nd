@@ -60,7 +60,6 @@ options:
                 - Configuration is saved at the fabric level before deploying for both scopes.
                 type: str
                 choices: [switch, global]
-                default: switch
     force:
         description:
         - Force deletion without pre-deletion validation checks.

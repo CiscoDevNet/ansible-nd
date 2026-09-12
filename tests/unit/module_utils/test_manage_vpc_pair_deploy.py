@@ -40,7 +40,7 @@ class _FakeNrm:
 class _FakeNDModuleV2:
     """Records (path, verb, payload) calls and routes switches/action requests."""
 
-    def __init__(self, module, switches_response=None, status=200, switches_exception=None, fail_on=None, fail_exception=None):
+    def __init__(self, module, switches_response=None, status=200, switches_exception=None, fail_on=None, fail_exception=None, switch_deploy_response=None):
         self.module = module
         self.status = status
         self.calls = []
@@ -48,6 +48,7 @@ class _FakeNDModuleV2:
         self._switches_exception = switches_exception
         self._fail_on = fail_on
         self._fail_exception = fail_exception
+        self._switch_deploy_response = switch_deploy_response
 
     def request(self, path, verb, payload=None):
         self.calls.append((path, verb, payload))
@@ -55,6 +56,8 @@ class _FakeNDModuleV2:
             if self._switches_exception is not None:
                 raise self._switches_exception
             return self._switches_response
+        if self._switch_deploy_response is not None and path.endswith("/switchActions/deploy"):
+            return self._switch_deploy_response
         if self._fail_on is not None and self._fail_on in path:
             raise self._fail_exception
         return {"success": True}
@@ -241,3 +244,85 @@ def test_manage_vpc_pair_deploy_00100_get_switches_needing_deploy_filters_and_so
     result = deploy._get_switches_needing_deploy(fake_nd, "fab1")
 
     assert result == ["FOXAAA", "FOXBBB"]
+
+
+def test_manage_vpc_pair_deploy_00110_switch_scope_partial_207_failure_raises_vpc_error():
+    # switchActions/deploy returns 2xx, but one peer failed in the per-switch
+    # status array -> must fail instead of reporting a clean changed=true.
+    nrm = _make_nrm("switch")
+    switches_response = {
+        "switches": [
+            {"serialNumber": "LEAF-A", "configSyncStatus": "Out-of-Sync"},
+            {"serialNumber": "LEAF-B", "configSyncStatus": "Out-of-Sync"},
+        ]
+    }
+    switch_deploy_response = {
+        "switchIds": [
+            {"switchId": "LEAF-A", "status": "success"},
+            {"switchId": "LEAF-B", "status": "failed", "message": "config apply error"},
+        ]
+    }
+    fake_nd = _FakeNDModuleV2(
+        nrm.module,
+        switches_response=switches_response,
+        switch_deploy_response=switch_deploy_response,
+    )
+
+    with patch.object(deploy, "NDModuleV2", lambda module: fake_nd):
+        with pytest.raises(VpcPairResourceError) as exc:
+            deploy.custom_vpc_deploy(nrm, "fab1", {"changed": True})
+
+    assert exc.value.msg == "Fabric switch deployment failed"
+    assert SWITCH_DEPLOY_PATH in fake_nd.paths()
+
+
+def test_manage_vpc_pair_deploy_00120_switch_scope_notexecuted_and_success_do_not_raise():
+    # success + notExecuted are not failures: the deploy completes normally and
+    # the run is not turned into a failure.
+    nrm = _make_nrm("switch")
+    switches_response = {
+        "switches": [
+            {"serialNumber": "LEAF-A", "configSyncStatus": "Out-of-Sync"},
+            {"serialNumber": "LEAF-B", "configSyncStatus": "Out-of-Sync"},
+        ]
+    }
+    switch_deploy_response = {
+        "switchIds": [
+            {"switchId": "LEAF-A", "status": "success"},
+            {"switchId": "LEAF-B", "status": "notExecuted", "message": "No Commands to execute"},
+        ]
+    }
+    fake_nd = _FakeNDModuleV2(
+        nrm.module,
+        switches_response=switches_response,
+        switch_deploy_response=switch_deploy_response,
+    )
+
+    out = _run_deploy(nrm, fake_nd)
+
+    assert SWITCH_DEPLOY_PATH in fake_nd.paths()
+    assert out["config_actions"]["type"] == "switch"
+
+
+def test_manage_vpc_pair_deploy_00130_switch_deploy_failures_helper_detects_only_explicit_failures():
+    # Direct coverage of the 207 parser: only failed/failure/error count, and
+    # empty/None/bare-list/non-dict shapes are handled defensively.
+    detect = deploy._switch_deploy_failures
+
+    body = {
+        "switchIds": [
+            {"switchId": "SN1", "status": "success"},
+            {"switchId": "SN2", "status": "failed", "message": "apply error"},
+            {"switchId": "SN3", "status": "Error"},
+        ]
+    }
+    failures = detect(body)
+    assert len(failures) == 2
+    assert any("SN2" in f and "apply error" in f for f in failures)
+    assert any("SN3" in f for f in failures)
+
+    assert detect({"switchIds": [{"switchId": "SN1", "status": "success"}, {"switchId": "SN2", "status": "notExecuted"}]}) == []
+    assert detect({"switchIds": []}) == []
+    assert detect(None) == []
+    assert detect({"success": True}) == []
+    assert detect(["not-a-dict", {"switchId": "SN9", "status": "failure"}]) == ["SN9: status='failure' message=''"]
