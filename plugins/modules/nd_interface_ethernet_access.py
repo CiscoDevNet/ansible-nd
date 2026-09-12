@@ -10,10 +10,10 @@ DOCUMENTATION = r"""
 ---
 module: nd_interface_ethernet_access
 version_added: "2.0.0"
-short_description: Manage ethernet accessHost interfaces on Cisco Nexus Dashboard
+short_description: Manage ethernet access-mode host interfaces on Cisco Nexus Dashboard
 description:
-- Manage ethernet accessHost interfaces on Cisco Nexus Dashboard.
-- It supports creating, updating, and deleting accessHost interface configurations on switches within a fabric.
+- Manage ethernet access-mode host interfaces on Cisco Nexus Dashboard, on NX-OS (C(accessHost)) and IOS-XE (C(iosXeAccess)) switches.
+- It supports creating, updating, and deleting access interface configurations on switches within a fabric.
 - Multiple interfaces can share the same configuration via the O(config[].interface_names) list.
 - Interfaces that are port-channel members have restricted mutability; only O(config[].config_data.network_os.policy.description),
   O(config[].config_data.network_os.policy.admin_state), and O(config[].config_data.network_os.policy.extra_config)
@@ -45,7 +45,8 @@ options:
       interface_names:
         description:
         - The list of ethernet interface names to configure with the same settings.
-        - Each name should be in the format C(Ethernet1/1), C(Ethernet1/2), etc.
+        - Each name should be in the format C(Ethernet1/1), C(Ethernet1/2), etc. for NX-OS and C(GigabitEthernet1/0/1),
+          C(TenGigabitEthernet1/1/1), etc. for IOS-XE.
         type: list
         elements: str
         required: true
@@ -59,203 +60,266 @@ options:
             - Network OS specific configuration.
             type: dict
             suboptions:
+              network_os_type:
+                description:
+                - The network OS (platform) type of the target switch. This is a discriminator that determines which
+                  policy templates are applicable.
+                - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst IOS-XE switches.
+                type: str
+                default: nx-os
+                choices: [ nx-os, ios-xe ]
               policy:
                 description:
-                - The policy configuration for the accessHost interface.
+                - The policy configuration for the access interface.
+                - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
                 type: dict
                 suboptions:
+                  policy_type:
+                    description:
+                    - The access policy template to apply. This is a discriminator that determines which of the
+                      remaining C(policy) suboptions are applicable.
+                    - Optional. When omitted it is derived from O(config[].config_data.network_os.network_os_type),
+                      V(accessHost) for C(nx-os) and V(iosXeAccess) for C(ios-xe).
+                    - Use V(accessHost) for an NX-OS access host interface.
+                    - Use V(iosXeAccess) for an IOS-XE access host interface.
+                    type: str
+                    choices: [ accessHost, iosXeAccess ]
                   admin_state:
                     description:
                     - The administrative state of the interface.
                     - It defaults to C(true) when unset during creation.
+                    - Applies to all policy_type values.
                     type: bool
                   access_vlan:
                     description:
                     - The access VLAN for the interface.
                     - Valid range is 1-4094.
+                    - Applies to all policy_type values.
                     type: int
                   bandwidth:
                     description:
                     - Bandwidth value of the interface in kilobits.
                     - Valid range is 1-100000000.
+                    - Applies when policy_type is C(accessHost).
                     type: int
                   bpdu_filter:
                     description:
                     - Spanning-tree BPDU filter setting for the interface.
                     - It defaults to C(default) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: str
                     choices: [ enable, disable, default ]
                   bpdu_guard:
                     description:
                     - BPDU guard setting for the interface.
-                    - It defaults to C(enable) when unset during creation.
+                    - It defaults to C(enable) for C(accessHost) and C(default) for C(iosXeAccess) when unset during creation.
+                    - Applies to all policy_type values.
                     type: str
                     choices: [ enable, disable, default ]
                   cdp:
                     description:
                     - Whether Cisco Discovery Protocol is enabled on the interface.
                     - It defaults to C(true) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: bool
                   debounce_timer:
                     description:
                     - Link debounce timer (in milliseconds).
                     - Valid range is 0-20000.
                     - It defaults to C(100) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: int
                   debounce_linkup_timer:
                     description:
                     - Link debounce timer for link-up event (in milliseconds).
                     - Valid range is 1000-10000.
+                    - Applies when policy_type is C(accessHost).
                     type: int
                   description:
                     description:
                     - The description of the interface.
-                    - Maximum 254 characters.
+                    - Maximum length is 254 characters for C(accessHost), 200 for C(iosXeAccess).
+                    - Applies to all policy_type values.
                     type: str
                   duplex_mode:
                     description:
                     - The duplex mode of the interface.
                     - It defaults to C(auto) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: str
                     choices: [ auto, full, half ]
                   error_detection_acl:
                     description:
                     - Whether error detection for access-list installation failures is enabled.
                     - It defaults to C(true) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: bool
                   extra_config:
                     description:
                     - Additional CLI configuration commands to apply to the interface.
+                    - Applies to all policy_type values.
                     type: str
                   fec:
                     description:
                     - The forward error correction (FEC) mode for the interface.
                     - It defaults to C(auto) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: str
                     choices: [ "auto", "fcFec", "off", "rsCons16", "rsFec", "rsIEEE" ]
                   inherit_bandwidth:
                     description:
                     - Inherit bandwidth (in kilobits) for sub-interfaces.
                     - Valid range is 1-100000000.
+                    - Applies when policy_type is C(accessHost).
                     type: int
                   link_type:
                     description:
                     - Spanning-tree link type.
                     - It defaults to C(auto) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: str
                     choices: [ auto, pointToPoint, shared ]
                   monitor:
                     description:
                     - Whether switchport monitor for SPAN / ERSPAN is enabled.
                     - It defaults to C(false) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: bool
                   mtu:
                     description:
                     - The MTU setting for the interface.
-                    - C(default) renders the NX-OS system default MTU (1500) on the switch.
-                    - C(jumbo) renders C(mtu 9216). Lab-verified on ND 4.2.1; the rendered value is fixed and is
-                      not affected by the fabric settings C(fabricMtu) or C(l2HostInterfaceMtu) options.
-                    - It defaults to C(jumbo) when unset during creation.
+                    - For C(accessHost), one of C(default) or C(jumbo). C(default) renders the NX-OS system default MTU (1500)
+                      on the switch; C(jumbo) renders C(mtu 9216). Lab-verified on ND 4.2.1; the rendered value is fixed and is
+                      not affected by the fabric settings C(fabricMtu) or C(l2HostInterfaceMtu) options. It defaults to C(jumbo)
+                      when unset during creation.
+                    - For C(iosXeAccess), an integer in the range 1500-9216 (for example C(9000)). It defaults to C(1500) when
+                      unset during creation.
+                    - A value outside the selected policy_type's form is rejected by the module.
+                    - Applies to all policy_type values.
                     type: str
-                    choices: [ default, jumbo ]
                   negotiate_auto:
                     description:
                     - Whether link auto-negotiation is enabled.
                     - It defaults to C(true) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: bool
                   netflow:
                     description:
                     - Whether netflow is enabled on the interface.
                     - It defaults to C(false) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: bool
                   netflow_monitor:
                     description:
                     - The netflow Layer-2 monitor name for the interface.
+                    - Applies when policy_type is C(accessHost).
                     type: str
                   netflow_sampler:
                     description:
                     - The netflow Layer-2 sampler name for the interface.
                     - Only applicable for Nexus 7000 platforms.
+                    - Applies when policy_type is C(accessHost).
                     type: str
                   orphan_port:
                     description:
                     - Whether VPC orphan port suspension is enabled.
                     - It defaults to C(false) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: bool
                   pfc:
                     description:
                     - Whether Priority Flow Control is enabled on the interface.
                     - It defaults to C(false) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: bool
                   port_type_edge_trunk:
                     description:
                     - Whether spanning-tree edge port (PortFast) is enabled.
                     - It defaults to C(true) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: bool
                   qos:
                     description:
                     - Whether a QoS policy is applied to the interface.
                     - It defaults to C(false) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: bool
                   qos_policy:
                     description:
                     - Custom QoS policy name associated with the interface.
                     - The policy must be defined prior to associating it with the interface.
+                    - Applies when policy_type is C(accessHost).
                     type: str
                   queuing_policy:
                     description:
                     - Custom queuing policy name associated with the interface.
                     - The policy must be defined prior to associating it with the interface.
+                    - Applies when policy_type is C(accessHost).
                     type: str
                   speed:
                     description:
                     - The speed setting for the interface.
                     - It defaults to C(auto) when unset during creation.
+                    - For C(accessHost), one of C(auto), C(10Mb), C(100Mb), C(1Gb), C(2.5Gb), C(5Gb), C(10Gb), C(25Gb), C(40Gb),
+                      C(50Gb), C(100Gb), C(200Gb), C(400Gb), C(800Gb).
+                    - For C(iosXeAccess), one of C(auto), C(10Mb), C(100Mb), C(1Gb), C(2.5Gb), C(5Gb), C(10Gb), C(25Gb),
+                      C(40Gb), C(100Gb), C(noNegotiate).
+                    - The choices below are the union of both sets; a value outside the selected policy_type's subset is rejected
+                      by the module.
+                    - Applies to all policy_type values.
                     type: str
-                    choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb ]
+                    choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb, noNegotiate ]
                   storm_control:
                     description:
                     - Whether traffic storm control is enabled on the interface.
                     - It defaults to C(false) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: bool
                   storm_control_action:
                     description:
                     - Storm control action on threshold violation.
                     - It defaults to C(default) when unset during creation.
+                    - Applies when policy_type is C(accessHost).
                     type: str
                     choices: [ shutdown, trap, default ]
                   storm_control_broadcast_level:
                     description:
                     - Broadcast storm control level in percentage (format V(whole.decimal), range 0.00-100.00).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_broadcast_level_pps).
+                    - Applies when policy_type is C(accessHost).
                     type: float
                   storm_control_broadcast_level_pps:
                     description:
                     - Broadcast storm control level in packets per second.
                     - Valid range is 0-200000000.
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_broadcast_level).
+                    - Applies when policy_type is C(accessHost).
                     type: int
                   storm_control_multicast_level:
                     description:
                     - Multicast storm control level in percentage (format V(whole.decimal), range 0.00-100.00).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_multicast_level_pps).
+                    - Applies when policy_type is C(accessHost).
                     type: float
                   storm_control_multicast_level_pps:
                     description:
                     - Multicast storm control level in packets per second.
                     - Valid range is 0-200000000.
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_multicast_level).
+                    - Applies when policy_type is C(accessHost).
                     type: int
                   storm_control_unicast_level:
                     description:
                     - Unicast storm control level in percentage (format V(whole.decimal), range 0.00-100.00).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_unicast_level_pps).
+                    - Applies when policy_type is C(accessHost).
                     type: float
                   storm_control_unicast_level_pps:
                     description:
                     - Unicast storm control level in packets per second.
                     - Valid range is 0-200000000.
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_unicast_level).
+                    - Applies when policy_type is C(accessHost).
                     type: int
   config_actions:
     description:
@@ -278,12 +342,15 @@ options:
     - Use O(state=merged) to create new resources and update existing ones as defined in your configuration.
       Resources on ND that are not specified in the configuration will be left unchanged.
     - Use O(state=replaced) to replace the resources specified in the configuration.
-    - Use O(state=overridden) to enforce the configuration as the single source of truth.
-      The resources on ND will be modified to exactly match the configuration.
-      Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
-    - Use O(state=deleted) to reset the specified interfaces to their fabric default configuration via the
-      C(interfaceActions/normalize) API. Physical ethernet interfaces cannot be truly deleted from a switch;
-      this operation is the API equivalent of the NX-OS C(default interface) CLI command.
+    - Use O(state=overridden) to enforce the configuration as the single source of truth. Named interfaces are
+      modified to exactly match the configuration. For NX-OS, every C(accessHost) interface in the fabric that is not
+      present in the configuration is reset to its fabric default (fabric-wide remove-omitted semantics); use with
+      extra caution. IOS-XE interfaces are merge-only under this state, so named C(iosXeAccess) interfaces converge
+      but omitted IOS-XE interfaces are left untouched and must be reset explicitly with O(state=deleted).
+    - Use O(state=deleted) to reset the specified interfaces to their fabric default configuration. Physical
+      ethernet interfaces cannot be truly deleted from a switch. NX-OS interfaces reset via the
+      C(interfaceActions/normalize) API, the equivalent of the NX-OS C(default interface) CLI command; IOS-XE
+      interfaces reset to a default trunk configuration with all policy fields cleared.
     type: str
     default: merged
     choices: [ merged, replaced, overridden, deleted ]
@@ -292,9 +359,13 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS ethernet accessHost interfaces only (interface_type C(ethernet), mode C(access), network_os_type C(nx-os),
-  policy_type C(accessHost)). These values are hardcoded by the module and are not user-configurable.
+- This module supports both NX-OS and IOS-XE access-mode ethernet interfaces (interface_type C(ethernet), mode C(access)),
+  selected via O(config[].config_data.network_os.network_os_type).
+- This module manages the C(accessHost) (NX-OS) and C(iosXeAccess) (IOS-XE) policy templates. Interfaces carrying any other
+  policy type are never read or modified by this module.
 - Interfaces that are port-channel members have restricted mutability.
+- IOS-XE interfaces are merge-only under O(state=overridden), they are converged when named in O(config) and
+  are never reset when absent from it. To reset an IOS-XE interface, name it explicitly under O(state=deleted).
 """
 
 EXAMPLES = r"""
@@ -375,6 +446,28 @@ EXAMPLES = r"""
               admin_state: true
               access_vlan: 200
               description: VLAN 200 access ports
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: Configure IOS-XE access interfaces on a Catalyst switch
+  cisco.nd.nd_interface_ethernet_access:
+    fabric_name: my_campus_fabric
+    config:
+      - switch_ip: 192.168.2.1
+        interface_names:
+          - GigabitEthernet1/0/1
+          - GigabitEthernet1/0/2
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeAccess  # optional; derived from network_os_type when omitted
+              admin_state: true
+              access_vlan: 100
+              bpdu_guard: enable
+              mtu: 9000
+              description: Catalyst access ports
     config_actions:
       deploy: true
     state: merged

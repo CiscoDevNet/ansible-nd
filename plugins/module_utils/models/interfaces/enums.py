@@ -26,6 +26,18 @@ class AccessHostPolicyTypeEnum(str, Enum):
     ACCESS_HOST = "accessHost"
 
 
+class XeAccessHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_ethernet_access` (issue #534): the `iosXeAccess` member of the ND create-side
+    `createInterfaceEthernetAccessXeType` mapping (`ios_xe_int_access_host` template). `iosXeAccessPoMember` is a port-channel
+    member type provisioned through the port-channel modules and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_ACCESS = "iosXeAccess"
+
+
 class AccessPoHostPolicyTypeEnum(str, Enum):
     """
     # Summary
@@ -206,6 +218,18 @@ class TrunkHostPolicyTypeEnum(str, Enum):
     """
 
     TRUNK_HOST = "trunkHost"
+
+
+class XeTrunkHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_ethernet_trunk_host` (issue #535): the `iosXeTrunkHost` member of the ND
+    create-side `createInterfaceEthernetTrunkXeType` mapping (`ios_xe_int_trunk_host` template). `iosXeTrunkPoMember` is a
+    port-channel member type provisioned through the port-channel modules and `userDefined` is intentionally excluded.
+    """
+
+    IOS_XE_TRUNK_HOST = "iosXeTrunkHost"
 
 
 class SviPolicyTypeEnum(str, Enum):
