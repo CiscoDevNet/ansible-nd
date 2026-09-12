@@ -5,6 +5,9 @@
 - name: Run nd_manage_fabric eBGP tests
   ansible.builtin.include_tasks: fabric_ebgp.yaml
 
+#- name: Run nd_manage_fabric eBGP tests
+ # ansible.builtin.import_tasks: fabric_ebgp.yaml
+
 - name: Run nd_manage_fabric External Connectivity tests
   ansible.builtin.include_tasks: fabric_external.yaml
 
