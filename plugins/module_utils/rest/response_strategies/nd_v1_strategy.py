@@ -583,8 +583,11 @@ class NdV1Strategy:
 
         ## Description
 
-        Checks, in priority order: `raw_response`, `code`/`message`, the scalar `error` key, the `messages[]` array, the `errors[]` array, and
-        Multi-Status per-item failures (`results[]`/`switchIds[]`/`links[]`). Falls back to a generic status message when no specific format matches.
+        Builds the message from two parts: a top-level *summary* (`raw_response`, or `code`/`message`, or the scalar `error` key) and a field-level
+        *detail* taken, in priority order, from the `messages[]` array, the `errors[]` array, or Multi-Status per-item failures
+        (`results[]`/`switchIds[]`/`links[]`). When ND sends both (e.g. a 400 `code`/`message` "Request validation failed" alongside an `errors[]`
+        naming the rejected payload field), the summary and detail are combined so the field-level detail is not lost. Falls back to a generic status
+        message when no specific format matches.
 
         The `messages` and `errors` arrays are read through `_get_typed_value` because ND may send either key with an explicit `null` value, which a
         bare `data_dict[key]` would iterate (or `len()`) into a `TypeError` on the very path that reports an error to the user.
@@ -603,45 +606,60 @@ class NdV1Strategy:
 
         None
         """
-        msg: Optional[str] = None
+        # Top-level summary (raw_response / code+message / scalar error). ND often sends one of these
+        # alongside a field-level detail array; capture it as the lead of the message rather than as
+        # the whole message, so the detail below can be appended instead of dropped.
+        base: Optional[str] = None
         # Raw response (non-JSON)
         if "raw_response" in data_dict:
-            msg = "ND Error: Response could not be parsed as JSON"
+            base = "ND Error: Response could not be parsed as JSON"
         # code/message format
         elif "code" in data_dict and "message" in data_dict:
-            msg = f"ND Error {data_dict['code']}: {data_dict['message']}"
+            base = f"ND Error {data_dict['code']}: {data_dict['message']}"
 
         # Scalar error key. `is_success()` already classifies a response carrying DATA.error as a
         # failure; without this branch the error ND actually sent is dropped and the user is shown
         # only the generic "Request failed with status <code>" fallback below.
-        if msg is None and data_dict.get("error") is not None:
-            msg = f"ND Error: {data_dict['error']}"
+        if base is None and data_dict.get("error") is not None:
+            base = f"ND Error: {data_dict['error']}"
+
+        # Field-level detail, in priority order: messages[] array, then errors[] array, then
+        # Multi-Status per-item failures. The `messages` and `errors` arrays are read through
+        # `_get_typed_value` because ND may send either key with an explicit `null` value, which a
+        # bare `data_dict[key]` would iterate (or `len()`) into a `TypeError` on the very path that
+        # reports an error to the user.
+        detail: Optional[str] = None
 
         # messages array format
-        if msg is None:
-            parts = []
-            for m in _get_typed_value(data_dict, "messages", list, []):
-                if isinstance(m, dict) and all(k in m for k in ("code", "severity", "message")):
-                    parts.append(f"ND Error {m['code']} ({m['severity']}): {m['message']}")
-            if parts:
-                msg = "; ".join(parts)
+        parts = []
+        for m in _get_typed_value(data_dict, "messages", list, []):
+            if isinstance(m, dict) and all(k in m for k in ("code", "severity", "message")):
+                parts.append(f"ND Error {m['code']} ({m['severity']}): {m['message']}")
+        if parts:
+            detail = "; ".join(parts)
 
         # errors array format
-        if msg is None:
+        if detail is None:
             errors = _get_typed_value(data_dict, "errors", list, [])
             if errors:
-                msg = f"ND Error: {'; '.join(str(e) for e in errors)}"
+                detail = f"ND Error: {'; '.join(str(e) for e in errors)}"
 
         # Multi-Status per-item failures (results[]/switchIds[]/links[]). Mirrors is_success:
         # on a 207 every non-exact-success item is reported (including status-less items), so the
         # message names the item ND rejected rather than falling through to the generic fallback.
-        if msg is None:
+        if detail is None:
             failed_items = _non_success_multistatus_items(response) if return_code == 207 else _failed_multistatus_items(response)
             if failed_items:
                 parts = [self._format_multistatus_failure(item) for item in failed_items]
-                msg = f"ND Error: {'; '.join(parts)}"
+                detail = f"ND Error: {'; '.join(parts)}"
 
+        # Combine. When ND provided BOTH a top-level summary and a field-level detail (e.g. a 400
+        # "Request validation failed" carrying an errors[] that names the rejected payload field),
+        # surface both so the offending field is not lost. Previously the summary short-circuited
+        # and the detail was dropped, leaving only the generic "Request validation failed".
+        if base is not None:
+            return f"{base} | {detail}" if detail is not None else base
+        if detail is not None:
+            return detail
         # Unknown dict format - fallback
-        if msg is None:
-            msg = f"ND Error: Request failed with status {return_code}"
-        return msg
+        return f"ND Error: Request failed with status {return_code}"

@@ -1460,8 +1460,86 @@ def test_response_handler_nd_01000():
     assert "Primary error message" in instance.error_message
 
 
-# =============================================================================
-# Test: Multi-Status per-item failure detection (issue #295)
+def test_response_handler_nd_01010():
+    """
+    # Summary
+
+    Verify a top-level `code`/`message` summary and a field-level `errors[]`
+    detail are combined, not dropped.
+
+    ## Test
+
+    - A 400 carrying both `code`/`message` "Request validation failed" and an
+      `errors[]` array naming the rejected payload field surfaces BOTH the
+      generic summary and the field-level detail. Previously the summary
+      short-circuited extraction and the `errors[]` detail was dropped, hiding
+      the offending field (e.g. the nd_manage_fabric create 400).
+
+    ## Classes and Methods
+
+    - NdV1Strategy._extract_dict_error_message()
+    - ResponseHandler.error_message
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 400,
+        "MESSAGE": "Bad Request",
+        "DATA": {
+            "code": 400,
+            "message": "Request validation failed",
+            "errors": ["management.dhcpStartAddress: must not be empty"],
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    instance.commit()
+    assert instance.error_message is not None
+    # Generic summary is preserved (lead of the message)...
+    assert "Request validation failed" in instance.error_message
+    # ...and the field-level detail is now surfaced too.
+    assert "management.dhcpStartAddress: must not be empty" in instance.error_message
+
+
+def test_response_handler_nd_01020():
+    """
+    # Summary
+
+    Verify a top-level `code`/`message` summary and a `messages[]` detail are
+    combined, not dropped.
+
+    ## Test
+
+    - A 400 carrying both `code`/`message` and a structured `messages[]` array
+      surfaces the field-level `messages[]` detail alongside the summary.
+
+    ## Classes and Methods
+
+    - NdV1Strategy._extract_dict_error_message()
+    - ResponseHandler.error_message
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 400,
+        "MESSAGE": "Bad Request",
+        "DATA": {
+            "code": 400,
+            "message": "Request validation failed",
+            "messages": [
+                {
+                    "code": "ERR_FIELD",
+                    "severity": "ERROR",
+                    "message": "management.managementGateway is invalid",
+                }
+            ],
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    instance.commit()
+    assert instance.error_message is not None
+    assert "Request validation failed" in instance.error_message
+    assert "management.managementGateway is invalid" in instance.error_message
+
+
+
 #
 # ND reports per-item outcomes for batch operations in a DATA envelope array whose
 # items carry status: "success" | "failed" | "failure" | "error". The two known
