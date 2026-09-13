@@ -368,7 +368,11 @@ class ConfigActionsModel(BaseModel):
     )
 
     save: bool = Field(default=True, description="Save fabric configuration after applying changes")
-    deploy: bool = Field(default=True, description="Deploy fabric configuration after save")
+    deploy: bool = Field(default=False, description="Deploy fabric configuration after save")
+    # ``type`` selects the deploy scope (switch/global) for the whole run.
+    # A per-resource deploy control (a ``deploy`` key on individual ``config[]``
+    # entries) is intentionally deferred until the shared config_actions contract
+    # is settled; deploy scope is currently chosen fabric-wide via this field.
     type: Literal["switch", "global"] | None = Field(default=None, description="Action scope type")
 
     @model_validator(mode="after")
@@ -459,7 +463,7 @@ class VpcPairPlaybookConfigModel(BaseModel):
                 required=False,
                 options=dict(
                     save=dict(type="bool", default=True),
-                    deploy=dict(type="bool", default=True),
+                    deploy=dict(type="bool", default=False),
                     type=dict(type="str", choices=["switch", "global"]),
                 ),
             ),

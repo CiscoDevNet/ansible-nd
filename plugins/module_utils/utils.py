@@ -222,12 +222,16 @@ class FabricUtils:
     def config_deploy_path(self, force_show_run: bool = True) -> str:
         return self.build_config_deploy_path(self.fabric_name, force_show_run=force_show_run)
 
-    def save_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def save_config(self) -> dict[str, Any]:
         """
         Call fabric config-save action.
+
+        Nexus Dashboard's config-save action is bodyless; the deploy-scope
+        selection is applied only to the separate deploy request and is never
+        sent to config-save.
         """
         path = self.config_save_path
-        response_data = self.nd.request(path, HttpVerbEnum.POST, payload)
+        response_data = self.nd.request(path, HttpVerbEnum.POST)
         return {
             "path": path,
             "status": self.nd.status,
