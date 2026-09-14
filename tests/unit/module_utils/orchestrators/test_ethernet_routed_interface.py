@@ -929,6 +929,59 @@ def test_ethernet_routed_orchestrator_00800() -> None:
     assert orchestrator._pending_deploys == []
 
 
+def test_ethernet_routed_orchestrator_00810(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify a second same-name bulk create that fails before response cannot reuse the first switch's successful HTTP 207.
+
+    ## Test
+
+    - Ethernet1/7 is submitted in separate per-switch POST groups and the first returns an all-success HTTP 207
+    - The second request raises from sender.commit() before recording a response
+    - Only the first switch target is queued and deployed; the unsent second target is never inferred from stale response state
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.create_bulk()
+    - EthernetBaseOrchestrator._post_bulk_group()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_remove_pending_00360a")
+        yield responses_ethernet_routed("test_remove_pending_00360b")
+        yield responses_ethernet_routed("test_remove_pending_00360d")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    orchestrator.deploy = True
+    assert orchestrator.fabric_context.get_switch_id("192.168.1.1") == "FDO11111AAA"
+    sender = orchestrator.rest_send.sender
+    original_commit = sender.commit
+    commit_count = 0
+
+    def fail_second_commit() -> None:
+        nonlocal commit_count
+        commit_count += 1
+        if commit_count == 2:
+            raise ValueError("second bulk create failed before response")
+        original_commit()
+
+    monkeypatch.setattr(sender, "commit", fail_second_commit)
+    models = [
+        _user_nx_model({"ip": "10.10.7.1", "prefix": 30}, switch_ip="192.168.1.1"),
+        _user_nx_model({"ip": "10.10.8.1", "prefix": 30}, switch_ip="192.168.1.2"),
+    ]
+    with pytest.raises(RuntimeError, match=r"Bulk create failed: .*second bulk create failed before response") as exc_info:
+        orchestrator.create_bulk(models, existing_data={"interfaceName": "probe"})
+
+    assert "The controller accepted" not in str(exc_info.value)
+    assert orchestrator._pending_deploys == [("Ethernet1/7", "FDO11111AAA")]
+    monkeypatch.setattr(sender, "commit", original_commit)
+    assert orchestrator.deploy_accepted_mutations() == [("Ethernet1/7", "FDO11111AAA")]
+    assert orchestrator._pending_deploys == []
+
+
 def test_ethernet_routed_orchestrator_00430() -> None:
     """
     # Summary
@@ -1165,6 +1218,58 @@ def test_ethernet_routed_orchestrator_00360() -> None:
     with does_not_raise():
         deployed = orchestrator.deploy_accepted_mutations()
     assert deployed == [("Ethernet1/31", "FDO11111AAA")]
+    assert orchestrator._pending_deploys == [("Ethernet1/31", "FDO22222BBB")]
+
+
+def test_ethernet_routed_orchestrator_00370(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify a second same-name normalize that fails before receiving a response cannot reuse the first switch's successful HTTP 207.
+
+    ## Test
+
+    - Ethernet1/31 is queued on two switches and the first per-switch normalize returns an all-success HTTP 207
+    - The second request raises from sender.commit() before recording a response
+    - Only the first pair is accepted/deployable; the second pair remains pending and is never inferred from stale response state
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._normalize_interfaces()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_remove_pending_00360a")
+        yield responses_ethernet_routed("test_remove_pending_00360b")
+        yield responses_ethernet_routed("test_remove_pending_00360d")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    orchestrator.deploy = True
+    orchestrator.delete_bulk(
+        [_nx_model("Ethernet1/31", switch_ip="192.168.1.1"), _nx_model("Ethernet1/31", switch_ip="192.168.1.2")],
+        existing_data={"interfaceName": "probe"},
+    )
+    sender = orchestrator.rest_send.sender
+    original_commit = sender.commit
+    commit_count = 0
+
+    def fail_second_commit() -> None:
+        nonlocal commit_count
+        commit_count += 1
+        if commit_count == 2:
+            raise ValueError("second normalize failed before response")
+        original_commit()
+
+    monkeypatch.setattr(sender, "commit", fail_second_commit)
+    with pytest.raises(RuntimeError, match=r"Bulk normalize failed for \['Ethernet1/31'\].*None of these interfaces were reset"):
+        orchestrator.remove_pending()
+
+    assert orchestrator._accepted_multistatus_names(None) == set()
+    assert orchestrator._pending_normalizes == [("Ethernet1/31", "FDO22222BBB")]
+    monkeypatch.setattr(sender, "commit", original_commit)
+    assert orchestrator.deploy_accepted_mutations() == [("Ethernet1/31", "FDO11111AAA")]
     assert orchestrator._pending_deploys == [("Ethernet1/31", "FDO22222BBB")]
 
 

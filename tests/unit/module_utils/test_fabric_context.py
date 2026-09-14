@@ -544,6 +544,58 @@ def test_fabric_context_00210() -> None:
         instance.get_switch_ip("FDO99999XYZ")
 
 
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    (
+        ("inSync", True),
+        ("In-Sync", True),
+        ("SYNCHRONIZED", True),
+        ("outOfSync", False),
+        ("Out-of-Sync", False),
+        ("not_synchronized", False),
+        ("pending", False),
+        ("Pending", False),
+        ("NA", None),
+        (None, None),
+    ),
+)
+def test_fabric_context_00211(status, expected) -> None:
+    """Verify in-sync, deploy-needed, and unknown controller synchronization spellings normalize safely."""
+    assert FabricContext._normalize_config_sync_status(status) is expected
+
+
+def test_fabric_context_00212() -> None:
+    """Verify nested and top-level switch status reuse the switch-list cache without another GET."""
+    method_name = "test_fabric_context_00200"
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+
+    assert instance.switch_map["192.168.12.151"] == "FDO12345ABC"
+    assert instance.switch_config_in_sync("FDO12345ABC") is None
+
+    instance._switch_records_by_id = {
+        "FDO12345ABC": {"switchId": "FDO12345ABC", "additionalData": {"configSyncStatus": "Out-of-Sync"}},
+        "FDO12345ABD": {"switchId": "FDO12345ABD", "configSyncStatus": "In_Sync"},
+        "FDO12345ABE": {
+            "switchId": "FDO12345ABE",
+            "additionalData": {"configSyncStatus": "NA"},
+            "configSyncStatus": "outOfSync",
+        },
+        "FDO12345ABF": {"switchId": "FDO12345ABF", "additionalData": {"configSyncStatus": "Pending"}},
+    }
+
+    assert instance.switch_config_in_sync("FDO12345ABC") is False
+    assert instance.switch_config_in_sync("FDO12345ABD") is True
+    assert instance.switch_config_in_sync("FDO12345ABE") is False
+    assert instance.switch_config_in_sync("FDO12345ABF") is False
+    assert instance.switch_config_in_sync("UNKNOWN") is None
+
+
 def test_fabric_context_00220() -> None:
     """
     # Summary
@@ -641,6 +693,61 @@ def test_fabric_context_00230() -> None:
     match = r"No switch found with fabricManagementIp '10\.0\.0\.1' in fabric 'fabric_1'"
     with pytest.raises(RuntimeError, match=match):
         instance.get_platform_type("10.0.0.1")
+
+
+def test_fabric_context_00240() -> None:
+    """Verify platform and synchronization lookups share indexed records and invalidate together."""
+
+    def responses():
+        yield {
+            "RETURN_CODE": 200,
+            "METHOD": "GET",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+            "MESSAGE": "OK",
+            "DATA": {
+                "switches": [
+                    {
+                        "fabricManagementIp": "192.168.12.151",
+                        "switchId": "FDO12345ABC",
+                        "additionalData": {"platformType": "nx-os", "configSyncStatus": "outOfSync"},
+                    }
+                ]
+            },
+        }
+        yield {
+            "RETURN_CODE": 200,
+            "METHOD": "GET",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+            "MESSAGE": "OK",
+            "DATA": {
+                "switches": [
+                    {
+                        "fabricManagementIp": "192.168.12.151",
+                        "switchId": "FDO12345ABC",
+                        "additionalData": {"platformType": "ios-xe", "configSyncStatus": "inSync"},
+                    }
+                ]
+            },
+        }
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+
+    assert instance.get_platform_type("192.168.12.151") == PlatformType.NX_OS
+    assert instance.switch_config_in_sync("FDO12345ABC") is False
+    assert instance._switch_records_by_ip["192.168.12.151"] is instance._switch_records_by_id["FDO12345ABC"]
+
+    instance.invalidate()
+
+    assert instance._switches is None
+    assert instance._switch_map is None
+    assert instance._switch_map_by_id is None
+    assert instance._switch_records_by_ip is None
+    assert instance._switch_records_by_id is None
+    assert instance.switch_config_in_sync("FDO12345ABC") is True
+    assert instance.get_platform_type("192.168.12.151") == PlatformType.IOS_XE
+    assert instance._switch_records_by_ip["192.168.12.151"] is instance._switch_records_by_id["FDO12345ABC"]
 
 
 def test_fabric_context_00250() -> None:

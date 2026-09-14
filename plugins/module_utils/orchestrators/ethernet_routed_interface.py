@@ -34,6 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     normalize_ethernet_interface_name,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import DeferredDeleteRequestGroup
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
@@ -114,6 +115,7 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
     """
 
     model_class: ClassVar[type[NDBaseModel]] = EthernetRoutedInterfaceModel
+    deferred_delete_queue_names: ClassVar[frozenset[str]] = EthernetBaseOrchestrator.deferred_delete_queue_names | frozenset({"platform_reset"})
 
     # TODO(4.2.1) capable-switches-empty-for-ethernet-on-vxlan
     # Deliberate opt-OUT of the capability preflight (both ClassVars ""): the unpublished capableSwitches
@@ -154,6 +156,14 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         super().model_post_init(__context)
         self._pending_xe_resets: list[tuple[str, str]] = []
         self._fabric_link_endpoints_cache: dict[tuple[str, str], dict] | None = None
+        self._fabric_link_cache_provider: EthernetRoutedInterfaceOrchestrator | None = None
+
+    def share_fabric_link_cache(self, provider: EthernetRoutedInterfaceOrchestrator) -> None:
+        """Use one routed orchestrator as the workflow-wide owner of lazy fabric-link discovery."""
+        if provider is self:
+            self._fabric_link_cache_provider = None
+            return
+        self._fabric_link_cache_provider = provider
 
     def _fabric_link_endpoints(self) -> dict[tuple[str, str], dict]:
         """
@@ -174,6 +184,8 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
 
         - Via `_request` if the links query fails with a non-404 status.
         """
+        if self._fabric_link_cache_provider is not None:
+            return self._fabric_link_cache_provider._fabric_link_endpoints()
         if self._fabric_link_endpoints_cache is not None:
             return self._fabric_link_endpoints_cache
         endpoints: dict[tuple[str, str], dict] = {}
@@ -299,6 +311,37 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         pair = (interface_name, switch_id)
         if pair not in self._pending_xe_resets:
             self._pending_xe_resets.append(pair)
+
+    @property
+    def pending_platform_resets(self) -> tuple[tuple[str, str], ...]:
+        """Return IOS-XE defaults-only PUT resets through the platform-neutral public contract."""
+        return tuple(self._pending_xe_resets)
+
+    @property
+    def deferred_delete_queues(self) -> dict[str, tuple[tuple[str, str], ...]]:
+        """Extend shared Ethernet queues with platform-specific reset work."""
+        return {**super().deferred_delete_queues, "platform_reset": self.pending_platform_resets}
+
+    def queue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Import shared Ethernet work or IOS-XE platform-reset targets."""
+        if queue_name == "platform_reset":
+            for interface_name, switch_id in targets:
+                self._queue_xe_reset(interface_name, switch_id)
+            return
+        super().queue_deferred_delete_targets(queue_name, targets)
+
+    def dequeue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Remove transferred IOS-XE reset work or delegate a shared Ethernet queue."""
+        if queue_name == "platform_reset":
+            removed = set(targets)
+            self._pending_xe_resets = [target for target in self._pending_xe_resets if target not in removed]
+            return
+        super().dequeue_deferred_delete_targets(queue_name, targets)
+
+    def deferred_delete_request_groups(self) -> tuple[DeferredDeleteRequestGroup, ...]:
+        """Describe IOS-XE PUT resets followed by the shared NX-OS Ethernet request groups."""
+        platform_groups = tuple(DeferredDeleteRequestGroup(queue_name="platform_reset", targets=(target,)) for target in self.pending_platform_resets)
+        return platform_groups + super().deferred_delete_request_groups()
 
     def preflight_delete(self, model_instances: Sequence[NDBaseModel]) -> None:
         """

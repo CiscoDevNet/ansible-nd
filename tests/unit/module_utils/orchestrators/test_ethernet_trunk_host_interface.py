@@ -288,6 +288,85 @@ def test_ethernet_trunk_host_orchestrator_00110() -> None:
             },
             False,
         ),
+        (
+            {
+                "configData": {
+                    "networkOS": {
+                        "policy": {
+                            "stormControl": False,
+                            "stormControlAction": "default",
+                            "stormControlBroadcastLevel": "0.0",
+                            "stormControlBroadcastLevelPps": "0",
+                        },
+                    },
+                },
+            },
+            True,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"stormControlBroadcastLevel": "42.5"}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"stormControlBroadcastLevelPps": "4200"}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"stormControl": True}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"stormControlAction": "trap"}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"qos": True}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"adminState": False}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"vlanMappingEntries": [{"providerVlanId": 100}]}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"ptp": False}},
+                },
+            },
+            True,
+        ),
     ],
     ids=[
         "empty",
@@ -302,6 +381,15 @@ def test_ethernet_trunk_host_orchestrator_00110() -> None:
         "class_c_bandwidth",
         "class_c_debounce_linkup",
         "class_c_inherit_bandwidth",
+        "storm_defaults_numeric_strings",
+        "storm_percentage_configured",
+        "storm_pps_configured",
+        "storm_enabled",
+        "storm_action_configured",
+        "qos_configured",
+        "admin_state_configured",
+        "vlan_mapping_entries_configured",
+        "unknown_wire_field_ignored",
     ],
 )
 def test_ethernet_trunk_host_orchestrator_00200(iface, expected) -> None:

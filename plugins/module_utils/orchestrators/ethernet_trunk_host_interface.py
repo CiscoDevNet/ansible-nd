@@ -12,6 +12,7 @@ for ethernet trunkHost interfaces. It inherits all shared ethernet logic from
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -22,6 +23,28 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+
+
+@lru_cache(maxsize=1)
+def _default_interface_policy() -> dict[str, object]:
+    """Build defaults lazily so sanity imports do not require Pydantic."""
+    return InterfaceDefaultConfig().to_payload()["configData"]["networkOS"]["policy"]
+
+
+def _wire_value_matches_default(value: object, default: object) -> bool:
+    """Compare a raw API value to a normalized default, accepting numeric strings."""
+    if value is None:
+        return True
+    if isinstance(default, bool):
+        return isinstance(value, bool) and value is default
+    if isinstance(default, (int, float)):
+        if isinstance(value, bool):
+            return False
+        try:
+            return float(value) == float(default)
+        except (TypeError, ValueError):
+            return False
+    return value == default
 
 
 class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
@@ -67,10 +90,10 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         # Summary
 
         Return `True` if the given interface API response represents an unconfigured `int_trunk_host`
-        default — `allowedVlans` is absent or `"none"`, `description` is absent or empty, `nativeVlan`
-        is absent or `1`, and none of the Class C fields (`InterfaceDefaultConfig.UNRESETTABLE_FIELDS`)
-        are set. Such an interface is indistinguishable from a freshly normalized one and should
-        be treated as out-of-scope for `state: overridden` idempotency.
+        default: every present policy field modeled by `InterfaceDefaultConfig` matches its normalized
+        value, Class C fields are unset, and `vlanMappingEntries` is empty. Absent or null known fields
+        are equivalent to omitted defaults. Such an interface is indistinguishable from a freshly
+        normalized one and should be treated as out-of-scope for `state: overridden` idempotency.
 
         Class C fields are checked because they survive `interfaceActions/normalize` (ND's validator
         rejects 0/null for them); leaving them out of this filter would hide a configured-but-stuck
@@ -82,21 +105,21 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         None
         """
         policy = iface.get("configData", {}).get("networkOS", {}).get("policy", {}) or {}
-        allowed_vlans = policy.get("allowedVlans")
-        if allowed_vlans not in (None, "none"):
+        if not isinstance(policy, dict):
             return False
-        description = policy.get("description")
-        if description not in (None, ""):
-            return False
-        native_vlan = policy.get("nativeVlan")
-        if native_vlan not in (None, 1):
-            return False
+        for field, default in _default_interface_policy().items():
+            if field not in policy or policy[field] is None:
+                continue
+            if not _wire_value_matches_default(policy[field], default):
+                return False
         # TODO(4.2.1) normalize-unresettable-policy-fields
         # Class C fields (bandwidth, debounceLinkupTimer, inheritBandwidth) survive interfaceActions/normalize because
         # ND's validator rejects 0/null for them, so a normalized interface still carries any prior value. We must treat
         # such an interface as configured (not an unconfigured default) so `state: deleted` keeps it in scope and routes
         # it to the per-interface PUT-as-replace reset path. See InterfaceDefaultConfig.UNRESETTABLE_FIELDS for the set.
         if any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS):
+            return False
+        if policy.get("vlanMappingEntries"):
             return False
         return True
 

@@ -1,0 +1,20 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Normalize expected interface identities
+  ansible.builtin.set_fact:
+    nd_iw_expected_interface_names: >-
+      {{
+        [nd_iw_expected_config_item.interface_name]
+        if nd_iw_expected_config_item.interface_name is defined
+        else nd_iw_expected_config_item.interface_names
+      }}
+
+- name: Verify each normalized interface and all supplied properties
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_interface_item.yaml"
+  loop: "{{ nd_iw_expected_interface_names }}"
+  loop_control:
+    loop_var: nd_iw_expected_interface_name
+    label: "{{ nd_iw_expected_interface_name }}"

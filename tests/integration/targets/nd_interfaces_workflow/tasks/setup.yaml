@@ -1,0 +1,16 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Interface workflow setup | Reset cleanup tracking
+  ansible.builtin.set_fact:
+    nd_iw_cleanup_failures: []
+
+- name: Interface workflow setup | Batch-delete test-owned resources per fabric
+  ansible.builtin.include_tasks: cleanup_fabric.yaml
+  vars:
+    nd_iw_cleanup_phase: setup
+  loop: "{{ nd_iw_active_fabrics }}"
+  loop_control:
+    loop_var: nd_iw_current_fabric
+    label: "{{ nd_iw_current_fabric.discriminator }}:{{ nd_iw_current_fabric.fabric_name }}"

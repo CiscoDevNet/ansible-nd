@@ -1,0 +1,11 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Run invalid cases for {{ nd_iw_invalid_family_case.family }}
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/invalid_case.yaml"
+  loop: "{{ nd_iw_invalid_family_case.invalid | default([]) }}"
+  loop_control:
+    loop_var: nd_iw_invalid_case
+    label: "{{ nd_iw_invalid_case.name }}"

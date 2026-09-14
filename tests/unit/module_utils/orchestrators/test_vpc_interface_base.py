@@ -1308,7 +1308,7 @@ def test_vpc_interface_base_01010() -> None:
     # The file-based Sender replays responses positionally, so pin the request sequence: this proves the vpcPair lookup
     # actually happens (and where), rather than a later interfaces GET silently consuming the vpcPair fixture.
     assert results.path == [
-        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
         "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
     ]
 
@@ -1357,8 +1357,8 @@ def test_vpc_interface_base_01020() -> None:
     # The file-based Sender replays responses positionally, so pin the request sequence: this proves the vpcPair lookup
     # actually happens (and where), rather than a later interfaces GET silently consuming the vpcPair fixture.
     assert results.path == [
-        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
-        "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
         "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/vpcPair",
     ]
 
@@ -1402,9 +1402,9 @@ def test_vpc_interface_base_01030() -> None:
     # The file-based Sender replays responses positionally, so pin the request sequence: this proves the vpcPair lookup
     # actually happens (and where), rather than a later interfaces GET silently consuming the vpcPair fixture.
     assert results.path == [
-        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
         "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
-        "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces?offset=0&max=500&sort=interfaceName%3Aasc",
         "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/vpcPair",
     ]
 

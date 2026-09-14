@@ -501,6 +501,65 @@ def test_ethernet_access_orchestrator_00520() -> None:
     assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
 
 
+def test_ethernet_access_orchestrator_00525(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify update accepts a routed-host wire record supplied by the workflow and sends one exact
+    access-host replacement PUT without first normalizing or creating the interface.
+
+    ## Test
+
+    - Existing data has policyType=routedHost and is not a port-channel member
+    - The destination model requests policyType=accessHost, VLAN 100, and a description
+    - Exactly one request is issued to the encoded per-interface PUT endpoint
+    - The body is exactly the destination model payload plus the resolved switch ID
+    - One deployment target is queued for the workflow's consolidated deploy phase
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.update()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    instance = _build_orchestrator(gen_responses)
+    model = _build_access_model({"access_vlan": 100, "description": "workflow transition"})
+    current = {
+        "interfaceName": "Ethernet1/1",
+        "interfaceType": "ethernet",
+        "configData": {
+            "mode": "routed",
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {"policyType": "routedHost", "ip": "198.51.100.1", "prefix": 31},
+            },
+        },
+        "operData": {"portChannelId": -1},
+    }
+    requests = []
+
+    monkeypatch.setattr(instance, "_resolve_switch_id", lambda _switch_ip: "FDO11111AAA")
+    monkeypatch.setattr(instance, "_request", lambda **kwargs: requests.append(kwargs) or {"ok": True})
+
+    result = instance.update(model, existing_data=current)
+
+    expected_payload = model.to_payload()
+    expected_payload["switchId"] = "FDO11111AAA"
+    assert result == {"ok": True}
+    assert requests == [
+        {
+            "path": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F1",
+            "verb": HttpVerbEnum.PUT,
+            "data": expected_payload,
+        }
+    ]
+    assert requests[0]["data"]["configData"]["networkOS"]["policy"]["policyType"] == "accessHost"
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+
+
 def test_ethernet_access_orchestrator_00530() -> None:
     """
     # Summary
@@ -910,6 +969,23 @@ def test_ethernet_access_orchestrator_00610() -> None:
 
     assert instance._pending_normalizes == []
     assert instance._pending_deploys == []
+
+
+def test_ethernet_access_orchestrator_00590() -> None:
+    """Verify public Ethernet queue transfer APIs de-duplicate targets and expose immutable views."""
+
+    def responses():
+        yield {}
+
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    normalize_targets = [("Ethernet1/1", "FDO11111AAA"), ("Ethernet1/2", "FDO22222BBB")]
+    reset_targets = [("Ethernet1/3", "FDO11111AAA")]
+
+    instance.queue_normalize_targets([*normalize_targets, normalize_targets[0]])
+    instance.queue_reset_targets([*reset_targets, reset_targets[0]])
+
+    assert instance.pending_normalizes == tuple(normalize_targets)
+    assert instance.pending_resets == tuple(reset_targets)
 
 
 def test_ethernet_access_orchestrator_00595() -> None:

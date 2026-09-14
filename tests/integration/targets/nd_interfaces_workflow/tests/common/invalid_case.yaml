@@ -1,0 +1,27 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Reject {{ nd_iw_invalid_family_case.family }} invalid case {{ nd_iw_invalid_case.name }}
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: "{{ nd_iw_invalid_family_case.family }}"
+        state: merged
+        config: "{{ nd_iw_invalid_case.config }}"
+    config_actions:
+      deploy: true
+    output_level: debug
+  check_mode: true
+  register: nd_iw_invalid_result
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  ignore_errors: true
+
+- name: Verify {{ nd_iw_invalid_case.name }} fails without a mutation
+  ansible.builtin.assert:
+    that:
+      - nd_iw_invalid_result.failed | default(false) | bool
+      - not (nd_iw_invalid_result.changed | default(false) | bool)
+      - nd_iw_invalid_result.msg is string
+      - nd_iw_invalid_result.msg is search(nd_iw_invalid_case.expected_error)

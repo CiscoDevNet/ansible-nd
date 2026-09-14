@@ -529,6 +529,22 @@ def test_base_interface_00530() -> None:
     assert instance._pending_removes == [("loopback10", "FDO12345ABC")]
 
 
+def test_base_interface_00540() -> None:
+    """Verify public queue transfer APIs de-duplicate targets and expose immutable views."""
+
+    def responses():
+        yield {}
+
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    targets = [("loopback10", "FDO12345ABC"), ("loopback20", "FDO12345ABD")]
+
+    instance.queue_deploy_targets([*targets, targets[0]])
+    instance.queue_remove_targets([*targets, targets[0]])
+
+    assert instance.pending_deploys == tuple(targets)
+    assert instance.pending_removes == tuple(targets)
+
+
 # =============================================================================
 # Test: deploy_pending
 # =============================================================================
