@@ -1751,3 +1751,68 @@ def test_ethernet_access_interface_01290(value, expected):
     """
     instance = EthernetAccessInterfaceModel(switch_ip="192.168.2.1", interface_name=value)
     assert instance.interface_name == expected
+
+
+# =============================================================================
+# Test: payload_defaults (issue #564)
+# =============================================================================
+
+
+def test_ethernet_access_interface_01300():
+    """
+    # Summary
+
+    Verify the IOS-XE `iosXeAccess` payload always carries `mtu`: the template default (1500) is emitted when the user set nothing,
+    and a user-supplied value wins. ND 4.3.1 rejects a create body that omits `mtu` where 4.2.1 defaulted it (issue #564).
+
+    ## Test
+
+    - `from_config` with no `mtu` -> `to_payload()` policy carries `mtu: 1500`
+    - `from_config` with `mtu: "8000"` (str-typed argspec) -> `to_payload()` policy carries `mtu: 8000`
+    - `to_diff_dict()` and `to_config()` of the unset model do not carry `mtu` (payload-only injection)
+
+    ## Classes and Methods
+
+    - XeEthernetAccessPolicyModel.payload_defaults
+    - NDBaseModel.to_payload()
+    """
+    config = {
+        "switch_ip": "192.168.2.1",
+        "interface_name": "GigabitEthernet1/0/1",
+        "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"access_vlan": 20}}},
+    }
+    unset = EthernetAccessInterfaceModel.from_config(config)
+    assert unset.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 1500
+    assert "mtu" not in unset.to_diff_dict()["configData"]["networkOS"]["policy"]
+    assert "mtu" not in unset.to_config()["config_data"]["network_os"]["policy"]
+
+    explicit_config = copy.deepcopy(config)
+    explicit_config["config_data"]["network_os"]["policy"]["mtu"] = "8000"
+    explicit = EthernetAccessInterfaceModel.from_config(explicit_config)
+    assert explicit.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 8000
+
+
+def test_ethernet_access_interface_01310():
+    """
+    # Summary
+
+    Contract guard: the NX-OS `accessHost` payload injects nothing. ND 4.3.1 accepts an `accessHost` create body with no `mtu`
+    (issue #564 lists it as unaffected), so the NX-OS access branch declares no payload defaults.
+
+    ## Test
+
+    - `from_config` for `nx-os` with only `access_vlan` -> `to_payload()` policy carries exactly `policyType` and `accessVlan`
+
+    ## Classes and Methods
+
+    - EthernetAccessPolicyModel.payload_defaults
+    - NDBaseModel.to_payload()
+    """
+    unset = EthernetAccessInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.1.1",
+            "interface_name": "Ethernet1/1",
+            "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"access_vlan": 20}}},
+        }
+    )
+    assert unset.to_payload()["configData"]["networkOS"]["policy"] == {"policyType": "accessHost", "accessVlan": 20}

@@ -95,6 +95,12 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
         "speed": "auto",
     }
 
+    # TODO(4.3.1) ethernet-create-required-fields-431
+    # ND 4.3.1 rejects a routedHost create body that omits `mtu` ("Validation failed for following fields: [mtu]")
+    # where 4.2.1 defaulted it to 9216 (neither spec marks it required). Always emit the template default on the wire;
+    # 4.2.1 stores 9216 either way, so idempotency is unchanged on both releases. Payload-only: see `NDBaseModel.payload_defaults`.
+    payload_defaults: ClassVar[dict[str, Any]] = {"mtu": 9216}
+
     policy_type: Literal["routedHost"] = Field(
         alias="policyType", description="Routed-host policy template discriminator; injected as `routedHost` when omitted (see `default_policy_type`)"
     )

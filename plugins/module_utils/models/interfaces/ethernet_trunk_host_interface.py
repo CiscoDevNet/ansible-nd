@@ -289,6 +289,12 @@ class EthernetTrunkHostPolicyModel(StormControlMutexMixin):
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
     orphan_port: bool | None = Field(default=None, alias="orphanPort", description="Enable vPC orphan port")
     pfc: bool | None = Field(default=None, alias="pfc", description="Enable priority flow control")
+    # TODO(4.3.1) ethernet-create-required-fields-431
+    # ND 4.3.1 rejects a trunkHost create body that omits `allowedVlans` ("Validation failed for following fields: [allowedVlans]")
+    # where 4.2.1 defaulted it to "none" (neither spec marks it required). Always emit the template default on the wire;
+    # 4.2.1 stores "none" either way, so idempotency is unchanged on both releases. Payload-only: see `NDBaseModel.payload_defaults`.
+    payload_defaults: ClassVar[dict[str, Any]] = {"allowedVlans": "none"}
+
     policy_type: Literal["trunkHost"] = Field(
         alias="policyType", description="Trunk-host policy template discriminator; injected as `trunkHost` when omitted (see `default_policy_type`)"
     )
@@ -410,6 +416,12 @@ class XeEthernetTrunkHostPolicyModel(InterfacePolicyStrictBase):
         "mtu": 1500,
         "speed": "auto",
     }
+
+    # TODO(4.3.1) ethernet-create-required-fields-431
+    # ND 4.3.1 rejects a iosXeTrunkHost create body that omits `mtu` ("Validation failed for following fields: [mtu]")
+    # where 4.2.1 defaulted it to 1500 (neither spec marks it required). Always emit the template default on the wire;
+    # 4.2.1 stores 1500 either way, so idempotency is unchanged on both releases. Payload-only: see `NDBaseModel.payload_defaults`.
+    payload_defaults: ClassVar[dict[str, Any]] = {"mtu": 1500}
 
     policy_type: Literal["iosXeTrunkHost"] = Field(
         alias="policyType",
