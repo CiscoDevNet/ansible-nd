@@ -1092,7 +1092,8 @@ def test_ethernet_access_orchestrator_00710() -> None:
     ## Test
 
     - Two models on the same switch: one `accessHost`, one `iosXeAccess`; `existing_data` supplied so no interface-list GET
-    - Exactly three responses are consumed: the switch map plus two POSTs (a fourth request would exhaust the generator)
+    - Exactly four responses are consumed: the switch map, the once-per-run links GET (the IOS-XE item is not fabric-owned),
+      plus two POSTs (a fifth request would exhaust the generator)
     - The last POST body carries only the `iosXeAccess` item; both pairs are in `_pending_deploys`
 
     ## Classes and Methods
@@ -1103,6 +1104,7 @@ def test_ethernet_access_orchestrator_00710() -> None:
 
     def responses():
         yield responses_access("test_create_bulk_grouping_00710a")
+        yield responses_access("test_create_bulk_grouping_00710d")
         yield responses_access("test_create_bulk_grouping_00710b")
         yield responses_access("test_create_bulk_grouping_00710c")
 
@@ -1112,7 +1114,7 @@ def test_ethernet_access_orchestrator_00710() -> None:
     with does_not_raise():
         result = orchestrator.create_bulk([nx, xe], existing_data={"interfaceName": "probe", "operData": {"portChannelId": -1}})
     assert len(result) == 2
-    assert len(orchestrator.rest_send.responses) == 3
+    assert len(orchestrator.rest_send.responses) == 4
     last_body = orchestrator.rest_send.committed_payload
     assert [item["interfaceName"] for item in last_body["interfaces"]] == ["GigabitEthernet1/0/1"]
     assert last_body["interfaces"][0]["configData"]["networkOS"]["policy"]["policyType"] == "iosXeAccess"
@@ -1129,7 +1131,8 @@ def test_ethernet_access_orchestrator_00720() -> None:
 
     ## Test
 
-    - state is `deleted`; delete_bulk receives one NX-OS model and one IOS-XE model
+    - state is `deleted`; delete_bulk receives one NX-OS model and one IOS-XE model (the links GET lists no fabric link, so the
+      IOS-XE interface is not fabric-owned)
     - NX-OS pair in `_pending_normalizes`; XE pair in `_pending_xe_resets` and NOT in `_pending_normalizes`
     - Both pairs in `_pending_deploys`
 
@@ -1141,6 +1144,7 @@ def test_ethernet_access_orchestrator_00720() -> None:
 
     def responses():
         yield responses_access("test_delete_bulk_xe_00720a")
+        yield responses_access("test_delete_bulk_xe_00720b")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
     nx = _build_access_model({"access_vlan": 10}, interface_name="Ethernet1/1", switch_ip="192.168.1.1")
@@ -1214,11 +1218,11 @@ def test_ethernet_access_orchestrator_00740() -> None:
     # Summary
 
     Verify `remove_pending` flushes the XE reset queue via one per-interface PUT carrying the `_xe_reset_payload` body and empties
-    the queue. After the switch-map GET, a single fixture covers the PUT; any additional request would exhaust the generator.
+    the queue. After the switch-map and links GETs, a single fixture covers the PUT; any additional request would exhaust the generator.
 
     ## Test
 
-    - state is `deleted`; delete_bulk queues one IOS-XE interface
+    - state is `deleted`; delete_bulk queues one IOS-XE interface (the links GET lists no fabric link, so it is not fabric-owned)
     - `remove_pending` consumes exactly one PUT, whose body is the reset payload, and clears `_pending_xe_resets`
 
     ## Classes and Methods
@@ -1228,6 +1232,7 @@ def test_ethernet_access_orchestrator_00740() -> None:
 
     def responses():
         yield responses_access("test_xe_remove_pending_00740a")
+        yield responses_access("test_xe_remove_pending_00740c")
         yield responses_access("test_xe_remove_pending_00740b")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
@@ -1287,7 +1292,7 @@ def test_ethernet_access_orchestrator_00760() -> None:
 
     ## Test
 
-    - `delete_bulk` queues GigabitEthernet1/0/1, 1/0/2, 1/0/3 for XE reset and deploy
+    - `delete_bulk` queues GigabitEthernet1/0/1, 1/0/2, 1/0/3 for XE reset and deploy (the links GET lists no fabric link)
     - `remove_pending` raises naming 1/0/1 as reset, 1/0/2 as failed, 1/0/3 as not attempted; the queue holds 1/0/2 and 1/0/3
     - `deploy_accepted_mutations` deploys `[GigabitEthernet1/0/1]` only; the other two remain in `_pending_deploys`
 
@@ -1300,6 +1305,7 @@ def test_ethernet_access_orchestrator_00760() -> None:
 
     def responses():
         yield responses_access("test_xe_reset_partial_00760a")
+        yield responses_access("test_xe_reset_partial_00760e")
         yield responses_access("test_xe_reset_partial_00760b")
         yield responses_access("test_xe_reset_partial_00760c")
         yield responses_access("test_xe_reset_partial_00760d")
@@ -1324,3 +1330,188 @@ def test_ethernet_access_orchestrator_00760() -> None:
         deployed = orchestrator.deploy_accepted_mutations()
     assert deployed == [("GigabitEthernet1/0/1", "FDO22222BBB")]
     assert orchestrator._pending_deploys == [("GigabitEthernet1/0/2", "FDO22222BBB"), ("GigabitEthernet1/0/3", "FDO22222BBB")]
+
+
+# =============================================================================
+# Test: fabric-ownership guard on the IOS-XE branch (PR #558 review, mikewiebe)
+# =============================================================================
+
+
+def _xe_routed_wire(interface_name: str) -> dict:
+    """Build the wire-state dict of a defaults-only IOS-XE `iosXeRoutedHost` interface — the shape a fabric-link endpoint reads as."""
+    return {
+        "interfaceName": interface_name,
+        "interfaceType": "ethernet",
+        "operData": {"portChannelId": -1},
+        "configData": {
+            "mode": "routed",
+            "networkOS": {"networkOSType": "ios-xe", "policy": {"policyType": "iosXeRoutedHost", "adminState": True, "mtu": 1500, "speed": "auto"}},
+        },
+    }
+
+
+def test_ethernet_access_orchestrator_00800() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` refuses an IOS-XE target that is an endpoint of a fabric link carrying an ND link policy even though its own
+    wire record is a plain defaults-only `iosXeRoutedHost`, which the policy-type guard alone would let an `iosXeAccess` overwrite
+    (PR #558 review). Policy type cannot express IOS-XE fabric ownership, so the fabric links are consulted before any write.
+
+    ## Test
+
+    - Existing wire state for GigabitEthernet1/0/48 is a defaults-only `iosXeRoutedHost` (passes the policy-type guard)
+    - The links GET lists GigabitEthernet1/0/48 as the src endpoint of a link carrying a link policy
+    - `create_bulk` raises `RuntimeError` naming the link before any POST; nothing is queued for deploy
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._check_fabric_ownership()
+    - EthernetBaseOrchestrator._check_xe_fabric_link()
+    - EthernetBaseOrchestrator._fabric_link_endpoints()
+    """
+
+    def responses():
+        yield responses_access("test_xe_ownership_00800a")
+        yield responses_access("test_xe_ownership_00800b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    model = _build_xe_access_model({"access_vlan": 100}, interface_name="GigabitEthernet1/0/48")
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Bulk create failed: Interface GigabitEthernet1/0/48 on switch 192\.168\.2\.1 is an endpoint of fabric link LINK-UUID-1 "
+        r"\(numbered: C1_LE1 GigabitEthernet1/0/48 -> C1_CORE1 GigabitEthernet1/0/1\)\. Refusing to overwrite fabric-owned intent with policy 'iosXeAccess'",
+    ):
+        orchestrator.create_bulk([model], existing_data=_xe_routed_wire("GigabitEthernet1/0/48"))
+    assert orchestrator._pending_deploys == []
+    assert len(orchestrator.rest_send.responses) == 2
+
+
+def test_ethernet_access_orchestrator_00810() -> None:
+    """
+    # Summary
+
+    Verify `preflight` runs the IOS-XE fabric-link check against the per-switch inventory, so a `--check` run naming a fabric-link
+    endpoint fails exactly like a normal run would inside `create_bulk` instead of reporting a planned change.
+
+    ## Test
+
+    - interfaceList reports GigabitEthernet1/0/48 as a defaults-only `iosXeRoutedHost`
+    - The links GET lists GigabitEthernet1/0/48 as the src endpoint of a link carrying a link policy
+    - `preflight` raises `RuntimeError` naming the link
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.preflight()
+    - EthernetBaseOrchestrator._check_xe_fabric_link()
+    """
+
+    def responses():
+        yield responses_access("test_xe_ownership_preflight_00810a")
+        yield responses_access("test_xe_ownership_preflight_00810b")
+        yield responses_access("test_xe_ownership_preflight_00810c")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged", "check_mode": True})
+    model = _build_xe_access_model({"access_vlan": 100}, interface_name="GigabitEthernet1/0/48")
+
+    with pytest.raises(RuntimeError, match=r"Interface GigabitEthernet1/0/48 on switch 192\.168\.2\.1 is an endpoint of fabric link LINK-UUID-1"):
+        orchestrator.preflight([model])
+
+
+def test_ethernet_access_orchestrator_00820() -> None:
+    """
+    # Summary
+
+    Verify `preflight_delete` refuses an explicitly named IOS-XE fabric-link endpoint, so a `--check` `state: deleted` run fails like
+    a normal run's `delete_bulk` would. The XE reset PUT would otherwise rewrite the endpoint's record underneath the link.
+
+    ## Test
+
+    - interfaceList reports GigabitEthernet1/0/48 as a defaults-only `iosXeRoutedHost` (not a port-channel member)
+    - The links GET lists GigabitEthernet1/0/48 as the src endpoint of a link carrying a link policy
+    - `preflight_delete` raises `RuntimeError` naming the link
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.preflight_delete()
+    - EthernetBaseOrchestrator._check_xe_fabric_link()
+    """
+
+    def responses():
+        yield responses_access("test_xe_ownership_preflight_delete_00820a")
+        yield responses_access("test_xe_ownership_preflight_delete_00820b")
+        yield responses_access("test_xe_ownership_preflight_delete_00820c")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted", "check_mode": True})
+    model = _build_xe_access_model({"access_vlan": 100}, interface_name="GigabitEthernet1/0/48")
+
+    with pytest.raises(RuntimeError, match=r"Interface GigabitEthernet1/0/48 on switch 192\.168\.2\.1 is an endpoint of fabric link LINK-UUID-1"):
+        orchestrator.preflight_delete([model])
+
+
+def test_ethernet_access_orchestrator_00830() -> None:
+    """
+    # Summary
+
+    Verify `delete_bulk` under `state: deleted` refuses an IOS-XE fabric-link endpoint before queueing anything: neither the XE reset
+    nor its deploy is queued, so `remove_pending` / `deploy_pending` have nothing to ship for it.
+
+    ## Test
+
+    - The links GET lists GigabitEthernet1/0/48 as the src endpoint of a link carrying a link policy
+    - `delete_bulk` raises `RuntimeError` naming the link
+    - The XE reset queue and the deploy queue are both empty
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.delete_bulk()
+    - EthernetBaseOrchestrator._check_xe_fabric_link()
+    """
+
+    def responses():
+        yield responses_access("test_xe_ownership_delete_bulk_00830a")
+        yield responses_access("test_xe_ownership_delete_bulk_00830b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    model = _build_xe_access_model({"access_vlan": 100}, interface_name="GigabitEthernet1/0/48")
+
+    with pytest.raises(RuntimeError, match=r"GigabitEthernet1/0/48 on switch 192\.168\.2\.1 is an endpoint of fabric link LINK-UUID-1"):
+        orchestrator.delete_bulk([model], existing_data={"interfaceName": "probe", "operData": {"portChannelId": -1}})
+    assert orchestrator._pending_xe_resets == []
+    assert orchestrator._pending_deploys == []
+
+
+def test_ethernet_access_orchestrator_00840() -> None:
+    """
+    # Summary
+
+    Verify a bulk batch is refused as a whole when any IOS-XE item is a fabric-link endpoint: every guard runs before the first POST,
+    so a discovered-only neighbor (policy-less link, allowed) in the same batch is not written either, and the links are fetched once.
+
+    ## Test
+
+    - Two IOS-XE models on the same switch: GigabitEthernet1/0/47 (policy-less link, allowed) and GigabitEthernet1/0/48 (fabric link)
+    - `create_bulk` raises `RuntimeError` naming GigabitEthernet1/0/48's link
+    - Exactly two responses were consumed (switch map + one links GET): no POST was sent; nothing is queued for deploy
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.create_bulk()
+    - EthernetBaseOrchestrator._group_by_switch_and_policy_type()
+    - EthernetBaseOrchestrator._check_xe_fabric_link()
+    """
+
+    def responses():
+        yield responses_access("test_xe_ownership_bulk_00840a")
+        yield responses_access("test_xe_ownership_bulk_00840b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    allowed = _build_xe_access_model({"access_vlan": 100}, interface_name="GigabitEthernet1/0/47")
+    owned = _build_xe_access_model({"access_vlan": 100}, interface_name="GigabitEthernet1/0/48")
+
+    with pytest.raises(RuntimeError, match=r"GigabitEthernet1/0/48 on switch 192\.168\.2\.1 is an endpoint of fabric link LINK-UUID-1"):
+        orchestrator.create_bulk([allowed, owned], existing_data=_xe_routed_wire("GigabitEthernet1/0/48"))
+    assert orchestrator._pending_deploys == []
+    assert len(orchestrator.rest_send.responses) == 2
+    assert set(orchestrator._fabric_link_endpoints()) == {("FDO22222BBB", "gigabitethernet1/0/48"), ("FDO33333CCC", "gigabitethernet1/0/1")}

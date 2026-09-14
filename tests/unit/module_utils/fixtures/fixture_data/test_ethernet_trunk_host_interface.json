@@ -252,5 +252,455 @@
                 }
             ]
         }
+    },
+    "test_xe_ownership_00800a": {
+        "TEST_NOTES": [
+            "00800 (orchestrator): IOS-XE switch 192.168.2.1 -> FDO22222BBB"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_xe_ownership_00800b": {
+        "TEST_NOTES": [
+            "00800 (orchestrator): fabric links. GigabitEthernet1/0/48 on FDO22222BBB is the src endpoint of a link carrying an ND link policy",
+            "(fabric-owned) while its own interface record reads as a defaults-only iosXeRoutedHost. The policyType value is illustrative:",
+            "the guard treats ANY non-empty link policyType as ownership. GigabitEthernet1/0/47's link carries no policyType",
+            "(discovered-only adjacency) and must NOT count as ownership.",
+            "create_bulk must refuse GigabitEthernet1/0/48 before any POST."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": true,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "C1_LE1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet1/0/47",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "C1_AP1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "GigabitEthernet0/1"
+                },
+                {
+                    "linkId": "LINK-UUID-1",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {
+                        "policyType": "numbered"
+                    },
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "C1_LE1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet1/0/48",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "C1_CORE1",
+                    "dstSwitchId": "FDO33333CCC",
+                    "dstInterfaceName": "GigabitEthernet1/0/1"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 2,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_xe_ownership_preflight_00810a": {
+        "TEST_NOTES": [
+            "00810 (orchestrator): IOS-XE switch 192.168.2.1 -> FDO22222BBB"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_xe_ownership_preflight_00810b": {
+        "TEST_NOTES": [
+            "00810 (orchestrator): interfaceList for FDO22222BBB. GigabitEthernet1/0/48 reads as a defaults-only iosXeRoutedHost (the shape an",
+            "IOS-XE fabric-link endpoint carries on its own interface record), not a port-channel member, so the policy-type guard and the",
+            "port-channel guards pass; only the fabric-link check can refuse it in the trunk_host module."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/48",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO22222BBB",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeRoutedHost",
+                                "adminState": true,
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_xe_ownership_preflight_00810c": {
+        "TEST_NOTES": [
+            "00810 (orchestrator): fabric links. GigabitEthernet1/0/48 on FDO22222BBB is the src endpoint of a link carrying an ND link policy",
+            "(fabric-owned) while its own interface record reads as a defaults-only iosXeRoutedHost. The policyType value is illustrative:",
+            "the guard treats ANY non-empty link policyType as ownership. GigabitEthernet1/0/47's link carries no policyType",
+            "(discovered-only adjacency) and must NOT count as ownership.",
+            "preflight (check mode) must refuse GigabitEthernet1/0/48."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": true,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "C1_LE1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet1/0/47",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "C1_AP1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "GigabitEthernet0/1"
+                },
+                {
+                    "linkId": "LINK-UUID-1",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {
+                        "policyType": "numbered"
+                    },
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "C1_LE1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet1/0/48",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "C1_CORE1",
+                    "dstSwitchId": "FDO33333CCC",
+                    "dstInterfaceName": "GigabitEthernet1/0/1"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 2,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_xe_ownership_preflight_delete_00820a": {
+        "TEST_NOTES": [
+            "00820 (orchestrator): IOS-XE switch 192.168.2.1 -> FDO22222BBB"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_xe_ownership_preflight_delete_00820b": {
+        "TEST_NOTES": [
+            "00820 (orchestrator): interfaceList for FDO22222BBB. GigabitEthernet1/0/48 reads as a defaults-only iosXeRoutedHost (the shape an",
+            "IOS-XE fabric-link endpoint carries on its own interface record), not a port-channel member, so the policy-type guard and the",
+            "port-channel guards pass; only the fabric-link check can refuse it in the trunk_host module."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/48",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO22222BBB",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeRoutedHost",
+                                "adminState": true,
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_xe_ownership_preflight_delete_00820c": {
+        "TEST_NOTES": [
+            "00820 (orchestrator): fabric links. GigabitEthernet1/0/48 on FDO22222BBB is the src endpoint of a link carrying an ND link policy",
+            "(fabric-owned) while its own interface record reads as a defaults-only iosXeRoutedHost. The policyType value is illustrative:",
+            "the guard treats ANY non-empty link policyType as ownership. GigabitEthernet1/0/47's link carries no policyType",
+            "(discovered-only adjacency) and must NOT count as ownership.",
+            "preflight_delete (check mode, state: deleted) must refuse GigabitEthernet1/0/48."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": true,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "C1_LE1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet1/0/47",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "C1_AP1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "GigabitEthernet0/1"
+                },
+                {
+                    "linkId": "LINK-UUID-1",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {
+                        "policyType": "numbered"
+                    },
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "C1_LE1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet1/0/48",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "C1_CORE1",
+                    "dstSwitchId": "FDO33333CCC",
+                    "dstInterfaceName": "GigabitEthernet1/0/1"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 2,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_xe_ownership_delete_bulk_00830a": {
+        "TEST_NOTES": [
+            "00830 (orchestrator): IOS-XE switch 192.168.2.1 -> FDO22222BBB"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_xe_ownership_delete_bulk_00830b": {
+        "TEST_NOTES": [
+            "00830 (orchestrator): fabric links. GigabitEthernet1/0/48 on FDO22222BBB is the src endpoint of a link carrying an ND link policy",
+            "(fabric-owned) while its own interface record reads as a defaults-only iosXeRoutedHost. The policyType value is illustrative:",
+            "the guard treats ANY non-empty link policyType as ownership. GigabitEthernet1/0/47's link carries no policyType",
+            "(discovered-only adjacency) and must NOT count as ownership.",
+            "delete_bulk under state: deleted must refuse GigabitEthernet1/0/48 before queueing the XE reset / deploy."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": true,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "C1_LE1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet1/0/47",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "C1_AP1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "GigabitEthernet0/1"
+                },
+                {
+                    "linkId": "LINK-UUID-1",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {
+                        "policyType": "numbered"
+                    },
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "C1_LE1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet1/0/48",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "C1_CORE1",
+                    "dstSwitchId": "FDO33333CCC",
+                    "dstInterfaceName": "GigabitEthernet1/0/1"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 2,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_xe_ownership_bulk_00840a": {
+        "TEST_NOTES": [
+            "00840 (orchestrator): IOS-XE switch 192.168.2.1 -> FDO22222BBB"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_xe_ownership_bulk_00840b": {
+        "TEST_NOTES": [
+            "00840 (orchestrator): fabric links. GigabitEthernet1/0/48 on FDO22222BBB is the src endpoint of a link carrying an ND link policy",
+            "(fabric-owned) while its own interface record reads as a defaults-only iosXeRoutedHost. The policyType value is illustrative:",
+            "the guard treats ANY non-empty link policyType as ownership. GigabitEthernet1/0/47's link carries no policyType",
+            "(discovered-only adjacency) and must NOT count as ownership.",
+            "Bulk input: GigabitEthernet1/0/47 (policy-less link) is allowed, GigabitEthernet1/0/48 is refused; the whole batch",
+            "fails before the first POST, so nothing is written or queued."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [
+                {
+                    "linkId": "LINK-UUID-2",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": true,
+                    "configData": {},
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "C1_LE1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet1/0/47",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "C1_AP1",
+                    "dstSwitchId": "FDO44444DDD",
+                    "dstInterfaceName": "GigabitEthernet0/1"
+                },
+                {
+                    "linkId": "LINK-UUID-1",
+                    "linkType": "ethisl",
+                    "linkPresent": true,
+                    "linkDiscovered": false,
+                    "configData": {
+                        "policyType": "numbered"
+                    },
+                    "srcFabricName": "fabric_1",
+                    "srcSwitchName": "C1_LE1",
+                    "srcSwitchId": "FDO22222BBB",
+                    "srcInterfaceName": "GigabitEthernet1/0/48",
+                    "dstFabricName": "fabric_1",
+                    "dstSwitchName": "C1_CORE1",
+                    "dstSwitchId": "FDO33333CCC",
+                    "dstInterfaceName": "GigabitEthernet1/0/1"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "total": 2,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_xe_reset_payload_00440b": {
+        "TEST_NOTES": [
+            "00440 (orchestrator): fabric links, consulted once per run for the IOS-XE fabric-ownership check (PR #558 review).",
+            "The fabric has no links, so the IOS-XE interface is not fabric-owned and the write/reset proceeds."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [],
+            "meta": {
+                "counts": {
+                    "total": 0,
+                    "remaining": 0
+                }
+            }
+        }
     }
 }

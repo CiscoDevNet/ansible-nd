@@ -17,10 +17,8 @@ both the per-interface PUT and the bulk POST accept `routedHost` on a VXLAN leaf
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import ClassVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_links import EpManageLinksListGet
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
     EthernetRoutedPolicyTypeEnum,
@@ -71,13 +69,12 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
 
     The filter alone does not protect a fabric link the task names EXPLICITLY (a mistyped `interface_name`): the
     state machine cannot see it, classifies it as a create, and the bulk POST would replace the link's intent
-    (PR #550 review). `EthernetBaseOrchestrator._check_fabric_ownership` closes that gap for NX-OS by inspecting the
-    unfiltered wire policy before any write (only `CONVERTIBLE_POLICY_TYPES` may be overwritten). IOS-XE needs one
-    more source of truth: a C8000V fabric link can carry a plain `iosXeRoutedHost` with no ownership marker on the
-    interface record (lab-verified 2026-09-03: WAN1 `GigabitEthernet3`, endpoint of the ISN->SITE2 `ebgpVrfLite`
-    link, reads as a defaults-only `iosXeRoutedHost`), so `_check_fabric_ownership` here additionally consults the
-    fabric's links (`GET /api/v1/manage/links?fabricName=`, fetched once per run and only when an IOS-XE interface is
-    written) and refuses an interface that is an endpoint of a link carrying an ND link policy.
+    (PR #550 review). `EthernetBaseOrchestrator._check_fabric_ownership` closes that gap by inspecting the unfiltered
+    wire policy before any write (only `CONVERTIBLE_POLICY_TYPES` may be overwritten) and, for IOS-XE targets, by
+    consulting the fabric's links (`_check_xe_fabric_link`): a C8000V fabric link can carry a plain `iosXeRoutedHost`
+    with no ownership marker on the interface record (lab-verified 2026-09-03: WAN1 `GigabitEthernet3`, endpoint of
+    the ISN->SITE2 `ebgpVrfLite` link). Both guards live in the base so every host-facing module shares them
+    (PR #558 review).
 
     Like `EthernetTrunkHostInterfaceOrchestrator`, this orchestrator filters unconfigured fabric defaults out of
     `query_all` - but for the opposite reason. ND's fabric default interface policy is ROLE-DEPENDENT
@@ -103,8 +100,8 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
 
     The IOS-XE delete-side contract (merge-only under `overridden`, per-interface reset PUT under `deleted`) is inherited
     from `EthernetBaseOrchestrator`; this module sets the reset target to a defaults-only `iosXeRoutedHost` in `routed` mode
-    (`XE_RESET_MODE` / `XE_RESET_POLICY_TYPE`, lab-verified on C8000V) and hooks `_check_xe_delete_guard` with the
-    fabric-link endpoint check.
+    (`XE_RESET_MODE` / `XE_RESET_POLICY_TYPE`, lab-verified on C8000V); the fabric-link endpoint check on that path is
+    inherited too.
 
     ## Raises
 
@@ -141,165 +138,6 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         None
         """
         return {e.value for e in EthernetRoutedPolicyTypeEnum} | {e.value for e in XeEthernetRoutedPolicyTypeEnum}
-
-    def model_post_init(self, __context) -> None:
-        """
-        # Summary
-
-        Initialize the routed-specific mutable state after Pydantic model construction. Extends
-        `EthernetBaseOrchestrator.model_post_init` (normalize/reset/XE-reset queues) with the lazily populated fabric-link
-        endpoint cache (`_fabric_link_endpoints_cache`, `None` until `_fabric_link_endpoints` first fetches the links).
-
-        ## Raises
-
-        None
-        """
-        super().model_post_init(__context)
-        self._fabric_link_endpoints_cache: dict[tuple[str, str], dict] | None = None
-
-    def _fabric_link_endpoints(self) -> dict[tuple[str, str], dict]:
-        """
-        # Summary
-
-        Return the `(switch_id, lower-cased interface_name)` endpoints of every link in the fabric that carries an ND link policy
-        (`configData.policyType`, e.g. `numbered`, `ebgpVrfLite`, `multisiteUnderlay`), each mapped to its link record. Links without a
-        policy are discovered-only neighbor adjacencies (lab-verified 2026-09-03: leaf->ToR uplinks, vPC peer links) with no ND intent
-        on the interface, so they do not make an interface fabric-owned. Both ends of a link are indexed, so a link another fabric
-        owns that terminates on this fabric's switch is found under this fabric's listing.
-
-        Fetched at most once per module run via `GET /api/v1/manage/links?fabricName=`, following `meta.counts.remaining` pagination
-        with `offset`. A fabric with no links (HTTP 404 or an empty `links[]`) yields an empty map.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - Via `_request` if the links query fails with a non-404 status.
-        """
-        if self._fabric_link_endpoints_cache is not None:
-            return self._fabric_link_endpoints_cache
-        endpoints: dict[tuple[str, str], dict] = {}
-        offset = 0
-        while True:
-            api_endpoint = EpManageLinksListGet()
-            api_endpoint.endpoint_params.fabric_name = self.fabric_name
-            if offset:
-                api_endpoint.endpoint_params.offset = offset
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-            links = result.get("links") if isinstance(result, dict) else None
-            links = links if isinstance(links, list) else []
-            for link in links:
-                if not isinstance(link, dict):
-                    continue
-                if not (link.get("configData") or {}).get("policyType"):
-                    continue
-                for side in ("src", "dst"):
-                    switch_id = link.get(f"{side}SwitchId")
-                    interface_name = link.get(f"{side}InterfaceName")
-                    if isinstance(switch_id, str) and isinstance(interface_name, str):
-                        endpoints[(switch_id, interface_name.lower())] = link
-            meta = (result.get("meta") or result.get("metadata") or {}) if isinstance(result, dict) else {}
-            remaining = (meta.get("counts") or {}).get("remaining")
-            if not links or not isinstance(remaining, int) or remaining <= 0:
-                break
-            offset += len(links)
-        self._fabric_link_endpoints_cache = endpoints
-        return endpoints
-
-    def _check_fabric_ownership(self, model_instance: NDBaseModel, existing_data: dict | None) -> None:
-        """
-        # Summary
-
-        Extend `EthernetBaseOrchestrator._check_fabric_ownership` (wire policy type must be user-convertible) with a fabric-link
-        endpoint check for IOS-XE targets: an interface that is an endpoint of a link carrying an ND link policy is fabric-owned even
-        when its own record reads as a plain `iosXeRoutedHost` (see the class docstring). NX-OS targets rely on the policy-type guard
-        alone — ND stamps a system policy type on every NX-OS link member — so NX-OS-only runs never fetch the links.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - Propagated from `EthernetBaseOrchestrator._check_fabric_ownership` (fabric-owned wire policy type).
-        - Propagated from `_check_xe_fabric_link` (IOS-XE fabric-link endpoint, or links query failure).
-        """
-        super()._check_fabric_ownership(model_instance, existing_data)
-        self._check_xe_fabric_link(model_instance)
-
-    def _check_xe_fabric_link(self, model_instance: NDBaseModel) -> None:
-        """
-        # Summary
-
-        Refuse to write an IOS-XE interface that is an endpoint of a fabric link carrying an ND link policy. Such an interface is
-        fabric-owned even when its own record reads as a plain `iosXeRoutedHost` (see the class docstring), so policy type alone cannot
-        express its ownership and the fabric links are consulted (`_fabric_link_endpoints`, fetched once per run). Shared by the
-        create/update guard (`_check_fabric_ownership`) and the delete path (`preflight_delete`, `delete_bulk`): the XE reset PUT
-        would rewrite the endpoint's interface record underneath the link just like a host-policy overwrite would (PR #550 review).
-        No-op for non-IOS-XE models.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If the IOS-XE interface is an endpoint of a fabric link that carries an ND link policy.
-        - Via `_fabric_link_endpoints` if the links query fails.
-        """
-        network_os = getattr(getattr(model_instance, "config_data", None), "network_os", None)
-        if getattr(network_os, "network_os_type", None) != "ios-xe":
-            return
-        switch_ip = str(getattr(model_instance, "switch_ip", "") or "")
-        interface_name = str(getattr(model_instance, "interface_name", "") or "")
-        switch_id = self._resolve_switch_id(switch_ip)
-        link = self._fabric_link_endpoints().get((switch_id, interface_name.lower()))
-        if link is None:
-            return
-        raise RuntimeError(
-            f"Interface {interface_name} on switch {switch_ip} is an endpoint of fabric link "
-            f"{link.get('linkId')} ({(link.get('configData') or {}).get('policyType')}: {link.get('srcSwitchName')} "
-            f"{link.get('srcInterfaceName')} -> {link.get('dstSwitchName')} {link.get('dstInterfaceName')}). Refusing to overwrite "
-            f"fabric-owned intent with policy '{self._desired_policy_type(model_instance)}'; fabric links must be changed through "
-            f"the fabric link workflow, not an interface module."
-        )
-
-    def _check_xe_delete_guard(self, model_instance: NDBaseModel) -> None:
-        """
-        # Summary
-
-        `EthernetBaseOrchestrator._check_xe_delete_guard` hook: refuse to reset an IOS-XE interface that is a fabric-link
-        endpoint (`_check_xe_fabric_link`) before it is queued for the XE reset PUT, which would otherwise rewrite the
-        endpoint's record underneath the link.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - Propagated from `_check_xe_fabric_link`.
-        """
-        self._check_xe_fabric_link(model_instance)
-
-    def preflight_delete(self, model_instances: Sequence[NDBaseModel]) -> None:
-        """
-        # Summary
-
-        Extend `EthernetBaseOrchestrator.preflight_delete` (switch resolution, port-channel membership) with the IOS-XE fabric-link
-        ownership check, so a `--check` `state: deleted` run naming an XE fabric-link endpoint is refused exactly like a normal run's
-        `delete_bulk` would refuse it. NX-OS needs no delete-side ownership guard: the state machine builds the delete set from
-        `before[]`, and `query_all` already keeps the system routed policy types (`numbered`, `vrfLiteLinkMember`, ...) out of it. An
-        IOS-XE fabric-link endpoint reads as a plain `iosXeRoutedHost` and passes that filter, so it must be refused here. In practice
-        this fires only when the endpoint's record carries a non-default policy field (e.g. a description set in the GUI): a defaults-only
-        endpoint — the shape ND's fabric provisioning leaves (lab-verified 2026-09-08: WAN1 GigabitEthernet3, ISN->SITE2 `ebgpVrfLite`) —
-        is already at the XE reset target and `query_all` scopes it out under `deleted`, so the run is a no-op before reaching this hook.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - Propagated from `EthernetBaseOrchestrator.preflight_delete` (unresolvable `switch_ip`, port-channel member, interface-list
-          query failure).
-        - Propagated from `_check_xe_fabric_link` (IOS-XE fabric-link endpoint, or links query failure).
-        """
-        super().preflight_delete(model_instances)
-        for model_instance in model_instances:
-            self._check_xe_fabric_link(model_instance)
 
     @staticmethod
     def _unconfigured_default_signature(policy_type: str) -> dict | None:
