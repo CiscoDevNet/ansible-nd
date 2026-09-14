@@ -265,6 +265,15 @@ class TrunkVpcHostPolicyModel(StormControlMutexMixin):
 
     # --- Policy Discriminator ---
 
+    # TODO(4.3.1) vpc-trunk-allowedvlans-required-431
+    # ND 4.3.1 rejects a trunkVpcHost POST (207 item failed) and PUT (400) that omit the allowed-VLAN keys ("Validation failed
+    # for following fields: [peer2AllowedVlans, peer1AllowedVlans]") where 4.2.1 defaulted them to "none" (spec marks nothing
+    # required). Always emit the template default on the wire, on update as well as create; 4.2.1 stores "none" either way, so
+    # idempotency is unchanged on both releases. Declared under the single user-facing key: `expand_per_peer_fields` applies this
+    # table before its fan-out, so the wire carries `peer1AllowedVlans` / `peer2AllowedVlans`. `nativeVlan` has no template
+    # default and is still accepted when omitted. Payload-only: see `NDBaseModel.payload_defaults`.
+    payload_defaults: ClassVar[dict[str, Any]] = {"allowedVlans": "none"}
+
     policy_type: TrunkVpcHostPolicyTypeEnum = Field(
         default=TrunkVpcHostPolicyTypeEnum.TRUNK_VPC_HOST,
         alias="policyType",
@@ -422,7 +431,8 @@ class TrunkVpcHostPolicyModel(StormControlMutexMixin):
         Single wrap-mode model serializer for the policy block, applying two ND-specific adjustments keyed off the
         serialization `mode` context:
 
-        - On payload serialization (`mode == "payload"`), split the single user-facing `allowedVlans` / `nativeVlan`
+        - On payload serialization (`mode == "payload"`), apply `payload_defaults` (issue #564: `allowedVlans: "none"` when
+          the user set nothing) and then split the single user-facing `allowedVlans` / `nativeVlan`
           into the per-peer `peer1AllowedVlans` / `peer2AllowedVlans` and `peer1NativeVlan` / `peer2NativeVlan` keys the
           ND create/update schema requires. ND collapses each pair back to a single field on read, so config / diff
           modes leave the fields as-is and the diff stays symmetric.
@@ -442,6 +452,9 @@ class TrunkVpcHostPolicyModel(StormControlMutexMixin):
             raise AssertionError(f"Expected dict from model serialization, got {type(data).__name__}")
         mode = (info.context or {}).get("mode", "payload")
         if mode == "payload":
+            # Base-class payload defaults (issue #564) before the fan-out, so an injected `allowedVlans: "none"` reaches both
+            # per-peer keys. The helper gates on an EXPLICIT payload context, so the contextless diff dump still never injects.
+            self._apply_payload_defaults(data, info)
             if "allowedVlans" in data:
                 vlans = data.pop("allowedVlans")
                 data["peer1AllowedVlans"] = vlans
