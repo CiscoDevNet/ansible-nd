@@ -2331,14 +2331,16 @@ def test_ethernet_trunk_host_interface_01300():
     """
     # Summary
 
-    Verify the IOS-XE `iosXeTrunkHost` payload always carries `mtu`: the template default (1500) is emitted when the user set
-    nothing, and a user-supplied value wins. ND 4.3.1 rejects a create body that omits `mtu` where 4.2.1 defaulted it (issue #564).
+    Verify the IOS-XE `iosXeTrunkHost` payload always carries `mtu` and `allowedVlans`: the template defaults (1500 / `none`) are
+    emitted when the user set nothing, and a user-supplied value wins. ND 4.3.1 rejects a create body that omits `mtu` and the
+    reset PUT that omits either field, where 4.2.1 defaulted both (issue #564; lab-verified 2026-09-14).
 
     ## Test
 
     - `from_config` with no `mtu` -> `to_payload()` policy carries `mtu: 1500`
     - `from_config` with `mtu: "8000"` (str-typed argspec) -> `to_payload()` policy carries `mtu: 8000`
-    - `to_diff_dict()` of the unset model does not carry `mtu`
+    - `from_config` with no `allowed_vlans` -> `to_payload()` policy carries `allowedVlans: "none"`
+    - `to_diff_dict()` of the unset model does not carry `mtu` or `allowedVlans`
 
     ## Classes and Methods
 
@@ -2358,3 +2360,13 @@ def test_ethernet_trunk_host_interface_01300():
     explicit_config["config_data"]["network_os"]["policy"]["mtu"] = "8000"
     explicit = EthernetTrunkHostInterfaceModel.from_config(explicit_config)
     assert explicit.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 8000
+
+    no_vlans = EthernetTrunkHostInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.2.1",
+            "interface_name": "GigabitEthernet1/0/1",
+            "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"description": "cat trunk"}}},
+        }
+    )
+    assert no_vlans.to_payload()["configData"]["networkOS"]["policy"]["allowedVlans"] == "none"
+    assert "allowedVlans" not in no_vlans.to_diff_dict()["configData"]["networkOS"]["policy"]

@@ -418,10 +418,12 @@ class XeEthernetTrunkHostPolicyModel(InterfacePolicyStrictBase):
     }
 
     # TODO(4.3.1) ethernet-create-required-fields-431
-    # ND 4.3.1 rejects a iosXeTrunkHost create body that omits `mtu` ("Validation failed for following fields: [mtu]")
-    # where 4.2.1 defaulted it to 1500 (neither spec marks it required). Always emit the template default on the wire;
-    # 4.2.1 stores 1500 either way, so idempotency is unchanged on both releases. Payload-only: see `NDBaseModel.payload_defaults`.
-    payload_defaults: ClassVar[dict[str, Any]] = {"mtu": 1500}
+    # ND 4.3.1 rejects an iosXeTrunkHost create body that omits `mtu` and the per-interface reset PUT that omits `mtu` or
+    # `allowedVlans` ("Validation failed for following fields: [allowedVlans, mtu]", lab-verified 2026-09-14 on the CAMPUS1
+    # Catalyst 9000v) where 4.2.1 defaulted both (neither spec marks them required). Always emit the template defaults on
+    # the wire; 4.2.1 stores the same values either way, so idempotency is unchanged on both releases. Payload-only: see
+    # `NDBaseModel.payload_defaults`. `EthernetBaseOrchestrator.XE_RESET_POLICY_DEFAULTS` reuses this table for the reset body.
+    payload_defaults: ClassVar[dict[str, Any]] = {"allowedVlans": "none", "mtu": 1500}
 
     policy_type: Literal["iosXeTrunkHost"] = Field(
         alias="policyType",
