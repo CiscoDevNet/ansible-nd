@@ -35,6 +35,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     XeEthernetTrunkHostNetworkOSModel,
     XeEthernetTrunkHostPolicyModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import (
     EthernetTrunkHostInterfaceOrchestrator,
 )
@@ -606,7 +607,7 @@ def test_ethernet_trunk_host_orchestrator_00440() -> None:
 
     - state is `deleted`; delete_bulk receives one IOS-XE model (the links GET lists no fabric link, so it is not fabric-owned)
     - XE pair in `_pending_xe_resets`, not in `_pending_normalizes`; pair in `_pending_deploys`
-    - `_xe_reset_payload` policy is exactly {policyType: iosXeTrunkHost, adminState: true} in `trunk` mode
+    - `_xe_reset_payload` policy is exactly {policyType: iosXeTrunkHost, adminState: true, allowedVlans: none, mtu: 1500} in `trunk` mode
 
     ## Classes and Methods
 
@@ -636,7 +637,37 @@ def test_ethernet_trunk_host_orchestrator_00440() -> None:
     assert orchestrator._pending_deploys == [("GigabitEthernet1/0/1", "FDO22222BBB")]
     payload = EthernetTrunkHostInterfaceOrchestrator._xe_reset_payload("GigabitEthernet1/0/1", "FDO22222BBB")
     assert payload["configData"]["mode"] == "trunk"
-    assert payload["configData"]["networkOS"] == {"networkOSType": "ios-xe", "policy": {"policyType": "iosXeTrunkHost", "adminState": True}}
+    # The reset body carries the iosXeTrunkHost template-required defaults (issue #564; ND 4.3.1 rejects the PUT without them).
+    assert payload["configData"]["networkOS"] == {
+        "networkOSType": "ios-xe",
+        "policy": {"policyType": "iosXeTrunkHost", "adminState": True, "allowedVlans": "none", "mtu": 1500},
+    }
+
+
+def test_ethernet_trunk_host_orchestrator_00450() -> None:
+    """
+    # Summary
+
+    Verify the NX-OS Class C reset body (`InterfaceDefaultConfig.to_reset_payload`, the per-interface PUT-as-replace used when
+    `interfaceActions/normalize` cannot clear `bandwidth` / `debounceLinkupTimer` / `inheritBandwidth`) carries `allowedVlans`.
+    ND 4.3.1 rejects the PUT without it ("Validation failed for following fields: [allowedVlans]", lab-verified 2026-09-14 on
+    S3_BG1 Ethernet1/48) where 4.2.1 defaulted it to `none` (issue #564). The value is the template default, so the reset lands
+    on the same state on both releases.
+
+    ## Test
+
+    - Build the reset body for one interface
+    - The policy is exactly `{"adminState": True, "policyType": "trunkHost", "allowedVlans": "none"}`
+
+    ## Classes and Methods
+
+    - InterfaceDefaultConfig.to_reset_payload()
+    - EthernetTrunkHostPolicyModel.payload_defaults
+    """
+    payload = InterfaceDefaultConfig.to_reset_payload("Ethernet1/48", "FDO11111AAA")
+    assert payload["interfaceName"] == "Ethernet1/48"
+    assert payload["switchId"] == "FDO11111AAA"
+    assert payload["configData"]["networkOS"]["policy"] == {"adminState": True, "policyType": "trunkHost", "allowedVlans": "none"}
 
 
 # =============================================================================

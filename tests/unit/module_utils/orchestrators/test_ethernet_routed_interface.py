@@ -383,15 +383,16 @@ def test_ethernet_routed_orchestrator_00315() -> None:
     """
     # Summary
 
-    Verify the XE reset payload is the lab-verified C8000V-safe body: a defaults-only `iosXeRoutedHost` policy with NO
-    `mtu` key anywhere (probe 2026-07-27: the mtu-less PUT returns 204 and ND injects the schema defaults, landing the
-    interface on the unconfigured-default signature so it leaves managed scope).
+    Verify the XE reset payload is a defaults-only `iosXeRoutedHost` policy carrying the template default `mtu: 1500`. The
+    2026-07-27 C8000V probe used an mtu-less body (ND 4.2.1 injects the schema defaults on the echo), but ND 4.3.1 rejects that
+    PUT ("Validation failed for following fields: [mtu]", lab-verified 2026-09-14 on the CAMPUS1 Catalyst 9000v), so the body now
+    carries the template default from `XeEthernetRoutedPolicyModel.payload_defaults` (issue #564); both releases land the
+    interface on the same unconfigured-default signature so it leaves managed scope.
 
     ## Test
 
     - Payload carries interfaceName/interfaceType/switchId and mode "routed" / networkOSType "ios-xe"
-    - Policy is exactly {policyType: iosXeRoutedHost, adminState: true}
-    - No "mtu" key appears anywhere in the payload
+    - Policy is exactly {policyType: iosXeRoutedHost, adminState: true, mtu: 1500}
 
     ## Classes and Methods
 
@@ -403,8 +404,9 @@ def test_ethernet_routed_orchestrator_00315() -> None:
     assert payload["switchId"] == "FDO22222BBB"
     assert payload["configData"]["mode"] == "routed"
     assert payload["configData"]["networkOS"]["networkOSType"] == "ios-xe"
-    assert payload["configData"]["networkOS"]["policy"] == {"policyType": "iosXeRoutedHost", "adminState": True}
-    assert "mtu" not in str(payload)
+    # ND 4.3.1 rejects the reset PUT without `mtu` (issue #564; lab-verified 2026-09-14), so the body carries the template
+    # default from `XeEthernetRoutedPolicyModel.payload_defaults`; 4.2.1 stores 1500 either way.
+    assert payload["configData"]["networkOS"]["policy"] == {"policyType": "iosXeRoutedHost", "adminState": True, "mtu": 1500}
 
 
 def test_ethernet_routed_orchestrator_00320() -> None:
