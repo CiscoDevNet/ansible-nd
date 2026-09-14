@@ -233,6 +233,7 @@ options:
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
+- cisco.nd.verification
 notes:
 - This module is only supported on Nexus Dashboard.
 - This module supports both NX-OS and IOS-XE routed ethernet interfaces (interface_type C(ethernet), mode C(routed)),
@@ -499,7 +500,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import EthernetRoutedInterfaceModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec, verify_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator, finalize_accepted_intent
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import EthernetRoutedInterfaceOrchestrator
@@ -517,6 +518,7 @@ def main():
     None (catches all exceptions and calls `module.fail_json`).
     """
     argument_spec = nd_argument_spec()
+    argument_spec.update(verify_spec())
     argument_spec.update(EthernetRoutedInterfaceModel.get_argument_spec())
     argument_spec.update(config_actions_spec(include=("deploy",)))
 
@@ -557,6 +559,7 @@ def main():
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 
+        nd_state_machine.finalize_result()
         module.exit_json(**nd_state_machine.output.format())
 
     except NDStateMachineError as e:

@@ -181,6 +181,7 @@ options:
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
+- cisco.nd.verification
 notes:
 - This module is only supported on Nexus Dashboard 4.2.1 or higher.
 """
@@ -236,6 +237,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_l
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_group.fabric_update_group import FabricUpdateGroupModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import verify_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
@@ -333,6 +335,7 @@ def _validate_report_analysis_exclusion(module: AnsibleModule) -> None:
 
 def main():
     argument_spec = nd_argument_spec()
+    argument_spec.update(verify_spec())
     argument_spec.update(FabricUpdateGroupModel.get_argument_spec())
 
     module = AnsibleModule(
@@ -375,6 +378,7 @@ def main():
         module_log.debug("manage_state begin state=%s check_mode=%s", module.params.get("state"), module.check_mode)
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
+        nd_state_machine.finalize_result()
         module.exit_json(**nd_state_machine.output.format())
     except Exception as e:
         module_log.exception("Unhandled exception during module execution")

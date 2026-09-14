@@ -29,6 +29,7 @@ deleted / query) is **not** exercised here -- it requires the full
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import pytest
@@ -38,9 +39,11 @@ from ansible_collections.cisco.nd.plugins.modules.nd_manage_policy_group import 
     _FabricInventoryRestClient,
     _handle_gathered_state,
     _looks_like_ipv4,
+    _needs_verification_only_state_machine,
     _pending_cleanup_candidates,
     _resolve_config,
     _resolve_switch_ips_in_config,
+    _state_machine_failure_result,
 )
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
     does_not_raise,
@@ -62,6 +65,44 @@ def test_nd_policy_group_module_00005_deploy_default_matches_documentation() -> 
 
     assert documentation["options"]["deploy"]["default"] is False
     assert argument_spec["deploy"]["default"] is False
+
+
+def test_nd_policy_group_module_00006_direct_delete_builds_verification_state_machine() -> None:
+    """A changed bypass delete still gets the shared finalization boundary."""
+    assert _needs_verification_only_state_machine("deleted", [], {"verify": {"enabled": True}}, check_mode=False) is True
+    assert _needs_verification_only_state_machine("deleted", [], {"verify": {}}, check_mode=False) is False
+    assert _needs_verification_only_state_machine("deleted", [], {"verify": {"enabled": True}}, check_mode=True) is False
+
+
+def test_nd_policy_group_module_00007_failure_result_preserves_state_machine_output() -> None:
+    """Verification failures retain changed, predicted after, and supplemental output."""
+
+    class FakeOutput:
+        @staticmethod
+        def format() -> dict[str, Any]:
+            return {"changed": True, "before": ["before"], "after": ["predicted"]}
+
+    state_machine = type("FakeStateMachine", (), {"output": FakeOutput()})()
+    result = {"changed": True, "direct_actions": {"deleted": ["POLICY-GROUP-1"]}}
+
+    assert _state_machine_failure_result(state_machine, result) == {
+        "changed": True,
+        "before": ["before"],
+        "after": ["predicted"],
+        "direct_actions": {"deleted": ["POLICY-GROUP-1"]},
+    }
+
+
+def test_nd_policy_group_module_00008_bypass_verification_lifecycle_order() -> None:
+    """Bypass verification initializes before writes and finalizes after cleanup."""
+    source = inspect.getsource(nd_manage_policy_group.main)
+
+    initialize = source.index("if _needs_verification_only_state_machine(")
+    direct_delete = source.index("orchestrator.delete_bulk(direct_delete_models)")
+    pending_cleanup = source.index("orchestrator.deploy_scheduled_pending_deleted_cleanup()")
+    finalize = source.index("nd_state_machine.finalize_result")
+
+    assert initialize < direct_delete < pending_cleanup < finalize
 
 
 class FakeModule:

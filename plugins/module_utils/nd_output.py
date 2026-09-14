@@ -15,6 +15,7 @@ class NDOutput:
         self._output_level: str = output_level
         self._state: str = state
         self._changed: bool = False
+        self._changed_explicit: bool | None = None
         self._before: NDConfigCollection | list = []
         self._after: NDConfigCollection | list = []
         self._diff: NDConfigCollection | list = []
@@ -47,7 +48,12 @@ class NDOutput:
             gathered_output.update(**kwargs)
             return gathered_output
 
-        if isinstance(self._before, NDConfigCollection) and isinstance(self._after, NDConfigCollection) and self._before.get_diff_collection(self._after):
+        if (
+            self._changed_explicit is None
+            and isinstance(self._before, NDConfigCollection)
+            and isinstance(self._after, NDConfigCollection)
+            and self._before.get_diff_collection(self._after)
+        ):
             self._changed = True
 
         output = {
@@ -69,6 +75,11 @@ class NDOutput:
         output.update(**kwargs)
 
         return output
+
+    def set_changed(self, changed: bool) -> None:
+        """Set an authoritative changed value independent of before/after diffing."""
+        self._changed = bool(changed)
+        self._changed_explicit = bool(changed)
 
     def format_with_verbosity(self, verbosity: int, results: Results | None = None, **kwargs) -> dict[str, Any]:
         """
