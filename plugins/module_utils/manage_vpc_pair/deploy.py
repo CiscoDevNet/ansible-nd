@@ -11,6 +11,10 @@ from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
     _raise_vpc_error,
     get_config_actions,
+    SWITCH_DEPLOY_ACTION_TYPES,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
+    VpcFieldNames,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.query import (
     _is_switch_config_in_sync,
@@ -32,6 +36,9 @@ try:
 except Exception:
     # TODO: Remove fallback import once rest.results is guaranteed in all supported framework trees.
     from ansible_collections.cisco.nd.plugins.module_utils.results import Results
+
+
+_SWITCH_DEPLOY_NO_ERROR_STATUSES = frozenset({"success", "notexecuted"})
 
 
 def _needs_deployment(result: dict[str, Any], nrm: Any) -> bool:
@@ -86,6 +93,17 @@ def _has_explicit_diff_changes(result: dict[str, Any]) -> bool:
     return bool(diff)
 
 
+def _is_non_fatal_switch_deploy_207(error: NDModuleError) -> bool:
+    """Return True when a raised switch-deploy 207 contains no failed rows."""
+    if error.status != 207 or not isinstance(error.response_payload, dict):
+        return False
+    per_switch = error.response_payload.get("switchIds")
+    if not isinstance(per_switch, list) or not per_switch:
+        return False
+    statuses = [str(entry.get("status", "")).strip().lower() for entry in per_switch if isinstance(entry, dict)]
+    return len(statuses) == len(per_switch) and all(status in _SWITCH_DEPLOY_NO_ERROR_STATUSES for status in statuses)
+
+
 def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
     """
     Return True only for known non-fatal configSave platform limitations.
@@ -113,27 +131,105 @@ def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
     return any(signature in message for signature in non_fatal_signatures)
 
 
-def _get_switches_needing_deploy(nd_v2: Any, fabric_name: str) -> list[str]:
+def _pair_serials(pairs: Any) -> set[str]:
     """
-    Return serial numbers of fabric switches that require deployment.
+    Flatten vPC pair identifiers into a set of peer serial numbers.
 
-    Queries the fabric switch inventory and selects every switch whose
-    config-sync state is not confirmed in-sync. Any switch that is not
-    explicitly in-sync (including unknown or missing status) is treated as
-    needing deployment so a pending change is never silently skipped. This
-    mirrors the collection's switch-scoped deploy contract used elsewhere for
-    config_actions.type == "switch".
+    Accepts the query-phase dict form ({switchId, peerSwitchId}) as well as
+    (switch_id, peer_switch_id) tuples/lists, ignoring empty/malformed entries.
+    """
+    serials: set[str] = set()
+    for pair in pairs or []:
+        if isinstance(pair, dict):
+            candidates: tuple[Any, ...] = (pair.get(VpcFieldNames.SWITCH_ID), pair.get(VpcFieldNames.PEER_SWITCH_ID))
+        elif isinstance(pair, (tuple, list)):
+            candidates = tuple(pair)
+        else:
+            candidates = ()
+        serials.update(serial for serial in candidates if serial)
+    return serials
+
+
+def _get_managed_pair_switches_needing_deploy(
+    nd_v2: Any,
+    fabric_name: str,
+    config_entries: list[dict[str, Any]],
+    class_diff: dict[str, Any] | None = None,
+    force_deploy_serials: set[str] | None = None,
+) -> list[str]:
+    """
+    Return serials of the managed vPC pairs' peer switches that need deployment.
+
+    Scopes the switch-level deploy to only the switches forming the vPC pairs
+    changed by this run (config_actions.type == "switch"), rather than every
+    out-of-sync switch in the fabric. Nexus Dashboard has no vPC-pair-level deploy
+    primitive, so a vPC pair maps to its two peer switches.
+
+    The affected set is the union of two sources:
+      * config_entries (module.params["config"]): the desired pairs, covering
+        create/update/unchanged. Peers are already serials at deploy time
+        (management IPs are resolved upstream in custom_vpc_query_all ->
+        normalize_vpc_playbook_switch_identifiers), with switch_id and
+        peer_switch_id present as distinct, non-empty serials.
+      * class_diff["deleted"]: pairs removed this run (e.g. state=overridden
+        omissions, config: []) are absent from config, yet their peers still need
+        the removal deployed. Deleted identifiers are (switch_id, peer_switch_id)
+        serial tuples from controller state.
+
+    A config pair is resolved atomically: if either peer is absent from inventory
+    (mistyped serial, wrong fabric, or an incomplete inventory response) the whole
+    pair is warned and skipped rather than deploying a single peer, so a
+    switch-scoped deploy never becomes a silent no-op nor an asymmetric half-pair
+    deploy. A deleted peer already gone from inventory needs no deploy and is
+    skipped quietly. A managed switch is returned when it is not confirmed
+    in-sync, or when it is listed in ``force_deploy_serials`` -- the pending set
+    the query phase already resolved before this run's configSave. Honoring that
+    set keeps the deploy scope consistent with the deploy decision even if the
+    post-configSave inventory read transiently reports a pending peer in-sync, so
+    an already deployed pair still no-ops while a needed deploy is never dropped.
 
     Args:
         nd_v2: NDModuleV2 instance for RestSend
         fabric_name: Fabric name to query
+        config_entries: Managed vPC pair config entries (module.params["config"])
+        class_diff: Run diff with created/updated/deleted identifiers; deleted
+            pairs recover peers removed this run that no longer appear in config
+        force_deploy_serials: Serials the query phase flagged not-in-sync; these
+            deploy even if the current inventory read reports them in-sync
 
     Returns:
         Sorted list of unique switch serial numbers needing deployment
     """
     switches = _validate_fabric_switches(nd_v2, fabric_name)
-    switch_ids = [serial_number for serial_number, switch_data in switches.items() if _is_switch_config_in_sync(switch_data) is not True]
-    return sorted(set(switch_ids))
+    # No early return on empty inventory: fall through so every configured pair is warned.
+    managed_serials: set[str] = set()
+    for config_entry in config_entries or []:
+        if not isinstance(config_entry, dict):
+            continue
+        pair_serials = (config_entry["switch_id"], config_entry["peer_switch_id"])
+        unresolved_serials = [serial for serial in pair_serials if serial not in switches]
+        if unresolved_serials:
+            # Resolve a vPC pair atomically: both peers must be present in the
+            # inventory snapshot before either is deployed. Deploying a lone peer
+            # (typo, wrong fabric, or a transient/incomplete inventory response)
+            # would leave the two members in inconsistent states, so warn and skip
+            # the whole pair instead of half-deploying it.
+            nd_v2.module.warn(
+                f"config_actions.type=switch: vPC pair peer(s) {unresolved_serials} not found in fabric "
+                f"'{fabric_name}' inventory; skipping switch-scoped deploy for the entire pair "
+                f"{list(pair_serials)} to avoid deploying only one peer."
+            )
+            continue
+        managed_serials.update(pair_serials)
+    # Pairs removed this run are absent from config; recover their peers so the
+    # removal is deployed. A peer already gone from inventory needs no deploy.
+    for identifier in (class_diff or {}).get("deleted") or []:
+        peers = identifier if isinstance(identifier, (tuple, list)) else (identifier,)
+        managed_serials.update(serial for serial in peers if serial in switches)
+    forced = force_deploy_serials or set()
+    return sorted(
+        serial_number for serial_number in managed_serials if serial_number in forced or _is_switch_config_in_sync(switches[serial_number]) is not True
+    )
 
 
 def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -144,7 +240,8 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
     - Optional Step 1: Save fabric configuration
     - Optional Step 2: Deploy scope depends on config_actions.type:
       * "global": deploy the whole fabric via .../actions/deploy (forceShowRun=true)
-      * "switch": deploy only affected switches via .../switchActions/deploy
+      * "switch": deploy only the out-of-sync peer switches of the vPC pairs
+        changed by this run via .../switchActions/deploy
     - Proper error handling with NDModuleError
     - Results aggregation
     - Executes only if there are actual changes or pending operations
@@ -162,7 +259,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
     """
     config_actions = get_config_actions(nrm.module)
     save_enabled = bool(config_actions.get("save", True))
-    deploy_enabled = bool(config_actions.get("deploy", True))
+    deploy_enabled = bool(config_actions.get("deploy", False))
     action_type = config_actions.get("type", "switch")
     action_payload = {"type": action_type}
 
@@ -179,8 +276,10 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
             "config_actions": config_actions,
         }
 
-    # Smart deployment decision (from Common.needs_deployment)
-    if not _needs_deployment(result, nrm):
+    # An explicit save-only request is an imperative Recalculate & Save action.
+    # It must reach configSave even without a fresh declarative delta, while
+    # deployment flows remain gated by pending or out-of-sync state.
+    if not _needs_deployment(result, nrm) and not (save_enabled and not deploy_enabled):
         return {
             "msg": ("No configuration changes, pending operations, or out-of-sync pairs " "detected, skipping config actions"),
             "fabric": fabric_name,
@@ -197,9 +296,9 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
         planned_actions = []
         if save_enabled:
             save_path = FabricUtils.build_config_save_path(fabric_name)
-            planned_actions.append(f"POST {save_path} payload={action_payload}")
+            planned_actions.append(f"POST {save_path}")
         if deploy_enabled:
-            if action_type == "switch":
+            if action_type in SWITCH_DEPLOY_ACTION_TYPES:
                 deploy_path = FabricUtils.build_switch_deploy_path(fabric_name)
                 planned_actions.append(f'POST {deploy_path} payload={{"switchIds": [switches needing deployment]}}')
             else:
@@ -240,16 +339,24 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
     if save_enabled:
         save_path = fabric_utils.config_save_path
 
+        # A bare configSave (Recalculate & Save) does not push to the switches:
+        # on a merely-pending pair it recomputes the identical config and leaves
+        # the switches pending. It is therefore idempotent and must not, by
+        # itself, drive module-level changed (otherwise repeated save=true,
+        # deploy=false runs report changed=true forever). Only a declarative
+        # delta (create/update/delete) or an actual deploy (Step 2) is a change.
+        save_changed = _has_explicit_diff_changes(result) or bool(nrm.module.params.get("_pending_create")) or bool(nrm.module.params.get("_pending_delete"))
+
         try:
-            response = fabric_utils.save_config(action_payload)
+            response = fabric_utils.save_config()
             register_action_api_call(
                 results=results,
                 request_path=save_path,
-                payload=action_payload,
+                payload=None,
                 return_code=response.get("status"),
                 message="Config saved successfully",
                 success=True,
-                changed=True,
+                changed=save_changed,
             )
 
         except NDModuleError as error:
@@ -261,7 +368,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 register_action_api_call(
                     results=results,
                     request_path=save_path,
-                    payload=action_payload,
+                    payload=None,
                     return_code=error.status,
                     message=error.msg,
                     success=True,
@@ -273,7 +380,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 register_action_api_call(
                     results=results,
                     request_path=save_path,
-                    payload=action_payload,
+                    payload=None,
                     return_code=error.status,
                     message=error.msg,
                     success=False,
@@ -288,17 +395,26 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
     #
     # config_actions.type selects the deploy scope:
     #   - "global": deploy the entire fabric via .../actions/deploy.
-    #   - "switch": deploy only the switches left out-of-sync by the vPC pair
-    #     changes above, via .../switchActions/deploy.
+    #   - "switch": deploy only the out-of-sync peer switches of the vPC pairs
+    #     changed by this run, via .../switchActions/deploy.
     if deploy_enabled:
-        if action_type == "switch":
+        if action_type in SWITCH_DEPLOY_ACTION_TYPES:
             deploy_path = fabric_utils.switch_deploy_path
         else:
             deploy_path = fabric_utils.config_deploy_path(force_show_run=True)
 
         try:
-            if action_type == "switch":
-                switch_ids = _get_switches_needing_deploy(nd_v2, fabric_name)
+            if action_type in SWITCH_DEPLOY_ACTION_TYPES:
+                # Keep the deploy scope consistent with the deploy decision: the
+                # query phase already resolved the pending pairs into
+                # _not_in_sync_pairs. Force-deploy those peers even if the
+                # inventory read taken right after Step 1's configSave transiently
+                # reports them in-sync, so a requested, needed deploy never
+                # collapses into a silent changed=false no-op.
+                forced_serials = _pair_serials(nrm.module.params.get("_not_in_sync_pairs"))
+                switch_ids = _get_managed_pair_switches_needing_deploy(
+                    nd_v2, fabric_name, nrm.module.params.get("config"), result.get("class_diff"), forced_serials
+                )
                 deploy_payload = {"switchIds": switch_ids}
                 if switch_ids:
                     response = fabric_utils.deploy_switches(switch_ids)
@@ -312,14 +428,14 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                         changed=True,
                     )
                 else:
-                    # Switch scope requested but nothing is out-of-sync; record a
-                    # successful no-op instead of posting an empty switch list.
+                    # Switch scope requested but nothing is out-of-sync;
+                    # record a successful no-op instead of posting an empty list.
                     register_action_api_call(
                         results=results,
                         request_path=deploy_path,
                         payload=deploy_payload,
                         return_code=None,
-                        message="No switches required switch-scoped deployment",
+                        message=f"No switches required {action_type}-scoped deployment",
                         success=True,
                         changed=False,
                     )
@@ -337,7 +453,22 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 )
 
         except NDModuleError as error:
-            error_payload = {"switchIds": []} if action_type == "switch" else action_payload
+            if action_type in SWITCH_DEPLOY_ACTION_TYPES and _is_non_fatal_switch_deploy_207(error):
+                register_action_api_call(
+                    results=results,
+                    request_path=deploy_path,
+                    payload=error.request_payload,
+                    return_code=error.status,
+                    message=error.msg,
+                    success=True,
+                    changed=False,
+                )
+                results.build_final_result()
+                final_result = dict(results.final_result)
+                final_result["config_actions"] = config_actions
+                return final_result
+
+            error_payload = {"switchIds": []} if action_type in SWITCH_DEPLOY_ACTION_TYPES else action_payload
             register_action_api_call(
                 results=results,
                 request_path=deploy_path,
