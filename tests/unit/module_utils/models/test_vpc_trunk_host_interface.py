@@ -881,3 +881,55 @@ def test_vpc_trunk_host_interface_00600_nested_defaults():
     config = TrunkVpcHostConfigDataModel(network_os=network_os)
     assert config.mode == "trunk"
     assert config.network_os.network_os_type == "nx-os"
+
+
+# =============================================================================
+# Test: payload_defaults (issue #564)
+# =============================================================================
+
+
+def test_vpc_trunk_host_interface_00610():
+    """
+    # Summary
+
+    Verify the `trunkVpcHost` payload always carries the per-peer allowed-VLAN keys: when the user set no `allowed_vlans`, the
+    template default (`none`) is injected and fanned out to `peer1AllowedVlans` / `peer2AllowedVlans`. ND 4.3.1 rejects both the
+    POST and the PUT body when they are absent, where 4.2.1 defaulted them (issue #564, vault `vpc-trunk-allowedvlans-required-431`).
+    `nativeVlan` has no template default and is never injected.
+
+    ## Test
+
+    - `from_config` with no `allowed_vlans` -> `to_payload()` policy carries `peer1AllowedVlans` and `peer2AllowedVlans` as `"none"`,
+      no single `allowedVlans` key, and no `peer1NativeVlan` / `peer2NativeVlan`
+    - `from_config` with `allowed_vlans: "100-200"` -> both per-peer keys carry `"100-200"`
+    - `to_diff_dict()` of the unset model carries no allowed-VLAN key in any spelling, and `to_config()` carries no `allowed_vlans`
+      (payload-only injection; the contextless diff dump still fans out but never injects)
+
+    ## Classes and Methods
+
+    - TrunkVpcHostPolicyModel.payload_defaults
+    - TrunkVpcHostPolicyModel.expand_per_peer_fields()
+    - NDBaseModel.to_payload()
+    """
+    config = {
+        "switch_ip": "192.168.1.1",
+        "interface_name": "vpc500",
+        "config_data": {"network_os": {"policy": {"peer1_port_channel_id": 500, "peer2_port_channel_id": 500}}},
+    }
+    unset = TrunkVpcHostInterfaceModel.from_config(config)
+    policy = unset.to_payload()["configData"]["networkOS"]["policy"]
+    assert policy["peer1AllowedVlans"] == "none"
+    assert policy["peer2AllowedVlans"] == "none"
+    assert "allowedVlans" not in policy
+    assert "peer1NativeVlan" not in policy
+    assert "peer2NativeVlan" not in policy
+    diff_policy = unset.to_diff_dict()["configData"]["networkOS"]["policy"]
+    assert not {"allowedVlans", "peer1AllowedVlans", "peer2AllowedVlans"} & set(diff_policy)
+    assert "allowed_vlans" not in unset.to_config()["config_data"]["network_os"]["policy"]
+
+    explicit_config = copy.deepcopy(config)
+    explicit_config["config_data"]["network_os"]["policy"]["allowed_vlans"] = "100-200"
+    explicit = TrunkVpcHostInterfaceModel.from_config(explicit_config)
+    explicit_policy = explicit.to_payload()["configData"]["networkOS"]["policy"]
+    assert explicit_policy["peer1AllowedVlans"] == "100-200"
+    assert explicit_policy["peer2AllowedVlans"] == "100-200"

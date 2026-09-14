@@ -2283,3 +2283,78 @@ def test_ethernet_trunk_host_interface_01280():
         result = EthernetTrunkHostPolicyModel(speed="noNegotiate")
     with pytest.raises(ValidationError):
         result = XeEthernetTrunkHostPolicyModel(mtu="jumbo")
+
+
+# =============================================================================
+# Test: payload_defaults (issue #564)
+# =============================================================================
+
+
+def test_ethernet_trunk_host_interface_01290():
+    """
+    # Summary
+
+    Verify the NX-OS `trunkHost` payload always carries `allowedVlans`: the template default (`none`) is emitted when the user set
+    nothing, and a user-supplied value wins. ND 4.3.1 rejects a create body that omits `allowedVlans` where 4.2.1 defaulted it
+    (issue #564). `nativeVlan` has no template default and is never injected.
+
+    ## Test
+
+    - `from_config` with no `allowed_vlans` -> `to_payload()` policy carries `allowedVlans: "none"` and no `nativeVlan`
+    - `from_config` with `allowed_vlans: "1-100"` -> `to_payload()` policy carries `allowedVlans: "1-100"`
+    - `to_config()` and `to_diff_dict()` of the unset model do not carry the field (payload-only injection)
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostPolicyModel.payload_defaults
+    - NDBaseModel.to_payload()
+    """
+    config = {
+        "switch_ip": "192.168.1.1",
+        "interface_name": "Ethernet1/1",
+        "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"description": "uplink to spine"}}},
+    }
+    unset = EthernetTrunkHostInterfaceModel.from_config(config)
+    policy = unset.to_payload()["configData"]["networkOS"]["policy"]
+    assert policy["allowedVlans"] == "none"
+    assert "nativeVlan" not in policy
+    assert "allowedVlans" not in unset.to_diff_dict()["configData"]["networkOS"]["policy"]
+    assert "allowed_vlans" not in unset.to_config()["config_data"]["network_os"]["policy"]
+
+    explicit_config = copy.deepcopy(config)
+    explicit_config["config_data"]["network_os"]["policy"]["allowed_vlans"] = "1-100"
+    explicit = EthernetTrunkHostInterfaceModel.from_config(explicit_config)
+    assert explicit.to_payload()["configData"]["networkOS"]["policy"]["allowedVlans"] == "1-100"
+
+
+def test_ethernet_trunk_host_interface_01300():
+    """
+    # Summary
+
+    Verify the IOS-XE `iosXeTrunkHost` payload always carries `mtu`: the template default (1500) is emitted when the user set
+    nothing, and a user-supplied value wins. ND 4.3.1 rejects a create body that omits `mtu` where 4.2.1 defaulted it (issue #564).
+
+    ## Test
+
+    - `from_config` with no `mtu` -> `to_payload()` policy carries `mtu: 1500`
+    - `from_config` with `mtu: "8000"` (str-typed argspec) -> `to_payload()` policy carries `mtu: 8000`
+    - `to_diff_dict()` of the unset model does not carry `mtu`
+
+    ## Classes and Methods
+
+    - XeEthernetTrunkHostPolicyModel.payload_defaults
+    - NDBaseModel.to_payload()
+    """
+    config = {
+        "switch_ip": "192.168.2.1",
+        "interface_name": "GigabitEthernet1/0/1",
+        "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"allowed_vlans": "10,20-30"}}},
+    }
+    unset = EthernetTrunkHostInterfaceModel.from_config(config)
+    assert unset.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 1500
+    assert "mtu" not in unset.to_diff_dict()["configData"]["networkOS"]["policy"]
+
+    explicit_config = copy.deepcopy(config)
+    explicit_config["config_data"]["network_os"]["policy"]["mtu"] = "8000"
+    explicit = EthernetTrunkHostInterfaceModel.from_config(explicit_config)
+    assert explicit.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 8000

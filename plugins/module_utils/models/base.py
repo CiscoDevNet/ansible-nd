@@ -7,7 +7,13 @@ from __future__ import absolute_import, division, print_function
 from abc import ABC
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple, Union
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    BaseModel,
+    ConfigDict,
+    SerializationInfo,
+    model_serializer,
+    model_validator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.utils import NO_LOG_PLACEHOLDER, has_removals, issubset
 
 
@@ -95,6 +101,16 @@ class NDBaseModel(BaseModel, ABC):
     # declaring model's own nesting level, so nested models scope their own exclusions.
     reverse_diff_exclude: ClassVar[Set[str]] = set()
 
+    # ND template defaults the WIRE body must always carry, keyed by field ALIAS (wire key). ND 4.3.1 rejects create/update
+    # bodies that omit certain template fields 4.2.1 silently defaulted (issue #564; vault `ethernet-create-required-fields-431`
+    # and `vpc-trunk-allowedvlans-required-431`). Only `to_payload` injects these (`_apply_payload_defaults`, gated on the
+    # payload serialization context): config and diff dumps carry no payload context, so before/after output and diff
+    # classification are unchanged, and the read side already normalizes the echoed default via `reverse_diff_defaults`.
+    # Values MUST be the template default in wire form so the body is version-agnostic (4.2.1 stores the same value whether
+    # or not it is sent). Applies at the declaring model's own nesting level. A model that declares its own wrap-mode
+    # `model_serializer` replaces `_serialize_with_payload_defaults` and must call `_apply_payload_defaults` itself.
+    payload_defaults: ClassVar[Dict[str, Any]] = {}
+
     # --- Subclass Validation ---
 
     def __init_subclass__(cls, **kwargs):
@@ -176,6 +192,43 @@ class NDBaseModel(BaseModel, ABC):
             if value:
                 values.add(value)
         return values
+
+    def _apply_payload_defaults(self, data: Dict[str, Any], info: SerializationInfo) -> Dict[str, Any]:
+        """
+        # Summary
+
+        Inject each `payload_defaults` entry whose key is absent from `data`, but only for a payload-mode dump (serialization
+        context `mode == "payload"`, set by `to_payload`). Every other dump (config, diff, contextless) returns `data` unchanged,
+        so a wrap serializer that defaults a missing context to payload mode (e.g. the vPC per-peer fan-out) still never injects
+        into a diff. Models that declare their own wrap-mode `model_serializer` call this from it, since the subclass serializer
+        replaces `_serialize_with_payload_defaults`.
+
+        ## Raises
+
+        None
+        """
+        if not self.payload_defaults or (info.context or {}).get("mode") != "payload":
+            return data
+        for key, value in self.payload_defaults.items():
+            data.setdefault(key, value)
+        return data
+
+    @model_serializer(mode="wrap")
+    def _serialize_with_payload_defaults(self, handler, info: SerializationInfo) -> Any:
+        """
+        # Summary
+
+        Default wrap-mode serializer: run the standard serialization, then apply `payload_defaults` (`_apply_payload_defaults`)
+        when the dump is a payload. A no-op for every model that declares no defaults.
+
+        ## Raises
+
+        None
+        """
+        data = handler(self)
+        if isinstance(data, dict):
+            return self._apply_payload_defaults(data, info)
+        return data
 
     def to_payload(self, **kwargs) -> Dict[str, Any]:
         """Convert model to API payload format (aliased keys, nested structures)."""
