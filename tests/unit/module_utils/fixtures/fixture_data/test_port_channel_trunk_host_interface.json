@@ -675,5 +675,107 @@
                 }
             ]
         }
+    },
+    "test_port_channel_trunk_host_orchestrator_01010a": {
+        "TEST_NOTES": [
+            "create_bulk grouped (issue #409): switches list (1 switch)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01010b": {
+        "TEST_NOTES": [
+            "POST create, NX group accepted"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface added successfully",
+                    "name": "port-channel501",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01010c": {
+        "TEST_NOTES": [
+            "POST create, XE group accepted (ND echoes the canonical name it was sent)"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface added successfully",
+                    "name": "Port-channel103",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01020a": {
+        "TEST_NOTES": [
+            "create_bulk partial failure (issue #409): switches list (1 switch)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01020b": {
+        "TEST_NOTES": [
+            "POST create, NX group accepted (before the XE group fails)"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface added successfully",
+                    "name": "port-channel501",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01020c": {
+        "TEST_NOTES": [
+            "POST create, XE group rejected with the flat 500 ND 4.2.1 returns for a member-mode mismatch"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "code": 500,
+            "description": "",
+            "message": "Switch [C1_LE1/FDO11111AAA]: Member interface GigabitEthernet1/0/2 is a trunk host which can not be a member interface of iosXeTrunkPoHost. Change GigabitEthernet1/0/2 to layer 2 trunk host using iosXeTrunk policy first"
+        }
     }
 }

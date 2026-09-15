@@ -148,11 +148,12 @@ def test_port_channel_trunk_host_orchestrator_00100() -> None:
     """
     # Summary
 
-    Verify `_managed_policy_types` returns the single `"trunkPoHost"` API value.
+    Verify `_managed_policy_types` covers both the NX-OS `trunkPoHost` and the IOS-XE `iosXeTrunkPoHost` API values
+    (issue #537).
 
     ## Test
 
-    - Returned set contains exactly "trunkPoHost"
+    - Returned set contains exactly "trunkPoHost" and "iosXeTrunkPoHost"
 
     ## Classes and Methods
 
@@ -164,18 +165,20 @@ def test_port_channel_trunk_host_orchestrator_00100() -> None:
 
     gen_responses = ResponseGenerator(responses())
     orchestrator = _build_orchestrator(gen_responses)
-    assert orchestrator._managed_policy_types() == {"trunkPoHost"}
+    assert orchestrator._managed_policy_types() == {"trunkPoHost", "iosXeTrunkPoHost"}
 
 
 def test_port_channel_trunk_host_orchestrator_00110() -> None:
     """
     # Summary
 
-    Verify `_managed_policy_types` returns a set (supports set membership for `in` checks).
+    Verify `_managed_policy_types` returns a set (supports set membership for `in` checks) containing both the
+    NX-OS `trunkPoHost` and the IOS-XE `iosXeTrunkPoHost` API values.
 
     ## Test
 
     - Return type is set
+    - Both "trunkPoHost" and "iosXeTrunkPoHost" are members
 
     ## Classes and Methods
 
@@ -190,6 +193,7 @@ def test_port_channel_trunk_host_orchestrator_00110() -> None:
     result = orchestrator._managed_policy_types()
     assert isinstance(result, set)
     assert "trunkPoHost" in result
+    assert "iosXeTrunkPoHost" in result
 
 
 # =============================================================================
@@ -460,3 +464,130 @@ def test_port_channel_trunk_host_orchestrator_00910() -> None:
 
     with pytest.raises(RuntimeError, match=r"Ethernet1/1.*port-channel501"):
         instance.preflight([_build_trunk_model("port-channel702", ["Ethernet1/1"])])
+
+
+# =============================================================================
+# Test: create_bulk -- grouped by (switch, policyType) (issue #409); IOS-XE managed types (issue #537)
+# =============================================================================
+
+
+def _build_pc_model(
+    switch_ip: str = "192.168.1.1",
+    interface_name: str = "port-channel501",
+    include_config: bool = True,
+    ports: list[str] | None = None,
+) -> PortChannelTrunkHostInterfaceModel:
+    """Build a minimal NX-OS `trunkPoHost` `PortChannelTrunkHostInterfaceModel` instance. `ports` defaults to `["Ethernet1/1"]`."""
+    kwargs: dict = {"switch_ip": switch_ip, "interface_name": interface_name}
+    if include_config:
+        kwargs["config_data"] = PortChannelTrunkHostConfigDataModel(
+            network_os=PortChannelTrunkHostNetworkOSModel(
+                policy=PortChannelTrunkHostPolicyModel(
+                    admin_state=True, allowed_vlans="1-100", port_channel_mode="active", ports=ports if ports is not None else ["Ethernet1/1"]
+                ),
+            ),
+        )
+    return PortChannelTrunkHostInterfaceModel(**kwargs)
+
+
+def _build_xe_pc_model(
+    interface_name: str = "port-channel103", ports: list[str] | None = None, switch_ip: str = "192.168.1.1"
+) -> PortChannelTrunkHostInterfaceModel:
+    """Build an IOS-XE `iosXeTrunkPoHost` model (members default to `["GigabitEthernet1/0/2"]`)."""
+    return PortChannelTrunkHostInterfaceModel.from_config(
+        {
+            "switch_ip": switch_ip,
+            "interface_name": interface_name,
+            "config_data": {
+                "network_os": {
+                    "network_os_type": "ios-xe",
+                    "policy": {"allowed_vlans": "all", "ports": ports if ports is not None else ["GigabitEthernet1/0/2"]},
+                }
+            },
+        }
+    )
+
+
+def test_port_channel_trunk_host_orchestrator_01000() -> None:
+    """
+    # Summary
+
+    Verify `_managed_policy_types` now covers both the NX-OS and the IOS-XE trunk-host port-channel types.
+
+    ## Test
+
+    - Returns exactly `{"trunkPoHost", "iosXeTrunkPoHost"}`
+
+    ## Classes and Methods
+
+    - PortChannelTrunkHostInterfaceOrchestrator._managed_policy_types()
+    """
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())))
+    assert orchestrator._managed_policy_types() == {"trunkPoHost", "iosXeTrunkPoHost"}
+
+
+def test_port_channel_trunk_host_orchestrator_01010() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` groups by `(switch, policyType)` (issue #409): an NX-OS and an IOS-XE port-channel on the same switch produce two
+    POSTs, the IOS-XE body carries `Port-channel103`, and both interfaces are deploy-queued under their lowercase names.
+
+    ## Test
+
+    - Responses: switches list, POST (NX group), POST (XE group)
+    - `len(rest_send.responses) == 3`
+    - Last committed body is the XE group with `interfaceName == "Port-channel103"` and `policyType == "iosXeTrunkPoHost"`
+    - `_pending_deploys == [("port-channel501", sw), ("port-channel103", sw)]`
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator.bulk_create_groups()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_trunk_host(f"{method_name}a")
+        yield responses_pc_trunk_host(f"{method_name}b")
+        yield responses_pc_trunk_host(f"{method_name}c")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = PortChannelTrunkHostInterfaceOrchestrator(rest_send=rest_send)
+    with does_not_raise():
+        instance.create_bulk([_build_pc_model(), _build_xe_pc_model()])
+    assert len(rest_send.responses) == 3
+    body = rest_send.committed_payload
+    assert [item["interfaceName"] for item in body["interfaces"]] == ["Port-channel103"]
+    assert body["interfaces"][0]["configData"]["networkOS"]["policy"]["policyType"] == "iosXeTrunkPoHost"
+    assert instance._pending_deploys == [("port-channel501", "FDO11111AAA"), ("port-channel103", "FDO11111AAA")]
+
+
+def test_port_channel_trunk_host_orchestrator_01020() -> None:
+    """
+    # Summary
+
+    Verify a failing second group leaves the first group's deploys queued (partial-success bookkeeping) and raises `Bulk create failed`.
+
+    ## Test
+
+    - Responses: switches list, POST 207 success (NX group), POST 500 (XE group)
+    - `RuntimeError` matches `Bulk create failed`
+    - `_pending_deploys == [("port-channel501", sw)]` only
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.create_bulk()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_trunk_host(f"{method_name}a")
+        yield responses_pc_trunk_host(f"{method_name}b")
+        yield responses_pc_trunk_host(f"{method_name}c")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = PortChannelTrunkHostInterfaceOrchestrator(rest_send=rest_send)
+    with pytest.raises(RuntimeError, match=r"Bulk create failed"):
+        instance.create_bulk([_build_pc_model(), _build_xe_pc_model()])
+    assert instance._pending_deploys == [("port-channel501", "FDO11111AAA")]
