@@ -29,6 +29,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     PortChannelModeEnum,
     SpeedEnum,
     StormControlActionEnum,
+    XeAccessPoHostPolicyTypeEnum,
+    XePortChannelModeEnum,
+    XeTrunkPoHostPolicyTypeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_access_interface import (
     PortChannelAccessConfigDataModel,
@@ -1458,3 +1461,30 @@ def test_port_channel_access_interface_01130():
         PortChannelAccessPolicyModel(netflow=True, netflow_monitor="MONITOR-1")
         PortChannelAccessPolicyModel(netflow=False)
         PortChannelAccessPolicyModel()
+
+
+# =============================================================================
+# Test: IOS-XE enums (issues #536 / #537)
+# =============================================================================
+
+
+def test_port_channel_access_interface_02000():
+    """
+    # Summary
+
+    Verify the IOS-XE port-channel enums carry exactly the create-side wire values.
+
+    ## Test
+
+    - `XeAccessPoHostPolicyTypeEnum` / `XeTrunkPoHostPolicyTypeEnum` each have the single managed member
+    - `XePortChannelModeEnum` is the template enum (`on`, `active`, `passive`, `auto`, `desirable`)
+
+    ## Classes and Methods
+
+    - XeAccessPoHostPolicyTypeEnum
+    - XeTrunkPoHostPolicyTypeEnum
+    - XePortChannelModeEnum
+    """
+    assert [e.value for e in XeAccessPoHostPolicyTypeEnum] == ["iosXeAccessPoHost"]
+    assert [e.value for e in XeTrunkPoHostPolicyTypeEnum] == ["iosXeTrunkPoHost"]
+    assert [e.value for e in XePortChannelModeEnum] == ["on", "active", "passive", "auto", "desirable"]
