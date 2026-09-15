@@ -13,10 +13,14 @@ from typing import List, Dict, Optional, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import NdFabricName
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import IPv4CIDR, IPv6CIDR, NdFabricName
+from ansible_collections.cisco.nd.plugins.module_utils.common.validators import validate_ip_address
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
+    FieldSerializationInfo,
+    SecretStr,
+    field_serializer,
     field_validator,
     model_validator,
 )
@@ -32,6 +36,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import (
     _build_options_from_model,
+    serialize_secret_value,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BGP_ASN_RE,
@@ -78,10 +83,19 @@ class RouteServerModel(NDNestedModel):
     - `ValueError` - If IP address or ASN format is invalid
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+    model_config = ConfigDict(
+        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True
+    )
 
     route_server_ip: str = Field(alias="routeServerIp", description="Route Server IP Address")
     route_server_asn: str = Field(alias="routeServerAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]")
+
+    @field_validator("route_server_ip")
+    @classmethod
+    def validate_route_server_ip(cls, value: str) -> str:
+        # Schema format "ip": accepts IPv4 or IPv6.
+        validate_ip_address(value)
+        return value
 
     @field_validator("route_server_asn")
     @classmethod
@@ -106,7 +120,9 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
     - `TypeError` - If required string fields are not provided
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+    model_config = ConfigDict(
+        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True
+    )
 
     # Fabric Group Type (required for discriminated union)
     type: Literal[FabricGroupTypeEnum.VXLAN] = Field(description="Type of the fabric group", default=FabricGroupTypeEnum.VXLAN)
@@ -130,12 +146,12 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
     downstream_l2_vni_range: str = Field(
         alias="downstreamL2VniRange",
         description="Unique Range for L2VNI when downstream VNI is enabled (min: 1, max: 16777214)",
-        default="",
+        default="10030000-10049000",
     )
     downstream_l3_vni_range: str = Field(
         alias="downstreamL3VniRange",
         description="Unique Range for L3VNI when downstream VNI is enabled (min: 1, max: 16777214)",
-        default="",
+        default="10050000-10059000",
     )
 
     # Underlay
@@ -253,12 +269,11 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         description="BGP key encryption type: 3 - 3DES, 6 - Cisco type 6, 7 - Cisco type 7",
         default=BgpAuthenticationKeyTypeEnum.THREE_DES,
     )
-    multisite_inter_connect_bgp_key: Optional[str] = Field(
+    multisite_inter_connect_bgp_key: Optional[SecretStr] = Field(
         alias="multisiteInterConnectBgpKey",
         description="Encrypted BGP authentication key based on type",
-        min_length=1,
-        max_length=256,
         default=None,
+        json_schema_extra={"secret": True},
     )
     multisite_loopback_id: int = Field(
         alias="multisiteLoopbackId",
@@ -276,12 +291,12 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
     )
 
     # Multi-Site IP Ranges
-    multisite_loopback_ip_range: str = Field(
+    multisite_loopback_ip_range: IPv4CIDR = Field(
         alias="multisiteLoopbackIpRange",
         description="Typically Loopback100 IP Address Range",
         default="10.10.0.0/24",
     )
-    multisite_underlay_subnet_range: str = Field(
+    multisite_underlay_subnet_range: IPv4CIDR = Field(
         alias="multisiteUnderlaySubnetRange",
         description="Address range to assign P2P DCI Links",
         default="10.10.1.0/24",
@@ -293,12 +308,12 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         le=31,
         default=30,
     )
-    multisite_loopback_ipv6_range: str = Field(
+    multisite_loopback_ipv6_range: IPv6CIDR = Field(
         alias="multisiteLoopbackIpv6Range",
         description="Typically Loopback100 IPv6 Address Range",
         default="fd00::a10:0/120",
     )
-    multisite_underlay_ipv6_subnet_range: str = Field(
+    multisite_underlay_ipv6_subnet_range: IPv6CIDR = Field(
         alias="multisiteUnderlayIpv6SubnetRange",
         description="Address range to assign P2P DCI IPv6 Links",
         default="fd00::a11:0/120",
@@ -329,6 +344,7 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         description="Prefix to be used when a new security group is created",
         min_length=1,
         max_length=10,
+        pattern=r"^[a-zA-Z0-9-_]*$",
         default="SG_",
     )
     security_group_tag_mac_segmentation: bool = Field(
@@ -353,12 +369,11 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         description="Auto Config CloudSec on Border Gateways",
         default=False,
     )
-    cloud_sec_key: Optional[str] = Field(
+    cloud_sec_key: Optional[SecretStr] = Field(
         alias="cloudSecKey",
         description="Cisco Type 7 Encrypted Octet String",
-        min_length=1,
-        max_length=130,
         default=None,
+        json_schema_extra={"secret": True},
     )
     cloud_sec_algorithm: CloudSecAlgorithmEnum = Field(
         alias="cloudSecAlgorithm",
@@ -387,6 +402,7 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
     scheduled_backup_time: Optional[str] = Field(
         alias="scheduledBackupTime",
         description="Time (UTC) in 24 hour format to take a daily backup (00:00 to 23:59)",
+        pattern=r"^([01]\d|2[0-3]):([0-5]\d)$",
         default=None,
     )
 
@@ -396,6 +412,39 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         if not re.match(r"^[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}$", value):
             raise ValueError(f"Invalid MAC address format, expected xxxx.xxxx.xxxx, got: {value}")
         return value.lower()
+
+    @field_validator("cloud_sec_key")
+    @classmethod
+    def validate_cloud_sec_key(cls, value: Optional[SecretStr]) -> Optional[SecretStr]:
+        # Generic message only; never echo the secret value.
+        if value is None:
+            return value
+        raw = value.get_secret_value()
+        if raw == "":
+            return value
+        if not re.match(r"^[a-fA-F0-9]{1,130}$", raw):
+            raise ValueError("cloud_sec_key must be a hexadecimal string of 1-130 characters ([a-fA-F0-9]).")
+        return value
+
+    @model_validator(mode="after")
+    def validate_cloud_sec_key_length(self) -> "VxlanFabricGroupManagementModel":
+        # ND enforces an exact key length per algorithm; fail fast without echoing the secret.
+        if self.cloud_sec_key is None:
+            return self
+        raw = self.cloud_sec_key.get_secret_value()
+        if raw == "":
+            return self
+        algo = self.cloud_sec_algorithm
+        algo_str = algo.value if hasattr(algo, "value") else str(algo)
+        expected = {"AES_128_CMAC": 66, "AES_256_CMAC": 130}.get(algo_str)
+        if expected is not None and len(raw) != expected:
+            raise ValueError(f"cloud_sec_key must be exactly {expected} hexadecimal characters for {algo_str}.")
+        return self
+
+    @field_serializer("multisite_inter_connect_bgp_key", "cloud_sec_key")
+    def serialize_secret_key(self, value: Optional[SecretStr], info: FieldSerializationInfo) -> Optional[str]:
+        """Real value only for the API payload; masked in config/diff/gathered/error output."""
+        return serialize_secret_value(value, info)
 
 
 class FabricGroupVxlanModel(NDBaseModel):
@@ -410,7 +459,9 @@ class FabricGroupVxlanModel(NDBaseModel):
     - `TypeError` - If field types don't match expected types
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+    model_config = ConfigDict(
+        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True
+    )
 
     identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"

@@ -434,6 +434,112 @@
   tags: [test_fg_multi]
 
 #############################################################################
+# TEST 6: SECURITY - Secret keys must be masked in module output
+#############################################################################
+- name: "TEST 6: Create fabric group with secret keys (check mode)"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "fg_vxlan_secret_check"
+        management:
+          multisite_inter_connect_bgp_authentication: true
+          multisite_inter_connect_bgp_key: "0123456789abcdef"
+          auto_configure_cloud_sec: true
+          cloud_sec_key: "abcdef0123"
+  check_mode: true
+  register: fg_secret_result
+  tags: [test_fg_security]
+
+- name: "TEST 6: Verify secret values never appear in module output"
+  assert:
+    that:
+      - fg_secret_result is not failed
+      - "'0123456789abcdef' not in (fg_secret_result | to_json)"
+      - "'abcdef0123' not in (fg_secret_result | to_json)"
+      - "'VALUE_SPECIFIED_IN_NO_LOG_PARAMETER' in (fg_secret_result | to_json)"
+    fail_msg: "Secret key values leaked into module output"
+    success_msg: "Secret key values are masked in module output"
+  tags: [test_fg_security]
+
+#############################################################################
+# TEST 7: Downstream VNI ranges default to documented values
+#############################################################################
+- name: "TEST 7: Enable downstream VNI without explicit ranges (check mode)"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "fg_vxlan_downstream_check"
+        management:
+          downstream_vni: true
+  check_mode: true
+  register: fg_downstream_result
+  tags: [test_fg_downstream]
+
+- name: "TEST 7: Verify documented downstream VNI defaults are used"
+  assert:
+    that:
+      - fg_downstream_result is not failed
+      - "'10030000-10049000' in (fg_downstream_result | to_json)"
+      - "'10050000-10059000' in (fg_downstream_result | to_json)"
+    fail_msg: "Downstream VNI ranges did not default to the documented values"
+    success_msg: "Downstream VNI ranges default to the documented values"
+  tags: [test_fg_downstream]
+
+#############################################################################
+# TEST 8: Format validation rejects malformed input (client-side)
+#############################################################################
+- name: "TEST 8a: Reject invalid IPv4 CIDR range"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "fg_vxlan_invalid"
+        management:
+          multisite_loopback_ip_range: "not-an-ip"
+  register: fg_bad_ip
+  ignore_errors: true
+  tags: [test_fg_validation]
+
+- name: "TEST 8b: Reject invalid scheduled backup time"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "fg_vxlan_invalid"
+        management:
+          scheduled_backup: true
+          scheduled_backup_time: "24:00"
+  register: fg_bad_time
+  ignore_errors: true
+  tags: [test_fg_validation]
+
+- name: "TEST 8c: Reject non-hex CloudSec key without leaking its value"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "fg_vxlan_invalid"
+        management:
+          auto_configure_cloud_sec: true
+          cloud_sec_key: "LEAK_ME_zz"
+  register: fg_bad_key
+  ignore_errors: true
+  tags: [test_fg_validation]
+
+- name: "TEST 8: Verify malformed input is rejected and secrets are not leaked"
+  assert:
+    that:
+      - fg_bad_ip is failed
+      - fg_bad_time is failed
+      - fg_bad_key is failed
+      - "'LEAK_ME_zz' not in (fg_bad_key | to_json)"
+    fail_msg: "Format validation did not reject malformed input as expected"
+    success_msg: "Format validation rejects malformed input and does not leak secrets"
+  tags: [test_fg_validation]
+
+#############################################################################
 # FINAL CLEANUP - Clean up all test fabric groups
 #############################################################################
 - name: "CLEANUP: Delete all test fabric groups"
@@ -473,5 +579,14 @@
 
       TEST 5: MULTI-CREATE
         - Multiple fabric groups: {{ 'PASSED' if fg_multi_result is changed else 'FAILED' }}
+
+      TEST 6: SECURITY (secret masking)
+        - Secrets masked in output: {{ 'PASSED' if ('abcdef0123' not in (fg_secret_result | to_json)) else 'FAILED' }}
+
+      TEST 7: DOWNSTREAM VNI DEFAULTS
+        - Documented defaults used: {{ 'PASSED' if fg_downstream_result is not failed else 'FAILED' }}
+
+      TEST 8: FORMAT VALIDATION
+        - Malformed input rejected: {{ 'PASSED' if (fg_bad_ip is failed and fg_bad_time is failed and fg_bad_key is failed) else 'FAILED' }}
       ========================================================
   tags: [test_summary, always]

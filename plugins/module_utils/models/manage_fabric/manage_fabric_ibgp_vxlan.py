@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import re
 
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
+    FieldSerializationInfo,
+    SecretStr,
+    field_serializer,
     field_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
@@ -48,7 +51,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     BootstrapSubnetModel,
     NetflowSettingsModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel, serialize_secret_value
 
 """
 # Comprehensive Pydantic models for iBGP VXLAN fabric management via Nexus Dashboard
@@ -93,7 +96,9 @@ class VxlanIbgpManagementModel(NDNestedModel):
     - `TypeError` - If required string fields are not provided
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+    model_config = ConfigDict(
+        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True
+    )
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
 
@@ -492,16 +497,22 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
 
     # Authentication — BGP Extended
-    bgp_authentication_key: str = Field(alias="bgpAuthenticationKey", description="Encrypted BGP authentication key based on type", default="")
+    bgp_authentication_key: Optional[SecretStr] = Field(
+        alias="bgpAuthenticationKey", description="Encrypted BGP authentication key based on type", default="", json_schema_extra={"secret": True}
+    )
 
     # Authentication — PIM
     pim_hello_authentication: bool = Field(alias="pimHelloAuthentication", description="Valid for IPv4 Underlay only", default=False)
-    pim_hello_authentication_key: str = Field(alias="pimHelloAuthenticationKey", description="3DES Encrypted", default="")
+    pim_hello_authentication_key: Optional[SecretStr] = Field(
+        alias="pimHelloAuthenticationKey", description="3DES Encrypted", default="", json_schema_extra={"secret": True}
+    )
 
     # Authentication — BFD
     bfd_authentication: bool = Field(alias="bfdAuthentication", description="Enable BFD Authentication.  Valid for P2P Interfaces only", default=False)
     bfd_authentication_key_id: int = Field(alias="bfdAuthenticationKeyId", description="BFD Authentication Key ID", default=100)
-    bfd_authentication_key: str = Field(alias="bfdAuthenticationKey", description="Encrypted SHA1 secret value", default="")
+    bfd_authentication_key: Optional[SecretStr] = Field(
+        alias="bfdAuthenticationKey", description="Encrypted SHA1 secret value", default="", json_schema_extra={"secret": True}
+    )
     bfd_ospf: bool = Field(alias="bfdOspf", description="Enable BFD For OSPF", default=False)
     bfd_isis: bool = Field(alias="bfdIsis", description="Enable BFD For ISIS", default=False)
     bfd_pim: bool = Field(alias="bfdPim", description="Enable BFD For PIM", default=False)
@@ -509,7 +520,9 @@ class VxlanIbgpManagementModel(NDNestedModel):
     # Authentication — OSPF
     ospf_authentication: bool = Field(alias="ospfAuthentication", description="Enable OSPF Authentication", default=False)
     ospf_authentication_key_id: int = Field(alias="ospfAuthenticationKeyId", description="(Min:0, Max:255)", default=127)
-    ospf_authentication_key: str = Field(alias="ospfAuthenticationKey", description="OSPF Authentication Key.  3DES Encrypted", default="")
+    ospf_authentication_key: Optional[SecretStr] = Field(
+        alias="ospfAuthenticationKey", description="OSPF Authentication Key.  3DES Encrypted", default="", json_schema_extra={"secret": True}
+    )
 
     # IS-IS
     isis_level: IsisLevelEnum = Field(alias="isisLevel", description="IS-IS Level", default=IsisLevelEnum.LEVEL_2)
@@ -529,7 +542,9 @@ class VxlanIbgpManagementModel(NDNestedModel):
     isis_authentication: bool = Field(alias="isisAuthentication", description="Enable IS-IS Authentication", default=False)
     isis_authentication_keychain_name: str = Field(alias="isisAuthenticationKeychainName", description="IS-IS Authentication Keychain Name", default="")
     isis_authentication_keychain_key_id: int = Field(alias="isisAuthenticationKeychainKeyId", description="IS-IS Authentication Key ID", default=127)
-    isis_authentication_key: str = Field(alias="isisAuthenticationKey", description="IS-IS Authentication Key.  Cisco Type 7 Encrypted", default="")
+    isis_authentication_key: Optional[SecretStr] = Field(
+        alias="isisAuthenticationKey", description="IS-IS Authentication Key.  Cisco Type 7 Encrypted", default="", json_schema_extra={"secret": True}
+    )
     isis_overload: bool = Field(
         alias="isisOverload", description="Set IS-IS Overload Bit.  When enabled, set the overload bit for an elapsed time after a reload", default=True
     )
@@ -547,12 +562,14 @@ class VxlanIbgpManagementModel(NDNestedModel):
     macsec_cipher_suite: MacsecCipherSuiteEnum = Field(
         alias="macsecCipherSuite", description="Configure Cipher Suite", default=MacsecCipherSuiteEnum.GCM_AES_XPN_256
     )
-    macsec_key_string: str = Field(alias="macsecKeyString", description="MACsec Primary Key String.  Cisco Type 7 Encrypted Octet String", default="")
+    macsec_key_string: Optional[SecretStr] = Field(
+        alias="macsecKeyString", description="MACsec Primary Key String.  Cisco Type 7 Encrypted Octet String", default="", json_schema_extra={"secret": True}
+    )
     macsec_algorithm: MacsecAlgorithmEnum = Field(
         alias="macsecAlgorithm", description="MACsec Primary Cryptographic Algorithm.  AES_128_CMAC or AES_256_CMAC", default=MacsecAlgorithmEnum.AES_128_CMAC
     )
-    macsec_fallback_key_string: str = Field(
-        alias="macsecFallbackKeyString", description="MACsec Fallback Key String. Cisco Type 7 Encrypted Octet String", default=""
+    macsec_fallback_key_string: Optional[SecretStr] = Field(
+        alias="macsecFallbackKeyString", description="MACsec Fallback Key String. Cisco Type 7 Encrypted Octet String", default="", json_schema_extra={"secret": True}
     )
     macsec_fallback_algorithm: MacsecAlgorithmEnum = Field(
         alias="macsecFallbackAlgorithm",
@@ -573,16 +590,17 @@ class VxlanIbgpManagementModel(NDNestedModel):
     vrf_lite_macsec_cipher_suite: MacsecCipherSuiteEnum = Field(
         alias="vrfLiteMacsecCipherSuite", description="DCI MACsec Cipher Suite", default=MacsecCipherSuiteEnum.GCM_AES_XPN_256
     )
-    vrf_lite_macsec_key_string: str = Field(
-        alias="vrfLiteMacsecKeyString", description="DCI MACsec Primary Key String.  Cisco Type 7 Encrypted Octet String", default=""
+    vrf_lite_macsec_key_string: Optional[SecretStr] = Field(
+        alias="vrfLiteMacsecKeyString", description="DCI MACsec Primary Key String.  Cisco Type 7 Encrypted Octet String", default="", json_schema_extra={"secret": True}
     )
     vrf_lite_macsec_algorithm: MacsecAlgorithmEnum = Field(
         alias="vrfLiteMacsecAlgorithm", description="DCI MACsec Primary Cryptographic Algorithm", default=MacsecAlgorithmEnum.AES_128_CMAC
     )
-    vrf_lite_macsec_fallback_key_string: str = Field(
+    vrf_lite_macsec_fallback_key_string: Optional[SecretStr] = Field(
         alias="vrfLiteMacsecFallbackKeyString",
         description=("DCI MACsec Fallback Key String.  Cisco Type 7 Encrypted Octet String. This parameter is used when DCI link has QKD disabled."),
         default="",
+        json_schema_extra={"secret": True},
     )
     vrf_lite_macsec_fallback_algorithm: MacsecAlgorithmEnum = Field(
         alias="vrfLiteMacsecFallbackAlgorithm",
@@ -1035,6 +1053,21 @@ class VxlanIbgpManagementModel(NDNestedModel):
             raise ValueError(f"Invalid MAC address format, expected xxxx.xxxx.xxxx, got: {value}")
 
         return value.lower()
+
+    @field_serializer(
+        "bgp_authentication_key",
+        "pim_hello_authentication_key",
+        "bfd_authentication_key",
+        "ospf_authentication_key",
+        "isis_authentication_key",
+        "macsec_key_string",
+        "macsec_fallback_key_string",
+        "vrf_lite_macsec_key_string",
+        "vrf_lite_macsec_fallback_key_string",
+    )
+    def _serialize_secret_keys(self, value: Optional[SecretStr], info: FieldSerializationInfo) -> Optional[str]:
+        """Real value only for the API payload; masked in config/diff/gathered/error output."""
+        return serialize_secret_value(value, info)
 
 
 class FabricIbgpModel(FabricBaseModel):

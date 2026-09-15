@@ -63,13 +63,13 @@ options:
             - Unique Range for L2VNI when downstream VNI is enabled (min 1, max 16777214).
             - Should not conflict with any VNI already used in member fabric.
             type: str
-            default: "60000-69000"
+            default: "10030000-10049000"
           downstream_l3_vni_range:
             description:
             - Unique Range for L3VNI when downstream VNI is enabled (min 1, max 16777214).
             - Should not conflict with any VNI already used in member fabric.
             type: str
-            default: "80000-89000"
+            default: "10050000-10059000"
           underlay_ipv6:
             description:
             - Enable IPv6 underlay. If not enabled, IPv4 underlay is used.
@@ -286,6 +286,7 @@ options:
           cloud_sec_key:
             description:
             - Cisco Type 7 Encrypted Octet String for CloudSec.
+            - Must be exactly 66 hexadecimal characters when O(config.management.cloud_sec_algorithm=AES_128_CMAC) or 130 when O(config.management.cloud_sec_algorithm=AES_256_CMAC).
             type: str
           cloud_sec_algorithm:
             description:
@@ -443,8 +444,8 @@ EXAMPLES = r"""
           multisite_underlay_subnet_target_mask: 30
           multisite_delay_restore: 500
           downstream_vni: true
-          downstream_l2_vni_range: "60000-69000"
-          downstream_l3_vni_range: "80000-89000"
+          downstream_l2_vni_range: "10030000-10049000"
+          downstream_l3_vni_range: "10050000-10059000"
   register: result
 
 - name: Replace fabric group with only required fields (all optional settings revert to defaults)
