@@ -1335,3 +1335,104 @@ def test_port_channel_access_orchestrator_01020() -> None:
     with pytest.raises(RuntimeError, match=r"Bulk create failed"):
         instance.create_bulk([_build_pc_model(), _build_xe_pc_model()])
     assert instance._pending_deploys == [("port-channel501", "FDO11111AAA")]
+
+
+# =============================================================================
+# Test: preflight -- IOS-XE member-mode mismatch (issues #536/#537)
+#
+# Shared inventory for switch FDO11111AAA (see the 01100b fixture TEST_NOTES): GigabitEthernet1/0/2 is an
+# iosXeTrunkHost, GigabitEthernet1/0/3 is a free iosXeAccess, GigabitEthernet1/0/4 is an iosXeAccessPoMember
+# already owned by port-channel101, GigabitEthernet1/0/5 is an iosXeAccessPoMember owned by port-channel102,
+# and Ethernet1/1 is an unrelated NX-OS trunkHost. GigabitEthernet1/0/9 does not exist on the switch.
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "ports, match",
+    [
+        (["GigabitEthernet1/0/2"], r"member=GigabitEthernet1/0/2, current policy=iosXeTrunkHost, required=iosXeAccess.*nd_interface_ethernet_access"),
+        (["GigabitEthernet1/0/9"], r"member=GigabitEthernet1/0/9, current policy=absent"),
+    ],
+)
+def test_port_channel_access_orchestrator_01100(ports, match) -> None:
+    """
+    # Summary
+
+    Verify the IOS-XE member-mode preflight refuses an `iosXeAccessPoHost` whose member is a trunk host or absent from the inventory,
+    before any write and in check mode.
+
+    # workaround: xe-port-channel-member-mode-mismatch
+
+    ## Test
+
+    - Responses: switches list, interfaces list for the switch
+    - `preflight` raises `RuntimeError` matching `match`; no POST was sent (`len(rest_send.responses) == 2`)
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator._validate_xe_member_modes()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=True)
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    with pytest.raises(RuntimeError, match=match):
+        instance.preflight([_build_xe_pc_model(ports=ports)])
+    assert len(rest_send.responses) == 2
+
+
+def test_port_channel_access_orchestrator_01110() -> None:
+    """
+    # Summary
+
+    Verify the preflight accepts a fresh `iosXeAccess` member and an `iosXeAccessPoMember` already owned by the same port-channel
+    (idempotent re-apply), and skips NX-OS models entirely.
+
+    ## Test
+
+    - `port-channel101` with members Gi1/0/3 (iosXeAccess) and Gi1/0/4 (member of Port-channel101) passes
+    - An NX-OS model naming Ethernet1/1 passes without consulting member policy types
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator._validate_xe_member_modes()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    with does_not_raise():
+        instance.preflight([_build_xe_pc_model(ports=["GigabitEthernet1/0/3", "GigabitEthernet1/0/4"]), _build_pc_model(ports=["Ethernet1/1"])])
+
+
+def test_port_channel_access_orchestrator_01120() -> None:
+    """
+    # Summary
+
+    Verify a member owned by ANOTHER port-channel is reported by the existing member-availability preflight first (its message names the
+    current owner), so the mode preflight never masks the ownership conflict.
+
+    ## Test
+
+    - `port-channel101` naming Gi1/0/5 (member of port-channel102) raises `already in use ... current owner=port-channel102`
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator._validate_members_available()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    with pytest.raises(RuntimeError, match=r"already in use.*current owner=port-channel102"):
+        instance.preflight([_build_xe_pc_model(ports=["GigabitEthernet1/0/5"])])

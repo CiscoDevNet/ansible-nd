@@ -591,3 +591,40 @@ def test_port_channel_trunk_host_orchestrator_01020() -> None:
     with pytest.raises(RuntimeError, match=r"Bulk create failed"):
         instance.create_bulk([_build_pc_model(), _build_xe_pc_model()])
     assert instance._pending_deploys == [("port-channel501", "FDO11111AAA")]
+
+
+# =============================================================================
+# Test: preflight -- IOS-XE member-mode mismatch (issue #537), trunk-host mirror of the access orchestrator test
+# =============================================================================
+
+
+def test_port_channel_trunk_host_orchestrator_01100() -> None:
+    """
+    # Summary
+
+    Verify the IOS-XE member-mode preflight refuses an `iosXeTrunkPoHost` whose member is an `iosXeAccess` host, before
+    any write.
+
+    # workaround: xe-port-channel-member-mode-mismatch
+
+    ## Test
+
+    - Responses: switches list, interfaces list for the switch
+    - `iosXeTrunkPoHost` port-channel names GigabitEthernet1/0/3 (iosXeAccess) as a member
+    - `preflight` raises `RuntimeError` naming the required `iosXeTrunkHost` policy and `nd_interface_ethernet_trunk_host`
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator._validate_xe_member_modes()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_trunk_host(f"{method_name}a")
+        yield responses_pc_trunk_host(f"{method_name}b")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = PortChannelTrunkHostInterfaceOrchestrator(rest_send=rest_send)
+    match = r"required=iosXeTrunkHost.*nd_interface_ethernet_trunk_host"
+    with pytest.raises(RuntimeError, match=match):
+        instance.preflight([_build_xe_pc_model(ports=["GigabitEthernet1/0/3"])])
