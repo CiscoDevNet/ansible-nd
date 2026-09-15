@@ -16,6 +16,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
     _is_update_needed,
     _raise_vpc_error,
+    get_config_actions,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.query import (
     _is_switch_config_in_sync,
@@ -522,6 +523,25 @@ def custom_vpc_update(nrm: Any) -> dict[str, Any] | None:
         )
 
 
+def _fabric_switches_cached(nrm: Any, nd_v2: NDModuleV2, fabric_name: str) -> dict[str, dict[str, Any]]:
+    """
+    Return the fabric switch inventory, reading it at most once per run.
+
+    ``custom_vpc_delete`` builds a fresh ``NDModuleV2`` per pair, so deleting
+    several already-unpaired pairs would otherwise issue one identical inventory
+    GET per pair. Cache the snapshot on ``module.params`` (keyed by fabric) so the
+    delete phase reads it once. The deploy phase deliberately re-reads inventory
+    after configSave and is not served from this cache.
+    """
+    cache = nrm.module.params.get("_fabric_switches_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        nrm.module.params["_fabric_switches_cache"] = cache
+    if fabric_name not in cache:
+        cache[fabric_name] = _validate_fabric_switches(nd_v2, fabric_name)
+    return cache[fabric_name]
+
+
 def _flag_pending_member_switches_for_deploy(
     nrm: Any,
     nd_v2: NDModuleV2,
@@ -539,8 +559,14 @@ def _flag_pending_member_switches_for_deploy(
     Only switches explicitly reported out-of-sync are flagged, so the run stays
     idempotent once the switches are back in sync.
     """
+    config_actions = get_config_actions(nrm.module)
+    if not (config_actions.get("save") or config_actions.get("deploy")):
+        # Neither save nor deploy is requested, so the deploy step will not flush
+        # a staged removal. Skip the inventory read and the misleading warning.
+        return
+
     try:
-        switches = _validate_fabric_switches(nd_v2, fabric_name)
+        switches = _fabric_switches_cached(nrm, nd_v2, fabric_name)
     except Exception as switch_query_error:
         nrm.module.warn(
             f"Could not verify member switch sync state after idempotent unpair of "

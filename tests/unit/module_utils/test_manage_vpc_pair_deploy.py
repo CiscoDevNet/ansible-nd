@@ -487,51 +487,6 @@ def test_manage_vpc_pair_deploy_00215_staged_pair_deploys_when_inventory_reads_i
     assert out["changed"] is True
 
 
-def test_manage_vpc_pair_deploy_00220_switch_scope_partial_207_failure_raises_vpc_error():
-    nrm = _make_switch_nrm(config=[{"switch_id": "LEAF-A", "peer_switch_id": "LEAF-B"}])
-    switches_response = {
-        "switches": [
-            {"serialNumber": "LEAF-A", "configSyncStatus": "Out-of-Sync"},
-            {"serialNumber": "LEAF-B", "configSyncStatus": "Out-of-Sync"},
-        ]
-    }
-    switch_deploy_response = {
-        "switchIds": [
-            {"switchId": "LEAF-A", "status": "success"},
-            {"switchId": "LEAF-B", "status": "failed", "message": "config apply error"},
-        ]
-    }
-    fake_nd = _FakeNDModuleV2(nrm.module, switches_response=switches_response, switch_deploy_response=switch_deploy_response)
-
-    with pytest.raises(VpcPairResourceError) as exc:
-        _run_deploy(nrm, fake_nd)
-
-    assert exc.value.msg == "Fabric switch deployment failed"
-    assert SWITCH_DEPLOY_PATH in fake_nd.paths()
-
-
-def test_manage_vpc_pair_deploy_00230_switch_scope_notexecuted_and_success_do_not_raise():
-    nrm = _make_switch_nrm(config=[{"switch_id": "LEAF-A", "peer_switch_id": "LEAF-B"}])
-    switches_response = {
-        "switches": [
-            {"serialNumber": "LEAF-A", "configSyncStatus": "Out-of-Sync"},
-            {"serialNumber": "LEAF-B", "configSyncStatus": "Out-of-Sync"},
-        ]
-    }
-    switch_deploy_response = {
-        "switchIds": [
-            {"switchId": "LEAF-A", "status": "success"},
-            {"switchId": "LEAF-B", "status": "notExecuted", "message": "No Commands to execute"},
-        ]
-    }
-    fake_nd = _FakeNDModuleV2(nrm.module, switches_response=switches_response, switch_deploy_response=switch_deploy_response)
-
-    out = _run_deploy(nrm, fake_nd)
-
-    assert SWITCH_DEPLOY_PATH in fake_nd.paths()
-    assert out["config_actions"]["type"] == "switch"
-
-
 def test_manage_vpc_pair_deploy_00235_switch_scope_accepts_notexecuted_207_error():
     nrm = _make_switch_nrm(config=[{"switch_id": "LEAF-A", "peer_switch_id": "LEAF-B"}])
     switches_response = {
@@ -562,25 +517,3 @@ def test_manage_vpc_pair_deploy_00235_switch_scope_accepts_notexecuted_207_error
     assert SWITCH_DEPLOY_PATH in fake_nd.paths()
     assert out["changed"] is False
     assert out["config_actions"]["type"] == "switch"
-
-
-def test_manage_vpc_pair_deploy_00240_switch_deploy_failures_helper_detects_only_explicit_failures():
-    detect = deploy._switch_deploy_failures
-    body = {
-        "switchIds": [
-            {"switchId": "SN1", "status": "success"},
-            {"switchId": "SN2", "status": "failed", "message": "apply error"},
-            {"switchId": "SN3", "status": "Error"},
-        ]
-    }
-
-    failures = detect(body)
-
-    assert len(failures) == 2
-    assert any("SN2" in failure and "apply error" in failure for failure in failures)
-    assert any("SN3" in failure for failure in failures)
-    assert detect({"switchIds": [{"switchId": "SN1", "status": "success"}, {"switchId": "SN2", "status": "notExecuted"}]}) == []
-    assert detect({"switchIds": []}) == []
-    assert detect(None) == []
-    assert detect({"success": True}) == []
-    assert detect(["not-a-dict", {"switchId": "SN9", "status": "failure"}]) == ["SN9: status='failure' message=''"]

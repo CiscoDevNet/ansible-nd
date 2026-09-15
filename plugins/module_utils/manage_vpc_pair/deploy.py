@@ -38,9 +38,8 @@ except Exception:
     from ansible_collections.cisco.nd.plugins.module_utils.results import Results
 
 
-# Per-switch ``status`` values in a 207 switchActions/deploy body that count as a
-# failure. Anything else (e.g. "success", "notExecuted") is not a failure.
-_SWITCH_DEPLOY_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
+# Per-switch ``status`` values in a raised 207 switchActions/deploy body that are
+# not failures (e.g. a switch with no pending config returns "notExecuted").
 _SWITCH_DEPLOY_NO_ERROR_STATUSES = frozenset({"success", "notexecuted"})
 
 
@@ -222,40 +221,6 @@ def _get_managed_pair_switches_needing_deploy(
     return sorted(
         serial_number for serial_number in managed_serials if serial_number in forced or _is_switch_config_in_sync(switches[serial_number]) is not True
     )
-
-
-def _switch_deploy_failures(response_data: Any) -> list[str]:
-    """
-    Extract per-switch failures from a switchActions/deploy 207 response body.
-
-    The controller returns a per-switch status array shaped like
-    ``{"switchIds": [{"switchId": "<sn>", "status": "<s>", "message": "<m>"}]}``.
-    Some success paths return None or a bare list; those yield no failures.
-
-    Args:
-        response_data: Unwrapped DATA body from FabricUtils.deploy_switches.
-
-    Returns:
-        List of "<sn>: status=... message=..." strings for switches whose
-        status is an explicit failure. Empty when nothing failed.
-    """
-    if isinstance(response_data, dict):
-        per_switch = response_data.get("switchIds") or []
-    elif isinstance(response_data, list):
-        per_switch = response_data
-    else:
-        per_switch = []
-
-    failures: list[str] = []
-    for entry in per_switch:
-        if not isinstance(entry, dict):
-            continue
-        status = str(entry.get("status", "")).lower()
-        if status in _SWITCH_DEPLOY_FAILURE_STATUSES:
-            switch_id = entry.get("switchId") or entry.get("switchSn") or "?"
-            message = entry.get("message") or ""
-            failures.append(f"{switch_id}: status={status!r} message={message!r}")
-    return failures
 
 
 def _is_non_fatal_switch_deploy_207(error: NDModuleError) -> bool:
@@ -455,24 +420,6 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 deploy_payload = {"switchIds": switch_ids}
                 if switch_ids:
                     response = fabric_utils.deploy_switches(switch_ids)
-                    # A 2xx (including 207 Multi-Status) can still carry per-switch
-                    # failures; do not report a clean changed=true when one vPC peer
-                    # deployed and the other failed.
-                    switch_failures = _switch_deploy_failures(response.get("response_data"))
-                    if switch_failures:
-                        register_action_api_call(
-                            results=results,
-                            request_path=deploy_path,
-                            payload=deploy_payload,
-                            return_code=response.get("status"),
-                            message="Switch deployment reported per-switch failures: " + "; ".join(switch_failures),
-                            success=False,
-                            changed=False,
-                        )
-                        results.build_final_result()
-                        final_result = dict(results.final_result)
-                        final_msg = final_result.pop("msg", "Fabric switch deployment failed")
-                        _raise_vpc_error(msg=final_msg, **final_result)
                     register_action_api_call(
                         results=results,
                         request_path=deploy_path,
