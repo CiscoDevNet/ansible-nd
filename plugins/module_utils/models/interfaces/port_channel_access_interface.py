@@ -62,7 +62,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
     default_network_os_type,
     default_policy_type,
-    normalize_ethernet_interface_name,
+    normalize_member_interface_names,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
@@ -248,16 +248,14 @@ class PortChannelAccessPolicyModel(StormControlMutexMixin):
         # Summary
 
         Normalize each member name to its wire-canonical prefix through the shared cross-OS helper
-        (`ethernet_common.normalize_ethernet_interface_name`): `e1/1` / `eth1/1` -> `Ethernet1/1`, `gi1/0/2` -> `GigabitEthernet1/0/2`,
+        (`ethernet_common.normalize_member_interface_names`): `e1/1` / `eth1/1` -> `Ethernet1/1`, `gi1/0/2` -> `GigabitEthernet1/0/2`,
         any other family verbatim. Members are always physical ethernet ports; matching the wire key exactly keeps idempotency.
 
         ## Raises
 
         None
         """
-        if not isinstance(value, list):
-            return value
-        return [normalize_ethernet_interface_name(name) for name in value]
+        return normalize_member_interface_names(value)
 
 
 class XePortChannelAccessPolicyModel(InterfacePolicyStrictBase):
@@ -336,15 +334,13 @@ class XePortChannelAccessPolicyModel(InterfacePolicyStrictBase):
         """
         # Summary
 
-        Normalize each member name through `ethernet_common.normalize_ethernet_interface_name` (see the NX-OS branch).
+        Normalize each member name through `ethernet_common.normalize_member_interface_names` (see the NX-OS branch).
 
         ## Raises
 
         None
         """
-        if not isinstance(value, list):
-            return value
-        return [normalize_ethernet_interface_name(name) for name in value]
+        return normalize_member_interface_names(value)
 
 
 class XePortChannelAccessNetworkOSModel(NDNestedModel):
@@ -573,6 +569,8 @@ class PortChannelAccessInterfaceModel(NDBaseModel):
                                             lacp_suspend=dict(type="bool"),
                                             link_type=dict(type="str", choices=[e.value for e in LinkTypeEnum]),
                                             monitor=dict(type="bool"),
+                                            # str with no choices: the NX-OS branch takes the default/jumbo enum,
+                                            # the IOS-XE branch an int (the branch models validate the form).
                                             mtu=dict(type="str"),
                                             negotiate_auto=dict(type="bool"),
                                             netflow=dict(type="bool"),
@@ -580,6 +578,7 @@ class PortChannelAccessInterfaceModel(NDBaseModel):
                                             netflow_sampler=dict(type="str"),
                                             orphan_port=dict(type="bool"),
                                             pfc=dict(type="bool"),
+                                            # Superset of both branches' modes; the NX-OS branch model rejects the PAgP auto/desirable values.
                                             port_channel_mode=dict(type="str", choices=[e.value for e in XePortChannelModeEnum]),
                                             port_type_edge_trunk=dict(type="bool"),
                                             ports=dict(type="list", elements="str"),
