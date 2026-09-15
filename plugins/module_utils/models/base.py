@@ -8,7 +8,7 @@ from abc import ABC
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
-from ansible_collections.cisco.nd.plugins.module_utils.utils import has_removals, issubset
+from ansible_collections.cisco.nd.plugins.module_utils.utils import NO_LOG_PLACEHOLDER, has_removals, issubset
 
 
 def _strip_none_values(data):
@@ -134,6 +134,43 @@ class NDBaseModel(BaseModel, ABC):
 
         return result
 
+    @classmethod
+    def secret_field_keys(cls, by_alias: bool = False) -> set[str]:
+        """Names of fields tagged ``json_schema_extra={"secret": True}``.
+
+        Aliases when ``by_alias`` is True (payload shape), else Python field
+        names (config/input shape). The single source of truth for which fields
+        are secret, used both to keep them out of output and to register their
+        values for ``no_log`` masking.
+        """
+        keys: set[str] = set()
+        for field_name, field_info in cls.model_fields.items():
+            extra = field_info.json_schema_extra
+            if isinstance(extra, dict) and extra.get("secret"):
+                keys.add((field_info.alias or field_name) if by_alias else field_name)
+        return keys
+
+    @classmethod
+    def collect_secret_values(cls, config_item: dict[str, Any]) -> set[str]:
+        """Secret string values in a raw Ansible config item, for no_log masking.
+
+        Ansible auto-masks ``no_log`` argument-spec params, but not values in
+        free-form/nested dicts it does not statically model. ``NDStateMachine``
+        registers whatever this returns with ``module.no_log_values`` so the
+        value-based scrubber strips them from the invocation echo and result.
+
+        Default: top-level fields tagged secret. Models with secrets nested in a
+        free-form dict (e.g. links ``template_inputs``) override to add those.
+        """
+        values: set[str] = set()
+        if not isinstance(config_item, dict):
+            return values
+        for key in cls.secret_field_keys(by_alias=False):
+            value = config_item.get(key)
+            if value:
+                values.add(value)
+        return values
+
     def to_payload(self, **kwargs) -> Dict[str, Any]:
         """Convert model to API payload format (aliased keys, nested structures)."""
         data = self.model_dump(
@@ -147,25 +184,51 @@ class NDBaseModel(BaseModel, ABC):
         return self._build_payload_nested(data)
 
     def to_config(self, **kwargs) -> Dict[str, Any]:
-        """Convert model to Ansible config format (Python field names, flat structure)."""
-        return self.model_dump(
+        """Convert model to Ansible config format (Python field names, flat structure).
+
+        Secret-tagged fields are masked to ``NO_LOG_PLACEHOLDER`` in output
+        (after/before/proposed): the key stays visible so callers see
+        the field is set, but the value is never shown. The real value remains
+        only in to_payload() (the controller request).
+        """
+        data = self.model_dump(
             by_alias=False,
             exclude_none=True,
             context={"mode": "config"},
             exclude=self.config_exclude_fields or None,
             **kwargs,
         )
+        for key in self.secret_field_keys(by_alias=False):
+            if key in data:
+                data[key] = NO_LOG_PLACEHOLDER
+        return data
+
+    def to_gathered_config(self, **kwargs) -> Dict[str, Any]:
+        """Convert the model to replay-safe gathered configuration.
+
+        Most resources use the normal Ansible config representation. Models
+        containing write-only fields may override this method to omit values that
+        cannot be read back from the controller and therefore cannot safely be
+        replayed as declarative input.
+        """
+        return self.to_config(**kwargs)
 
     # --- Core Deserialization ---
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any], **kwargs) -> "NDBaseModel":
-        """Create model instance from API response dict (validation context ``mode=response``)."""
-        context = {"mode": "response", **(kwargs.pop("context", None) or {})}
+    def from_response(cls, response: dict[str, Any], **kwargs) -> "NDBaseModel":
+        """Create model instance from API response dict.
+
+        Marks the validation context with both ``mode="response"`` (resource-manager
+        convention) and ``source="response"`` (links tolerant-read convention) so
+        models can be lenient about controller-only shapes (e.g. links tolerate
+        policy types they cannot model) without relaxing validation of user input.
+        """
+        context = {"mode": "response", **(kwargs.pop("context", None) or {}), "source": "response"}
         return cls.model_validate(response, by_alias=True, context=context, **kwargs)
 
     @classmethod
-    def from_config(cls, ansible_config: Dict[str, Any], **kwargs) -> "NDBaseModel":
+    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "NDBaseModel":
         """Create model instance from Ansible config dict.
 
         Strips None values recursively before validation so that Ansible's
@@ -229,11 +292,17 @@ class NDBaseModel(BaseModel, ABC):
     # --- Diff & Merge ---
 
     def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
-        """Export for diff comparison, excluding sensitive fields."""
+        """Export for diff comparison, excluding sensitive fields.
+
+        Secret-tagged fields are excluded from the comparison so a change to
+        only a secret is not (and cannot be) detected as a diff, keeping runs
+        idempotent when the controller does not echo secrets back on read.
+        """
+        exclude = set(self.exclude_from_diff) | self.secret_field_keys(by_alias=False)
         return self.model_dump(
             by_alias=True,
             exclude_none=True,
-            exclude=self.exclude_from_diff or None,
+            exclude=exclude or None,
             mode="json",
             **kwargs,
         )

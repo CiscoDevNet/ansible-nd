@@ -29,7 +29,25 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Optional, TypeVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+
 T = TypeVar("T")
+
+# 4xx codes that are transient for every verb and therefore stay retryable: 408 Request Timeout and 421 Misdirected Request
+# (RFC 9110 sections 15.5.9 / 15.5.20), 425 Too Early (RFC 8470 section 5.2), and 429 Too Many Requests (rate limiting).
+# ND 4.2.1 documents none of 408/421/425 for any endpoint, so retaining them simply preserves the pre-#502 retry behavior for
+# codes ND is not expected to send. RFC 9110 calls for retrying 421 on a *different* connection; connection lifecycle belongs
+# to Ansible's persistent httpapi transport (which re-establishes a dropped connection transparently), so the retry rides
+# whatever connection that layer provides.
+_TRANSIENT_CLIENT_ERROR_CODES = frozenset({408, 421, 425, 429})
+
+# 4xx codes that are additionally transient for GET. The ND 4.2.1 OpenAPI documents 409 Conflict on safe GETs (manage v1.1.411:
+# /links, /links/{linkId}, /logicalLinks, /remoteFabrics, /anomalyRules/postProcessingRules; onemanage documents three more)
+# where the conflict is with the resource's *current* state and can clear on its own (e.g. topology reconciliation after a
+# switch add), so GET keeps retrying/polling through it. For mutations 409 remains terminal: the documented mutation 409s are
+# create/update conflicts (resource already exists), which an identical replay cannot resolve — retrying them would reintroduce
+# the full-retry-budget stall that issue #457 removes.
+_TRANSIENT_GET_CLIENT_ERROR_CODES = frozenset({409})
 
 # Per-item status literals that mark a failure inside a Multi-Status body. ND sends these
 # on HTTP 207 and, for some endpoints, on HTTP 200 as well, so the body is scanned on any
@@ -228,7 +246,7 @@ class NdV1Strategy:
     ## Description
 
     Implements status code validation and error message extraction
-    for ND API v1 (ND 4.2+).
+    for ND API v1 (ND 4.2+). Satisfies `ResponseValidationStrategy` and the optional `TerminalClientErrorPolicy` capability.
 
     ## Status Codes
 
@@ -397,6 +415,45 @@ class NdV1Strategy:
         None
         """
         return return_code == self.not_found_code
+
+    def is_terminal_client_error(self, return_code: int, verb: HttpVerbEnum) -> bool:
+        """
+        # Summary
+
+        Check whether `return_code` is a 4xx client error that is terminal (not retryable) for `verb` (v1).
+
+        ## Description
+
+        A 4xx response proves the request reached the application and was rejected, so replaying the identical request is deterministic and the
+        failure is terminal — except for the transient codes below, which stay retryable (see issue #457):
+
+        - For every verb: 408 Request Timeout and 421 Misdirected Request (RFC 9110), 425 Too Early (RFC 8470), and 429 Too Many Requests.
+        - For GET only: 409 Conflict, which the ND 4.2.1 OpenAPI documents on safe GETs where the conflict is with the resource's current state and
+          can clear on its own (GET retries also serve eventual-consistency polling). For mutations 409 is a deterministic create/update conflict
+          and stays terminal.
+
+        Non-4xx codes always return False; this method classifies only client errors, leaving success and 5xx policy to the caller.
+
+        ## Parameters
+
+        - return_code: HTTP status code to check
+        - verb: The HTTP verb of the request the response answers
+
+        ## Returns
+
+        - True if the code is a 4xx client error that is terminal for `verb`, False otherwise
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(return_code, int) or not 400 <= return_code <= 499:
+            return False
+        if return_code in _TRANSIENT_CLIENT_ERROR_CODES:
+            return False
+        if verb == HttpVerbEnum.GET and return_code in _TRANSIENT_GET_CLIENT_ERROR_CODES:
+            return False
+        return True
 
     def is_changed(self, response: dict) -> bool:
         """

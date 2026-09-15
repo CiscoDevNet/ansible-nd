@@ -20,6 +20,8 @@ description:
   O(config[].config_data.network_os.policy.ports) and inherit access-mode configuration from the port-channel policy.
 - Member interface field mutability is restricted while members of a port-channel; only description, admin_state, and
   extra_config can be modified on members via the C(nd_interface_ethernet_access) module.
+- A port-channel that lists a member ethernet already belonging to a different port-channel is rejected before any
+  change is made (also in check mode); remove the member from its current port-channel first.
 author:
 - Allen Robel (@allenrobel)
 options:
@@ -222,6 +224,9 @@ options:
         - When V(true), all queued port-channel changes are deployed in a single bulk API call at the end of module
           execution via the C(interfaceActions/deploy) API. Only the port-channels modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
+        - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
+          accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
+          changes staged but undeployed.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
         - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
@@ -461,9 +466,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_access_interface import (
     PortChannelAccessInterfaceModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator, finalize_accepted_intent
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_access_interface import (
     PortChannelAccessInterfaceOrchestrator,
 )
@@ -482,14 +487,7 @@ def main():
     """
     argument_spec = nd_argument_spec()
     argument_spec.update(PortChannelAccessInterfaceModel.get_argument_spec())
-    argument_spec.update(
-        config_actions={
-            "type": "dict",
-            "options": {
-                "deploy": {"type": "bool", "default": False},
-            },
-        },
-    )
+    argument_spec.update(config_actions_spec(include=("deploy",)))
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -508,9 +506,7 @@ def main():
         )
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
-        config_actions = module.params.get("config_actions") or {}
-        deploy = config_actions.get("deploy", False)
-        nd_state_machine.model_orchestrator.deploy = deploy
+        deploy = nd_state_machine.model_orchestrator.apply_config_actions(module.params)
 
         module_log.debug(
             "manage_state begin state=%s check_mode=%s deploy=%s",
@@ -531,6 +527,7 @@ def main():
         module_log.exception("NDStateMachineError during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module execution failed: {str(e)}"
+        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
@@ -539,6 +536,7 @@ def main():
         module_log.exception("Unhandled exception during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module failed: {str(e)}"
+        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)

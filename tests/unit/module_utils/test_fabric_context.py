@@ -15,15 +15,13 @@ and switches list endpoints, surfaces 404s as "fabric not found", parses the
 
 # pylint: disable=disallowed-name,protected-access,redefined-outer-name,too-many-lines
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 import inspect
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformType
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext, _Sentinel
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -172,6 +170,122 @@ def test_fabric_context_00110() -> None:
 
     assert summary is None
     assert exists is False
+
+
+def test_fabric_context_00170() -> None:
+    """
+    # Summary
+
+    Verify `fabric_summary` fails closed when a 200 response body carries an embedded `code` error key (issue #400).
+
+    ## Test
+
+    - GET (summary) returns 200 with DATA `{"code": 404, "message": "..."}`
+    - `fabric_summary` raises `RuntimeError` rather than accepting the payload as a valid summary
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_summary
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+    match = r"returned an embedded error instead of a fabric summary"
+    with pytest.raises(RuntimeError, match=match):
+        result = instance.fabric_summary  # pylint: disable=unused-variable
+
+
+def test_fabric_context_00180() -> None:
+    """
+    # Summary
+
+    Verify a fetched-but-absent (`None`) fabric summary is cached, so repeated reads do not re-issue the GET.
+
+    `None` is a legitimate fetched value here ("the fabric does not exist"), so `_fabric_summary` cannot use `None` to
+    mean "not yet fetched" — it is initialized to the `_Sentinel.UNSET` sentinel instead. Without that sentinel every
+    `fabric_exists()` call against a nonexistent fabric re-queries the controller.
+
+    ## Test
+
+    - GET (summary) returns 404 exactly once; the fixture supplies a single response
+    - `fabric_summary` and `fabric_exists` are read repeatedly
+    - Every read is served from cache; a second GET would exhaust the response generator and fail the test
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_summary
+    - FabricContext.fabric_exists
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="missing_fabric")
+        assert instance._fabric_summary is _Sentinel.UNSET  # pylint: disable=protected-access
+        first = instance.fabric_summary
+        # The cached value is now None (fetched, absent) -- these reads must not re-query.
+        second = instance.fabric_summary
+        exists_first = instance.fabric_exists()
+        exists_second = instance.fabric_exists()
+
+    assert first is None
+    assert second is None
+    assert exists_first is False
+    assert exists_second is False
+    assert instance._fabric_summary is None  # pylint: disable=protected-access
+
+
+def test_fabric_context_00190() -> None:
+    """
+    # Summary
+
+    Verify `invalidate` clears a cached-absent (`None`) fabric summary rather than pinning it, so a fabric created
+    after the first read is observed on the next access.
+
+    Guards the sentinel's reset path: `invalidate` must restore `_Sentinel.UNSET`, not `None`, or the summary would be
+    treated as already-fetched-and-absent forever.
+
+    ## Test
+
+    - GET (summary) returns 404; `fabric_summary` caches `None`
+    - `invalidate` is called
+    - GET (summary) returns 200; `fabric_summary` re-fetches and returns the new summary
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_summary
+    - FabricContext.invalidate
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+        yield responses_fabric_context(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="missing_fabric")
+        before = instance.fabric_summary
+        instance.invalidate()
+        assert instance._fabric_summary is _Sentinel.UNSET  # pylint: disable=protected-access
+        after = instance.fabric_summary
+
+    assert before is None
+    assert after is not None
+    assert after.get("name") == "missing_fabric"
 
 
 # =============================================================================
@@ -474,6 +588,93 @@ def test_fabric_context_00220() -> None:
         "FDO12345ABC": "192.168.12.151",
         "FDO12345ABD": "192.168.12.152",
     }
+
+
+def test_fabric_context_00230() -> None:
+    """
+    # Summary
+
+    Verify `switches` retains the raw switch records and `get_platform_type` resolves each switch's `platformType`
+    (nested under `additionalData`) to a `PlatformType`.
+
+    ## Test
+
+    - GET (switches) returns four switches: nx-os, ios-xe, one with no `additionalData`, and sonic
+    - `switches` returns the raw four-record list
+    - `get_platform_type` returns `PlatformType.NX_OS` / `PlatformType.IOS_XE` for the first two
+    - `get_platform_type` returns `None` for the switch that reports no `platformType`
+    - `get_platform_type` returns `PlatformType.SONIC` for the sonic switch (guards the omitted-member defect:
+      an unrecognized value falls through `try/except ValueError` to `None`, silently hiding the platform)
+    - `get_platform_type` raises `RuntimeError` for an IP not in the fabric
+
+    ## Classes and Methods
+
+    - FabricContext.switches
+    - FabricContext.get_platform_type
+    - FabricContext._load_switch_maps
+    """
+    method_name = inspect.stack()[0][3]
+    key = f"{method_name}a"
+
+    def responses():
+        yield responses_fabric_context(key)
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+        switches = instance.switches
+
+    assert len(switches) == 4
+    assert switches[0]["switchId"] == "FDO12345ABC"
+    # `switches` returns a shallow copy: mutating it must not corrupt the cache.
+    switches.append({"fabricManagementIp": "10.0.0.9", "switchId": "BOGUS"})
+    assert len(instance.switches) == 4
+    assert instance.get_platform_type("192.168.12.151") == PlatformType.NX_OS
+    assert instance.get_platform_type("192.168.12.152") == PlatformType.IOS_XE
+    # Switch exists but reports no platformType -> None (not a raise).
+    assert instance.get_platform_type("192.168.12.153") is None
+    # SONIC must resolve rather than falling through to None (omitted-member defect).
+    assert instance.get_platform_type("192.168.12.154") == PlatformType.SONIC
+
+    match = r"No switch found with fabricManagementIp '10\.0\.0\.1' in fabric 'fabric_1'"
+    with pytest.raises(RuntimeError, match=match):
+        instance.get_platform_type("10.0.0.1")
+
+
+def test_fabric_context_00250() -> None:
+    """
+    # Summary
+
+    Verify a switches-endpoint 404 for a nonexistent fabric raises "fabric not found" rather than a misleading
+    "switch not found" (issue #399). The 404 is confirmed against `fabric_summary` before raising.
+
+    ## Test
+
+    - GET (switches) returns 404
+    - `_load_switch_maps` consults `fabric_summary` (also 404) and raises the fabric-level error
+    - The message matches `validate_for_mutation`'s "fabric not found" wording
+
+    ## Classes and Methods
+
+    - FabricContext.switch_map
+    - FabricContext._load_switch_maps
+    - FabricContext.fabric_exists
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")  # switches 404
+        yield responses_fabric_context(f"{method_name}b")  # summary 404 (fabric_exists confirmation)
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = FabricContext(rest_send=rest_send, fabric_name="missing_fabric")
+    match = r"Fabric 'missing_fabric' not found"
+    with pytest.raises(RuntimeError, match=match):
+        result = instance.switch_map  # pylint: disable=unused-variable
 
 
 # =============================================================================
