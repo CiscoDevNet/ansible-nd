@@ -367,12 +367,13 @@ def main():
             module.fail_json(msg=f"Module execution failed: {str(e)}", **output.format())
         return
 
-    nd_state_machine = NDStateMachine(
-        module=module,
-        model_orchestrator=FabricUpdateGroupOrchestrator,
-    )
+    nd_state_machine = None
 
     try:
+        nd_state_machine = NDStateMachine(
+            module=module,
+            model_orchestrator=FabricUpdateGroupOrchestrator,
+        )
         module_log.debug("manage_state begin state=%s check_mode=%s", module.params.get("state"), module.check_mode)
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
