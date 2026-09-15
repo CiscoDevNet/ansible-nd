@@ -1,19 +1,31 @@
 name: CI
 on:
-  # Triggers the workflow on push or pull request events but only for the develop branch
+  # Triggers the workflow on push or pull request events for the develop and main branches
   push:
     branches:
       - develop
       - main
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "changelogs/**"
+      - "playbooks/**"
   pull_request:
     branches:
       - develop
       - main
-  # schedule:
-  #   # * is a special character in YAML so you have to quote this string
-  #   - cron: '0 6 * * *'
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "changelogs/**"
+      - "playbooks/**"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
+
+# Cancel superseded runs on the same branch / PR to save Actions minutes
+concurrency:
+  group: ci-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   pep8-black:
@@ -32,86 +44,50 @@ jobs:
   build:
     name: Build Collection
     runs-on: ubuntu-latest
-    strategy: &ansible_strategy
-      fail-fast: false
-      # https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html#ansible-core-support-matrix
-      # https://access.redhat.com/support/policy/updates/ansible-automation-platform#coreversion
-      matrix:
-        include:
-          # Ansible 2.19: supports Python 3.11 - 3.13
-          - ansible_version: "stable-2.19"
-            python_version: "3.13"
-          - ansible_version: "stable-2.19"
-            python_version: "3.12"
-          - ansible_version: "stable-2.19"
-            python_version: "3.11"
-
-          # Ansible 2.18: supports Python 3.11 - 3.13
-          - ansible_version: "stable-2.18"
-            python_version: "3.13"
-          - ansible_version: "stable-2.18"
-            python_version: "3.12"
-          - ansible_version: "stable-2.18"
-            python_version: "3.11"
-
-          # Ansible 2.17: supports Python 3.10 - 3.12
-          - ansible_version: "stable-2.17"
-            python_version: "3.12"
-          - ansible_version: "stable-2.17"
-            python_version: "3.11"
-          - ansible_version: "stable-2.17"
-            python_version: "3.10"
-
-          # Ansible 2.16: supports Python 3.10 - 3.12
-          - ansible_version: "stable-2.16"
-            python_version: "3.12"
-          - ansible_version: "stable-2.16"
-            python_version: "3.11"
-          - ansible_version: "stable-2.16"
-            python_version: "3.10"
-
+    needs:
+      - pep8-black
+    # The collection tarball is identical regardless of Python / ansible-core,
+    # so it is built once and reused by every downstream job.
     steps:
       - name: Check out code
         uses: actions/checkout@v6
 
-      - name: Set up Python ${{ matrix.python_version }}
+      - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python_version }}
+          python-version: "3.13"
 
-      - name: Install ansible-base (${{ matrix.ansible_version }})
-        run: pip install https://github.com/ansible/ansible/archive/${{ matrix.ansible_version }}.tar.gz --disable-pip-version-check
+      - name: Install ansible-core (stable-2.19)
+        run: pip install https://github.com/ansible/ansible/archive/stable-2.19.tar.gz --disable-pip-version-check
 
       - name: Build a collection tarball
         run: ansible-galaxy collection build --output-path "${GITHUB_WORKSPACE}/.cache/collection-tarballs"
 
-      - name: Store migrated collection artifacts
-        uses: actions/upload-artifact@v7
+      - name: Store collection artifact
+        uses: actions/upload-artifact@v8
         with:
-          name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
+          name: collection
           path: .cache/collection-tarballs
 
   ansible-galaxy-importer:
     name: Ansible Galaxy-Importer Check
     needs:
-      - pep8-black
       - build
     runs-on: ubuntu-latest
-    strategy: *ansible_strategy
-
+    # The importer check is version-independent, so it runs once.
     steps:
-      - name: Set up Python ${{ matrix.python_version }}
+      - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python_version }}
+          python-version: "3.13"
 
-      - name: Install ansible-core (${{ matrix.ansible_version }})
-        run: pip install https://github.com/ansible/ansible/archive/${{ matrix.ansible_version }}.tar.gz --disable-pip-version-check
+      - name: Install ansible-core (stable-2.19)
+        run: pip install https://github.com/ansible/ansible/archive/stable-2.19.tar.gz --disable-pip-version-check
 
-      - name: Download migrated collection artifacts
+      - name: Download collection artifact
         uses: actions/download-artifact@v8
         with:
-          name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
+          name: collection
           path: .cache/collection-tarballs
 
       - name: Install the collection tarball
@@ -149,9 +125,9 @@ jobs:
           exit(err)
 
       - name: Store galaxy_importer check log file
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v8
         with:
-          name: galaxy-importer-log-${{ matrix.python_version }}-${{ matrix.ansible_version }}
+          name: galaxy-importer-log
           path: .cache/collection-tarballs/importer_result.json
 
   ansible-test:
@@ -159,7 +135,20 @@ jobs:
     needs:
       - ansible-galaxy-importer
     runs-on: ubuntu-latest
-    strategy: *ansible_strategy
+    strategy:
+      fail-fast: false
+      # ansible-test sanity runs inside the default --docker container, which
+      # ignores the runner host Python, so one cell per ansible-core version is enough.
+      matrix:
+        include:
+          - ansible_version: "stable-2.19"
+            python_version: "3.13"
+          - ansible_version: "stable-2.18"
+            python_version: "3.13"
+          - ansible_version: "stable-2.17"
+            python_version: "3.12"
+          - ansible_version: "stable-2.16"
+            python_version: "3.12"
 
     steps:
       - name: Set up Python ${{ matrix.python_version }}
@@ -173,10 +162,10 @@ jobs:
       - name: Install coverage (v4.5.4)
         run: pip install coverage==4.5.4
 
-      - name: Download migrated collection artifacts
+      - name: Download collection artifact
         uses: actions/download-artifact@v8
         with:
-          name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
+          name: collection
           path: .cache/collection-tarballs
 
       - name: Install the collection tarball
@@ -199,7 +188,36 @@ jobs:
     needs:
       - ansible-galaxy-importer
     runs-on: ubuntu-latest
-    strategy: *ansible_strategy
+    strategy:
+      fail-fast: false
+      # https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html#ansible-core-support-matrix
+      # Unit tests exercise each interpreter via --python, so the full matrix is retained.
+      matrix:
+        include:
+          - ansible_version: "stable-2.19"
+            python_version: "3.13"
+          - ansible_version: "stable-2.19"
+            python_version: "3.12"
+          - ansible_version: "stable-2.19"
+            python_version: "3.11"
+          - ansible_version: "stable-2.18"
+            python_version: "3.13"
+          - ansible_version: "stable-2.18"
+            python_version: "3.12"
+          - ansible_version: "stable-2.18"
+            python_version: "3.11"
+          - ansible_version: "stable-2.17"
+            python_version: "3.12"
+          - ansible_version: "stable-2.17"
+            python_version: "3.11"
+          - ansible_version: "stable-2.17"
+            python_version: "3.10"
+          - ansible_version: "stable-2.16"
+            python_version: "3.12"
+          - ansible_version: "stable-2.16"
+            python_version: "3.11"
+          - ansible_version: "stable-2.16"
+            python_version: "3.10"
 
     steps:
       - name: Set up Python ${{ matrix.python_version }}
@@ -213,10 +231,10 @@ jobs:
       - name: Install coverage (v4.5.4)
         run: pip install coverage==4.5.4
 
-      - name: Download migrated collection artifacts
+      - name: Download collection artifact
         uses: actions/download-artifact@v8
         with:
-          name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
+          name: collection
           path: .cache/collection-tarballs
 
       - name: Install the collection tarball
@@ -241,7 +259,34 @@ jobs:
       - units
       - ansible-test
     runs-on: ubuntu-latest
-    strategy: *ansible_strategy
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ansible_version: "stable-2.19"
+            python_version: "3.13"
+          - ansible_version: "stable-2.19"
+            python_version: "3.12"
+          - ansible_version: "stable-2.19"
+            python_version: "3.11"
+          - ansible_version: "stable-2.18"
+            python_version: "3.13"
+          - ansible_version: "stable-2.18"
+            python_version: "3.12"
+          - ansible_version: "stable-2.18"
+            python_version: "3.11"
+          - ansible_version: "stable-2.17"
+            python_version: "3.12"
+          - ansible_version: "stable-2.17"
+            python_version: "3.11"
+          - ansible_version: "stable-2.17"
+            python_version: "3.10"
+          - ansible_version: "stable-2.16"
+            python_version: "3.12"
+          - ansible_version: "stable-2.16"
+            python_version: "3.11"
+          - ansible_version: "stable-2.16"
+            python_version: "3.10"
 
     env:
       MUTEX_URL: https://8v7s765ibh.execute-api.us-west-1.amazonaws.com
@@ -257,10 +302,10 @@ jobs:
       - name: Install coverage (v4.5.4)
         run: pip install coverage==4.5.4
 
-      - name: Download migrated collection artifacts
+      - name: Download collection artifact
         uses: actions/download-artifact@v8
         with:
-          name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
+          name: collection
           path: .cache/collection-tarballs
 
       - name: Install the collection tarball
