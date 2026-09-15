@@ -28,6 +28,10 @@ from typing import ClassVar, Literal, Optional
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.backend import ConfigActionsBackend
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import SWITCH_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionStepResult, ConfigActionsContext, ConfigActionsResult
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -127,6 +131,46 @@ class ConfigActionsOrchestrator(ConfigActionsMixin, NDBaseOrchestrator):
     """Concrete orchestrator with ConfigActionsMixin for testing."""
 
     model_class: ClassVar[type[NDBaseModel]] = StubModel
+
+
+class FacadeBackend:
+    """Backend test double for the controller facade path."""
+
+    def __init__(self, owner=None) -> None:
+        self.owner = owner
+        self.calls = []
+
+    def save(self, context, fabric_name):
+        self.calls.append(("save", fabric_name, context.state))
+        return {"saved": fabric_name}
+
+    def deploy_global(self, context, fabric_name):
+        self.calls.append(("deploy_global", fabric_name, context.state))
+        return {"deployed": fabric_name}
+
+    def deploy_switches(self, context, fabric_name, switch_ids):
+        self.calls.append(("deploy_switches", fabric_name, switch_ids))
+        return {"switch_ids": list(switch_ids)}
+
+    def deploy_resources(self, context, fabric_name, resources):
+        self.calls.append(("deploy_resources", fabric_name, resources))
+        return {"resources": list(resources)}
+
+
+class ConfiguredBackend(FacadeBackend):
+    """Backend test double constructed from the mixin's class-level hook."""
+
+    instances: ClassVar[list["ConfiguredBackend"]] = []
+
+    def __init__(self, owner) -> None:
+        super().__init__(owner)
+        self.instances.append(self)
+
+
+class ConfiguredBackendOrchestrator(ConfigActionsOrchestrator):
+    """Concrete orchestrator that configures the backend hook at class level."""
+
+    config_actions_backend_class: ClassVar[type[ConfigActionsBackend]] = ConfiguredBackend
 
 
 # =============================================================================
@@ -903,3 +947,174 @@ class TestValidateConfigActions:
         """
         with pytest.raises(ValueError, match="deploy=True requires save=True"):
             ConfigActionsOrchestrator.validate_config_actions(save=False, deploy=True, deploy_type="switch")
+
+
+class TestConfigActionsControllerFacade:
+    """Tests for ConfigActionsMixin.execute_config_actions_plan()."""
+
+    def test_facade_uses_configured_classvar_backend(self):
+        """
+        # Summary
+
+        Verify a Pydantic-backed orchestrator can configure the backend hook at class level.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        ConfiguredBackend.instances = []
+        orch = ConfiguredBackendOrchestrator(
+            create_endpoint=StubPostEndpoint,
+            update_endpoint=StubPutEndpoint,
+            delete_endpoint=StubDeleteEndpoint,
+            query_one_endpoint=StubGetEndpoint,
+            query_all_endpoint=StubGetEndpoint,
+            rest_send=_make_rest_send([]),
+        )
+        actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+        context = ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=("SER1",))
+
+        result = orch.execute_config_actions_plan(actions=actions, context=context)
+
+        assert "config_actions_policy" not in ConfiguredBackendOrchestrator.model_fields
+        assert "config_actions_backend_class" not in ConfiguredBackendOrchestrator.model_fields
+        assert len(ConfiguredBackend.instances) == 1
+        assert ConfiguredBackend.instances[0].owner is orch
+        assert ConfiguredBackend.instances[0].calls == [
+            ("save", "FAB1", "merged"),
+            ("deploy_switches", "FAB1", ("SER1",)),
+        ]
+        assert result.status == "completed"
+        assert result.reason == "actions_executed"
+
+    def test_facade_uses_supplied_backend_and_shared_controller(self):
+        """
+        # Summary
+
+        Verify the mixin facade delegates normalized actions to ConfigActionsController.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        orch = _make_orchestrator(_make_rest_send([]))
+        actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+        context = ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=("SER1",))
+        backend = FacadeBackend()
+
+        result = orch.execute_config_actions_plan(actions=actions, context=context, backend=backend)
+
+        assert backend.calls == [
+            ("save", "FAB1", "merged"),
+            ("deploy_switches", "FAB1", ("SER1",)),
+        ]
+        assert result.status == "completed"
+        assert result.reason == "actions_executed"
+
+    def test_facade_requires_backend_configuration(self):
+        """
+        # Summary
+
+        Verify the mixin facade fails clearly when no backend is provided or configured.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        orch = _make_orchestrator(_make_rest_send([]))
+        actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+        context = ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=("SER1",))
+
+        with pytest.raises(ValueError, match="No config actions backend"):
+            orch.execute_config_actions_plan(actions=actions, context=context)
+
+    @pytest.mark.parametrize(
+        ("actions_params", "actions_raw_args", "context", "expected_reason"),
+        [
+            ({}, {}, ConfigActionsContext(fabric_names=(), state="merged", switch_ids=("SER1",)), "no_fabrics"),
+            ({}, {}, ConfigActionsContext(fabric_names=("FAB1",), state="merged", eligible=False, reason="switchless_fabric"), "switchless_fabric"),
+            (
+                {"config_actions": {"save": False, "deploy": False}},
+                {"config_actions": {"save": False, "deploy": False}},
+                ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=("SER1",)),
+                "actions_disabled",
+            ),
+        ],
+    )
+    def test_facade_warns_for_top_level_skipped_results(self, actions_params, actions_raw_args, context, expected_reason):
+        """
+        # Summary
+
+        Verify top-level skipped controller results are surfaced through `rest_send.warn`.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        rest_send = _make_rest_send([])
+        orch = _make_orchestrator(rest_send)
+        actions = parse_config_actions(params=actions_params, raw_args=actions_raw_args, policy=SWITCH_CONFIG_ACTIONS)
+        backend = FacadeBackend()
+
+        result = orch.execute_config_actions_plan(actions=actions, context=context, backend=backend)
+
+        assert result.status == "skipped"
+        assert result.reason == expected_reason
+        assert backend.calls == []
+        warnings = rest_send.sender.ansible_module.warnings
+        assert len(warnings) == 1
+        assert expected_reason in warnings[0]
+
+    def test_facade_warns_for_skipped_action_steps(self):
+        """
+        # Summary
+
+        Verify skipped deploy steps from the controller are surfaced through `rest_send.warn`.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        rest_send = _make_rest_send([])
+        orch = _make_orchestrator(rest_send)
+        actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+        context = ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=())
+        backend = FacadeBackend()
+
+        result = orch.execute_config_actions_plan(actions=actions, context=context, backend=backend)
+
+        assert result.status == "completed"
+        assert result.reason == "actions_executed_with_skips"
+        assert backend.calls == [("save", "FAB1", "merged")]
+        warnings = rest_send.sender.ansible_module.warnings
+        assert len(warnings) == 1
+        assert "deploy" in warnings[0]
+        assert "switch" in warnings[0]
+        assert "no_targets" in warnings[0]
+
+    def test_facade_warns_once_when_all_action_steps_are_skipped(self):
+        """
+        # Summary
+
+        Verify all-skipped controller results emit one top-level warning.
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.execute_config_actions_plan()
+        """
+        rest_send = _make_rest_send([])
+        orch = _make_orchestrator(rest_send)
+        actions = parse_config_actions(params={}, raw_args={}, policy=SWITCH_CONFIG_ACTIONS)
+        result = ConfigActionsResult(
+            requested=actions,
+            effective=actions,
+            status="skipped",
+            reason="no_targets",
+            targets={"fabrics": ("FAB1",), "switches": (), "resources": ()},
+            actions=(ConfigActionStepResult(action="deploy", status="skipped", scope="switch", target="FAB1", error="no_targets"),),
+        )
+
+        orch._warn_skipped_config_actions(result)
+
+        warnings = rest_send.sender.ansible_module.warnings
+        assert warnings == ["Skipping config actions for fabric(s) FAB1: no_targets."]
