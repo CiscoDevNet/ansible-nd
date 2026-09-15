@@ -246,3 +246,25 @@ xe_trunk_host_updated:
         allowed_vlans: "150-250"
         mtu: 8000  # Cat9kv (CML beta) caps system and port MTU at 8978; a real 9300 allows 9198. Keep below both.
         description: "Updated XE trunk description"
+
+# --- IOS-XE fabric-link ownership guard (PR #558) ---
+# Set nd_test_xe_fabric_link_switch_ip and nd_test_xe_fabric_link_interface_name
+# in inventory/extra-vars to enable xe_fabric_link_guard.yaml (skipped when
+# either is unset). The interface must be an IOS-XE port that is the src or dst
+# endpoint of an ND fabric link carrying a link policy (e.g. the leaf side of a
+# Catalyst leaf-spine link). Every module call in that file is expected to be
+# refused in preflight, so no deploy or reset ever reaches the port.
+test_xe_fabric_link_switch_ip: "{{ nd_test_xe_fabric_link_switch_ip | default('') }}"
+test_xe_fabric_link_interface_name: "{{ nd_test_xe_fabric_link_interface_name | default('') }}"
+
+xe_trunk_host_fabric_link:
+  switch_ip: "{{ test_xe_fabric_link_switch_ip }}"
+  interface_names:
+    - "{{ test_xe_fabric_link_interface_name }}"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        allowed_vlans: "100-200"
+        description: "Ansible integration test XE fabric-link guard"

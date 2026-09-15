@@ -7,7 +7,7 @@
 # Requires nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name and
 # nd_test_xe_interface_name) to be set via inventory/extra-vars; tasks/main.yaml
 # gates inclusion of this file on nd_test_xe_switch_ip being defined. The XE
-# interface (default GigabitEthernet3) must exist on the device.
+# interface (default GigabitEthernet1/0/1) must exist on the device.
 #
 # IOS-XE interfaces are merge-only under state: overridden (never reset when
 # absent from config), so this file establishes its baseline with state:
