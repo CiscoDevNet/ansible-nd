@@ -130,3 +130,87 @@ test_pc_501_with_vlan_mapping:
           - customer_vlan_id: ["100"]
             provider_vlan_id: 1100
             dot1q_tunnel: true
+
+# --- IOS-XE coverage (issue #537) ---
+# Set nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name and nd_test_xe_pc_member_a..d) in inventory/extra-vars to
+# enable; xe.yaml is skipped when nd_test_xe_switch_ip is unset. Members default to GigabitEthernet1/0/2-5 on a Catalyst leaf:
+# they must exist as real ports, must not be fabric-link endpoints, and stay at the fabric default (iosXeTrunkHost) so no
+# setup conversion is needed. Port-channel IDs 103-105 are reserved (Catalyst supports 1-128); 105 is a negative-test ID that
+# is never actually created.
+test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
+test_xe_switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+test_xe_pc_member_a: "{{ nd_test_xe_pc_member_a | default('GigabitEthernet1/0/2') }}"
+test_xe_pc_member_b: "{{ nd_test_xe_pc_member_b | default('GigabitEthernet1/0/3') }}"
+test_xe_pc_member_c: "{{ nd_test_xe_pc_member_c | default('GigabitEthernet1/0/4') }}"
+test_xe_pc_member_d: "{{ nd_test_xe_pc_member_d | default('GigabitEthernet1/0/5') }}"
+# A member deliberately converted to iosXeAccess for the negative test. Reset to the fabric default (iosXeTrunkHost) after use.
+test_xe_pc_member_access: "{{ nd_test_xe_pc_member_access | default('GigabitEthernet1/0/6') }}"
+
+xe_negative_member_access:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_names:
+    - "{{ test_xe_pc_member_access }}"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        access_vlan: 100
+        description: "Ansible integration test XE PC negative member"
+
+xe_pc_103:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel103   # lowercase on purpose: the module rewrites the create body to Port-channel103
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        # policy_type intentionally omitted: derived from network_os_type (iosXeTrunkPoHost); xe.yaml asserts the echo carries it.
+        admin_state: true
+        allowed_vlans: "10,20-30"
+        port_channel_mode: active
+        ports:
+          - "{{ test_xe_pc_member_a }}"
+          - "{{ test_xe_pc_member_b }}"
+        description: "Ansible integration test XE PC 103"
+
+xe_pc_104:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel104
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeTrunkPoHost
+        admin_state: true
+        allowed_vlans: "40-50"
+        ports:
+          - "{{ test_xe_pc_member_c }}"
+        description: "Ansible integration test XE PC 104"
+
+xe_pc_103_updated:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel103
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        allowed_vlans: "all"
+        mtu: 8000  # Cat9kv (CML beta) caps port MTU at 8978; a real 9300 allows 9198. Keep below both.
+        port_channel_mode: active
+        ports:
+          - "{{ test_xe_pc_member_a }}"
+          - "{{ test_xe_pc_member_b }}"
+        description: "Updated XE PC 103"
+
+xe_pc_bad_member:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel105
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        allowed_vlans: "10-20"
+        ports:
+          - "{{ test_xe_pc_member_access }}"
