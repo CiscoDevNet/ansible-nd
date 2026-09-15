@@ -1721,6 +1721,48 @@ def test_rest_send_add_response_type_error():
 
 
 # =============================================================================
+# Test: RestSend.response_count
+# =============================================================================
+
+
+def test_rest_send_response_count():
+    """
+    # Summary
+
+    Verify `response_count` reports the number of accumulated responses without copying them: it is the cheap freshness token the
+    orchestrators snapshot before a request and compare after (issue #554, PR #563 review), so it must track `add_response` exactly.
+
+    ## Test
+
+    - A fresh instance reports 0
+    - Each `add_response()` increments it by one and it matches `len(responses)`
+    - Reading it does not go through the deep-copying `responses` property
+
+    ## Classes and Methods
+
+    - RestSend.response_count
+    - RestSend.add_response
+    """
+    params = {"check_mode": False}
+    instance = RestSend(params)
+
+    assert instance.response_count == 0
+
+    instance.add_response({"RETURN_CODE": 200})
+    assert instance.response_count == 1
+    instance.add_response({"RETURN_CODE": 404})
+    assert instance.response_count == 2
+    assert instance.response_count == len(instance.responses)
+
+    def _no_copy(self):  # pylint: disable=unused-argument
+        raise AssertionError("response_count must not read the deep-copying responses property")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(RestSend, "responses", property(_no_copy))
+        assert instance.response_count == 2
+
+
+# =============================================================================
 # Test: RestSend.add_result()
 # =============================================================================
 

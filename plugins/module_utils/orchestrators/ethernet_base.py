@@ -608,7 +608,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - If the normalize request fails for any reason other than the ND 4.3.1 empty-description rejection, or if the resend fails.
         """
         payload = InterfaceDefaultConfig.to_normalize_payload(group, omit_description=self._normalize_omits_description)
-        response_count = len(self.rest_send.responses)
+        response_count = self.rest_send.response_count
         try:
             return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
         except Exception:
@@ -623,15 +623,16 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Return `True` if the most recent response is a fresh HTTP 400 whose schema errors name `/configData/networkOS/policy/description`
-        with `minimum string length`, i.e. ND 4.3.1 refusing the template's empty description. `response_count` is the length of
-        `rest_send.responses` before the request: `RestSend` keeps the previous `response_current` when the sender raises (issue #554),
-        so the response is only read when the count grew.
+        with `minimum string length`, i.e. ND 4.3.1 refusing the template's empty description. `response_count` is
+        `rest_send.response_count` before the request: `RestSend` keeps the previous `response_current` when the sender raises (issue #554),
+        so the response is only read when the count grew. The count is read, never the copying `responses` list, because this runs once
+        per normalize group and the history holds one inventory response per switch (PR #563 review).
 
         ## Raises
 
         None
         """
-        if len(self.rest_send.responses) <= response_count:
+        if self.rest_send.response_count <= response_count:
             return False
         response = self.rest_send.response_current
         if response.get("RETURN_CODE") != 400:
