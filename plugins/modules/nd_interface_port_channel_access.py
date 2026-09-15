@@ -12,16 +12,21 @@ DOCUMENTATION = r"""
 ---
 module: nd_interface_port_channel_access
 version_added: "2.0.0"
-short_description: Manage port-channel (accessPoHost) interfaces on Cisco Nexus Dashboard
+short_description: Manage port-channel (accessPoHost, iosXeAccessPoHost) interfaces on Cisco Nexus Dashboard
 description:
-- Manage port-channel (accessPoHost) interfaces on Cisco Nexus Dashboard.
-- It supports creating, updating, and deleting (accessPoHost) port-channel configurations on switches within a fabric.
+- Manage port-channel (accessPoHost, iosXeAccessPoHost) interfaces on Cisco Nexus Dashboard.
+- It supports creating, updating, and deleting (accessPoHost, iosXeAccessPoHost) port-channel configurations on switches within a fabric.
 - Each config item represents one port-channel interface. Member ethernet interfaces are listed in
   O(config[].config_data.network_os.policy.ports) and inherit access-mode configuration from the port-channel policy.
 - Member interface field mutability is restricted while members of a port-channel; only description, admin_state, and
   extra_config can be modified on members via the C(nd_interface_ethernet_access) module.
 - A port-channel that lists a member ethernet already belonging to a different port-channel is rejected before any
   change is made (also in check mode); remove the member from its current port-channel first.
+- Supports NX-OS (C(accessPoHost)) and IOS-XE (C(iosXeAccessPoHost)) port-channels; select the platform with
+  O(config[].config_data.network_os.network_os_type).
+- On IOS-XE the members named in O(config[].config_data.network_os.policy.ports) must already be access-host interfaces
+  (C(iosXeAccess)); convert them with M(cisco.nd.nd_interface_ethernet_access) first. The module fails before any change
+  when they are not.
 author:
 - Allen Robel (@allenrobel)
 options:
@@ -61,157 +66,250 @@ options:
             - Network OS specific configuration.
             type: dict
             suboptions:
+              network_os_type:
+                description:
+                - The network OS (platform) type of the target switch. This is a discriminator that determines which
+                  policy templates are applicable.
+                - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst IOS-XE switches.
+                type: str
+                default: nx-os
+                choices: [ nx-os, ios-xe ]
               policy:
                 description:
-                - The policy configuration for the (accessPoHost) port-channel.
+                - The policy configuration for the port-channel.
+                - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
                 type: dict
                 suboptions:
+                  policy_type:
+                    description:
+                    - The port-channel policy template to apply. This is a discriminator that determines which of the
+                      remaining C(policy) suboptions are applicable.
+                    - Optional. When omitted it is derived from O(config[].config_data.network_os.network_os_type),
+                      V(accessPoHost) for C(nx-os) and V(iosXeAccessPoHost) for C(ios-xe).
+                    type: str
+                    choices: [ accessPoHost, iosXeAccessPoHost ]
                   admin_state:
                     description:
                     - The administrative state of the port-channel.
+                    - Applies to all policy_type values.
                     type: bool
                   access_vlan:
                     description:
                     - The access VLAN for the port-channel.
                     - Valid range is 1-4094.
+                    - Applies to all policy_type values.
+                    type: int
+                  bandwidth:
+                    description:
+                    - Interface bandwidth in kilobits per second.
+                    - Valid range is 1-100000000.
+                    - Applies when policy_type is C(accessPoHost).
                     type: int
                   bpdu_filter:
                     description:
                     - BPDU filter setting for the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
                     type: str
                     choices: [ enable, disable, default ]
                   bpdu_guard:
                     description:
                     - BPDU guard setting for the port-channel.
+                    - Applies to all policy_type values.
                     type: str
                     choices: [ enable, disable, default ]
                   cdp:
                     description:
                     - Whether Cisco Discovery Protocol is enabled on the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
                     type: bool
                   copy_description:
                     description:
                     - Whether to propagate the port-channel description to all member interfaces.
+                    - Applies when policy_type is C(accessPoHost).
                     type: bool
                   description:
                     description:
                     - The description of the port-channel.
-                    - Maximum 254 characters.
+                    - Maximum length is 254 characters for C(accessPoHost), 200 for C(iosXeAccessPoHost).
+                    - Applies to all policy_type values.
                     type: str
                   duplex_mode:
                     description:
                     - The duplex mode of the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
                     type: str
                     choices: [ auto, full, half ]
                   extra_config:
                     description:
                     - Additional CLI configuration commands to apply to the port-channel.
+                    - Applies to all policy_type values.
                     type: str
+                  inherit_bandwidth:
+                    description:
+                    - Inherited interface bandwidth in kilobits per second.
+                    - Valid range is 1-100000000.
+                    - Applies when policy_type is C(accessPoHost).
+                    type: int
                   lacp_port_priority:
                     description:
                     - LACP port priority.
                     - Valid range is 1-65535. Default 32768.
+                    - Applies when policy_type is C(accessPoHost).
                     type: int
                   lacp_rate:
                     description:
                     - LACP rate (PDU transmit interval).
                     - V(normal) = 30 seconds, V(fast) = 1 second.
+                    - Applies when policy_type is C(accessPoHost).
                     type: str
                     choices: [ normal, fast ]
                   lacp_suspend:
                     description:
                     - Whether to suspend the port if LACP PDUs are not received.
+                    - Applies when policy_type is C(accessPoHost).
                     type: bool
+                  link_type:
+                    description:
+                    - Spanning-tree link type for the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
+                    type: str
+                    choices: [ auto, pointToPoint, shared ]
                   monitor:
                     description:
                     - Whether the port-channel is configured as a SPAN/ERSPAN monitor source.
+                    - Applies when policy_type is C(accessPoHost).
                     type: bool
                   mtu:
                     description:
                     - The MTU setting for the port-channel.
+                    - For C(accessPoHost), one of C(default) or C(jumbo). It defaults to C(jumbo) when unset during creation.
+                    - For C(iosXeAccessPoHost), an integer in the range 1500-9198 (for example C(8000)).
+                    - A value outside the selected policy_type's form is rejected by the module.
+                    - Applies to all policy_type values.
                     type: str
-                    choices: [ default, jumbo ]
+                  negotiate_auto:
+                    description:
+                    - Whether link auto-negotiation is enabled.
+                    - Applies when policy_type is C(accessPoHost).
+                    type: bool
                   netflow:
                     description:
                     - Whether netflow is enabled on the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
                     type: bool
                   netflow_monitor:
                     description:
                     - The netflow Layer-2 monitor name for the port-channel.
                     - Required when O(config[].config_data.network_os.policy.netflow=true).
+                    - Applies when policy_type is C(accessPoHost).
                     type: str
                   netflow_sampler:
                     description:
                     - The netflow Layer-2 sampler name for the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
                     type: str
+                  orphan_port:
+                    description:
+                    - Configure the port-channel as a vPC orphan port.
+                    - When V(true), the port is suspended by the secondary peer on vPC failure.
+                    - Applies when policy_type is C(accessPoHost).
+                    type: bool
+                  pfc:
+                    description:
+                    - Whether Priority Flow Control is enabled on the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
+                    type: bool
                   port_channel_mode:
                     description:
-                    - The port-channel mode.
+                    - The port-channel (channel-group) mode.
+                    - For C(accessPoHost), one of C(on), C(active) or C(passive). It defaults to C(active) when unset during creation.
+                    - For C(iosXeAccessPoHost), additionally C(auto) or C(desirable) (PAgP).
+                    - A value outside the selected policy_type's subset is rejected by the module.
+                    - Applies to all policy_type values.
                     type: str
-                    choices: [ 'on', active, passive ]
+                    choices: [ 'on', active, passive, auto, desirable ]
+                  port_type_edge_trunk:
+                    description:
+                    - Configure the port-channel as an edge trunk port (PortFast on trunk).
+                    - Applies when policy_type is C(accessPoHost).
+                    type: bool
                   ports:
                     description:
                     - The list of member ethernet interface names for this port-channel.
                     - Each name should be in the format C(Ethernet1/1), C(Ethernet1/2), etc.
+                    - On IOS-XE, member names such as C(GigabitEthernet1/0/2); abbreviations such as C(gi1/0/2) are expanded.
                     - The port-channel policy is the single source of truth for member configuration; member
                       interfaces inherit access-mode settings from this policy.
+                    - Applies to all policy_type values.
                     type: list
                     elements: str
                   qos:
                     description:
                     - Whether a QoS policy is applied to the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
                     type: bool
                   qos_policy:
                     description:
                     - Custom QoS policy name associated with the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
                     type: str
                   queuing_policy:
                     description:
                     - Custom queuing policy name associated with the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
                     type: str
                   speed:
                     description:
                     - The speed setting for the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
                     type: str
                     choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb ]
                   storm_control:
                     description:
                     - Whether traffic storm control is enabled on the port-channel.
+                    - Applies when policy_type is C(accessPoHost).
                     type: bool
                   storm_control_action:
                     description:
                     - Storm control action on threshold violation.
+                    - Applies when policy_type is C(accessPoHost).
                     type: str
                     choices: [ shutdown, trap, default ]
                   storm_control_broadcast_level:
                     description:
                     - Broadcast storm control level in percentage (0.00-100.00).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_broadcast_level_pps).
+                    - Applies when policy_type is C(accessPoHost).
                     type: float
                   storm_control_broadcast_level_pps:
                     description:
                     - Broadcast storm control level in packets per second (0-200000000).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_broadcast_level).
+                    - Applies when policy_type is C(accessPoHost).
                     type: int
                   storm_control_multicast_level:
                     description:
                     - Multicast storm control level in percentage (0.00-100.00).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_multicast_level_pps).
+                    - Applies when policy_type is C(accessPoHost).
                     type: float
                   storm_control_multicast_level_pps:
                     description:
                     - Multicast storm control level in packets per second (0-200000000).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_multicast_level).
+                    - Applies when policy_type is C(accessPoHost).
                     type: int
                   storm_control_unicast_level:
                     description:
                     - Unicast storm control level in percentage (0.00-100.00).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_unicast_level_pps).
+                    - Applies when policy_type is C(accessPoHost).
                     type: float
                   storm_control_unicast_level_pps:
                     description:
                     - Unicast storm control level in packets per second (0-200000000).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_unicast_level).
+                    - Applies when policy_type is C(accessPoHost).
                     type: int
   config_actions:
     description:
@@ -250,8 +348,10 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS port-channel accessPoHost interfaces only (interface_type C(portChannel), mode C(access),
-  network_os_type C(nx-os), policy_type C(accessPoHost)). These values are hardcoded by the module and are not user-configurable.
+- This module supports both NX-OS and IOS-XE access-mode port-channel interfaces (interface_type C(portChannel), mode
+  C(access)), selected via O(config[].config_data.network_os.network_os_type).
+- This module manages the C(accessPoHost) (NX-OS) and C(iosXeAccessPoHost) (IOS-XE) policy templates. Port-channels
+  carrying any other policy type are never read or modified by this module.
 - The port-channel policy is the source of truth for member interface configuration.
 """
 
@@ -277,6 +377,28 @@ EXAMPLES = r"""
       deploy: true
     state: merged
   register: result
+
+- name: Create an IOS-XE access port-channel on a Catalyst leaf (members must already be iosXeAccess)
+  cisco.nd.nd_interface_port_channel_access:
+    fabric_name: CAMPUS1
+    config:
+      - switch_ip: 192.168.12.181
+        interface_name: port-channel101
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              admin_state: true
+              access_vlan: 100
+              mtu: "8000"
+              port_channel_mode: active
+              ports:
+                - GigabitEthernet1/0/2
+                - GigabitEthernet1/0/3
+              description: "Catalyst access EtherChannel"
+    config_actions:
+      deploy: true
+    state: merged
 
 - name: Add a third member to an existing port-channel
   cisco.nd.nd_interface_port_channel_access:
@@ -410,7 +532,9 @@ after:
     interface_name: port-channel501
     config_data:
       network_os:
+        network_os_type: ios-xe
         policy:
+          policy_type: iosXeAccessPoHost
           admin_state: true
           access_vlan: 200
           ports:
