@@ -942,5 +942,19 @@
         "DATA": {
             "status": "ok"
         }
+    },
+    "test_loopback_interface_01500a": {
+        "TEST_NOTES": [
+            "bulk_create_groups (hoisted to NDBaseInterfaceOrchestrator, issue #409) grouping test: switches list (1 switch)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
     }
 }
