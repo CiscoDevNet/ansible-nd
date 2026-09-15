@@ -24,6 +24,8 @@ resolution) from `NDBaseInterfaceOrchestrator` and adds port-channel-specific fu
   already owned by a different port-channel (issue #369)
 - `create_bulk()` groups port-channels by `(switch_id, policy_type)` via `bulk_create_groups` and sends one POST
   per group, so an NX-OS and an IOS-XE port-channel on the same switch never share a batch (issue #409)
+- An IOS-XE member-mode `preflight()` that rejects, before any write, an `iosXeAccessPoHost`/`iosXeTrunkPoHost`
+  member whose current intent policy does not already match the port-channel mode (issues #536/#537)
 
 Member ethernet interfaces are not managed by this orchestrator — the port-channel policy is the
 single source of truth for member configuration via the `ports` list. Member field restrictions
@@ -73,6 +75,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `preflight` if a proposed member ethernet is already owned by a different port-channel.
+    - Via `preflight` if a proposed IOS-XE member's current policy mode does not match the port-channel mode.
     - Via `create` if the create API request fails.
     - Via `update` if the update API request fails.
     - Via `remove_pending` if the bulk remove API request fails.
@@ -91,6 +94,13 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
+
+    # For each IOS-XE port-channel policy type: the member policy type ND requires BEFORE the create, the member type ND provisions once
+    # joined, and the cisco.nd module that converts a member (lab-verified 2026-09-15 on 4.2.1.10 and 4.3.1.175).
+    XE_MEMBER_HOST_POLICY: ClassVar[dict[str, tuple[str, str, str]]] = {
+        "iosXeAccessPoHost": ("iosXeAccess", "iosXeAccessPoMember", "nd_interface_ethernet_access"),
+        "iosXeTrunkPoHost": ("iosXeTrunkHost", "iosXeTrunkPoMember", "nd_interface_ethernet_trunk_host"),
+    }
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -230,8 +240,9 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Run the inherited capability preflight, then reject any proposed port-channel whose member ethernet is already
-        owned by a different port-channel (issue #369). Invoked by `NDStateMachine.manage_state` for merged/replaced/
-        overridden before any mutation, including in `--check` mode.
+        owned by a different port-channel (issue #369), then reject any IOS-XE port-channel whose member's current
+        intent policy does not match the port-channel mode (issues #536/#537). Invoked by `NDStateMachine.manage_state`
+        for merged/replaced/overridden before any mutation, including in `--check` mode.
 
         ## Raises
 
@@ -239,9 +250,11 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - Propagated from `NDBaseInterfaceOrchestrator.preflight` (capability preflight).
         - Via `_validate_members_available` if any proposed member is owned by another port-channel.
+        - Via `_validate_xe_member_modes` if any proposed IOS-XE member's current policy mode does not match.
         """
         super().preflight(model_instances)
         self._validate_members_available(model_instances)
+        self._validate_xe_member_modes(model_instances)
 
     @staticmethod
     def _policy_of(iface: dict) -> dict:
@@ -348,6 +361,88 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 f"Cannot configure port-channel member(s) already in use in fabric '{self.fabric_name}': {', '.join(conflicts)}. "
                 "Remove each member from its current port-channel first."
             )
+
+    def _validate_xe_member_modes(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Fail fast when an IOS-XE port-channel names a member whose current intent policy does not match the port-channel mode. Unlike
+        NX-OS, where the port-channel policy re-homes its members, ND requires an `iosXeAccessPoHost` member to already be `iosXeAccess`
+        and an `iosXeTrunkPoHost` member to be `iosXeTrunkHost` (the fabric default), and rejects the create otherwise: ND 4.2.1 with a flat
+        HTTP 500 that masquerades as a transient error, 4.3.1 with a 207 failed item. A member ND already lists as this port-channel's own
+        member type (`portChannelId` naming this port-channel) passes so an idempotent re-apply is accepted. A member absent from the
+        switch inventory is refused too (ND would otherwise create a phantom record). NX-OS models are skipped. Reads the same cached
+        per-switch inventory as `_member_owners`, so no additional requests are issued, and runs in `--check` mode.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If any IOS-XE member's current policy type does not match, naming the member, its current policy, the required policy and the
+          ethernet module that converts it.
+        - Via `_resolve_switch_id` / `_switch_interfaces`.
+        """
+        # TODO(4.2.1) xe-port-channel-member-mode-mismatch
+        # ND validates IOS-XE members against their CURRENT intent policy and refuses a mode mismatch (4.2.1: flat 500 {code,message};
+        # 4.3.1: 207 failed item). Predicting it here keeps the failure before any write and out of the retry path.
+        mismatches: list[str] = []
+        for model_instance in model_instances:
+            mismatches.extend(self._xe_member_mode_mismatches(model_instance))
+        if mismatches:
+            raise RuntimeError(
+                f"Cannot configure IOS-XE port-channel member(s) whose policy mode does not match in fabric '{self.fabric_name}': {', '.join(mismatches)}."
+            )
+
+    def _xe_member_mode_mismatches(self, model_instance: ModelType) -> list[str]:
+        """
+        # Summary
+
+        Return one formatted mismatch string per proposed member of `model_instance` whose current intent policy does not match the
+        IOS-XE host policy required by `model_instance`'s desired policy type. Returns `[]` when the model is not an IOS-XE host
+        port-channel type in `XE_MEMBER_HOST_POLICY` (including every NX-OS model), when it claims no members, or when every claimed
+        member already matches. Helper for `_validate_xe_member_modes`, split out (with `_xe_member_mismatch`) to keep every method
+        under the local-variable limit.
+
+        ## Raises
+
+        None
+        """
+        requirement = self.XE_MEMBER_HOST_POLICY.get(self._desired_policy_type(model_instance) or "")
+        if requirement is None:
+            return []
+        ports = self._proposed_members(model_instance)
+        if not ports:
+            return []
+        inventory = self._switch_interfaces(self._resolve_switch_id(model_instance.switch_ip))
+        po_name = model_instance.interface_name.lower()
+        mismatches = (self._xe_member_mismatch(model_instance, requirement, inventory, po_name, member) for member in ports)
+        return [mismatch for mismatch in mismatches if mismatch is not None]
+
+    @staticmethod
+    def _xe_member_mismatch(model_instance: ModelType, requirement: tuple[str, str, str], inventory: dict[str, dict], po_name: str, member: str) -> str | None:
+        """
+        # Summary
+
+        Compare one proposed member's current intent policy (from the cached `inventory`) against the `(host_type, member_type,
+        module_name)` `requirement` for `model_instance`'s desired IOS-XE host policy type, returning a formatted mismatch string when
+        it does not match, or `None` when the member is already the required host-side type, or is already this port-channel's own
+        member type (`portChannelId` naming `po_name`). Helper for `_xe_member_mode_mismatches`.
+
+        ## Raises
+
+        None
+        """
+        host_type, member_type, module_name = requirement
+        record = inventory.get(member.lower())
+        policy = PortChannelBaseOrchestrator._policy_of(record) if record else {}
+        current = policy.get("policyType")
+        owner = str(policy.get("portChannelId") or "").lower()
+        if current == host_type or (current == member_type and owner == po_name):
+            return None
+        return (
+            f"(switch_ip={model_instance.switch_ip}, port-channel={model_instance.interface_name}, member={member}, "
+            f"current policy={current or 'absent'}, required={host_type}; convert it with {module_name} first)"
+        )
 
     @staticmethod
     def _proposed_members(model_instance: ModelType) -> list[str]:

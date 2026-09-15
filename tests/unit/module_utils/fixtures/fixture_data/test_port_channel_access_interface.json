@@ -2047,5 +2047,83 @@
             "description": "",
             "message": "Switch [C1_LE1/FDO11111AAA]: Member interface GigabitEthernet1/0/2 is a trunk host which can not be a member interface of iosXeAccessPoHost. Change GigabitEthernet1/0/2 to layer 2 access host using iosXeAccess policy first"
         }
+    },
+    "test_port_channel_access_orchestrator_01100a": {
+        "TEST_NOTES": ["IOS-XE member-mode preflight (issues #536/#537): switches list (1 switch); shared verbatim by 01100a/01110a/01120a"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}]}
+    },
+    "test_port_channel_access_orchestrator_01100b": {
+        "TEST_NOTES": [
+            "IOS-XE member-mode preflight (issues #536/#537) inventory for FDO11111AAA: GigabitEthernet1/0/2 (iosXeTrunkHost), GigabitEthernet1/0/3 (free iosXeAccess), GigabitEthernet1/0/4 (iosXeAccessPoMember, portChannelId Port-channel101, and port-channel101 lists it in ports so it reads as owned by the same port-channel for an idempotent re-apply), GigabitEthernet1/0/5 (iosXeAccessPoMember, portChannelId Port-channel102, and port-channel102 lists it in ports), plus an unrelated NX-OS Ethernet1/1 trunkHost. GigabitEthernet1/0/9 is absent. Shared verbatim by 01100b/01110b/01120b."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [
+          {"interfaceName": "GigabitEthernet1/0/2", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "trunk", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "allowedVlans": "none", "bpduGuard": "default", "mtu": 1500, "policyType": "iosXeTrunkHost", "speed": "auto"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/3", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "mtu": 1500, "policyType": "iosXeAccess", "speed": "auto"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/4", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "policyType": "iosXeAccessPoMember", "portChannelId": "Port-channel101", "portChannelMode": "active"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/5", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "policyType": "iosXeAccessPoMember", "portChannelId": "Port-channel102", "portChannelMode": "active"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "port-channel101", "interfaceType": "portChannel", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "policyType": "iosXeAccessPoHost", "portChannelId": "Port-channel101", "portChannelMode": "active", "ports": ["GigabitEthernet1/0/4"]}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "port-channel102", "interfaceType": "portChannel", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "policyType": "iosXeAccessPoHost", "portChannelId": "Port-channel102", "portChannelMode": "active", "ports": ["GigabitEthernet1/0/5"]}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "Ethernet1/1", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "trunk", "networkOS": {"networkOSType": "nx-os", "policy": {"adminState": true, "policyType": "trunkHost"}}}, "operData": {"portChannelId": -1}}
+        ]}
+    },
+    "test_port_channel_access_orchestrator_01110a": {
+        "TEST_NOTES": ["IOS-XE member-mode preflight (issues #536/#537): switches list (1 switch); shared verbatim by 01100a/01110a/01120a"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}]}
+    },
+    "test_port_channel_access_orchestrator_01110b": {
+        "TEST_NOTES": [
+            "IOS-XE member-mode preflight (issues #536/#537) inventory for FDO11111AAA: GigabitEthernet1/0/2 (iosXeTrunkHost), GigabitEthernet1/0/3 (free iosXeAccess), GigabitEthernet1/0/4 (iosXeAccessPoMember, portChannelId Port-channel101, and port-channel101 lists it in ports so it reads as owned by the same port-channel for an idempotent re-apply), GigabitEthernet1/0/5 (iosXeAccessPoMember, portChannelId Port-channel102, and port-channel102 lists it in ports), plus an unrelated NX-OS Ethernet1/1 trunkHost. GigabitEthernet1/0/9 is absent. Shared verbatim by 01100b/01110b/01120b."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [
+          {"interfaceName": "GigabitEthernet1/0/2", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "trunk", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "allowedVlans": "none", "bpduGuard": "default", "mtu": 1500, "policyType": "iosXeTrunkHost", "speed": "auto"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/3", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "mtu": 1500, "policyType": "iosXeAccess", "speed": "auto"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/4", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "policyType": "iosXeAccessPoMember", "portChannelId": "Port-channel101", "portChannelMode": "active"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/5", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "policyType": "iosXeAccessPoMember", "portChannelId": "Port-channel102", "portChannelMode": "active"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "port-channel101", "interfaceType": "portChannel", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "policyType": "iosXeAccessPoHost", "portChannelId": "Port-channel101", "portChannelMode": "active", "ports": ["GigabitEthernet1/0/4"]}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "port-channel102", "interfaceType": "portChannel", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "policyType": "iosXeAccessPoHost", "portChannelId": "Port-channel102", "portChannelMode": "active", "ports": ["GigabitEthernet1/0/5"]}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "Ethernet1/1", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "trunk", "networkOS": {"networkOSType": "nx-os", "policy": {"adminState": true, "policyType": "trunkHost"}}}, "operData": {"portChannelId": -1}}
+        ]}
+    },
+    "test_port_channel_access_orchestrator_01120a": {
+        "TEST_NOTES": ["IOS-XE member-mode preflight (issues #536/#537): switches list (1 switch); shared verbatim by 01100a/01110a/01120a"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}]}
+    },
+    "test_port_channel_access_orchestrator_01120b": {
+        "TEST_NOTES": [
+            "IOS-XE member-mode preflight (issues #536/#537) inventory for FDO11111AAA: GigabitEthernet1/0/2 (iosXeTrunkHost), GigabitEthernet1/0/3 (free iosXeAccess), GigabitEthernet1/0/4 (iosXeAccessPoMember, portChannelId Port-channel101, and port-channel101 lists it in ports so it reads as owned by the same port-channel for an idempotent re-apply), GigabitEthernet1/0/5 (iosXeAccessPoMember, portChannelId Port-channel102, and port-channel102 lists it in ports), plus an unrelated NX-OS Ethernet1/1 trunkHost. GigabitEthernet1/0/9 is absent. Shared verbatim by 01100b/01110b/01120b."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [
+          {"interfaceName": "GigabitEthernet1/0/2", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "trunk", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "allowedVlans": "none", "bpduGuard": "default", "mtu": 1500, "policyType": "iosXeTrunkHost", "speed": "auto"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/3", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "mtu": 1500, "policyType": "iosXeAccess", "speed": "auto"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/4", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "policyType": "iosXeAccessPoMember", "portChannelId": "Port-channel101", "portChannelMode": "active"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/5", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "policyType": "iosXeAccessPoMember", "portChannelId": "Port-channel102", "portChannelMode": "active"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "port-channel101", "interfaceType": "portChannel", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "policyType": "iosXeAccessPoHost", "portChannelId": "Port-channel101", "portChannelMode": "active", "ports": ["GigabitEthernet1/0/4"]}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "port-channel102", "interfaceType": "portChannel", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "policyType": "iosXeAccessPoHost", "portChannelId": "Port-channel102", "portChannelMode": "active", "ports": ["GigabitEthernet1/0/5"]}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "Ethernet1/1", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "trunk", "networkOS": {"networkOSType": "nx-os", "policy": {"adminState": true, "policyType": "trunkHost"}}}, "operData": {"portChannelId": -1}}
+        ]}
     }
 }
