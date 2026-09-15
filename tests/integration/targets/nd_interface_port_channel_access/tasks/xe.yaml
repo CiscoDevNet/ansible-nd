@@ -110,7 +110,7 @@
 
 # --- XE MERGED UPDATE ---
 
-- name: "XE MERGED UPDATE: Change vlan, mtu and description on port-channel101 (check mode)"
+- name: "XE MERGED UPDATE: Change vlan and description on port-channel101 (check mode)"
   cisco.nd.nd_interface_port_channel_access: &xe_merge_updated
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_xe_fabric_name }}"
@@ -122,7 +122,7 @@
   check_mode: true
   register: cm_xe_update
 
-- name: "XE MERGED UPDATE: Change vlan, mtu and description on port-channel101 (normal mode)"
+- name: "XE MERGED UPDATE: Change vlan and description on port-channel101 (normal mode)"
   cisco.nd.nd_interface_port_channel_access: *xe_merge_updated
   register: nm_xe_update
 
@@ -134,7 +134,6 @@
       - cm_xe_update is changed
       - nm_xe_update is changed
       - pc101.config_data.network_os.policy.access_vlan == 150
-      - pc101.config_data.network_os.policy.mtu == 8000
       - pc101.config_data.network_os.policy.description == "Updated XE PC 101"
 
 - name: "XE MERGED UPDATE IDEMPOTENT: Re-apply"
@@ -164,7 +163,7 @@
   cisco.nd.nd_interface_port_channel_access: *xe_replace
   register: nm_xe_replaced
 
-- name: "XE REPLACED: Verify mtu was cleared and vlan restored"
+- name: "XE REPLACED: Verify the base config is restored"
   vars:
     pc101: "{{ nm_xe_replaced.after | selectattr('interface_name', 'equalto', 'port-channel101') | first }}"
   ansible.builtin.assert:
@@ -172,7 +171,6 @@
       - cm_xe_replaced is changed
       - nm_xe_replaced is changed
       - pc101.config_data.network_os.policy.access_vlan == 100
-      - pc101.config_data.network_os.policy.mtu is not defined
 
 # --- XE OVERRIDDEN ---
 

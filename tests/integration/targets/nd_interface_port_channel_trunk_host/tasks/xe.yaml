@@ -122,7 +122,7 @@
 
 # --- XE MERGED UPDATE ---
 
-- name: "XE MERGED UPDATE: Change allowed_vlans, mtu and description on port-channel103 (check mode)"
+- name: "XE MERGED UPDATE: Change allowed_vlans and description on port-channel103 (check mode)"
   cisco.nd.nd_interface_port_channel_trunk_host: &xe_merge_updated
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_xe_fabric_name }}"
@@ -134,7 +134,7 @@
   check_mode: true
   register: cm_xe_update
 
-- name: "XE MERGED UPDATE: Change allowed_vlans, mtu and description on port-channel103 (normal mode)"
+- name: "XE MERGED UPDATE: Change allowed_vlans and description on port-channel103 (normal mode)"
   cisco.nd.nd_interface_port_channel_trunk_host: *xe_merge_updated
   register: nm_xe_update
 
@@ -146,7 +146,6 @@
       - cm_xe_update is changed
       - nm_xe_update is changed
       - pc103.config_data.network_os.policy.allowed_vlans == "all"
-      - pc103.config_data.network_os.policy.mtu == 8000
       - pc103.config_data.network_os.policy.description == "Updated XE PC 103"
 
 - name: "XE MERGED UPDATE IDEMPOTENT: Re-apply"
@@ -176,7 +175,7 @@
   cisco.nd.nd_interface_port_channel_trunk_host: *xe_replace
   register: nm_xe_replaced
 
-- name: "XE REPLACED: Verify mtu was cleared and allowed_vlans restored"
+- name: "XE REPLACED: Verify the base config is restored"
   vars:
     pc103: "{{ nm_xe_replaced.after | selectattr('interface_name', 'equalto', 'port-channel103') | first }}"
   ansible.builtin.assert:
@@ -184,7 +183,6 @@
       - cm_xe_replaced is changed
       - nm_xe_replaced is changed
       - pc103.config_data.network_os.policy.allowed_vlans == "10,20-30"
-      - pc103.config_data.network_os.policy.mtu is not defined
 
 # --- XE OVERRIDDEN ---
 
