@@ -400,6 +400,100 @@
   tags: [test_fg_deleted, test_fg_deleted_idempotent]
 
 #############################################################################
+# TEST 4: STATE OVERRIDDEN - Prune fabric groups not present in the config
+#
+# NOTE: For this resource `overridden` is cluster-wide - it deletes EVERY
+# VXLAN fabric group that is not listed in the config. To avoid destroying
+# unrelated fabric groups on a shared controller, the pruning behaviour is
+# validated in CHECK MODE: the state machine still computes `after` (with the
+# unlisted group removed) but issues no real DELETE calls, so the delete
+# semantics can be asserted safely. TEST 4c then confirms, against live ND,
+# that the unlisted group was not actually removed.
+#############################################################################
+- name: "TEST 4a: Seed two fabric groups for the overridden prune test"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': 'fg_vxlan_override_keep'} | combine(fabric_config_fg_vxlan) }}"
+      - "{{ {'fabric_name': 'fg_vxlan_override_prune'} | combine(fabric_config_fg_vxlan) }}"
+  register: fg_override_seed
+  tags: [test_fg_overridden]
+
+- name: "TEST 4a: Verify both fabric groups were seeded"
+  assert:
+    that:
+      - fg_override_seed is not failed
+      - fg_override_seed is changed
+    fail_msg: "Seeding fabric groups for the overridden test failed"
+    success_msg: "Both fabric groups seeded for the overridden test"
+  tags: [test_fg_overridden]
+
+- name: "TEST 4b: Overridden with only the keep group listed (check mode - safe prune)"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: overridden
+    config:
+      - "{{ {'fabric_name': 'fg_vxlan_override_keep'} | combine(fabric_config_fg_vxlan) }}"
+  check_mode: true
+  register: fg_override_prune
+  tags: [test_fg_overridden]
+
+- name: "TEST 4b: Verify overridden prunes the unlisted fabric group"
+  assert:
+    that:
+      - fg_override_prune is not failed
+      - fg_override_prune is changed
+      - "'fg_vxlan_override_keep' in (fg_override_prune.after | to_json)"
+      - "'fg_vxlan_override_prune' not in (fg_override_prune.after | to_json)"
+    fail_msg: "Overridden state did not prune the unlisted fabric group from the resulting config"
+    success_msg: "Overridden state prunes fabric groups that are not present in the config"
+  tags: [test_fg_overridden]
+
+- name: "TEST 4c: Authenticate with ND to verify check mode did not delete the pruned group"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_override_auth
+  tags: [test_fg_overridden]
+  delegate_to: localhost
+
+- name: "TEST 4c: Query the pruned group from ND (check mode must be non-destructive)"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/fg_vxlan_override_prune"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_override_auth.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: fg_override_prune_live
+  tags: [test_fg_overridden]
+  delegate_to: localhost
+
+- name: "TEST 4c: Assert the pruned group was not actually deleted in check mode"
+  assert:
+    that:
+      - fg_override_prune_live.status == 200
+    fail_msg: "Check mode overridden unexpectedly deleted the fabric group on ND"
+    success_msg: "Check mode overridden did not delete the fabric group on ND"
+  tags: [test_fg_overridden]
+
+#############################################################################
 # TEST 5: Multiple fabric group operations in single task
 #############################################################################
 - name: "TEST 5: Create multiple fabric groups in single task"
@@ -551,6 +645,8 @@
       - fabric_name: "{{ fg_vxlan_test_replaced }}"
       - fabric_name: "multi_fg_1"
       - fabric_name: "multi_fg_2"
+      - fabric_name: "fg_vxlan_override_keep"
+      - fabric_name: "fg_vxlan_override_prune"
   ignore_errors: true
   tags: [cleanup, always]
 
@@ -576,6 +672,10 @@
       TEST 3: STATE DELETED
         - Delete fabric group: {{ 'PASSED' if fg_deleted_result_1 is changed else 'FAILED' }}
         - Idempotency: {{ 'PASSED' if fg_deleted_result_2 is not changed else 'FAILED' }}
+
+      TEST 4: STATE OVERRIDDEN (safe check-mode prune)
+        - Prunes unlisted group: {{ 'PASSED' if ('fg_vxlan_override_prune' not in (fg_override_prune.after | to_json)) else 'FAILED' }}
+        - Non-destructive in check mode: {{ 'PASSED' if fg_override_prune_live.status == 200 else 'FAILED' }}
 
       TEST 5: MULTI-CREATE
         - Multiple fabric groups: {{ 'PASSED' if fg_multi_result is changed else 'FAILED' }}

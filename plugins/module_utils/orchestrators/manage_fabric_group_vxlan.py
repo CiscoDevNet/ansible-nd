@@ -19,6 +19,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsPut,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.enums import FabricGroupTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import FabricGroupVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions_mixin import ConfigActionsMixin
@@ -44,6 +45,6 @@ class ManageFabricGroupVxlanOrchestrator(ConfigActionsMixin, NDBaseOrchestrator)
             api_endpoint.endpoint_params.category = "fabricGroup"
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             fabrics = result.get("fabrics", []) or []
-            return [f for f in fabrics if f.get("management", {}).get("type") == "vxlan"]
+            return [f for f in fabrics if f.get("management", {}).get("type") == FabricGroupTypeEnum.VXLAN.value]
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
