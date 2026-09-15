@@ -15,7 +15,10 @@ from __future__ import annotations
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import AccessPoHostPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
+    AccessPoHostPolicyTypeEnum,
+    XeAccessPoHostPolicyTypeEnum,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_access_interface import (
     PortChannelAccessInterfaceModel,
 )
@@ -29,7 +32,8 @@ class PortChannelAccessInterfaceOrchestrator(PortChannelBaseOrchestrator):
     Orchestrator for port-channel accessPoHost interface CRUD operations on Nexus Dashboard.
 
     Inherits all shared port-channel logic from `PortChannelBaseOrchestrator`. Defines `model_class` as
-    `PortChannelAccessInterfaceModel` and manages the `accessPoHost` policy type.
+    `PortChannelAccessInterfaceModel` and manages both the NX-OS `accessPoHost` and the IOS-XE `iosXeAccessPoHost`
+    policy types (issue #536).
 
     ## Raises
 
@@ -44,10 +48,11 @@ class PortChannelAccessInterfaceOrchestrator(PortChannelBaseOrchestrator):
         """
         # Summary
 
-        Return the set of API-side policy type values managed by this orchestrator.
+        Return the set of API-side policy type values managed by this orchestrator: the NX-OS `accessPoHost` and the
+        IOS-XE `iosXeAccessPoHost` policy types (issue #536).
 
         ## Raises
 
         None
         """
-        return {e.value for e in AccessPoHostPolicyTypeEnum}
+        return {e.value for e in AccessPoHostPolicyTypeEnum} | {e.value for e in XeAccessPoHostPolicyTypeEnum}

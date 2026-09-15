@@ -11,9 +11,10 @@
 Base orchestrator for port-channel interface modules on Nexus Dashboard.
 
 This module provides `PortChannelBaseOrchestrator`, which implements shared CRUD operations
-for all port-channel interface types (accessPoHost, trunkPoHost, etc.) via the ND Manage
-Interfaces API. Type-specific orchestrators inherit from this base and provide their own
-`model_class` and `_managed_policy_types()`.
+for all port-channel interface types (accessPoHost/iosXeAccessPoHost, trunkPoHost/iosXeTrunkPoHost,
+etc.) via the ND Manage Interfaces API. Type-specific orchestrators inherit from this base and
+provide their own `model_class` and `_managed_policy_types()`, which name both the NX-OS and the
+IOS-XE policy type for their interface flavor (issues #536/#537).
 
 Inherits shared interface lifecycle operations (deploy queuing, fabric validation, switch
 resolution) from `NDBaseInterfaceOrchestrator` and adds port-channel-specific functionality:
@@ -21,6 +22,8 @@ resolution) from `NDBaseInterfaceOrchestrator` and adds port-channel-specific fu
 - Fabric-wide `query_all()` filtered by `interfaceType: "portChannel"` and per-type policy filtering
 - A member-already-in-use `preflight()` that rejects, before any write, a port-channel whose member ethernet is
   already owned by a different port-channel (issue #369)
+- `create_bulk()` groups port-channels by `(switch_id, policy_type)` via `bulk_create_groups` and sends one POST
+  per group, so an NX-OS and an IOS-XE port-channel on the same switch never share a batch (issue #409)
 
 Member ethernet interfaces are not managed by this orchestrator — the port-channel policy is the
 single source of truth for member configuration via the `ports` list. Member field restrictions
@@ -29,7 +32,6 @@ on standalone ethernet modules are enforced separately by the ethernet orchestra
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Sequence
 from typing import ClassVar
 
@@ -179,33 +181,29 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Create multiple port-channel interfaces in bulk. Groups port-channels by switch and sends one POST per switch
-        with all port-channels in the `interfaces` array, reducing API calls from N to one-per-switch. Queues deploys
-        for all created port-channels for later bulk execution via `deploy_pending`.
+        Create multiple port-channel interfaces in bulk. Groups by `(switch_id, policy_type)` (`bulk_create_groups`, issue #409) and
+        sends one POST per group with the group's port-channels in the `interfaces` array. Deploys are queued per item after each
+        accepted POST, so an earlier accepted group's deploys survive a later group's failure (the module's failure-path finalizer ships
+        them); a group that raises queues nothing.
 
         ## Raises
 
         ### RuntimeError
 
-        - If any create API request fails.
+        - If any create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item (detected by
+          `NdV1Strategy.is_success` via `_request`).
         """
         try:
-            groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
-            for model_instance in model_instances:
-                switch_id = self._resolve_switch_id(model_instance.switch_ip)
-                payload = model_instance.to_payload()
-                payload["switchId"] = switch_id
-                groups[switch_id].append((model_instance.interface_name, payload))
-
+            groups = self.bulk_create_groups(model_instances)
             results = []
-            for switch_id, items in groups.items():
+            for group_key, items in groups.items():
                 # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
-                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
-                request_body = {"interfaces": [payload for interface_name, payload in items]}
+                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=group_key.switch_id)  # pyright: ignore[reportOptionalCall]
+                request_body = {"interfaces": [item.payload for item in items]}
                 result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
                 results.append(result)
-                for interface_name, payload in items:
-                    self._queue_deploy(interface_name, switch_id)
+                for item in items:
+                    self._queue_deploy(item.interface_name, group_key.switch_id)
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
