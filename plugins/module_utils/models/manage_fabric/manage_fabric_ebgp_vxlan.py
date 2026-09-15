@@ -93,9 +93,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     - `TypeError` - If required string fields are not provided
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True)
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
 

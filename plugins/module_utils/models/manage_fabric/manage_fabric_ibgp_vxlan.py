@@ -96,9 +96,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     - `TypeError` - If required string fields are not provided
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True)
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
 
@@ -569,7 +567,10 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="macsecAlgorithm", description="MACsec Primary Cryptographic Algorithm.  AES_128_CMAC or AES_256_CMAC", default=MacsecAlgorithmEnum.AES_128_CMAC
     )
     macsec_fallback_key_string: Optional[SecretStr] = Field(
-        alias="macsecFallbackKeyString", description="MACsec Fallback Key String. Cisco Type 7 Encrypted Octet String", default="", json_schema_extra={"secret": True}
+        alias="macsecFallbackKeyString",
+        description="MACsec Fallback Key String. Cisco Type 7 Encrypted Octet String",
+        default="",
+        json_schema_extra={"secret": True},
     )
     macsec_fallback_algorithm: MacsecAlgorithmEnum = Field(
         alias="macsecFallbackAlgorithm",
@@ -591,7 +592,10 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="vrfLiteMacsecCipherSuite", description="DCI MACsec Cipher Suite", default=MacsecCipherSuiteEnum.GCM_AES_XPN_256
     )
     vrf_lite_macsec_key_string: Optional[SecretStr] = Field(
-        alias="vrfLiteMacsecKeyString", description="DCI MACsec Primary Key String.  Cisco Type 7 Encrypted Octet String", default="", json_schema_extra={"secret": True}
+        alias="vrfLiteMacsecKeyString",
+        description="DCI MACsec Primary Key String.  Cisco Type 7 Encrypted Octet String",
+        default="",
+        json_schema_extra={"secret": True},
     )
     vrf_lite_macsec_algorithm: MacsecAlgorithmEnum = Field(
         alias="vrfLiteMacsecAlgorithm", description="DCI MACsec Primary Cryptographic Algorithm", default=MacsecAlgorithmEnum.AES_128_CMAC

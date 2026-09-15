@@ -83,9 +83,7 @@ class RouteServerModel(NDNestedModel):
     - `ValueError` - If IP address or ASN format is invalid
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True)
 
     route_server_ip: str = Field(alias="routeServerIp", description="Route Server IP Address")
     route_server_asn: str = Field(alias="routeServerAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]")
@@ -120,9 +118,7 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
     - `TypeError` - If required string fields are not provided
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True)
 
     # Fabric Group Type (required for discriminated union)
     type: Literal[FabricGroupTypeEnum.VXLAN] = Field(description="Type of the fabric group", default=FabricGroupTypeEnum.VXLAN)
@@ -459,9 +455,7 @@ class FabricGroupVxlanModel(NDBaseModel):
     - `TypeError` - If field types don't match expected types
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True)
 
     identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"

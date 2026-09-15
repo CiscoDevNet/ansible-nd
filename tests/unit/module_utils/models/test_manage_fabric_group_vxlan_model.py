@@ -196,10 +196,8 @@ def test_manage_fabric_group_vxlan_00140():
         {"scheduled_backup_time": "23:59"},
         {"cloud_sec_key": VALID_CS_KEY_128},
         {"cloud_sec_algorithm": "AES_256_CMAC", "cloud_sec_key": VALID_CS_KEY_256},
-        {"multisite_overlay_inter_connect_type": "routeServer",
-         "route_server_collection": [{"route_server_ip": "1.2.3.4", "route_server_asn": "65001"}]},
-        {"multisite_overlay_inter_connect_type": "routeServer",
-         "route_server_collection": [{"route_server_ip": "2001:db8::1", "route_server_asn": "65001"}]},
+        {"multisite_overlay_inter_connect_type": "routeServer", "route_server_collection": [{"route_server_ip": "1.2.3.4", "route_server_asn": "65001"}]},
+        {"multisite_overlay_inter_connect_type": "routeServer", "route_server_collection": [{"route_server_ip": "2001:db8::1", "route_server_asn": "65001"}]},
     ],
 )
 def test_manage_fabric_group_vxlan_00200(management):
@@ -233,8 +231,7 @@ def test_manage_fabric_group_vxlan_00200(management):
         {"cloud_sec_key": "zz11"},  # non-hex
         {"cloud_sec_key": "abcdef0123"},  # valid hex but wrong length for AES_128_CMAC (needs 66)
         {"cloud_sec_algorithm": "AES_256_CMAC", "cloud_sec_key": VALID_CS_KEY_128},  # 66 too short for AES_256 (needs 130)
-        {"multisite_overlay_inter_connect_type": "routeServer",
-         "route_server_collection": [{"route_server_ip": "999.1.1.1", "route_server_asn": "65001"}]},
+        {"multisite_overlay_inter_connect_type": "routeServer", "route_server_collection": [{"route_server_ip": "999.1.1.1", "route_server_asn": "65001"}]},
     ],
 )
 def test_manage_fabric_group_vxlan_00300(management):
