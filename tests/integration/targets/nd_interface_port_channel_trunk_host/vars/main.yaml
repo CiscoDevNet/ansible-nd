@@ -188,6 +188,7 @@ xe_pc_104:
           - "{{ test_xe_pc_member_c }}"
         description: "Ansible integration test XE PC 104"
 
+# No mtu: the Catalyst 9000v rejects a per-port-channel MTU at deploy time (system MTU only), so the XE scenarios never set it.
 xe_pc_103_updated:
   switch_ip: "{{ test_xe_switch_ip }}"
   interface_name: port-channel103
@@ -197,7 +198,6 @@ xe_pc_103_updated:
       policy:
         admin_state: true
         allowed_vlans: "all"
-        mtu: 8000  # Cat9kv (CML beta) caps port MTU at 8978; a real 9300 allows 9198. Keep below both.
         port_channel_mode: active
         ports:
           - "{{ test_xe_pc_member_a }}"
