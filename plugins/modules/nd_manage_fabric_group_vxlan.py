@@ -286,7 +286,8 @@ options:
           cloud_sec_key:
             description:
             - Cisco Type 7 Encrypted Octet String for CloudSec.
-            - Must be exactly 66 hexadecimal characters when O(config.management.cloud_sec_algorithm=AES_128_CMAC) or 130 when O(config.management.cloud_sec_algorithm=AES_256_CMAC).
+            - Must be exactly 66 hexadecimal characters when O(config.management.cloud_sec_algorithm=AES_128_CMAC)
+              or 130 when O(config.management.cloud_sec_algorithm=AES_256_CMAC).
             type: str
           cloud_sec_algorithm:
             description:
